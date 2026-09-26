@@ -1,0 +1,852 @@
+package com.example.data.local
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.*
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_settings")
+
+class UserPreferencesRepository(private val context: Context) {
+
+    private object PreferenceKeys {
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val THEME_MODE = stringPreferencesKey("theme_mode") // "DARK", "LIGHT", "SYSTEM"
+        val UI_THEME = stringPreferencesKey("ui_theme") // "MIDNIGHT_OBSIDIAN", "PURE_AMOLED", "CYBERPUNK_NEON", etc.
+        val HOME_SCREEN_LAYOUT = stringPreferencesKey("home_screen_layout") // "BENTO_DYNAMIC", "HERO_SPOTLIGHT", "MINIMAL_FEED", "STUDIO_DASHBOARD"
+        val NOW_PLAYING_LAYOUT = stringPreferencesKey("now_playing_layout") // "MODERN_BENTO", "VINYL_TURNTABLE", "MINIMAL_GLASS", "NEON_WAVEFORM"
+        val PLAYLISTS_LAYOUT = stringPreferencesKey("playlists_layout") // "BENTO_GRID", "MAGAZINE_HERO", "COMPACT_LIST", "GLOW_CARDS"
+        val ACCENT_COLOR = stringPreferencesKey("accent_color")
+        val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
+        val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
+        val LYRICS_FETCH_MODE = stringPreferencesKey("lyrics_fetch_mode") // "ALWAYS", "WIFI_ONLY", "OFF"
+        val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "COUNT", "BOTH"
+        val RESUME_ON_BLUETOOTH = booleanPreferencesKey("resume_on_bluetooth")
+        val PAUSE_ON_HEADSET_UNPLUG = booleanPreferencesKey("pause_on_headset_unplug")
+        val REPEAT_MODE = intPreferencesKey("repeat_mode") // 0=OFF, 1=ALL, 2=ONE
+        val SHUFFLE_MODE = booleanPreferencesKey("shuffle_mode")
+        val LAST_SONG_ID = longPreferencesKey("last_song_id")
+        val LAST_POSITION = longPreferencesKey("last_position")
+        val LAST_DURATION = longPreferencesKey("last_duration")
+        val LAST_QUEUE_IDS = stringPreferencesKey("last_queue_ids")
+        val LAST_QUEUE_INDEX = intPreferencesKey("last_queue_index")
+        val ADD_TO_QUEUE_POSITION = stringPreferencesKey("add_to_queue_position") // "BOTTOM" or "TOP_NEXT"
+        val PLAYLIST_ADD_SONG_POSITION = stringPreferencesKey("playlist_add_song_position") // "BOTTOM" or "TOP"
+        val PLAYLIST_VIEW_MODE = stringPreferencesKey("playlist_view_mode") // "GRID" or "LIST"
+
+        // Expanded Customization Settings
+        val WAVEFORM_STYLE = stringPreferencesKey("waveform_style") // "SNAKE", "CLASSIC", "SMOOTH_WAVE", "BARS", "DOTS", "MINIMAL"
+        val AMOLED_MODE = booleanPreferencesKey("amoled_mode")
+        val ACCENT_COLOR_PRESET = stringPreferencesKey("accent_color_preset") // "PURPLE", "PINK", "CYAN", "GREEN", "ORANGE"
+        val CORNER_RADIUS_DP = intPreferencesKey("corner_radius_dp") // 12, 16, 20, 24
+        val FONT_SIZE_SCALE = stringPreferencesKey("font_size_scale") // "SMALL", "MEDIUM", "LARGE"
+        val ARTWORK_SIZE = stringPreferencesKey("artwork_size") // "SMALL", "MEDIUM", "LARGE"
+        val SHOW_ARTIST = booleanPreferencesKey("show_artist")
+        val SHOW_ALBUM = booleanPreferencesKey("show_album")
+        val SHOW_AUDIO_OUTPUT = booleanPreferencesKey("show_audio_output")
+        val MINI_PLAYER_STYLE = stringPreferencesKey("mini_player_style") // "FLOATING", "DOCKED", "MINIMAL"
+        val MINI_PLAYER_SHOW_PREVIOUS = booleanPreferencesKey("mini_player_show_previous")
+        val MINI_PLAYER_SHOW_NEXT = booleanPreferencesKey("mini_player_show_next")
+        val MINI_PLAYER_SHOW_FAVORITE = booleanPreferencesKey("mini_player_show_favorite")
+        val GAPLESS_PLAYBACK = booleanPreferencesKey("gapless_playback")
+        val CROSSFADE_DURATION_SEC = intPreferencesKey("crossfade_duration_sec") // 0..12
+        val LYRICS_AUTO_SCROLL = booleanPreferencesKey("lyrics_auto_scroll")
+        val LYRICS_FONT_SIZE = stringPreferencesKey("lyrics_font_size") // "SMALL", "MEDIUM", "LARGE"
+        val NOTIFICATION_ENABLED = booleanPreferencesKey("notification_enabled")
+
+        // Audio & Playback Enhancements
+        val PAUSE_ON_ZERO_VOLUME = booleanPreferencesKey("pause_on_zero_volume")
+        val AUTO_RESUME_ON_VOLUME_INCREASE = booleanPreferencesKey("auto_resume_on_volume_increase")
+        val IGNORE_AUDIO_DURATION = intPreferencesKey("ignore_audio_duration") // Minimum duration in seconds
+        val FADE_IN_OUT_MS = intPreferencesKey("fade_in_out_ms") // 0..5000 ms (legacy)
+        val FADE_IN_MS = intPreferencesKey("fade_in_ms") // 0..5000 ms
+        val FADE_OUT_MS = intPreferencesKey("fade_out_ms") // 0..5000 ms
+        val SHAKE_TO_SKIP = booleanPreferencesKey("shake_to_skip")
+        val KEEP_SCREEN_AWAKE = booleanPreferencesKey("keep_screen_awake")
+        val AUDIO_BALANCE = floatPreferencesKey("audio_balance") // -1.0f .. 1.0f
+        val EQUALIZER_PRESET = stringPreferencesKey("equalizer_preset") // "NORMAL", "BASS_BOOST", "TREBLE_BOOST", "VOCAL", "ROCK", "POP"
+        val REDUCE_VOLUME_ON_NOTIFICATION = booleanPreferencesKey("reduce_volume_on_notification")
+        val SCROBBLE_THRESHOLD_TYPE = stringPreferencesKey("scrobble_threshold_type") // "SECONDS" or "PERCENTAGE"
+        val SCROBBLE_THRESHOLD_VALUE = intPreferencesKey("scrobble_threshold_value") // e.g. 30 (sec or %)
+        val HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
+        val ALWAYS_SHUFFLE_MODE = booleanPreferencesKey("always_shuffle_mode")
+        val GESTURE_PLAYBACK_ENABLED = booleanPreferencesKey("gesture_playback_enabled")
+        val FETCH_ONLINE_ARTWORK_HIGH_RES = booleanPreferencesKey("fetch_online_artwork_high_res")
+
+        // Offline Caching Preferences (Separate Toggles for Offline Playback)
+        val CACHE_LYRICS_ENABLED = booleanPreferencesKey("cache_lyrics_enabled")
+        val CACHE_ALBUM_ART_ENABLED = booleanPreferencesKey("cache_album_art_enabled")
+        val CACHE_SONG_ART_WORK_ENABLED = booleanPreferencesKey("cache_song_art_work_enabled")
+
+        // Custom Equalizer Settings
+        val CUSTOM_EQ_BANDS = stringPreferencesKey("custom_eq_bands")
+        val CUSTOM_BASS_BOOST = intPreferencesKey("custom_bass_boost")
+        val CUSTOM_VIRTUALIZER = intPreferencesKey("custom_virtualizer")
+
+        // HomeScreen Customization
+        val HOME_SECTIONS = stringPreferencesKey("home_sections")
+
+        // Normalize Audio
+        val NORMALIZE_AUDIO = booleanPreferencesKey("normalize_audio")
+
+        // Auto Play on Headphone Connection
+        val AUTO_PLAY_ON_HEADPHONE_CONNECTION = booleanPreferencesKey("auto_play_on_headphone_connection")
+
+        // Database Storage Tier ("STANDARD", "EXPANDED", "MAXIMUM")
+        val DATABASE_STORAGE_TIER = stringPreferencesKey("database_storage_tier")
+    }
+
+    val databaseStorageTier: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED"
+    }
+
+    suspend fun setDatabaseStorageTier(tier: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = tier
+        }
+    }
+
+    val cacheLyricsEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: true
+    }
+
+    val cacheAlbumArtEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: true
+    }
+
+    val cacheSongArtWorkEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: true
+    }
+
+    @Volatile var cachedFetchOnlineArtworkHighRes: Boolean = false
+        private set
+    @Volatile var cachedCacheAlbumArtEnabled: Boolean = true
+        private set
+    @Volatile var cachedCacheSongArtWorkEnabled: Boolean = true
+        private set
+
+    init {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                fetchOnlineArtworkHighRes.collect { cachedFetchOnlineArtworkHighRes = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                cacheAlbumArtEnabled.collect { cachedCacheAlbumArtEnabled = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                cacheSongArtWorkEnabled.collect { cachedCacheSongArtWorkEnabled = it }
+            } catch (_: Exception) {}
+        }
+    }
+
+    val customEqBands: Flow<List<Float>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0"
+        try {
+            raw.split(",").map { it.trim().toFloat() }
+        } catch (_: Exception) {
+            listOf(0f, 0f, 0f, 0f, 0f)
+        }
+    }
+
+    val customBassBoost: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0
+    }
+
+    val customVirtualizer: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0
+    }
+
+    val fetchOnlineArtworkHighRes: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: false
+    }
+
+    val alwaysShuffleMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: false
+    }
+
+    val gesturePlaybackEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: true
+    }
+
+    val homeSections: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
+        raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    suspend fun setHomeSections(sections: List<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.HOME_SECTIONS] = sections.joinToString(",")
+        }
+    }
+
+    val highRefreshRate: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true
+    }
+
+    val isOnboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: false
+    }
+
+    val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+    }
+
+    val uiTheme: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN"
+    }
+
+    val homeScreenLayout: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC"
+    }
+
+    val nowPlayingLayout: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MODERN_BENTO"
+    }
+
+    val playlistsLayout: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "BENTO_GRID"
+    }
+
+    val isDynamicArtworkTheme: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true
+    }
+
+    val customAccentColor: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0
+    }
+
+    val lyricsFetchMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: "WIFI_ONLY"
+    }
+
+    val resumeOnBluetooth: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: false
+    }
+
+    val pauseOnHeadsetUnplug: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: true
+    }
+
+    val repeatMode: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.REPEAT_MODE] ?: 0
+    }
+
+    val shuffleMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SHUFFLE_MODE] ?: false
+    }
+
+    val lastSongId: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_SONG_ID] ?: -1L
+    }
+
+    val lastPosition: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_POSITION] ?: 0L
+    }
+
+    val lastDuration: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_DURATION] ?: 0L
+    }
+
+    val lastQueueIds: Flow<List<Long>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[PreferenceKeys.LAST_QUEUE_IDS] ?: ""
+        if (raw.isBlank()) emptyList() else raw.split(",").mapNotNull { it.toLongOrNull() }
+    }
+
+    val lastQueueIndex: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_QUEUE_INDEX] ?: 0
+    }
+
+    val addToQueuePosition: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM"
+    }
+
+    val playlistAddSongPosition: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM"
+    }
+
+    val playlistViewMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID"
+    }
+
+    val waveformStyle: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SLEEK_LINE"
+    }
+
+    val amoledMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AMOLED_MODE] ?: false
+    }
+
+    val accentColorPreset: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "PURPLE"
+    }
+
+    val cornerRadiusDp: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16
+    }
+
+    val fontSizeScale: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM"
+    }
+
+    val artworkSize: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM"
+    }
+
+    val showArtist: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SHOW_ARTIST] ?: true
+    }
+
+    val showAlbum: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SHOW_ALBUM] ?: true
+    }
+
+    val showAudioOutput: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: true
+    }
+
+    val miniPlayerStyle: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: "FLOATING"
+    }
+
+    val miniPlayerShowPrevious: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: true
+    }
+
+    val miniPlayerShowNext: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: true
+    }
+
+    val miniPlayerShowFavorite: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: true
+    }
+
+    val gaplessPlayback: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: true
+    }
+
+    val normalizeAudio: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: false
+    }
+
+    val autoPlayOnHeadphoneConnection: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false
+    }
+
+    val crossfadeDurationSec: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: 0
+    }
+
+    val lyricsAutoScroll: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: true
+    }
+
+    val lyricsFontSize: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: "MEDIUM"
+    }
+
+    val notificationEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: true
+    }
+
+    val pauseOnZeroVolume: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: true
+    }
+    
+    val autoResumeOnVolumeIncrease: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: true
+    }
+    
+    val ignoreAudioDuration: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0
+    }
+
+    val fadeInOutMs: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+    }
+
+    val fadeInMs: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FADE_IN_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+    }
+
+    val fadeOutMs: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FADE_OUT_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+    }
+
+    val shakeToSkip: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: false
+    }
+
+    val keepScreenAwake: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: false
+    }
+
+    val audioBalance: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUDIO_BALANCE] ?: 0f
+    }
+
+    val equalizerPreset: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.EQUALIZER_PRESET] ?: "NORMAL"
+    }
+
+    val reduceVolumeOnNotification: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true
+    }
+
+    val scrobbleThresholdType: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS"
+    }
+
+    val scrobbleThresholdValue: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30
+    }
+
+    suspend fun setScrobbleThresholdType(type: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = type }
+    }
+
+    suspend fun setScrobbleThresholdValue(value: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = value }
+    }
+
+    suspend fun setReduceVolumeOnNotification(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = enabled }
+    }
+
+    suspend fun setPauseOnZeroVolume(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = enabled }
+    }
+    
+    suspend fun setAutoResumeOnVolumeIncrease(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = enabled }
+    }
+    
+    suspend fun setIgnoreAudioDuration(durationSec: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = durationSec }
+    }
+
+    suspend fun setFadeInOutMs(ms: Int) {
+        context.dataStore.edit { prefs -> 
+            prefs[PreferenceKeys.FADE_IN_OUT_MS] = ms
+            prefs[PreferenceKeys.FADE_IN_MS] = ms
+            prefs[PreferenceKeys.FADE_OUT_MS] = ms
+        }
+    }
+
+    suspend fun setFadeInMs(ms: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FADE_IN_MS] = ms }
+    }
+
+    suspend fun setFadeOutMs(ms: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FADE_OUT_MS] = ms }
+    }
+
+    suspend fun setShakeToSkip(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHAKE_TO_SKIP] = enabled }
+    }
+
+    suspend fun setKeepScreenAwake(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] = enabled }
+    }
+
+    suspend fun setAudioBalance(balance: Float) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUDIO_BALANCE] = balance }
+    }
+
+    suspend fun setEqualizerPreset(preset: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.EQUALIZER_PRESET] = preset
+            val eqPreset = com.example.ui.components.EQ_PRESETS.find { it.id.equals(preset, ignoreCase = true) }
+            if (eqPreset != null) {
+                prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = eqPreset.bands.joinToString(",")
+                prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = eqPreset.bassBoost
+                prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = eqPreset.virtualizer
+            }
+        }
+    }
+
+    suspend fun setWaveformStyle(style: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.WAVEFORM_STYLE] = style }
+    }
+
+    suspend fun setAmoledMode(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AMOLED_MODE] = enabled }
+    }
+
+    suspend fun setAccentColorPreset(preset: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = preset }
+    }
+
+    suspend fun setCornerRadiusDp(radius: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.CORNER_RADIUS_DP] = radius }
+    }
+
+    suspend fun setFontSizeScale(scale: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FONT_SIZE_SCALE] = scale }
+    }
+
+    suspend fun setArtworkSize(size: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ARTWORK_SIZE] = size }
+    }
+
+    suspend fun setShowArtist(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_ARTIST] = show }
+    }
+
+    suspend fun setShowAlbum(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_ALBUM] = show }
+    }
+
+    suspend fun setShowAudioOutput(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = show }
+    }
+
+    suspend fun setMiniPlayerStyle(style: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_STYLE] = style }
+    }
+
+    suspend fun setMiniPlayerShowPrevious(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = show }
+    }
+
+    suspend fun setMiniPlayerShowNext(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = show }
+    }
+
+    suspend fun setMiniPlayerShowFavorite(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = show }
+    }
+
+    suspend fun setGaplessPlayback(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.GAPLESS_PLAYBACK] = enabled }
+    }
+
+    suspend fun setNormalizeAudio(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.NORMALIZE_AUDIO] = enabled }
+    }
+
+    suspend fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = enabled }
+    }
+
+    suspend fun setCrossfadeDurationSec(sec: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = sec }
+    }
+
+    suspend fun setLyricsAutoScroll(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = enabled }
+    }
+
+    suspend fun setLyricsFontSize(size: String) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.LYRICS_FONT_SIZE] = size }
+    }
+
+    suspend fun setAlwaysShuffleMode(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = enabled }
+    }
+
+    suspend fun setGesturePlaybackEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = enabled }
+    }
+
+    fun getLyricsSyncOffsetMs(songId: Long): Long {
+        if (songId <= 0) return 0L
+        return try {
+            val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
+            sp.getLong("offset_$songId", 0L)
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    fun setLyricsSyncOffsetMs(songId: Long, offsetMs: Long) {
+        if (songId <= 0) return
+        try {
+            val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
+            sp.edit().putLong("offset_$songId", offsetMs).apply()
+        } catch (_: Exception) {}
+    }
+
+    suspend fun setNotificationEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.NOTIFICATION_ENABLED] = enabled }
+    }
+
+    suspend fun setPlaylistViewMode(mode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = mode
+        }
+    }
+
+    val librarySortOption: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[stringPreferencesKey("library_sort_option")] ?: "RECENTLY_ADDED"
+    }
+
+    val librarySortAscending: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[booleanPreferencesKey("library_sort_ascending")] ?: true
+    }
+
+    suspend fun saveLibrarySortOption(option: String, ascending: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[stringPreferencesKey("library_sort_option")] = option
+            prefs[booleanPreferencesKey("library_sort_ascending")] = ascending
+        }
+    }
+
+    suspend fun saveLastPlaybackState(songId: Long, position: Long, queueIds: List<Long>, queueIndex: Int, duration: Long = 0L) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LAST_SONG_ID] = songId
+            prefs[PreferenceKeys.LAST_POSITION] = position
+            prefs[PreferenceKeys.LAST_QUEUE_IDS] = queueIds.joinToString(",")
+            prefs[PreferenceKeys.LAST_QUEUE_INDEX] = queueIndex
+            if (duration > 0L) {
+                prefs[PreferenceKeys.LAST_DURATION] = duration
+            }
+        }
+    }
+
+    suspend fun setAddToQueuePosition(position: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = position
+        }
+    }
+
+    suspend fun setPlaylistAddSongPosition(position: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = position
+        }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.ONBOARDING_COMPLETED] = completed
+        }
+    }
+
+    suspend fun setThemeMode(mode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.THEME_MODE] = mode
+        }
+    }
+
+    suspend fun setUiTheme(themeId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.UI_THEME] = themeId
+        }
+    }
+
+    suspend fun setHomeScreenLayout(layoutId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = layoutId
+        }
+    }
+
+    suspend fun setNowPlayingLayout(layoutId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = layoutId
+        }
+    }
+
+    suspend fun setPlaylistsLayout(layoutId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = layoutId
+        }
+    }
+
+    suspend fun setDynamicArtworkTheme(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = enabled
+        }
+    }
+
+    suspend fun setCustomAccentColor(colorInt: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = colorInt
+        }
+    }
+
+    suspend fun setLyricsFetchMode(mode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LYRICS_FETCH_MODE] = mode
+        }
+    }
+
+    suspend fun setRepeatMode(mode: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.REPEAT_MODE] = mode
+        }
+    }
+
+    suspend fun setShuffleMode(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHUFFLE_MODE] = enabled
+        }
+    }
+
+    suspend fun setHighRefreshRate(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.HIGH_REFRESH_RATE] = enabled
+        }
+    }
+
+    suspend fun setFetchOnlineArtworkHighRes(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = enabled
+        }
+    }
+
+    suspend fun setCacheLyricsEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setCacheAlbumArtEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setCacheSongArtWorkEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setCustomEqBands(bands: List<Float>, markAsCustom: Boolean = true) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = bands.joinToString(",")
+            if (markAsCustom) {
+                prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
+            }
+        }
+    }
+
+    suspend fun setCustomBassBoost(strength: Int, markAsCustom: Boolean = true) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = strength
+            if (markAsCustom) {
+                prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
+            }
+        }
+    }
+
+    suspend fun setCustomVirtualizer(strength: Int, markAsCustom: Boolean = true) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = strength
+            if (markAsCustom) {
+                prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
+            }
+        }
+    }
+
+    suspend fun clearLyricsCache() {
+        try {
+            val dir = context.cacheDir.resolve("lyrics")
+            if (dir.exists()) dir.deleteRecursively()
+            context.getSharedPreferences("lyrics_cache_prefs", Context.MODE_PRIVATE).edit().clear().apply()
+        } catch (_: Exception) {}
+    }
+
+    suspend fun clearAlbumArtCache() {
+        try {
+            val dir = context.cacheDir.resolve("album_art")
+            if (dir.exists()) dir.deleteRecursively()
+            val imgDir = context.cacheDir.resolve("image_cache")
+            if (imgDir.exists()) imgDir.deleteRecursively()
+            context.getSharedPreferences("album_artworks_online_cache", Context.MODE_PRIVATE).edit().clear().apply()
+            context.getSharedPreferences("artist_images_cache", Context.MODE_PRIVATE).edit().clear().apply()
+            context.getSharedPreferences("album_images_cache", Context.MODE_PRIVATE).edit().clear().apply()
+            com.example.ui.components.ArtworkResolutionCache.clear()
+            coil.Coil.imageLoader(context).memoryCache?.clear()
+        } catch (_: Exception) {}
+    }
+
+    suspend fun clearSongArtCache() {
+        try {
+            val dir = context.cacheDir.resolve("song_artworks")
+            if (dir.exists()) dir.deleteRecursively()
+            val dir2 = context.cacheDir.resolve("artworks")
+            if (dir2.exists()) dir2.deleteRecursively()
+            context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE).edit().clear().apply()
+            com.example.ui.components.ArtworkResolutionCache.clear()
+            coil.Coil.imageLoader(context).memoryCache?.clear()
+        } catch (_: Exception) {}
+    }
+
+    fun getLyricsCacheSizeBytes(): Long {
+        var size = 0L
+        try {
+            val dir = context.cacheDir.resolve("lyrics")
+            if (dir.exists()) {
+                size += dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }
+            val dbFile = context.getDatabasePath("offgrid_music_db")
+            if (dbFile != null && dbFile.exists()) {
+                size += (dbFile.length() / 4).coerceAtLeast(0L)
+            }
+        } catch (_: Exception) {}
+        return size
+    }
+
+    fun getAlbumArtCacheSizeBytes(): Long {
+        var size = 0L
+        try {
+            val dir = context.cacheDir.resolve("album_art")
+            if (dir.exists()) size += dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val imgDir = context.cacheDir.resolve("image_cache")
+            if (imgDir.exists()) size += imgDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        } catch (_: Exception) {}
+        return size
+    }
+
+    fun getSongArtCacheSizeBytes(): Long {
+        var size = 0L
+        try {
+            val dir = context.cacheDir.resolve("song_artworks")
+            if (dir.exists()) size += dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val dir2 = context.cacheDir.resolve("artworks")
+            if (dir2.exists()) size += dir2.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val coversDir = context.filesDir.resolve("song_covers")
+            if (coversDir.exists()) size += coversDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        } catch (_: Exception) {}
+        return size
+    }
+
+    fun getTotalCacheSizeBytes(): Long {
+        var size = 0L
+        try {
+            context.cacheDir?.let { if (it.exists()) size += it.walkTopDown().filter { f -> f.isFile }.sumOf { f -> f.length() } }
+            context.externalCacheDir?.let { if (it.exists()) size += it.walkTopDown().filter { f -> f.isFile }.sumOf { f -> f.length() } }
+        } catch (_: Exception) {}
+        return size
+    }
+
+    companion object {
+        @Volatile
+        private var INSTANCE: UserPreferencesRepository? = null
+
+        fun getInstance(context: Context): UserPreferencesRepository {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: UserPreferencesRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
+        fun formatFileSize(bytes: Long): String {
+            if (bytes <= 0L) return "0.0 KB"
+            val kb = bytes / 1024.0
+            val mb = kb / 1024.0
+            val gb = mb / 1024.0
+            return when {
+                gb >= 1.0 -> String.format(java.util.Locale.US, "%.2f GB", gb)
+                mb >= 1.0 -> String.format(java.util.Locale.US, "%.1f MB", mb)
+                else -> String.format(java.util.Locale.US, "%.1f KB", kb)
+            }
+        }
+    }
+}

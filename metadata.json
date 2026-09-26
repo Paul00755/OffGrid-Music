@@ -1,0 +1,6 @@
+{
+  "name": "OffGrid Music",
+  "description": "An offline-first Android music player for OffGrid Music with smart audio controls, synced lyrics, and ambient visualizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
