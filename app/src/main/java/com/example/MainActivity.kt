@@ -427,7 +427,8 @@ class MainActivity : ComponentActivity() {
                                             recentSearches = recentSearches,
                                             onAddRecentSearch = { viewModel.addRecentSearch(it) },
                                             onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
-                                            onClearRecentSearches = { viewModel.clearRecentSearches() }
+                                            onClearRecentSearches = { viewModel.clearRecentSearches() },
+                                            scanProgress = scanProgress
                                         )
                                         NavTab.PLAYLISTS -> {
                                             val playlistViewMode by viewModel.playlistViewMode.collectAsState()
@@ -743,6 +744,7 @@ class MainActivity : ComponentActivity() {
                                                 onSetAddToQueuePosition = { viewModel.setAddToQueuePosition(it) },
                                                 playlistAddSongPosition = viewModel.playlistAddSongPosition.collectAsState().value,
                                                 onSetPlaylistAddSongPosition = { viewModel.setPlaylistAddSongPosition(it) },
+                                                scanProgress = scanProgress,
                                                 initialTargetSection = viewModel.settingsTargetSection.collectAsState().value
                                             )
                                         }

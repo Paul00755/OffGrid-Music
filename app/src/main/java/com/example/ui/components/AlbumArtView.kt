@@ -139,6 +139,57 @@ object ArtworkResolutionCache {
         return null
     }
 
+    fun isManualCover(context: Context, songId: Long, path: String? = null): Boolean {
+        return !getManualCoverUri(context, songId, path).isNullOrBlank()
+    }
+
+    fun hasSuccessfullyFetchedOnlineArtwork(context: Context, songId: Long): Boolean {
+        if (songId <= 0L) return false
+        try {
+            val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "$songId.jpg")
+            if (persistentFile.exists() && persistentFile.length() > 0) return true
+            val onlinePref = context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
+            return !onlinePref.getString(songId.toString(), null).isNullOrBlank()
+        } catch (_: Exception) {
+            return false
+        }
+    }
+
+    fun getAuthoritativeArtwork(context: Context, song: com.example.data.model.Song, isHighResPreferred: Boolean = false): String? {
+        val manual = getManualCoverUri(context, song.id, song.path)
+        if (!manual.isNullOrBlank()) {
+            if (song.id > 0L) cache[song.id] = manual
+            return manual
+        }
+
+        if (song.id > 0L) {
+            val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "${song.id}.jpg")
+            if (persistentFile.exists() && persistentFile.length() > 0) {
+                val uriStr = android.net.Uri.fromFile(persistentFile).toString()
+                cache[song.id] = uriStr
+                return uriStr
+            }
+            val persistentSongArt = java.io.File(java.io.File(context.filesDir, "song_artworks"), "${song.id}.jpg")
+            if (persistentSongArt.exists() && persistentSongArt.length() > 0) {
+                val uriStr = android.net.Uri.fromFile(persistentSongArt).toString()
+                cache[song.id] = uriStr
+                return uriStr
+            }
+        }
+
+        if (!song.artworkUri.isNullOrBlank() && (song.artworkUri.startsWith("file://") || song.artworkUri.startsWith("content://"))) {
+            if (song.id > 0L) cache[song.id] = song.artworkUri
+            return song.artworkUri
+        }
+
+        if (song.id > 0L) {
+            val disk = getOrCheckDisk(context, song.id, song.path)
+            if (!disk.isNullOrBlank()) return disk
+        }
+
+        return null
+    }
+
     fun invalidate(songId: Long) {
         cache.remove(songId)
     }
@@ -250,57 +301,114 @@ fun AlbumArtView(
         withContext(Dispatchers.IO) {
             var finalUri: String? = null
 
-            // Strategy 1: If "Prefer High-Res Online Artwork" is enabled:
-            // Fetch Ultra-HD covers (up to 1920x1080) from iTunes/Deezer
             if (isHighResPreferred) {
-                val online = OnlineArtistImageFetcher.getSongArtworkUrl(
-                    context = context,
-                    title = song.displayTitle,
-                    artist = song.displayArtist,
-                    album = song.displayAlbum,
-                    preferUltraHd = true,
-                    cacheEnabled = isCacheEnabled,
-                    songId = song.id
-                )
-                if (!online.isNullOrBlank()) {
-                    finalUri = online
-                    if (isCacheEnabled) {
-                        try {
-                            context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                                .edit().putString(songId.toString(), online).apply()
-                        } catch (_: Exception) {}
+                // When Hi-Res Artwork is ON:
+                // 1. Do not re-search songs whose artwork was manually assigned/edited by user
+                val isManual = ArtworkResolutionCache.isManualCover(context, song.id, song.path)
+                if (isManual) {
+                    finalUri = ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+                }
+
+                // 2. Check if artwork was already successfully searched/fetched to avoid repeated searches
+                if (finalUri.isNullOrBlank()) {
+                    val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "${song.id}.jpg")
+                    if (persistentFile.exists() && persistentFile.length() > 0) {
+                        finalUri = android.net.Uri.fromFile(persistentFile).toString()
                     }
                 }
-            }
 
-            // Strategy 2: Check local image (artworkUri or embedded ID3 APIC)
-            if (finalUri.isNullOrBlank()) {
-                val localUri = song.artworkUri
-                if (!localUri.isNullOrBlank() && (localUri.startsWith("file://") || localUri.startsWith("content://"))) {
-                    finalUri = localUri
-                } else {
-                    val extracted = ArtworkManager.getOrExtractArtworkUri(
+                // 3. Look for/fetch new higher-resolution artwork for eligible songs
+                if (finalUri.isNullOrBlank()) {
+                    val online = OnlineArtistImageFetcher.getSongArtworkUrl(
                         context = context,
-                        songId = song.id,
-                        filePath = song.path,
-                        albumId = song.albumId,
-                        albumName = song.displayAlbum
+                        title = song.displayTitle,
+                        artist = song.displayArtist,
+                        album = song.displayAlbum,
+                        preferUltraHd = true,
+                        cacheEnabled = isCacheEnabled,
+                        songId = song.id
                     )
-                    if (!extracted.isNullOrBlank()) {
-                        finalUri = extracted
+                    if (!online.isNullOrBlank()) {
+                        val savedLocal = ArtworkManager.saveFetchedArtworkLocally(context, song.id, online)
+                        finalUri = savedLocal ?: online
+                        if (isCacheEnabled) {
+                            try {
+                                context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
+                                    .edit().putString(song.id.toString(), finalUri).apply()
+                            } catch (_: Exception) {}
+                        }
                     }
                 }
-            }
 
-            // If Fetch Hi-Res Artwork = OFF, do NOT fetch from network.
-            // Check only existing cached online art without issuing new network requests.
-            if (finalUri.isNullOrBlank() && !isHighResPreferred && isCacheEnabled) {
-                val existingCached = try {
-                    context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                        .getString(songId.toString(), null)
-                } catch (_: Exception) { null }
-                if (!existingCached.isNullOrBlank()) {
-                    finalUri = existingCached
+                // 4. Fallback to local image (artworkUri or embedded ID3 APIC / albumart)
+                if (finalUri.isNullOrBlank()) {
+                    val localUri = song.artworkUri
+                    if (!localUri.isNullOrBlank() && (localUri.startsWith("file://") || localUri.startsWith("content://"))) {
+                        finalUri = localUri
+                    } else {
+                        finalUri = ArtworkManager.getOrExtractArtworkUri(
+                            context = context,
+                            songId = song.id,
+                            filePath = song.path,
+                            albumId = song.albumId,
+                            albumName = song.displayAlbum
+                        )
+                    }
+                }
+            } else {
+                // When Hi-Res Artwork is OFF:
+                // 1. Check valid existing artwork first (manual cover, persistent artwork, embedded APIC, folder/album art)
+                val manual = ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+                if (!manual.isNullOrBlank()) {
+                    finalUri = manual
+                }
+
+                if (finalUri.isNullOrBlank()) {
+                    val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "${song.id}.jpg")
+                    if (persistentFile.exists() && persistentFile.length() > 0) {
+                        finalUri = android.net.Uri.fromFile(persistentFile).toString()
+                    }
+                }
+
+                if (finalUri.isNullOrBlank()) {
+                    val localUri = song.artworkUri
+                    if (!localUri.isNullOrBlank() && (localUri.startsWith("file://") || localUri.startsWith("content://"))) {
+                        finalUri = localUri
+                    } else {
+                        val extracted = ArtworkManager.getOrExtractArtworkUri(
+                            context = context,
+                            songId = song.id,
+                            filePath = song.path,
+                            albumId = song.albumId,
+                            albumName = song.displayAlbum
+                        )
+                        if (!extracted.isNullOrBlank()) {
+                            finalUri = extracted
+                        }
+                    }
+                }
+
+                // 2. Only search/fetch artwork for songs that genuinely have NO artwork
+                if (finalUri.isNullOrBlank()) {
+                    val online = OnlineArtistImageFetcher.getSongArtworkUrl(
+                        context = context,
+                        title = song.displayTitle,
+                        artist = song.displayArtist,
+                        album = song.displayAlbum,
+                        preferUltraHd = false,
+                        cacheEnabled = isCacheEnabled,
+                        songId = song.id
+                    )
+                    if (!online.isNullOrBlank()) {
+                        val savedLocal = ArtworkManager.saveFetchedArtworkLocally(context, song.id, online)
+                        finalUri = savedLocal ?: online
+                        if (isCacheEnabled) {
+                            try {
+                                context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
+                                    .edit().putString(song.id.toString(), finalUri).apply()
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
             }
 
@@ -310,9 +418,13 @@ fun AlbumArtView(
                 }
                 withContext(Dispatchers.Main) {
                     resolvedArtworkUri = finalUri
+                    // If this song is currently playing, update notification immediately
+                    val activeSong = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.currentSong
+                    if (activeSong != null && activeSong.id == song.id) {
+                        com.example.service.PlaybackManager.activeInstance?.updateCurrentSongArtwork(song.id, finalUri)
+                    }
                 }
             } else {
-                // If not found and had no cached uri, set to null, otherwise keep previous
                 if (resolvedArtworkUri == null) {
                     withContext(Dispatchers.Main) {
                         resolvedArtworkUri = null

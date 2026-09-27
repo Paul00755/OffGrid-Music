@@ -37,16 +37,102 @@ import com.example.ui.theme.*
 import com.example.util.HapticUtils
 import com.example.util.StatsCardImageGenerator
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
+
+data class StoryTimeRange(
+    val period: StoryPeriod,
+    val customStartMs: Long? = null,
+    val customEndMs: Long? = null,
+    val customLabel: String? = null
+) {
+    val displayLabel: String
+        get() = when (period) {
+            StoryPeriod.CUSTOM -> customLabel ?: "Custom Range"
+            else -> period.label
+        }
+
+    fun getTimeRange(nowMs: Long = System.currentTimeMillis()): Pair<Long, Long> {
+        if (period == StoryPeriod.CUSTOM && customStartMs != null && customEndMs != null) {
+            return Pair(customStartMs, customEndMs)
+        }
+        return period.getTimeRange(nowMs)
+    }
+
+    companion object {
+        val TODAY = StoryTimeRange(StoryPeriod.TODAY)
+        val YESTERDAY = StoryTimeRange(StoryPeriod.YESTERDAY)
+        val THIS_WEEK = StoryTimeRange(StoryPeriod.THIS_WEEK)
+        val LAST_7_DAYS = StoryTimeRange(StoryPeriod.LAST_7_DAYS)
+        val THIS_MONTH = StoryTimeRange(StoryPeriod.THIS_MONTH)
+        val LAST_MONTH = StoryTimeRange(StoryPeriod.LAST_MONTH)
+        val THIS_YEAR = StoryTimeRange(StoryPeriod.THIS_YEAR)
+        val ALL_TIME = StoryTimeRange(StoryPeriod.ALL_TIME)
+
+        fun forPeriod(period: StoryPeriod): StoryTimeRange = StoryTimeRange(period)
+        fun custom(startMs: Long, endMs: Long, label: String): StoryTimeRange =
+            StoryTimeRange(StoryPeriod.CUSTOM, startMs, endMs, label)
+    }
+}
 
 enum class StoryPeriod(val label: String, val subtitle: String, val icon: ImageVector) {
+    TODAY("Today", "Today's listening activity", Icons.Default.Today),
+    YESTERDAY("Yesterday", "Yesterday's listening activity", Icons.Default.History),
+    THIS_WEEK("This Week", "Current week of listening", Icons.Default.ViewWeek),
     LAST_7_DAYS("Last 7 Days", "Past 7 days of listening activity", Icons.Default.DateRange),
     THIS_MONTH("This Month", "Current calendar month", Icons.Default.CalendarMonth),
     LAST_MONTH("Last Month", "Previous calendar month", Icons.Default.Event),
-    ALL_TIME("All Time", "All-time listening journey", Icons.Default.AllInclusive);
+    THIS_YEAR("This Year", "Current calendar year", Icons.Default.CalendarToday),
+    ALL_TIME("All Time", "All-time listening journey", Icons.Default.AllInclusive),
+    CUSTOM("Choose from Calendar", "Custom date or range from calendar", Icons.Default.EditCalendar);
 
     fun getTimeRange(nowMs: Long = System.currentTimeMillis()): Pair<Long, Long> {
         return when (this) {
+            TODAY -> {
+                val startCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMs
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val endCal = (startCal.clone() as Calendar).apply {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+                Pair(startCal.timeInMillis, endCal.timeInMillis)
+            }
+            YESTERDAY -> {
+                val todayStart = Calendar.getInstance().apply {
+                    timeInMillis = nowMs
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val yesterdayStart = (todayStart.clone() as Calendar).apply {
+                    add(Calendar.DAY_OF_YEAR, -1)
+                }
+                Pair(yesterdayStart.timeInMillis, todayStart.timeInMillis)
+            }
+            THIS_WEEK -> {
+                val startCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMs
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    if (timeInMillis > nowMs) {
+                        add(Calendar.WEEK_OF_YEAR, -1)
+                    }
+                }
+                val endCal = (startCal.clone() as Calendar).apply {
+                    add(Calendar.WEEK_OF_YEAR, 1)
+                }
+                Pair(startCal.timeInMillis, endCal.timeInMillis)
+            }
             LAST_7_DAYS -> {
                 val startCal = Calendar.getInstance().apply {
                     timeInMillis = nowMs
@@ -86,17 +172,175 @@ enum class StoryPeriod(val label: String, val subtitle: String, val icon: ImageV
                 }
                 Pair(lastMonthStart.timeInMillis, thisMonthStart.timeInMillis)
             }
+            THIS_YEAR -> {
+                val startCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMs
+                    set(Calendar.DAY_OF_YEAR, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val endCal = (startCal.clone() as Calendar).apply {
+                    add(Calendar.YEAR, 1)
+                }
+                Pair(startCal.timeInMillis, endCal.timeInMillis)
+            }
             ALL_TIME -> Pair(0L, Long.MAX_VALUE)
+            CUSTOM -> Pair(0L, Long.MAX_VALUE)
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StoryCalendarRangePickerDialog(
+    onDismiss: () -> Unit,
+    onRangeSelected: (startMs: Long, endMs: Long, label: String) -> Unit
+) {
+    val dateRangePickerState = rememberDateRangePickerState()
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val startUtc = dateRangePickerState.selectedStartDateMillis
+                    val endUtc = dateRangePickerState.selectedEndDateMillis ?: startUtc
+                    if (startUtc != null) {
+                        val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = startUtc
+                        }
+                        val startYear = utcCal.get(Calendar.YEAR)
+                        val startMonth = utcCal.get(Calendar.MONTH)
+                        val startDay = utcCal.get(Calendar.DAY_OF_MONTH)
+
+                        val localStartCal = Calendar.getInstance().apply {
+                            set(Calendar.YEAR, startYear)
+                            set(Calendar.MONTH, startMonth)
+                            set(Calendar.DAY_OF_MONTH, startDay)
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+
+                        val utcEndCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = endUtc ?: startUtc
+                        }
+                        val endYear = utcEndCal.get(Calendar.YEAR)
+                        val endMonth = utcEndCal.get(Calendar.MONTH)
+                        val endDay = utcEndCal.get(Calendar.DAY_OF_MONTH)
+
+                        val localEndCal = Calendar.getInstance().apply {
+                            set(Calendar.YEAR, endYear)
+                            set(Calendar.MONTH, endMonth)
+                            set(Calendar.DAY_OF_MONTH, endDay)
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                            add(Calendar.DAY_OF_YEAR, 1)
+                        }
+
+                        val label = if (startYear == endYear && startMonth == endMonth && startDay == endDay) {
+                            SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(localStartCal.time)
+                        } else if (startYear == endYear) {
+                            val startStr = SimpleDateFormat("MMM d", Locale.getDefault()).format(localStartCal.time)
+                            val endVisibleCal = (localEndCal.clone() as Calendar).apply { add(Calendar.MILLISECOND, -1) }
+                            val endStr = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(endVisibleCal.time)
+                            "$startStr – $endStr"
+                        } else {
+                            val startStr = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(localStartCal.time)
+                            val endVisibleCal = (localEndCal.clone() as Calendar).apply { add(Calendar.MILLISECOND, -1) }
+                            val endStr = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(endVisibleCal.time)
+                            "$startStr – $endStr"
+                        }
+
+                        onRangeSelected(localStartCal.timeInMillis, localEndCal.timeInMillis, label)
+                    }
+                },
+                enabled = dateRangePickerState.selectedStartDateMillis != null
+            ) {
+                Text("Confirm", color = BentoPrimary, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = BentoTextSecondary)
+            }
+        },
+        colors = DatePickerDefaults.colors(
+            containerColor = BentoCardSurface
+        )
+    ) {
+        DateRangePicker(
+            state = dateRangePickerState,
+            title = {
+                Text(
+                    text = "Select Story Period",
+                    modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary
+                )
+            },
+            headline = {
+                val startMillis = dateRangePickerState.selectedStartDateMillis
+                val endMillis = dateRangePickerState.selectedEndDateMillis
+                val headlineText = when {
+                    startMillis != null && endMillis != null -> "Range selected"
+                    startMillis != null -> "Select end date (or confirm for single day)"
+                    else -> "Select start date"
+                }
+                Text(
+                    text = headlineText,
+                    modifier = Modifier.padding(start = 24.dp, bottom = 12.dp),
+                    fontSize = 12.sp,
+                    color = BentoTextSecondary
+                )
+            },
+            showModeToggle = false,
+            colors = DatePickerDefaults.colors(
+                containerColor = BentoCardSurface,
+                titleContentColor = BentoTextPrimary,
+                headlineContentColor = BentoTextSecondary,
+                weekdayContentColor = BentoTextSecondary,
+                subheadContentColor = BentoTextSecondary,
+                yearContentColor = BentoTextPrimary,
+                currentYearContentColor = BentoPrimary,
+                selectedYearContentColor = Color.White,
+                selectedYearContainerColor = BentoPrimary,
+                dayContentColor = BentoTextPrimary,
+                selectedDayContentColor = Color.White,
+                selectedDayContainerColor = BentoPrimary,
+                todayContentColor = BentoPrimary,
+                todayDateBorderColor = BentoPrimary,
+                dayInSelectionRangeContentColor = Color.White,
+                dayInSelectionRangeContainerColor = BentoPrimary.copy(alpha = 0.35f)
+            )
+        )
     }
 }
 
 @Composable
 fun SharePeriodSelectionDialog(
+    selectedRange: StoryTimeRange? = null,
     onDismiss: () -> Unit,
-    onPeriodSelected: (StoryPeriod) -> Unit
+    onRangeSelected: (StoryTimeRange) -> Unit
 ) {
     val context = LocalContext.current
+    var showCalendarPicker by remember { mutableStateOf(false) }
+
+    if (showCalendarPicker) {
+        StoryCalendarRangePickerDialog(
+            onDismiss = { showCalendarPicker = false },
+            onRangeSelected = { startMs, endMs, label ->
+                showCalendarPicker = false
+                HapticUtils.performClickHaptic(context)
+                onRangeSelected(StoryTimeRange.custom(startMs, endMs, label))
+            }
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -109,14 +353,15 @@ fun SharePeriodSelectionDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.85f)
                 .clip(RoundedCornerShape(26.dp))
                 .border(1.dp, BentoBorder, RoundedCornerShape(26.dp)),
             color = BentoCardSurface
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(22.dp),
+                    .fillMaxSize()
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header
@@ -174,72 +419,88 @@ fun SharePeriodSelectionDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Period Option Cards
+                // Scrollable Period Option Cards
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StoryPeriod.values().forEach { period ->
+                        val isSelected = selectedRange != null && selectedRange.period == period
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable {
                                     HapticUtils.performClickHaptic(context)
-                                    onPeriodSelected(period)
+                                    if (period == StoryPeriod.CUSTOM) {
+                                        showCalendarPicker = true
+                                    } else {
+                                        onRangeSelected(StoryTimeRange.forPeriod(period))
+                                    }
                                 },
                             shape = RoundedCornerShape(16.dp),
-                            color = BentoCardPurple,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.6f))
+                            color = if (isSelected) BentoPrimary.copy(alpha = 0.12f) else BentoCardPurple,
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) BentoPrimary else BentoBorder.copy(alpha = 0.6f)
+                            )
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.weight(1f)
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
-                                        color = BentoPrimary.copy(alpha = 0.12f),
-                                        modifier = Modifier.size(38.dp)
+                                        color = if (isSelected) BentoPrimary else BentoPrimary.copy(alpha = 0.12f),
+                                        modifier = Modifier.size(36.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = period.icon,
                                                 contentDescription = null,
-                                                tint = BentoPrimary,
-                                                modifier = Modifier.size(20.dp)
+                                                tint = if (isSelected) BentoOnPrimary else BentoPrimary,
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
                                     }
 
                                     Column {
                                         Text(
-                                            text = period.label,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoTextPrimary
+                                            text = if (isSelected && period == StoryPeriod.CUSTOM && selectedRange?.customLabel != null) {
+                                                selectedRange.customLabel
+                                            } else {
+                                                period.label
+                                            },
+                                            fontSize = 14.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                            color = if (isSelected) BentoPrimary else BentoTextPrimary
                                         )
                                         Text(
                                             text = period.subtitle,
-                                            fontSize = 12.sp,
+                                            fontSize = 11.5.sp,
                                             color = BentoTextSecondary
                                         )
                                     }
                                 }
 
                                 Icon(
-                                    imageVector = Icons.Default.ChevronRight,
+                                    imageVector = if (isSelected) Icons.Default.Check else Icons.Default.ChevronRight,
                                     contentDescription = null,
-                                    tint = BentoTextSecondary,
-                                    modifier = Modifier.size(20.dp)
+                                    tint = if (isSelected) BentoPrimary else BentoTextSecondary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -251,17 +512,46 @@ fun SharePeriodSelectionDialog(
 }
 
 @Composable
+fun SharePeriodSelectionDialog(
+    onDismiss: () -> Unit,
+    onPeriodSelected: (StoryPeriod) -> Unit
+) {
+    SharePeriodSelectionDialog(
+        selectedRange = null,
+        onDismiss = onDismiss,
+        onRangeSelected = { onPeriodSelected(it.period) }
+    )
+}
+
+@Composable
 fun ShareStatsCardDialog(
     wrappedData: WrappedData? = null,
-    timePeriodTitle: String = "All Time",
+    timePeriodTitle: String? = null,
     initialPeriod: StoryPeriod = StoryPeriod.ALL_TIME,
+    initialRange: StoryTimeRange? = null,
     loadWrappedData: (suspend (Long, Long) -> WrappedData)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var currentPeriod by remember { mutableStateOf(initialPeriod) }
+    val resolvedInitialRange = remember(initialRange, initialPeriod, timePeriodTitle) {
+        if (initialRange != null) {
+            initialRange
+        } else if (timePeriodTitle != null && timePeriodTitle != "All Time" && timePeriodTitle != initialPeriod.label) {
+            // Check if title matches one of our known period labels
+            val matchingPeriod = StoryPeriod.values().find { it.label.equals(timePeriodTitle, ignoreCase = true) }
+            if (matchingPeriod != null) {
+                StoryTimeRange.forPeriod(matchingPeriod)
+            } else {
+                StoryTimeRange.custom(0L, Long.MAX_VALUE, timePeriodTitle)
+            }
+        } else {
+            StoryTimeRange.forPeriod(initialPeriod)
+        }
+    }
+
+    var currentRange by remember { mutableStateOf(resolvedInitialRange) }
     var effectiveData by remember { mutableStateOf(wrappedData) }
     var cardBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isGenerating by remember { mutableStateOf(true) }
@@ -269,11 +559,11 @@ fun ShareStatsCardDialog(
     var showPeriodSwitcherMenu by remember { mutableStateOf(false) }
 
     // Fetch data for selected period when loader is provided
-    LaunchedEffect(currentPeriod) {
+    LaunchedEffect(currentRange) {
         isGenerating = true
         try {
+            val (start, end) = currentRange.getTimeRange()
             val data = if (loadWrappedData != null) {
-                val (start, end) = currentPeriod.getTimeRange()
                 loadWrappedData(start, end)
             } else {
                 wrappedData ?: WrappedData()
@@ -282,7 +572,7 @@ fun ShareStatsCardDialog(
             val bmp = StatsCardImageGenerator.generateStatsCardBitmap(
                 context = context,
                 wrappedData = data,
-                timePeriodTitle = currentPeriod.label
+                timePeriodTitle = currentRange.displayLabel
             )
             cardBitmap = bmp
         } catch (e: Exception) {
@@ -359,7 +649,7 @@ fun ShareStatsCardDialog(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = currentPeriod.label,
+                                        text = currentRange.displayLabel,
                                         color = BentoPrimary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold
@@ -412,7 +702,7 @@ fun ShareStatsCardDialog(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Generating ${currentPeriod.label} stats card...",
+                                text = "Generating ${currentRange.displayLabel} stats card...",
                                 color = BentoTextSecondary,
                                 fontSize = 13.sp
                             )
@@ -483,7 +773,7 @@ fun ShareStatsCardDialog(
                                 val uri = StatsCardImageGenerator.saveBitmapToCache(context, bmp)
                                 if (uri != null) {
                                     val caption = buildString {
-                                        appendLine("🔥 My OffGrid Music Stats (${currentPeriod.label}):")
+                                        appendLine("🔥 My OffGrid Music Stats (${currentRange.displayLabel}):")
                                         appendLine("⏱ Total Time: ${data.totalMinutes} mins")
                                         if (data.topSong != null) {
                                             appendLine("👑 #1 Track: ${data.topSong.displayTitle} by ${data.topSong.displayArtist}")
@@ -522,9 +812,10 @@ fun ShareStatsCardDialog(
 
     if (showPeriodSwitcherMenu) {
         SharePeriodSelectionDialog(
+            selectedRange = currentRange,
             onDismiss = { showPeriodSwitcherMenu = false },
-            onPeriodSelected = { period ->
-                currentPeriod = period
+            onRangeSelected = { newRange ->
+                currentRange = newRange
                 showPeriodSwitcherMenu = false
             }
         )

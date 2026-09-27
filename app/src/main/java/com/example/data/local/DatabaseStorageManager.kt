@@ -2,6 +2,7 @@ package com.example.data.local
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,7 +24,10 @@ data class DatabaseStorageStats(
     val smartPlaylistCount: Int,
     val formattedMainDbSize: String,
     val formattedWalSize: String,
-    val formattedTotalDbSize: String
+    val formattedTotalDbSize: String,
+    val quotaLimit: Int = 50000,
+    val quotaRemaining: Int = 50000,
+    val quotaUsagePercentage: Float = 0f
 )
 
 data class OptimizationResult(
@@ -43,6 +47,17 @@ data class BackupImportResult(
 
 object DatabaseStorageManager {
 
+    fun calculateQuotaUsage(historyCount: Int, tier: String): Triple<Int, Int, Float> {
+        val quotaLimit = when (tier) {
+            "MAXIMUM" -> 100000
+            "STANDARD" -> 10000
+            else -> 50000
+        }
+        val remaining = (quotaLimit - historyCount).coerceAtLeast(0)
+        val usagePercentage = if (quotaLimit > 0) (historyCount.toFloat() / quotaLimit.toFloat()).coerceIn(0f, 1f) else 0f
+        return Triple(quotaLimit, remaining, usagePercentage)
+    }
+
     suspend fun getStorageStats(context: Context): DatabaseStorageStats = withContext(Dispatchers.IO) {
         val db = AppDatabase.getInstance(context)
         val mainDbFile = context.getDatabasePath("offgrid_music_db")
@@ -61,6 +76,14 @@ object DatabaseStorageManager {
         val folderCount = try { db.folderDao().getFolderCountOnce() } catch (_: Exception) { 0 }
         val smartCount = try { db.smartPlaylistDao().getSmartPlaylistCountOnce() } catch (_: Exception) { 0 }
 
+        val tier = try {
+            UserPreferencesRepository.getInstance(context).databaseStorageTier.firstOrNull() ?: "EXPANDED"
+        } catch (_: Exception) {
+            "EXPANDED"
+        }
+
+        val (quotaLimit, quotaRemaining, quotaUsagePercentage) = calculateQuotaUsage(historyCount, tier)
+
         DatabaseStorageStats(
             mainDbSizeBytes = mainDbSize,
             walSizeBytes = walSize,
@@ -74,7 +97,10 @@ object DatabaseStorageManager {
             smartPlaylistCount = smartCount,
             formattedMainDbSize = UserPreferencesRepository.formatFileSize(mainDbSize),
             formattedWalSize = UserPreferencesRepository.formatFileSize(walSize),
-            formattedTotalDbSize = UserPreferencesRepository.formatFileSize(totalSize)
+            formattedTotalDbSize = UserPreferencesRepository.formatFileSize(totalSize),
+            quotaLimit = quotaLimit,
+            quotaRemaining = quotaRemaining,
+            quotaUsagePercentage = quotaUsagePercentage
         )
     }
 

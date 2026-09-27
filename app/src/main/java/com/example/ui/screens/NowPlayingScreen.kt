@@ -2048,8 +2048,8 @@ private fun LyricsPanelContent(
                                 )
                                 Text(
                                     text = when {
-                                        syncOffsetMs > 0 -> "Lyrics delayed by ${String.format(java.util.Locale.US, "%.2f", syncOffsetMs / 1000f)}s (shows later)"
-                                        syncOffsetMs < 0 -> "Lyrics advanced by ${String.format(java.util.Locale.US, "%.2f", (-syncOffsetMs) / 1000f)}s (shows earlier)"
+                                        syncOffsetMs > 0 -> "Lyrics advanced by +${String.format(java.util.Locale.US, "%.2f", syncOffsetMs / 1000f)}s (appears earlier)"
+                                        syncOffsetMs < 0 -> "Lyrics delayed by ${String.format(java.util.Locale.US, "%.2f", syncOffsetMs / 1000f)}s (appears later)"
                                         else -> "Default timing (0.00s)"
                                     },
                                     fontSize = 11.sp,
@@ -2106,8 +2106,8 @@ private fun LyricsPanelContent(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("-5.0s (Earlier)", fontSize = 10.sp, color = BentoTextSecondary)
-                                Text("+5.0s (Later)", fontSize = 10.sp, color = BentoTextSecondary)
+                                Text("-5.0s (Later / Delayed)", fontSize = 10.sp, color = BentoTextSecondary)
+                                Text("+5.0s (Earlier / Advanced)", fontSize = 10.sp, color = BentoTextSecondary)
                             }
                         }
                     }

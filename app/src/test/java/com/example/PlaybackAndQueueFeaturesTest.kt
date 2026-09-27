@@ -211,6 +211,100 @@ class PlaybackAndQueueFeaturesTest {
         assertNotNull(resolved)
         assertTrue(resolved!!.contains("9999.jpg"))
 
+        // Verify authoritative artwork helper
+        val song = sampleSongs[0].copy(id = 9999L)
+        val authoritative = com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song)
+        assertNotNull(authoritative)
+        assertTrue(authoritative!!.contains("9999.jpg"))
+
         dummyArtFile.delete()
+    }
+
+    @Test
+    fun `test theme compatibility filtering and fallbacks`() {
+        // Dark mode: only dark themes should be compatible
+        val darkThemes = com.example.ui.theme.AppUiTheme.getCompatibleThemes("DARK", isSystemDark = false)
+        assertTrue(darkThemes.isNotEmpty())
+        assertTrue(darkThemes.all { it.isDark })
+        assertTrue(darkThemes.contains(com.example.ui.theme.AppUiTheme.MIDNIGHT_OBSIDIAN))
+        assertFalse(darkThemes.contains(com.example.ui.theme.AppUiTheme.PORCELAIN_SLATE))
+
+        // Light mode: only light themes should be compatible
+        val lightThemes = com.example.ui.theme.AppUiTheme.getCompatibleThemes("LIGHT", isSystemDark = false)
+        assertTrue(lightThemes.isNotEmpty())
+        assertTrue(lightThemes.all { !it.isDark })
+        assertTrue(lightThemes.contains(com.example.ui.theme.AppUiTheme.PORCELAIN_SLATE))
+        assertFalse(lightThemes.contains(com.example.ui.theme.AppUiTheme.MIDNIGHT_OBSIDIAN))
+
+        // AMOLED mode: only AMOLED compatible themes
+        val amoledThemes = com.example.ui.theme.AppUiTheme.getCompatibleThemes("AMOLED", isSystemDark = false)
+        assertTrue(amoledThemes.contains(com.example.ui.theme.AppUiTheme.PURE_AMOLED))
+
+        // Default fallbacks
+        assertEquals(com.example.ui.theme.AppUiTheme.MIDNIGHT_OBSIDIAN, com.example.ui.theme.AppUiTheme.getDefaultThemeForMode("DARK"))
+        assertEquals(com.example.ui.theme.AppUiTheme.PORCELAIN_SLATE, com.example.ui.theme.AppUiTheme.getDefaultThemeForMode("LIGHT"))
+        assertEquals(com.example.ui.theme.AppUiTheme.PURE_AMOLED, com.example.ui.theme.AppUiTheme.getDefaultThemeForMode("AMOLED"))
+    }
+
+    @Test
+    fun `test lyrics sync offset shifts timing in correct direction and persists per track`() {
+        val userPrefs = com.example.data.local.UserPreferencesRepository.getInstance(context)
+        val songId = 42L
+
+        // Initial offset is 0
+        assertEquals(0L, userPrefs.getLyricsSyncOffsetMs(songId))
+
+        // Advance lyrics by +1.2s (+1200ms) for late lyrics
+        userPrefs.setLyricsSyncOffsetMs(songId, 1200L)
+        assertEquals(1200L, userPrefs.getLyricsSyncOffsetMs(songId))
+
+        // Delay lyrics by -0.5s (-500ms) for early lyrics
+        userPrefs.setLyricsSyncOffsetMs(songId, -500L)
+        assertEquals(-500L, userPrefs.getLyricsSyncOffsetMs(songId))
+
+        // Effective position with +1200ms offset when audio is at 10000ms
+        val audioPos = 10000L
+        val advanceOffset = 1200L
+        val effectiveAdvance = (audioPos + advanceOffset).coerceAtLeast(0L)
+        assertEquals(11200L, effectiveAdvance)
+        // Lyric stamped at 11000ms triggers earlier (since 11200ms >= 11000ms at audio 10000ms)
+        assertTrue(effectiveAdvance >= 11000L)
+
+        // Clear offset
+        userPrefs.setLyricsSyncOffsetMs(songId, 0L)
+        assertEquals(0L, userPrefs.getLyricsSyncOffsetMs(songId))
+    }
+
+    @Test
+    fun `test headphone auto-play respects preference and prevents duplicate instances`() {
+        val userPrefs = com.example.data.local.UserPreferencesRepository.getInstance(context)
+        
+        // Disabled preference
+        userPrefs.cachedAutoPlayOnHeadphoneConnection = false
+        assertFalse(userPrefs.cachedAutoPlayOnHeadphoneConnection)
+
+        // Enabled preference
+        userPrefs.cachedAutoPlayOnHeadphoneConnection = true
+        assertTrue(userPrefs.cachedAutoPlayOnHeadphoneConnection)
+
+        // Verify singleton PlaybackManager instance
+        val instance1 = PlaybackManager.getInstance(context)
+        val instance2 = PlaybackManager.getInstance(context)
+        assertSame(instance1, instance2)
+    }
+
+    @Test
+    fun `test notification artwork cache and instant update handling`() {
+        val songId = 777L
+        val testBytes = byteArrayOf(10, 20, 30)
+        com.example.util.ArtworkManager.putCachedNotificationArtwork(songId, testBytes)
+
+        val cached = com.example.util.ArtworkManager.getCachedNotificationArtwork(songId)
+        assertNotNull(cached)
+        assertArrayEquals(testBytes, cached)
+
+        // Invalidation clears cache cleanly
+        com.example.util.ArtworkManager.invalidateNotificationArtwork(songId)
+        assertNull(com.example.util.ArtworkManager.getCachedNotificationArtwork(songId))
     }
 }

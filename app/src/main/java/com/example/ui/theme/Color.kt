@@ -32,7 +32,7 @@ val BentoBorder: Color
     @Composable
     get() = MaterialTheme.colorScheme.outline
 
-val DefaultBentoPrimary = Color(0xFF80D8FF)
+val DefaultBentoPrimary = Color(0xFFFF9100)
 
 val BentoPrimary: Color
     @Composable

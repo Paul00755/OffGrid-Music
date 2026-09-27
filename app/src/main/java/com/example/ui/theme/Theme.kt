@@ -144,6 +144,50 @@ enum class AppUiTheme(
         fun fromId(id: String?): AppUiTheme {
             return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: MIDNIGHT_OBSIDIAN
         }
+
+        fun isThemeCompatibleWith(theme: AppUiTheme, mode: String, isSystemDark: Boolean = false): Boolean {
+            val effDark = when (mode.uppercase()) {
+                "DARK" -> true
+                "AMOLED" -> true
+                "LIGHT" -> false
+                "SYSTEM" -> isSystemDark
+                else -> true
+            }
+            return if (mode.uppercase() == "AMOLED") {
+                theme.id == "PURE_AMOLED" || (theme.isDark && theme.supportedModes.contains("AMOLED"))
+            } else if (effDark) {
+                theme.isDark
+            } else {
+                !theme.isDark
+            }
+        }
+
+        fun getCompatibleThemes(mode: String, isSystemDark: Boolean = false): List<AppUiTheme> {
+            val effDark = when (mode.uppercase()) {
+                "DARK" -> true
+                "AMOLED" -> true
+                "LIGHT" -> false
+                "SYSTEM" -> isSystemDark
+                else -> true
+            }
+            return if (mode.uppercase() == "AMOLED") {
+                entries.filter { it.id == "PURE_AMOLED" || (it.isDark && it.supportedModes.contains("AMOLED")) }
+            } else if (effDark) {
+                entries.filter { it.isDark }
+            } else {
+                entries.filter { !it.isDark }
+            }
+        }
+
+        fun getDefaultThemeForMode(mode: String, isSystemDark: Boolean = false): AppUiTheme {
+            return when (mode.uppercase()) {
+                "AMOLED" -> PURE_AMOLED
+                "LIGHT" -> PORCELAIN_SLATE
+                "DARK" -> MIDNIGHT_OBSIDIAN
+                "SYSTEM" -> if (isSystemDark) MIDNIGHT_OBSIDIAN else PORCELAIN_SLATE
+                else -> MIDNIGHT_OBSIDIAN
+            }
+        }
     }
 }
 
@@ -151,18 +195,19 @@ enum class AppUiTheme(
 fun MyApplicationTheme(
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     themeMode: String = "DARK",
-    accentColorPreset: String = "PURPLE",
+    accentColorPreset: String = "ORANGE",
     accentColor: Color? = null,
     content: @Composable () -> Unit
 ) {
-    val activeTheme = AppUiTheme.fromId(uiTheme)
-    val effectiveMode = if (themeMode.uppercase() in activeTheme.supportedModes) {
-        themeMode.uppercase()
-    } else {
-        activeTheme.defaultMode
-    }
-    val isAmoled = effectiveMode == "AMOLED"
     val isSystemInDark = isSystemInDarkTheme()
+    val rawTheme = AppUiTheme.fromId(uiTheme)
+    val activeTheme = if (AppUiTheme.isThemeCompatibleWith(rawTheme, themeMode, isSystemInDark)) {
+        rawTheme
+    } else {
+        AppUiTheme.getDefaultThemeForMode(themeMode, isSystemInDark)
+    }
+    val effectiveMode = themeMode.uppercase()
+    val isAmoled = effectiveMode == "AMOLED"
     val isDark = when (effectiveMode) {
         "AMOLED", "DARK" -> true
         "LIGHT" -> false
@@ -171,21 +216,18 @@ fun MyApplicationTheme(
     }
 
     // Resolved primary accent
-    val primaryColor = accentColor ?: when {
-        accentColorPreset.uppercase() != "PURPLE" && accentColorPreset.uppercase() != "CYAN" -> {
-            when (accentColorPreset.uppercase()) {
-                "PINK" -> if (isDark) Color(0xFFFF4081) else Color(0xFFD81B60)
-                "GREEN" -> if (isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
-                "ORANGE" -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
-                "GOLD" -> Color(0xFFFFD700)
-                "BLUE" -> Color(0xFF2979FF)
-                "RED" -> Color(0xFFFF5252)
-                "TEAL" -> Color(0xFF1DE9B6)
-                "INDIGO" -> Color(0xFF7C4DFF)
-                else -> activeTheme.previewPrimary
-            }
-        }
-        else -> activeTheme.previewPrimary
+    val primaryColor = accentColor ?: when (accentColorPreset.uppercase()) {
+        "PINK" -> if (isDark) Color(0xFFFF4081) else Color(0xFFD81B60)
+        "GREEN" -> if (isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
+        "ORANGE" -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
+        "GOLD" -> Color(0xFFFFD700)
+        "BLUE" -> Color(0xFF2979FF)
+        "RED" -> Color(0xFFFF5252)
+        "TEAL" -> Color(0xFF1DE9B6)
+        "INDIGO" -> Color(0xFF7C4DFF)
+        "PURPLE" -> if (isDark) Color(0xFFBB86FC) else Color(0xFF7B1FA2)
+        "CYAN" -> if (isDark) Color(0xFF00E5FF) else Color(0xFF0097A7)
+        else -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
     }
 
     val colorScheme = if (isDark) {

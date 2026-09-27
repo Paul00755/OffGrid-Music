@@ -63,6 +63,16 @@
         </receiver>
 
         <receiver
+            android:name=".receiver.HeadphoneConnectionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
+                <action android:name="android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".widget.CompactMusicWidgetProvider"
             android:label="Compact Music Player (4x2)"
             android:exported="true">

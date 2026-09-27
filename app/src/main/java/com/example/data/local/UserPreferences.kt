@@ -127,6 +127,7 @@ class UserPreferencesRepository(private val context: Context) {
         private set
     @Volatile var cachedCacheSongArtWorkEnabled: Boolean = true
         private set
+    @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = false
 
     init {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -142,6 +143,11 @@ class UserPreferencesRepository(private val context: Context) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 cacheSongArtWorkEnabled.collect { cachedCacheSongArtWorkEnabled = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                autoPlayOnHeadphoneConnection.collect { cachedAutoPlayOnHeadphoneConnection = it }
             } catch (_: Exception) {}
         }
     }
@@ -207,7 +213,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val nowPlayingLayout: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MODERN_BENTO"
+        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS"
     }
 
     val playlistsLayout: Flow<String> = context.dataStore.data.map { prefs ->
@@ -276,7 +282,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val waveformStyle: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SLEEK_LINE"
+        prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE"
     }
 
     val amoledMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -284,7 +290,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val accentColorPreset: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "PURPLE"
+        prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE"
     }
 
     val cornerRadiusDp: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -569,7 +575,11 @@ class UserPreferencesRepository(private val context: Context) {
         if (songId <= 0) return
         try {
             val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
-            sp.edit().putLong("offset_$songId", offsetMs).apply()
+            if (offsetMs == 0L) {
+                sp.edit().remove("offset_$songId").apply()
+            } else {
+                sp.edit().putLong("offset_$songId", offsetMs).apply()
+            }
         } catch (_: Exception) {}
     }
 

@@ -89,6 +89,7 @@ fun LibraryScreen(
     onAddRecentSearch: (String) -> Unit = {},
     onDeleteRecentSearch: (String) -> Unit = {},
     onClearRecentSearches: () -> Unit = {},
+    scanProgress: com.example.scanner.ScanProgress = com.example.scanner.ScanProgress(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -524,6 +525,60 @@ fun LibraryScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+
+        // Scanning Banner if active in Library
+        if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = BentoPrimary
+                            )
+                            Text(
+                                text = "${scanProgress.displayTracksCount} tracks found",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoPrimary
+                            )
+                        }
+                        Text(
+                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning in progress (${scanProgress.currentFolder})..." else "Scanning in progress...",
+                            fontSize = 11.5.sp,
+                            color = BentoTextSecondary
+                        )
+                    }
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(CircleShape),
+                        color = BentoPrimary,
+                        trackColor = BentoBorder.copy(alpha = 0.30f)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
         }
 
         // Library Category Filter Tabs & Sort Chips

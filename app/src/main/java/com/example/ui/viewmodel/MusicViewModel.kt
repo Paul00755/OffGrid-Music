@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getInstance(application)
-    private val scanner = LibraryScanner(application, db.songDao())
+    private val scanner = LibraryScanner.getInstance(application, db.songDao(), db.folderDao())
     val repository = MusicRepository(
         db.songDao(),
         db.folderDao(),
@@ -117,14 +117,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val themeMode: StateFlow<String> = preferences.themeMode.stateIn(viewModelScope, SharingStarted.Lazily, "DARK")
     val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Lazily, "MIDNIGHT_OBSIDIAN")
     val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_DYNAMIC")
-    val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Lazily, "MODERN_BENTO")
+    val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Lazily, "MINIMAL_GLASS")
     val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_GRID")
     val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Lazily, "RECENTLY_ADDED")
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Lazily, "GRID")
     val waveformStyle: StateFlow<String> = preferences.waveformStyle.stateIn(viewModelScope, SharingStarted.Lazily, "SNAKE")
     val amoledMode: StateFlow<Boolean> = preferences.amoledMode.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Lazily, "PURPLE")
+    val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Lazily, "ORANGE")
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Lazily, 0)
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Lazily, true)
 
@@ -195,6 +195,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val equalizerManager get() = playbackManager.equalizerManager
 
     init {
+        scanner.startAutoDetection()
+        viewModelScope.launch(Dispatchers.IO) {
+            scanner.detectAndImportNewSongs()
+        }
         audioRouteManager.onDeviceSelected = { dev ->
             playbackManager.setPreferredAudioDevice(dev)
         }
@@ -297,17 +301,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val currentUiTheme = preferences.uiTheme.firstOrNull() ?: "MIDNIGHT_OBSIDIAN"
             val currentTheme = com.example.ui.theme.AppUiTheme.fromId(currentUiTheme)
             val currentMode = (preferences.themeMode.firstOrNull() ?: "DARK").uppercase()
-            if (currentMode !in currentTheme.supportedModes) {
-                preferences.setThemeMode(currentTheme.defaultMode)
+            if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, currentMode)) {
+                val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(currentMode)
+                preferences.setUiTheme(fallback.id)
             }
         }
     }
 
     fun setThemeMode(mode: String) = viewModelScope.launch {
-        val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
         val targetMode = mode.uppercase()
-        if (selectedTheme.supportedModes.contains(targetMode)) {
-            preferences.setThemeMode(targetMode)
+        preferences.setThemeMode(targetMode)
+        val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
+        if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode)) {
+            val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode)
+            preferences.setUiTheme(fallback.id)
         }
     }
 
@@ -315,8 +322,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preferences.setUiTheme(themeId)
         val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(themeId)
         val currentMode = themeMode.value.uppercase()
-        if (currentMode !in selectedTheme.supportedModes) {
-            preferences.setThemeMode(selectedTheme.defaultMode)
+        if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(selectedTheme, currentMode)) {
+            val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
+            preferences.setThemeMode(newMode)
         }
     }
     fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch { preferences.setHomeScreenLayout(layoutId) }
@@ -326,7 +334,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
             com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "BARS"
             com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
-            com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SLEEK_LINE"
+            com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
         }
         preferences.setWaveformStyle(defaultWaveform)
     }
@@ -486,6 +494,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDatabaseStorageTier(tier: String) = viewModelScope.launch {
         preferences.setDatabaseStorageTier(tier)
+        refreshDatabaseStats()
     }
 
     fun refreshDatabaseStats() = viewModelScope.launch(Dispatchers.IO) {

@@ -115,13 +115,20 @@ object StatsCardImageGenerator {
         canvas.drawText("⚡ OFFGRID WRAPPED", 80f, currentY - 2f, tagTextPaint)
 
         // Period Title on Top Right
+        val periodText = timePeriodTitle.uppercase()
         val periodTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#B3FFFFFF")
             textSize = 26f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.RIGHT
         }
-        canvas.drawText(timePeriodTitle.uppercase(), (CARD_WIDTH - 60).toFloat(), currentY - 2f, periodTextPaint)
+        val maxPeriodWidth = (CARD_WIDTH - 60f) - 370f
+        var currentTextSize = 26f
+        while (periodTextPaint.measureText(periodText) > maxPeriodWidth && currentTextSize > 14f) {
+            currentTextSize -= 1f
+            periodTextPaint.textSize = currentTextSize
+        }
+        canvas.drawText(periodText, (CARD_WIDTH - 60).toFloat(), currentY - 2f, periodTextPaint)
 
         currentY += 80f
 

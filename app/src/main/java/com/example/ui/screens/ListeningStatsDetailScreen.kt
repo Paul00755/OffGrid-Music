@@ -67,9 +67,9 @@ fun ListeningStatsDetailScreen(
     modifier: Modifier = Modifier
 ) {
     var selectedPeriod by remember { mutableStateOf(DetailedStatsPeriod.SEVEN_DAYS) }
+    var currentStoryRange by remember { mutableStateOf(StoryTimeRange.LAST_7_DAYS) }
     var showWrappedDialog by remember { mutableStateOf(false) }
     var showSharePeriodDialog by remember { mutableStateOf(false) }
-    var selectedSharePeriod by remember { mutableStateOf(StoryPeriod.LAST_7_DAYS) }
     var showShareStatsCardDialog by remember { mutableStateOf(false) }
     var screenEntered by remember { mutableStateOf(false) }
 
@@ -174,7 +174,8 @@ fun ListeningStatsDetailScreen(
     if (showWrappedDialog) {
         WrappedStoryDialog(
             wrappedData = wrappedData,
-            timePeriodTitle = selectedPeriod.title,
+            timePeriodTitle = currentStoryRange.displayLabel,
+            initialRange = currentStoryRange,
             loadWrappedData = loadWrappedData,
             onDismiss = { showWrappedDialog = false },
             onPlaySong = { onSongClick(it) },
@@ -188,9 +189,10 @@ fun ListeningStatsDetailScreen(
 
     if (showSharePeriodDialog) {
         SharePeriodSelectionDialog(
+            selectedRange = currentStoryRange,
             onDismiss = { showSharePeriodDialog = false },
-            onPeriodSelected = { period ->
-                selectedSharePeriod = period
+            onRangeSelected = { range ->
+                currentStoryRange = range
                 showSharePeriodDialog = false
                 showShareStatsCardDialog = true
             }
@@ -200,8 +202,9 @@ fun ListeningStatsDetailScreen(
     if (showShareStatsCardDialog) {
         ShareStatsCardDialog(
             wrappedData = wrappedData,
-            timePeriodTitle = selectedSharePeriod.label,
-            initialPeriod = selectedSharePeriod,
+            timePeriodTitle = currentStoryRange.displayLabel,
+            initialRange = currentStoryRange,
+            initialPeriod = currentStoryRange.period,
             loadWrappedData = loadWrappedData,
             onDismiss = { showShareStatsCardDialog = false }
         )
@@ -293,7 +296,15 @@ fun ListeningStatsDetailScreen(
                             val isSelected = selectedPeriod == period
                             FilterChip(
                                 selected = isSelected,
-                                onClick = { selectedPeriod = period },
+                                onClick = {
+                                    selectedPeriod = period
+                                    currentStoryRange = when (period) {
+                                        DetailedStatsPeriod.SEVEN_DAYS -> StoryTimeRange.LAST_7_DAYS
+                                        DetailedStatsPeriod.THIRTY_DAYS -> StoryTimeRange.THIS_MONTH
+                                        DetailedStatsPeriod.NINETY_DAYS -> StoryTimeRange.forPeriod(StoryPeriod.LAST_MONTH)
+                                        DetailedStatsPeriod.ALL_TIME -> StoryTimeRange.ALL_TIME
+                                    }
+                                },
                                 label = {
                                     Text(
                                         text = period.title,

@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,6 +45,17 @@ class PlaybackManager(
     companion object {
         private const val TAG = "PlaybackManager"
         var activeInstance: PlaybackManager? = null
+
+        fun getInstance(context: Context): PlaybackManager {
+            return activeInstance ?: synchronized(this) {
+                activeInstance ?: run {
+                    val app = context.applicationContext
+                    val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+                    val sleepTimer = SleepTimerManager(scope) {}
+                    PlaybackManager(app, scope, sleepTimer).also { activeInstance = it }
+                }
+            }
+        }
     }
 
     init {
@@ -253,6 +265,43 @@ class PlaybackManager(
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    fun updateCurrentSongArtwork(songId: Long, artworkUri: String?, rawBytes: ByteArray? = null) {
+        if (songId <= 0L) return
+        val current = _playbackState.value.currentSong
+        if (current?.id != songId) return
+
+        val updatedSong = current.copy(artworkUri = artworkUri ?: current.artworkUri)
+        _playbackState.value = _playbackState.value.copy(currentSong = updatedSong)
+
+        scope.launch(Dispatchers.IO) {
+            val bytes = rawBytes ?: ArtworkManager.getNotificationArtworkBytes(
+                context = context,
+                songId = songId,
+                filePath = updatedSong.path,
+                albumId = updatedSong.albumId,
+                artworkUriStr = artworkUri
+            )
+            if (bytes != null && bytes.isNotEmpty()) {
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bmp != null) {
+                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                try {
+                    val idx = player.currentMediaItemIndex
+                    if (idx in _playbackState.value.queue.indices) {
+                        val updatedMediaItem = buildMediaItem(updatedSong)
+                        player.replaceMediaItem(idx, updatedMediaItem)
+                    }
+                } catch (_: Exception) {}
+                updateNotificationLayout()
+                MusicPlaybackService.instance?.triggerNotificationUpdate()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            }
         }
     }
 
@@ -1453,6 +1502,22 @@ class PlaybackManager(
         }
     }
 
+    fun handleHeadphoneConnectedFromBroadcast() {
+        scope.launch(Dispatchers.Main) {
+            if (!autoPlayOnHeadphoneConnection) return@launch
+            if (player.isPlaying || _playbackState.value.isPlaying) return@launch
+
+            pendingAutoPlayJob?.cancel()
+            pendingAutoPlayJob = scope.launch(Dispatchers.Main) {
+                delay(450)
+                if (!autoPlayOnHeadphoneConnection) return@launch
+                if (player.isPlaying || _playbackState.value.isPlaying) return@launch
+
+                resumePlaybackOnHeadphoneConnect()
+            }
+        }
+    }
+
     private fun onHeadphoneDisconnected(key: String) {
         knownConnectedDevices.remove(key)
         if (lastAutoPlayedDeviceKey == key) {
@@ -1484,6 +1549,34 @@ class PlaybackManager(
                     playWithFade(fadeInMs)
                 } else {
                     play()
+                }
+            } else {
+                // If queue is not yet in RAM (e.g. app was closed), load last saved playback state
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val qIds = userPreferences.lastQueueIds.firstOrNull() ?: emptyList()
+                        val qIdx = userPreferences.lastQueueIndex.firstOrNull() ?: 0
+                        val pos = userPreferences.lastPosition.firstOrNull() ?: 0L
+                        if (qIds.isNotEmpty()) {
+                            val db = com.example.data.local.AppDatabase.getInstance(context)
+                            val songs = mutableListOf<Song>()
+                            for (id in qIds) {
+                                db.songDao().getSongById(id)?.toDomainModel()?.let { songs.add(it) }
+                            }
+                            if (songs.isNotEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    if (!player.isPlaying && !_playbackState.value.isPlaying && autoPlayOnHeadphoneConnection) {
+                                        restorePlaybackState(songs, qIdx.coerceIn(songs.indices), pos)
+                                        if (fadeInMs > 0) {
+                                            playWithFade(fadeInMs)
+                                        } else {
+                                            play()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
             }
         } catch (e: Exception) {
@@ -1714,17 +1807,33 @@ class PlaybackManager(
         isCrossfadeTransitioning = true
 
         val initialPlayerVol = player.volume.coerceIn(0.1f, 1.0f)
+        val currentPos = player.currentPosition.coerceAtLeast(0L)
 
+        // Track A (outgoing) continues playing and fading out smoothly on crossfadePlayer
         try {
             crossfadePlayer.stop()
             crossfadePlayer.clearMediaItems()
-            val incomingItem = buildMediaItem(targetSong)
-            crossfadePlayer.setMediaItem(incomingItem, 0L)
-            crossfadePlayer.volume = 0.0f
+            val outgoingItem = buildMediaItem(currentSong)
+            crossfadePlayer.setMediaItem(outgoingItem, currentPos)
+            crossfadePlayer.volume = initialPlayerVol
             crossfadePlayer.prepare()
             crossfadePlayer.play()
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Error preparing crossfadePlayer for incoming track", e)
+            android.util.Log.e(TAG, "Error preparing crossfadePlayer for outgoing track", e)
+            isCrossfadeTransitioning = false
+            return
+        }
+
+        // Track B (incoming) begins immediately on player from 0:00, starting at volume 0.0f
+        try {
+            player.seekTo(targetIndex, 0L)
+            player.volume = 0.0f
+            player.prepare()
+            player.play()
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "Error advancing player to incoming track", e)
+            try { crossfadePlayer.stop() } catch (_: Exception) {}
+            player.volume = 1.0f
             isCrossfadeTransitioning = false
             return
         }
@@ -1741,19 +1850,9 @@ class PlaybackManager(
                     val outVol = (kotlin.math.cos(progress * (Math.PI / 2.0)) * initialPlayerVol).toFloat().coerceIn(0f, 1f)
                     val inVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0f, 1f)
 
-                    player.volume = outVol
-                    crossfadePlayer.volume = inVol
+                    crossfadePlayer.volume = outVol
+                    player.volume = inVol
                 }
-
-                // Seamless Handover: transfer to player at the position reached by crossfadePlayer
-                val handoverPos = crossfadePlayer.currentPosition.coerceAtLeast(0L)
-                player.seekTo(targetIndex, handoverPos)
-                player.volume = 1.0f
-                player.prepare()
-                player.play()
-
-                // Keep crossfadePlayer playing for a brief 80ms bridge window to ensure zero gap while player decodes
-                delay(80L)
             } catch (_: kotlinx.coroutines.CancellationException) {
                 // Deliberately cancelled
             } catch (e: Exception) {
@@ -2123,13 +2222,15 @@ class PlaybackManager(
                             (sleepState.mode == "SONGS" && (sleepState.isFinalTrack || sleepState.isFinalSleepTrack || sleepState.remainingSongs <= 1)) ||
                             (sleepState.mode == "TIME" && (sleepState.isWaitingForCurrentTrackToEnd || sleepState.remainingSeconds <= 0L))
                         )
+                        val isRepeatOne = _playbackState.value.repeatMode == Player.REPEAT_MODE_ONE
                         val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
-                        val canCrossfade = !isFinalSleepTrack && crossfadeMs > 0L && reliableDur > (crossfadeMs + 4000L) && currentPos >= 5000L
+                        val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 2000L
                         val inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
 
                         if (inCrossfadeZone && !hasTriggeredCrossfadeTransition && !isCrossfadeTransitioning) {
                             val nextIdx = if (player.hasNextMediaItem()) {
-                                player.currentMediaItemIndex + 1
+                                val nextCandidate = player.nextMediaItemIndex
+                                if (nextCandidate != androidx.media3.common.C.INDEX_UNSET) nextCandidate else player.currentMediaItemIndex + 1
                             } else if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ALL && _playbackState.value.queue.isNotEmpty()) {
                                 0
                             } else -1

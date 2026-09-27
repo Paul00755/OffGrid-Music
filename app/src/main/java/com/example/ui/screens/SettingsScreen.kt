@@ -586,6 +586,7 @@ fun SettingsScreen(
     onCancelSleepTimer: () -> Unit = {},
     onScanLibrary: () -> Unit = {},
     onQuickScanAndCleanLibrary: () -> Unit = {},
+    scanProgress: com.example.scanner.ScanProgress = com.example.scanner.ScanProgress(),
     onBackClick: () -> Unit = {},
     initialTargetSection: String? = null,
     modifier: Modifier = Modifier
@@ -1799,11 +1800,16 @@ fun SettingsScreen(
                                 }
                             }
 
+                            val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
+                            val compatibleThemes = remember(themeMode, isSystemDark) {
+                                com.example.ui.theme.AppUiTheme.getCompatibleThemes(themeMode, isSystemDark)
+                            }
+
                             LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 contentPadding = PaddingValues(vertical = 4.dp)
                             ) {
-                                items(AppUiTheme.entries, key = { it.id }, contentType = { "theme_preview" }) { theme ->
+                                items(compatibleThemes, key = { it.id }, contentType = { "theme_preview" }) { theme ->
                                     val isSelected = uiTheme.equals(theme.id, ignoreCase = true)
                                     ThemePreviewCard(
                                         theme = theme,
@@ -1927,8 +1933,8 @@ fun SettingsScreen(
                         SettingsDivider()
 
                         // 3. Display Mode Selection (Dark / Light / AMOLED / System)
+                        val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
                         val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme)
-                        val supportedModes = currentTheme.supportedModes.toSet()
 
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
@@ -1939,14 +1945,15 @@ fun SettingsScreen(
                                     "AMOLED" to "AMOLED",
                                     "SYSTEM" to "System"
                                 ),
-                                selectedOption = if (themeMode.uppercase() in supportedModes) themeMode.uppercase() else currentTheme.defaultMode,
-                                onSelectOption = {
-                                    if (supportedModes.contains(it)) {
-                                        HapticUtils.performClickHaptic(context)
-                                        onSetThemeMode(it)
+                                selectedOption = themeMode.uppercase(),
+                                onSelectOption = { newMode ->
+                                    HapticUtils.performClickHaptic(context)
+                                    if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, newMode, isSystemDark)) {
+                                        val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(newMode, isSystemDark)
+                                        onSetUiTheme(fallback.id)
                                     }
+                                    onSetThemeMode(newMode)
                                 },
-                                enabledOptions = supportedModes,
                                 accentColor = Color(0xFFBB86FC)
                             )
                         }
@@ -2908,9 +2915,45 @@ fun SettingsScreen(
                                         Text("${databaseStorageStats?.historySessionCount ?: 0}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
                                     }
                                     Column {
+                                        Text("Quota Remaining", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                        Text("${databaseStorageStats?.quotaRemaining ?: 50000}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF00E5FF))
+                                    }
+                                    Column {
                                         Text("Lyrics Cached", fontSize = 11.5.sp, color = BentoTextSecondary)
                                         Text("${databaseStorageStats?.cachedLyricsCount ?: 0}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
                                     }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Device Quota Usage Progress Bar
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "Local Database Usage: ${databaseStorageStats?.historySessionCount ?: 0} / ${databaseStorageStats?.quotaLimit ?: 50000} records",
+                                            fontSize = 11.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                        Text(
+                                            "${((databaseStorageStats?.quotaUsagePercentage ?: 0f) * 100).toInt()}%",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if ((databaseStorageStats?.quotaUsagePercentage ?: 0f) > 0.9f) BentoAccentPinkText else Color(0xFF00E5FF)
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { databaseStorageStats?.quotaUsagePercentage ?: 0f },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(5.dp)
+                                            .clip(RoundedCornerShape(3.dp)),
+                                        color = if ((databaseStorageStats?.quotaUsagePercentage ?: 0f) > 0.9f) BentoAccentPinkText else Color(0xFF00E5FF),
+                                        trackColor = BentoBorder
+                                    )
                                 }
                             }
                         }
@@ -2920,7 +2963,7 @@ fun SettingsScreen(
                         // Storage Capacity Tier Selector
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Database Capacity Tier", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                            Text("Configure playback history retention and caching limits for large collections", fontSize = 11.5.sp, color = BentoTextSecondary)
+                            Text("Configure playback history retention and caching limits for this device's local database", fontSize = 11.5.sp, color = BentoTextSecondary)
                         }
 
                         SettingsSegmentedSelector(
@@ -2933,16 +2976,16 @@ fun SettingsScreen(
                             onSelectOption = {
                                 HapticUtils.performClickHaptic(context)
                                 onSetDatabaseStorageTier(it)
-                                android.widget.Toast.makeText(context, "Database storage set to $it tier", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(context, "Local database storage set to $it tier", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             accentColor = Color(0xFF00E5FF)
                         )
 
                         Text(
                             text = when (databaseStorageTier) {
-                                "MAXIMUM" -> "Maximum: Retains up to 100,000 history sessions, 50,000 cached lyrics, and 90-day tracking data. Best for massive libraries."
-                                "STANDARD" -> "Standard: Retains up to 10,000 history sessions, 3,000 lyrics, and 30-day tracking data. Minimal storage footprint."
-                                else -> "Expanded: Retains up to 50,000 history sessions, 15,000 lyrics, and 60-day tracking data. Recommended balance of deep stats and speed."
+                                "MAXIMUM" -> "Maximum: Retains up to 100,000 history sessions, 50,000 cached lyrics, and 90-day tracking data on this device. Best for massive libraries."
+                                "STANDARD" -> "Standard: Retains up to 10,000 history sessions, 3,000 lyrics, and 30-day tracking data on this device. Minimal storage footprint."
+                                else -> "Expanded: Retains up to 50,000 history sessions, 15,000 lyrics, and 60-day tracking data on this device. Recommended balance of deep stats and speed."
                             },
                             fontSize = 11.5.sp,
                             color = BentoTextSecondary,
@@ -3082,6 +3125,66 @@ fun SettingsScreen(
 
                 item(key = "settings_library_card") {
                     SettingsCardContainer(accentGlow = Color(0xFF2979FF)) {
+                        // Authoritative Scan Progress & Status Banner (Shared State)
+                        if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = BentoPrimary.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = BentoPrimary)
+                                            Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoPrimary)
+                                        }
+                                        Text("Scanning in progress...", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                    }
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape), color = BentoPrimary)
+                                }
+                            }
+                            SettingsDivider()
+                        } else if (scanProgress.status == com.example.scanner.ScanStatus.COMPLETED && scanProgress.isFinished) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF00E676).copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f)),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                                    Text("Scan completed", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                }
+                            }
+                            SettingsDivider()
+                        } else if (scanProgress.status == com.example.scanner.ScanStatus.ERROR) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFFF5252).copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.35f)),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(scanProgress.errorMessage ?: "Scan error", fontSize = 12.5.sp, color = Color(0xFFFF5252))
+                                    Text("Error", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                }
+                            }
+                            SettingsDivider()
+                        }
+
                         // Ignore Short Audio Tracks Filter with quick presets (15s, 30s, 45s, 1m, 2m) and slider
                         AudioDurationFilterSetting(
                             ignoreAudioDuration = ignoreAudioDuration,
@@ -3089,6 +3192,8 @@ fun SettingsScreen(
                         )
 
                         SettingsDivider()
+
+                        val isCurrentlyScanning = scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING
 
                         // Quick Scan & Clean
                         Row(
@@ -3106,6 +3211,7 @@ fun SettingsScreen(
                                     onQuickScanAndCleanLibrary()
                                     android.widget.Toast.makeText(context, "Quick scan & clean started", android.widget.Toast.LENGTH_SHORT).show()
                                 },
+                                enabled = !isCurrentlyScanning,
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
@@ -3131,6 +3237,7 @@ fun SettingsScreen(
                                     onScanLibrary()
                                     android.widget.Toast.makeText(context, "Full library scan started", android.widget.Toast.LENGTH_SHORT).show()
                                 },
+                                enabled = !isCurrentlyScanning,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF2979FF)),
                                 border = BorderStroke(1.dp, Color(0xFF2979FF).copy(alpha = 0.5f)),
                                 shape = RoundedCornerShape(10.dp)

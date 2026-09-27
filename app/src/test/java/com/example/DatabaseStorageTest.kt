@@ -104,4 +104,89 @@ class DatabaseStorageTest {
         assertNotNull(optResult)
         assertTrue(optResult.success)
     }
+
+    @Test
+    fun testIndependentUserStorageQuotaAccounting() {
+        // User A / Device A: Quota = 10,000, 5,000 records used -> 5,000 remaining
+        val (limitA, remA, usageA) = DatabaseStorageManager.calculateQuotaUsage(5000, "STANDARD")
+        assertEquals(10000, limitA)
+        assertEquals(5000, remA)
+        assertEquals(0.5f, usageA, 0.001f)
+
+        // User B / Device B: Quota = 10,000, 5,000 records used -> 5,000 remaining
+        val (limitB, remB, usageB) = DatabaseStorageManager.calculateQuotaUsage(5000, "STANDARD")
+        assertEquals(10000, limitB)
+        assertEquals(5000, remB)
+        assertEquals(0.5f, usageB, 0.001f)
+
+        // Verify User B's 5,000 records do NOT consume User A's remaining 5,000
+        assertEquals(remA, remB)
+
+        // User A upgrades to EXPANDED (50K): User A now has 50K capacity and 45K remaining
+        val (upgradedLimitA, upgradedRemA, upgradedUsageA) = DatabaseStorageManager.calculateQuotaUsage(5000, "EXPANDED")
+        assertEquals(50000, upgradedLimitA)
+        assertEquals(45000, upgradedRemA)
+        assertEquals(0.1f, upgradedUsageA, 0.001f)
+
+        // User B remains on STANDARD with completely independent 10K quota and 5K remaining
+        val (stillLimitB, stillRemB, _) = DatabaseStorageManager.calculateQuotaUsage(5000, "STANDARD")
+        assertEquals(10000, stillLimitB)
+        assertEquals(5000, stillRemB)
+
+        // User A upgrades to MAXIMUM (100K)
+        val (maxLimitA, maxRemA, maxUsageA) = DatabaseStorageManager.calculateQuotaUsage(5000, "MAXIMUM")
+        assertEquals(100000, maxLimitA)
+        assertEquals(95000, maxRemA)
+        assertEquals(0.05f, maxUsageA, 0.001f)
+    }
+
+    @Test
+    fun testStoryTimeRangesAndBoundarySemantics() {
+        val fixedNow = 1718000000000L // arbitrary fixed timestamp
+
+        // Today: start of today to start of tomorrow
+        val (todayStart, todayEnd) = com.example.ui.components.StoryPeriod.TODAY.getTimeRange(fixedNow)
+        assertTrue(todayStart < fixedNow)
+        assertTrue(todayEnd > fixedNow)
+        val diffTodayDays = (todayEnd - todayStart) / (24 * 60 * 60 * 1000L)
+        assertEquals(1L, diffTodayDays)
+
+        // Yesterday: start of yesterday to start of today
+        val (yestStart, yestEnd) = com.example.ui.components.StoryPeriod.YESTERDAY.getTimeRange(fixedNow)
+        assertEquals(todayStart, yestEnd)
+        val diffYestDays = (yestEnd - yestStart) / (24 * 60 * 60 * 1000L)
+        assertEquals(1L, diffYestDays)
+
+        // Last 7 Days: exact existing semantics (6 days ago midnight to Long.MAX_VALUE)
+        val (l7Start, l7End) = com.example.ui.components.StoryPeriod.LAST_7_DAYS.getTimeRange(fixedNow)
+        assertTrue(l7Start < todayStart)
+        assertEquals(Long.MAX_VALUE, l7End)
+
+        // This Month & Last Month
+        val (thisMonthStart, thisMonthEnd) = com.example.ui.components.StoryPeriod.THIS_MONTH.getTimeRange(fixedNow)
+        val (lastMonthStart, lastMonthEnd) = com.example.ui.components.StoryPeriod.LAST_MONTH.getTimeRange(fixedNow)
+        assertEquals(thisMonthStart, lastMonthEnd)
+        assertTrue(lastMonthStart < lastMonthEnd)
+
+        // This Year
+        val (thisYearStart, thisYearEnd) = com.example.ui.components.StoryPeriod.THIS_YEAR.getTimeRange(fixedNow)
+        assertTrue(thisYearStart <= fixedNow)
+        assertTrue(thisYearEnd > fixedNow)
+
+        // All Time
+        val (allStart, allEnd) = com.example.ui.components.StoryPeriod.ALL_TIME.getTimeRange(fixedNow)
+        assertEquals(0L, allStart)
+        assertEquals(Long.MAX_VALUE, allEnd)
+
+        // Custom range: same day selection
+        val customRangeSameDay = com.example.ui.components.StoryTimeRange.custom(
+            startMs = todayStart,
+            endMs = todayEnd,
+            label = "Jun 10, 2024"
+        )
+        val (customStart, customEnd) = customRangeSameDay.getTimeRange()
+        assertEquals(todayStart, customStart)
+        assertEquals(todayEnd, customEnd)
+        assertEquals("Jun 10, 2024", customRangeSameDay.displayLabel)
+    }
 }

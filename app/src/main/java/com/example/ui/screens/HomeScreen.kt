@@ -682,7 +682,7 @@ fun HomeScreen(
                 }
 
         // Scanning Banner if active
-        if (scanProgress.isScanning) {
+        if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
             item {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -714,36 +714,25 @@ fun HomeScreen(
                                 )
                             }
                             Text(
-                                text = if (scanProgress.totalDiscovered > 0) {
-                                    "${scanProgress.processedCount} / ${scanProgress.totalDiscovered} tracks"
-                                } else {
-                                    "${scanProgress.processedCount} tracks found"
-                                },
+                                text = "${scanProgress.displayTracksCount} tracks found",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = BentoTextSecondary
                             )
                         }
-                        if (scanProgress.totalDiscovered > 0) {
-                            LinearProgressIndicator(
-                                progress = { (scanProgress.processedCount.toFloat() / scanProgress.totalDiscovered.coerceAtLeast(1)).coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(CircleShape),
-                                color = BentoPrimary,
-                                trackColor = BentoBorder.copy(alpha = 0.30f)
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                                    .clip(CircleShape),
-                                color = BentoPrimary,
-                                trackColor = BentoBorder.copy(alpha = 0.30f)
-                            )
-                        }
+                        Text(
+                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning in progress (${scanProgress.currentFolder})..." else "Scanning in progress...",
+                            fontSize = 11.5.sp,
+                            color = BentoTextSecondary
+                        )
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(CircleShape),
+                            color = BentoPrimary,
+                            trackColor = BentoBorder.copy(alpha = 0.30f)
+                        )
                     }
                 }
             }

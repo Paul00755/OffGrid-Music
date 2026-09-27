@@ -47,7 +47,8 @@ fun WrappedStoryDialog(
     onDismiss: () -> Unit,
     onPlaySong: (Song) -> Unit,
     onPlayTopQueue: (List<Song>) -> Unit,
-    loadWrappedData: (suspend (Long, Long) -> WrappedData)? = null
+    loadWrappedData: (suspend (Long, Long) -> WrappedData)? = null,
+    initialRange: StoryTimeRange? = null
 ) {
     var currentSlide by remember { mutableStateOf(0) }
     val totalSlides = 6
@@ -56,16 +57,30 @@ fun WrappedStoryDialog(
     val context = LocalContext.current
     var showSharePeriodDialog by remember { mutableStateOf(false) }
     var showShareCardDialog by remember { mutableStateOf(false) }
-    var selectedSharePeriod by remember { mutableStateOf(StoryPeriod.ALL_TIME) }
+
+    val defaultRange = remember(initialRange, timePeriodTitle) {
+        if (initialRange != null) {
+            initialRange
+        } else {
+            val matching = StoryPeriod.values().find { it.label.equals(timePeriodTitle, ignoreCase = true) }
+            if (matching != null) {
+                StoryTimeRange.forPeriod(matching)
+            } else {
+                StoryTimeRange.custom(0L, Long.MAX_VALUE, timePeriodTitle)
+            }
+        }
+    }
+    var selectedShareRange by remember { mutableStateOf(defaultRange) }
 
     if (showSharePeriodDialog) {
         SharePeriodSelectionDialog(
+            selectedRange = selectedShareRange,
             onDismiss = {
                 showSharePeriodDialog = false
                 isPaused = false
             },
-            onPeriodSelected = { period ->
-                selectedSharePeriod = period
+            onRangeSelected = { range ->
+                selectedShareRange = range
                 showSharePeriodDialog = false
                 showShareCardDialog = true
             }
@@ -75,8 +90,9 @@ fun WrappedStoryDialog(
     if (showShareCardDialog) {
         ShareStatsCardDialog(
             wrappedData = wrappedData,
-            timePeriodTitle = selectedSharePeriod.label,
-            initialPeriod = selectedSharePeriod,
+            timePeriodTitle = selectedShareRange.displayLabel,
+            initialRange = selectedShareRange,
+            initialPeriod = selectedShareRange.period,
             loadWrappedData = loadWrappedData,
             onDismiss = {
                 showShareCardDialog = false

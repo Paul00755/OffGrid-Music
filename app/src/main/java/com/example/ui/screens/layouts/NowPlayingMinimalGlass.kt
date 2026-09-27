@@ -47,7 +47,7 @@ fun NowPlayingMinimalGlass(
     onOpenLyricsSheet: () -> Unit,
     onOpenSleepTimer: () -> Unit,
     onOpenOptionsMenu: () -> Unit = {},
-    waveformStyle: String = "SLEEK_LINE",
+    waveformStyle: String = "SNAKE",
     gesturePlaybackEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {

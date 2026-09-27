@@ -16,6 +16,10 @@ import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.collect.ImmutableList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MusicPlaybackService : MediaSessionService() {
 
@@ -50,7 +54,7 @@ class MusicPlaybackService : MediaSessionService() {
                             Notification.FLAG_ONGOING_EVENT or
                             Notification.FLAG_NO_CLEAR
 
-                    // Ensure large icon artwork is directly embedded into the notification using memory cache
+                    // Ensure large icon artwork is directly embedded into the notification using authoritative cache
                     try {
                         val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
                         if (currentSong != null) {
@@ -66,11 +70,48 @@ class MusicPlaybackService : MediaSessionService() {
                                         com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
                                         @Suppress("DEPRECATION")
                                         mediaNotification.notification.largeIcon = bmp
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        mediaNotification.notification.largeIcon = null
+                                    }
+                                } else {
+                                    // Clear large icon immediately so artwork from previous song is never displayed
+                                    @Suppress("DEPRECATION")
+                                    mediaNotification.notification.largeIcon = null
+
+                                    // Asynchronously decode and dispatch notification update without blocking
+                                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                        val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                                            this@MusicPlaybackService,
+                                            currentSong.id,
+                                            currentSong.path,
+                                            currentSong.albumId,
+                                            currentSong.artworkUri
+                                        )
+                                        if (loadedBytes != null && loadedBytes.isNotEmpty()) {
+                                            val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
+                                            if (newBmp != null) {
+                                                com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp)
+                                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                    if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
+                                                        triggerNotificationUpdate()
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        } else {
+                            @Suppress("DEPRECATION")
+                            mediaNotification.notification.largeIcon = null
                         }
-                    } catch (_: Throwable) {}
+                    } catch (_: Throwable) {
+                        try {
+                            @Suppress("DEPRECATION")
+                            mediaNotification.notification.largeIcon = null
+                        } catch (_: Throwable) {}
+                    }
 
                     lastMediaNotification = mediaNotification
                     return mediaNotification
@@ -115,26 +156,34 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         activeMediaSession?.let { addSession(it) }
+        if (intent?.action == ACTION_HEADPHONE_CONNECTED) {
+            val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(applicationContext)
+            pm.handleHeadphoneConnectedFromBroadcast()
+        }
         super.onStartCommand(intent, flags, startId)
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
-            // When app is swiped away and cleared from Recent Apps:
-            // Vanish notification and cleanly stop foreground service
+            val prefs = com.example.data.local.UserPreferencesRepository.getInstance(applicationContext)
+            val isAutoPlayEnabled = prefs.cachedAutoPlayOnHeadphoneConnection
             val player = activeMediaSession?.player ?: PlaybackManager.activeInstance?.player
-            player?.pause()
+            val isPlaying = player?.isPlaying == true
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
+            // Only stop service and dismiss notification if auto-play is not enabled and player is not actively playing
+            if (!isAutoPlayEnabled && !isPlaying) {
+                player?.pause()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.cancelAll()
+                stopSelf()
             }
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.cancelAll()
-            stopSelf()
         } catch (e: Throwable) {
             e.printStackTrace()
         }
@@ -172,6 +221,7 @@ class MusicPlaybackService : MediaSessionService() {
 
     companion object {
         const val CHANNEL_ID = "media_playback_channel"
+        const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
         var instance: MusicPlaybackService? = null
         var lastNotificationCallback: MediaNotification.Provider.Callback? = null
         var lastMediaNotification: MediaNotification? = null

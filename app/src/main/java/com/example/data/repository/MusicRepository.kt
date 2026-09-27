@@ -90,6 +90,10 @@ class MusicRepository(
         libraryScanner.quickScanAndCleanLibrary(included, excluded, ignoreAudioDurationMs)
     }
 
+    suspend fun detectAndImportNewSongs(): Int {
+        return libraryScanner.detectAndImportNewSongs()
+    }
+
     val mostPlayedPlaylists: Flow<List<Playlist>> = playlistDao.getMostPlayedPlaylistsWithDetails(10).map { list ->
         list.map { item ->
             Playlist(
@@ -457,10 +461,13 @@ class MusicRepository(
                 isExcluded = isExcluded
             )
         )
+        libraryScanner.refreshDirectoryObservers()
+        libraryScanner.detectAndImportNewSongs()
     }
 
     suspend fun removeFolder(path: String) {
         folderDao.deleteFolder(path)
+        libraryScanner.refreshDirectoryObservers()
     }
 
     suspend fun createPlaylist(name: String): Long {

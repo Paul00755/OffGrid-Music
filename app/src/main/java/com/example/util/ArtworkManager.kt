@@ -8,7 +8,9 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import com.example.ui.components.ArtworkResolutionCache
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -48,6 +50,21 @@ object ArtworkManager {
         }
     }
 
+    fun putCachedNotificationArtwork(songId: Long, bytes: ByteArray) {
+        synchronized(notificationArtCache) {
+            notificationArtCache.put(songId, bytes)
+        }
+    }
+
+    fun putNotificationArtwork(songId: Long, bytes: ByteArray, bitmap: Bitmap) {
+        synchronized(notificationArtCache) {
+            notificationArtCache.put(songId, bytes)
+        }
+        synchronized(notificationBitmapCache) {
+            notificationBitmapCache.put(songId, bitmap)
+        }
+    }
+
     fun getNotificationArtworkBytes(
         context: Context,
         songId: Long,
@@ -60,7 +77,15 @@ object ArtworkManager {
             if (cached != null) return cached
         }
 
-        val rawBytes = getOrExtractArtworkBytesSync(context, songId, filePath, albumId, artworkUriStr) ?: return null
+        // Check authoritative memory resolution cache if uriStr not provided
+        val effectiveUriStr = if (!artworkUriStr.isNullOrBlank()) {
+            artworkUriStr
+        } else {
+            ArtworkResolutionCache.getMemory(songId)
+                ?: ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)
+        }
+
+        val rawBytes = getOrExtractArtworkBytesSync(context, songId, filePath, albumId, effectiveUriStr) ?: return null
 
         val finalBytes = try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -69,9 +94,9 @@ object ArtworkManager {
             options.inJustDecodeBounds = false
             val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
             if (bmp != null) {
+                putCachedNotificationBitmap(songId, bmp)
                 val stream = java.io.ByteArrayOutputStream()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-                bmp.recycle()
                 stream.toByteArray()
             } else {
                 rawBytes
@@ -84,6 +109,48 @@ object ArtworkManager {
             notificationArtCache.put(songId, finalBytes)
         }
         return finalBytes
+    }
+
+    fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String): String? {
+        if (songId <= 0L || url.isBlank()) return null
+        return try {
+            val destDir = File(context.filesDir, CACHE_DIR_NAME)
+            if (!destDir.exists()) destDir.mkdirs()
+            val destFile = File(destDir, "$songId.jpg")
+
+            val rawBytes = if (url.startsWith("http://") || url.startsWith("https://")) {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.inputStream.use { it.readBytes() }
+            } else if (url.startsWith("file://")) {
+                val f = File(Uri.parse(url).path ?: "")
+                if (f.exists() && f.length() > 0) f.readBytes() else null
+            } else null
+
+            if (rawBytes != null && rawBytes.isNotEmpty()) {
+                val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
+                if (bmp != null) {
+                    FileOutputStream(destFile).use { out ->
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    }
+                    putNotificationArtwork(songId, rawBytes, bmp)
+                    val localUri = Uri.fromFile(destFile).toString()
+                    ArtworkResolutionCache.cache[songId] = localUri
+                    com.example.service.PlaybackManager.activeInstance?.let { pm ->
+                        if (pm.playbackState.value.currentSong?.id == songId) {
+                            kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                                pm.updateCurrentSongArtwork(songId, localUri)
+                            }
+                        }
+                    }
+                    localUri
+                } else null
+            } else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun invalidateSongArtwork(context: Context, songId: Long, deleteFiles: Boolean = false) {

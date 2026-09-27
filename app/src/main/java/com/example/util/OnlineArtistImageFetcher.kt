@@ -53,9 +53,13 @@ object OnlineArtistImageFetcher {
             return null
         }
 
-        val cacheKey = "${cleanTitle}_${cleanArtist}_$cleanAlbum".lowercase().trim()
+        val cacheKey = if (songId > 0L) {
+            "song_${songId}_${cleanTitle}_${cleanArtist}".lowercase().trim()
+        } else {
+            "${cleanTitle}_${cleanArtist}_$cleanAlbum".lowercase().trim()
+        }
         if (cacheEnabled) {
-            if (negativeSongCache.contains(cacheKey)) return null
+            if (negativeSongCache.contains(cacheKey) || (songId > 0L && negativeSongCache.contains("song_$songId"))) return null
             songCache[cacheKey]?.let { return it }
 
             val prefs = context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)

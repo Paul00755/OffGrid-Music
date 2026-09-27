@@ -351,7 +351,7 @@ object WidgetBitmapRenderer {
         widthPx: Int = 420,
         heightPx: Int = 36,
         progressRatio: Float = 0f,
-        accentColor: Int = 0xFF8B5CF6.toInt(),
+        accentColor: Int = 0xFFFF9100.toInt(),
         barCount: Int = 38
     ): Bitmap {
         val clampedProgress = progressRatio.coerceIn(0f, 1f)
