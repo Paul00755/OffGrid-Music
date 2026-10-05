@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -53,6 +54,7 @@ fun FavoritesScreen(
     onPlayAll: () -> Unit = { if (favoriteSongs.isNotEmpty()) onSongClick(favoriteSongs.first()) },
     onClearAllFavorites: (() -> Unit)? = null,
     onExploreLibrary: (() -> Unit)? = null,
+    onBackClick: () -> Unit = {},
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
@@ -182,22 +184,58 @@ fun FavoritesScreen(
         )
     }
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .testTag("favorites_screen"),
-        contentAlignment = Alignment.TopCenter
+            .testTag("favorites_screen")
     ) {
-        val listState = rememberLazyListState()
-
-        LazyColumn(
-            state = listState,
+        // Top Bar with Left-Corner Back Button
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(
+                onClick = onBackClick,
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(surfaceVariantColor.copy(alpha = 0.65f))
+                    .testTag("favorites_back_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back to previous tab",
+                    tint = BentoTextPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Favorites",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = BentoTextPrimary
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            val listState = rememberLazyListState()
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
             // 1. Hero Header Banner
             item(key = "favorites_hero_header") {
                 Card(
@@ -651,13 +689,28 @@ fun FavoritesScreen(
             }
         }
 
+    val isAlphabeticalSort = selectedFilter == "ALL" && (sortOption == "TITLE" || sortOption == "ARTIST")
+    val favoritesAlphabetProvider: ((Int) -> String?)? = remember(isAlphabeticalSort, sortOption, filteredSongs) {
+        if (!isAlphabeticalSort) {
+            null
+        } else if (sortOption == "TITLE") {
+            { idx: Int -> filteredSongs.getOrNull(idx)?.displayTitle?.trim()?.firstOrNull()?.uppercaseChar()?.toString() }
+        } else if (sortOption == "ARTIST") {
+            { idx: Int -> filteredSongs.getOrNull(idx)?.displayArtist?.trim()?.firstOrNull()?.uppercaseChar()?.toString() }
+        } else {
+            null
+        }
+    }
+
         if (filteredSongs.size > 8) {
             FastScrollbar(
                 listState = listState,
                 totalItems = filteredSongs.size,
                 bottomPadding = 120.dp,
+                itemLabelProvider = favoritesAlphabetProvider,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
+        }
         }
     }
 }

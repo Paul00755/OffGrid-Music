@@ -12,7 +12,10 @@ import com.example.R
 import com.example.service.PlaybackState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import java.util.Locale
 
 object WidgetUpdateManager {
@@ -21,147 +24,133 @@ object WidgetUpdateManager {
     const val ACTION_WIDGET_NEXT = "com.example.widget.ACTION_NEXT"
     const val ACTION_WIDGET_PREV = "com.example.widget.ACTION_PREV"
     const val ACTION_WIDGET_FAVORITE = "com.example.widget.ACTION_FAVORITE"
-    const val ACTION_WIDGET_SHUFFLE = "com.example.widget.ACTION_SHUFFLE"
-    const val ACTION_WIDGET_REPEAT = "com.example.widget.ACTION_REPEAT"
-    const val ACTION_WIDGET_SEEK_FORWARD = "com.example.widget.ACTION_SEEK_FORWARD"
-    const val ACTION_WIDGET_SEEK_BACKWARD = "com.example.widget.ACTION_SEEK_BACKWARD"
+
+    private val widgetScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var progressJob: Job? = null
+    private var lastUpdatedSec = -1L
+    @Volatile private var cachedHasAnyWidgets = true
+    @Volatile private var lastWidgetIdsCheckTime = 0L
+
+    fun notifyWidgetsChanged() {
+        lastWidgetIdsCheckTime = 0L
+        cachedHasAnyWidgets = true
+    }
 
     fun updateAllWidgets(context: Context, state: PlaybackState) {
-        CoroutineScope(Dispatchers.IO).launch {
+        lastWidgetIdsCheckTime = 0L
+        widgetScope.launch {
             try {
                 val appWidgetManager = AppWidgetManager.getInstance(context) ?: return@launch
-                val compactComponent = ComponentName(context, CompactMusicWidgetProvider::class.java)
-                val circularComponent = ComponentName(context, CircularMusicWidgetProvider::class.java)
+                val cardComponent = ComponentName(context, CardMusicWidgetProvider::class.java)
                 val wideComponent = ComponentName(context, WideMusicWidgetProvider::class.java)
-                val defaultComponent = ComponentName(context, MusicAppWidgetProvider::class.java)
+                val pillComponent = ComponentName(context, PillMusicWidgetProvider::class.java)
 
-                val compactIds = appWidgetManager.getAppWidgetIds(compactComponent) ?: IntArray(0)
-                val circularIds = appWidgetManager.getAppWidgetIds(circularComponent) ?: IntArray(0)
+                val cardIds = appWidgetManager.getAppWidgetIds(cardComponent) ?: IntArray(0)
                 val wideIds = appWidgetManager.getAppWidgetIds(wideComponent) ?: IntArray(0)
-                val defaultIds = appWidgetManager.getAppWidgetIds(defaultComponent) ?: IntArray(0)
+                val pillIds = appWidgetManager.getAppWidgetIds(pillComponent) ?: IntArray(0)
 
-                if (compactIds.isEmpty() && circularIds.isEmpty() && wideIds.isEmpty() && defaultIds.isEmpty()) {
+                cachedHasAnyWidgets = cardIds.isNotEmpty() || wideIds.isNotEmpty() || pillIds.isNotEmpty()
+                lastWidgetIdsCheckTime = System.currentTimeMillis()
+
+                if (!cachedHasAnyWidgets) {
                     return@launch
+                }
+
+                val prefsRepo = com.example.data.local.UserPreferencesRepository(context)
+                val isDynamic = try { prefsRepo.isDynamicArtworkTheme.first() } catch (_: Exception) { true }
+                val customAccent = try { prefsRepo.customAccentColor.first() } catch (_: Exception) { 0 }
+                val preset = try { prefsRepo.accentColorPreset.first() } catch (_: Exception) { "ORANGE" }
+
+                val manualAccentColor = if (customAccent != 0) {
+                    customAccent
+                } else {
+                    when (preset.uppercase()) {
+                        "PINK" -> android.graphics.Color.parseColor("#FF4081")
+                        "GREEN" -> android.graphics.Color.parseColor("#00E676")
+                        "ORANGE" -> android.graphics.Color.parseColor("#FF9100")
+                        "GOLD" -> android.graphics.Color.parseColor("#FFD700")
+                        "BLUE" -> android.graphics.Color.parseColor("#2979FF")
+                        "RED" -> android.graphics.Color.parseColor("#FF5252")
+                        "TEAL" -> android.graphics.Color.parseColor("#1DE9B6")
+                        "INDIGO" -> android.graphics.Color.parseColor("#7C4DFF")
+                        "PURPLE" -> android.graphics.Color.parseColor("#BB86FC")
+                        "CYAN" -> android.graphics.Color.parseColor("#00E5FF")
+                        else -> android.graphics.Color.parseColor("#FF9100")
+                    }
                 }
 
                 val currentSong = state.currentSong
                 val artworkBitmap = WidgetBitmapRenderer.getOrLoadSongBitmap(context, currentSong)
-                val accentColor = WidgetBitmapRenderer.getCachedAccentColor()
+                val colors = WidgetBitmapRenderer.getThemeColors(
+                    songBitmap = artworkBitmap,
+                    isDynamicTheme = isDynamic,
+                    manualAccentColor = manualAccentColor
+                )
 
-                if (compactIds.isNotEmpty()) {
-                    updateCompactWidgets(context, appWidgetManager, state, artworkBitmap, accentColor)
-                }
-                if (circularIds.isNotEmpty()) {
-                    updateCircularWidgets(context, appWidgetManager, state, artworkBitmap, accentColor)
+                if (cardIds.isNotEmpty()) {
+                    updateCardWidgets(context, appWidgetManager, cardIds, state, artworkBitmap, colors)
                 }
                 if (wideIds.isNotEmpty()) {
-                    updateWideWidgets(context, appWidgetManager, state, artworkBitmap, accentColor)
+                    updateWideWidgets(context, appWidgetManager, wideIds, state, artworkBitmap, colors)
                 }
-                if (defaultIds.isNotEmpty()) {
-                    MusicAppWidgetProvider.updateAllWidgets(
-                        context = context,
-                        title = currentSong?.displayTitle ?: "Offgrid Player",
-                        artist = currentSong?.displayArtist ?: "Offline Audio",
-                        isPlaying = state.isPlaying,
-                        positionMs = state.positionMs,
-                        durationMs = state.durationMs,
-                        isFavorite = currentSong?.isFavorite == true,
-                        isShuffleEnabled = state.isShuffleEnabled,
-                        artworkBitmap = artworkBitmap
-                    )
+                if (pillIds.isNotEmpty()) {
+                    updatePillWidgets(context, appWidgetManager, pillIds, state, artworkBitmap, colors)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
-
-    private val widgetScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
-    private var progressJob: kotlinx.coroutines.Job? = null
-    private var lastUpdatedSec = -1L
 
     fun updateWidgetsProgress(context: Context, positionMs: Long, durationMs: Long) {
         val currentSec = (positionMs / 1000).coerceAtLeast(0L)
         if (currentSec == lastUpdatedSec) return
         lastUpdatedSec = currentSec
 
-        // Cancel previous progress job if still active to avoid stacking IPC transactions
+        val now = System.currentTimeMillis()
+        if (!cachedHasAnyWidgets && (now - lastWidgetIdsCheckTime < 15000L)) {
+            return
+        }
+
         if (progressJob?.isActive == true) return
 
         progressJob = widgetScope.launch {
             try {
                 val appWidgetManager = AppWidgetManager.getInstance(context) ?: return@launch
-                val compactComponent = ComponentName(context, CompactMusicWidgetProvider::class.java)
-                val circularComponent = ComponentName(context, CircularMusicWidgetProvider::class.java)
+                val cardComponent = ComponentName(context, CardMusicWidgetProvider::class.java)
                 val wideComponent = ComponentName(context, WideMusicWidgetProvider::class.java)
-                val defaultComponent = ComponentName(context, MusicAppWidgetProvider::class.java)
+                val pillComponent = ComponentName(context, PillMusicWidgetProvider::class.java)
 
-                val compactIds = appWidgetManager.getAppWidgetIds(compactComponent) ?: IntArray(0)
-                val circularIds = appWidgetManager.getAppWidgetIds(circularComponent) ?: IntArray(0)
+                val cardIds = appWidgetManager.getAppWidgetIds(cardComponent) ?: IntArray(0)
                 val wideIds = appWidgetManager.getAppWidgetIds(wideComponent) ?: IntArray(0)
-                val defaultIds = appWidgetManager.getAppWidgetIds(defaultComponent) ?: IntArray(0)
+                val pillIds = appWidgetManager.getAppWidgetIds(pillComponent) ?: IntArray(0)
 
-                if (compactIds.isEmpty() && circularIds.isEmpty() && wideIds.isEmpty() && defaultIds.isEmpty()) {
+                cachedHasAnyWidgets = cardIds.isNotEmpty() || wideIds.isNotEmpty() || pillIds.isNotEmpty()
+                lastWidgetIdsCheckTime = System.currentTimeMillis()
+
+                if (!cachedHasAnyWidgets) {
                     return@launch
                 }
 
                 val durationSec = (if (durationMs > 0L) durationMs else 0L) / 1000
-                val elapsedStr = formatTime(currentSec)
-                val totalStr = formatTime(durationSec)
-                val progress = if (durationMs > 0L) ((positionMs.toDouble() / durationMs.toDouble()) * 100).toInt().coerceIn(0, 100) else 0
-                val progressRatio = if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
-                val accentColor = WidgetBitmapRenderer.getCachedAccentColor()
+                val durationStr = "${formatTime(currentSec)} / ${formatTime(durationSec)}"
 
-                if (compactIds.isNotEmpty()) {
-                    val views = RemoteViews(context.packageName, R.layout.widget_compact)
-                    views.setTextViewText(R.id.widget_compact_time_elapsed, elapsedStr)
-                    views.setTextViewText(R.id.widget_compact_time_total, totalStr)
-                    views.setProgressBar(R.id.widget_compact_progress, 100, progress, false)
-                    val waveBmp = WidgetBitmapRenderer.renderWaveformBarBitmap(
-                        context, widthPx = 360, heightPx = 28, progressRatio = progressRatio, accentColor = accentColor
-                    )
-                    views.setImageViewBitmap(R.id.widget_compact_waveform_progress, waveBmp)
-                    appWidgetManager.partiallyUpdateAppWidget(compactIds, views)
+                if (cardIds.isNotEmpty()) {
+                    val views = RemoteViews(context.packageName, R.layout.widget_card)
+                    views.setTextViewText(R.id.widget_card_duration, durationStr)
+                    appWidgetManager.partiallyUpdateAppWidget(cardIds, views)
                 }
 
                 if (wideIds.isNotEmpty()) {
                     val views = RemoteViews(context.packageName, R.layout.widget_wide)
-                    views.setTextViewText(R.id.widget_wide_time_elapsed, elapsedStr)
-                    views.setTextViewText(R.id.widget_wide_time_total, totalStr)
-                    views.setProgressBar(R.id.widget_wide_progress, 100, progress, false)
-                    val waveBmp = WidgetBitmapRenderer.renderWaveformBarBitmap(
-                        context, widthPx = 420, heightPx = 32, progressRatio = progressRatio, accentColor = accentColor
-                    )
-                    views.setImageViewBitmap(R.id.widget_wide_waveform_progress, waveBmp)
+                    views.setTextViewText(R.id.widget_wide_duration, durationStr)
                     appWidgetManager.partiallyUpdateAppWidget(wideIds, views)
                 }
 
-                if (defaultIds.isNotEmpty()) {
-                    val views = RemoteViews(context.packageName, R.layout.widget_music_player)
-                    views.setTextViewText(R.id.widget_time_elapsed, elapsedStr)
-                    views.setTextViewText(R.id.widget_time_total, totalStr)
-                    views.setProgressBar(R.id.widget_progress_bar, 100, progress, false)
-                    val waveBmp = WidgetBitmapRenderer.renderWaveformBarBitmap(
-                        context, widthPx = 380, heightPx = 28, progressRatio = progressRatio, accentColor = accentColor
-                    )
-                    views.setImageViewBitmap(R.id.widget_waveform_progress, waveBmp)
-                    appWidgetManager.partiallyUpdateAppWidget(defaultIds, views)
-                }
-
-                if (circularIds.isNotEmpty()) {
-                    val views = RemoteViews(context.packageName, R.layout.widget_circular)
-                    views.setTextViewText(R.id.widget_circular_time_elapsed, elapsedStr)
-                    views.setTextViewText(R.id.widget_circular_time_total, totalStr)
-                    val artworkBitmap = WidgetBitmapRenderer.getCachedArtwork()
-                    val circularBitmap = WidgetBitmapRenderer.createCircularWidgetBitmap(
-                        context = context,
-                        sourceArtwork = artworkBitmap,
-                        progressRatio = progressRatio,
-                        accentColor = accentColor,
-                        sizePx = 220
-                    )
-                    views.setImageViewBitmap(R.id.widget_circular_canvas, circularBitmap)
-                    appWidgetManager.partiallyUpdateAppWidget(circularIds, views)
+                if (pillIds.isNotEmpty()) {
+                    val views = RemoteViews(context.packageName, R.layout.widget_pill)
+                    views.setTextViewText(R.id.widget_pill_duration, durationStr)
+                    appWidgetManager.partiallyUpdateAppWidget(pillIds, views)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -169,119 +158,97 @@ object WidgetUpdateManager {
         }
     }
 
-    private fun updateCompactWidgets(
+    private fun updateCardWidgets(
         context: Context,
         appWidgetManager: AppWidgetManager,
+        widgetIds: IntArray,
         state: PlaybackState,
         artworkBitmap: Bitmap?,
-        accentColor: Int
+        colors: WidgetBitmapRenderer.WidgetThemeColors
     ) {
-        val component = ComponentName(context, CompactMusicWidgetProvider::class.java)
-        val widgetIds = appWidgetManager.getAppWidgetIds(component) ?: return
-        if (widgetIds.isEmpty()) return
-
-        val views = RemoteViews(context.packageName, R.layout.widget_compact)
+        val views = RemoteViews(context.packageName, R.layout.widget_card)
         val song = state.currentSong
+        val density = context.resources.displayMetrics.density
 
-        // Text
-        views.setTextViewText(R.id.widget_compact_title, song?.displayTitle ?: "OffGrid Music")
-        views.setTextViewText(R.id.widget_compact_subtitle, if (!song?.album.isNullOrBlank()) song?.album else "Offline Audio")
-        views.setTextViewText(R.id.widget_compact_artist, song?.displayArtist ?: "Tap to play")
-
-        // Progress
-        val currentSec = state.positionMs / 1000
-        val durationSec = (if (state.durationMs > 0) state.durationMs else 0L) / 1000
-        views.setTextViewText(R.id.widget_compact_time_elapsed, formatTime(currentSec))
-        views.setTextViewText(R.id.widget_compact_time_total, formatTime(durationSec))
-
-        val progress = if (state.durationMs > 0) ((state.positionMs.toDouble() / state.durationMs.toDouble()) * 100).toInt() else 0
-        views.setProgressBar(R.id.widget_compact_progress, 100, progress.coerceIn(0, 100), false)
-        val progressRatio = if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
-        val compactWaveBmp = WidgetBitmapRenderer.renderWaveformBarBitmap(
-            context, widthPx = 360, heightPx = 28, progressRatio = progressRatio, accentColor = accentColor
-        )
-        views.setImageViewBitmap(R.id.widget_compact_waveform_progress, compactWaveBmp)
-
-        // Rounded Artwork Bitmap & Blurred Background (from cache)
-        val roundedArt = WidgetBitmapRenderer.getRoundedArtwork(context, artworkBitmap, 180, 12f)
-        views.setImageViewBitmap(R.id.widget_compact_artwork, roundedArt)
-
-        val blurredBg = WidgetBitmapRenderer.getBlurredBackground(context, artworkBitmap, 400, 240, 20f)
-        views.setImageViewBitmap(R.id.widget_compact_bg_overlay, blurredBg)
-
-        // Play / Pause Icon
-        val playPauseRes = if (state.isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play
-        views.setImageViewResource(R.id.widget_compact_btn_play_pause, playPauseRes)
-
-        // Favorite Icon
-        val isFav = song?.isFavorite == true
-        val favRes = if (isFav) R.drawable.ic_widget_favorite_active else R.drawable.ic_favorite_border
-        views.setImageViewResource(R.id.widget_compact_btn_favorite, favRes)
-
-        // Set Pending Intents - Only Album Art and Title/Artist open app
-        setOnClickOpenApp(context, views, R.id.widget_compact_artwork)
-        setOnClickOpenApp(context, views, R.id.widget_compact_title)
-        setOnClickOpenApp(context, views, R.id.widget_compact_subtitle)
-        setOnClickOpenApp(context, views, R.id.widget_compact_artist)
-
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 101)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_btn_next, ACTION_WIDGET_NEXT, 102)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_btn_prev, ACTION_WIDGET_PREV, 103)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_btn_favorite, ACTION_WIDGET_FAVORITE, 104)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_time_elapsed, ACTION_WIDGET_SEEK_BACKWARD, 105)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_time_total, ACTION_WIDGET_SEEK_FORWARD, 106)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_seek_backward, ACTION_WIDGET_SEEK_BACKWARD, 107)
-        setBroadcast(context, views, CompactMusicWidgetProvider::class.java, R.id.widget_compact_seek_forward, ACTION_WIDGET_SEEK_FORWARD, 108)
-
-        appWidgetManager.updateAppWidget(widgetIds, views)
-    }
-
-    private fun updateCircularWidgets(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        state: PlaybackState,
-        artworkBitmap: Bitmap?,
-        accentColor: Int
-    ) {
-        val component = ComponentName(context, CircularMusicWidgetProvider::class.java)
-        val widgetIds = appWidgetManager.getAppWidgetIds(component) ?: return
-        if (widgetIds.isEmpty()) return
-
-        val views = RemoteViews(context.packageName, R.layout.widget_circular)
-        val song = state.currentSong
-
-        val progressRatio = if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs.toFloat()) else 0f
-        val circularBitmap = WidgetBitmapRenderer.createCircularWidgetBitmap(
+        // 1. Render card background with dynamic dark theme & glow border
+        val bgBmp = WidgetBitmapRenderer.renderCardBackground(
             context = context,
-            sourceArtwork = artworkBitmap,
-            progressRatio = progressRatio,
-            accentColor = accentColor,
-            sizePx = 480
+            widthPx = (280 * density).toInt(),
+            heightPx = (280 * density).toInt(),
+            cornerRadiusDp = 28f,
+            bgColor = colors.containerBgColor,
+            borderColor = colors.containerBorderColor
         )
-        views.setImageViewBitmap(R.id.widget_circular_canvas, circularBitmap)
+        views.setImageViewBitmap(R.id.widget_card_bg, bgBmp)
 
-        // Text inside circle - Song Title and Album Name right below it
-        views.setTextViewText(R.id.widget_circular_title, song?.displayTitle ?: "OffGrid Music")
-        views.setTextViewText(R.id.widget_circular_subtitle, if (!song?.album.isNullOrBlank()) song?.album else "Offline Audio")
+        // 2. Render top rounded artwork
+        val artBmp = WidgetBitmapRenderer.renderRoundedArtwork(
+            source = artworkBitmap,
+            widthPx = (256 * density).toInt(),
+            heightPx = (125 * density).toInt(),
+            cornerRadiusDp = 18f,
+            context = context
+        )
+        views.setImageViewBitmap(R.id.widget_card_artwork, artBmp)
 
+        // 3. Texts
         val currentSec = state.positionMs / 1000
         val durationSec = (if (state.durationMs > 0) state.durationMs else 0L) / 1000
-        views.setTextViewText(R.id.widget_circular_time_elapsed, formatTime(currentSec))
-        views.setTextViewText(R.id.widget_circular_time_total, formatTime(durationSec))
+        val durationStr = "${formatTime(currentSec)} / ${formatTime(durationSec)}"
 
-        // Play / Pause Icon
-        val playPauseRes = if (state.isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play
-        views.setImageViewResource(R.id.widget_circular_btn_play_pause, playPauseRes)
+        views.setTextViewText(R.id.widget_card_duration, durationStr)
+        views.setTextColor(R.id.widget_card_duration, colors.durationColor)
 
-        // Set Pending Intents - Title/Album opens app
-        setOnClickOpenApp(context, views, R.id.widget_circular_title)
-        setOnClickOpenApp(context, views, R.id.widget_circular_subtitle)
+        views.setTextViewText(R.id.widget_card_title, song?.displayTitle ?: "OffGrid Music")
+        views.setTextColor(R.id.widget_card_title, colors.titleColor)
 
-        setBroadcast(context, views, CircularMusicWidgetProvider::class.java, R.id.widget_circular_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 201)
-        setBroadcast(context, views, CircularMusicWidgetProvider::class.java, R.id.widget_circular_btn_next, ACTION_WIDGET_NEXT, 202)
-        setBroadcast(context, views, CircularMusicWidgetProvider::class.java, R.id.widget_circular_btn_prev, ACTION_WIDGET_PREV, 203)
-        setBroadcast(context, views, CircularMusicWidgetProvider::class.java, R.id.widget_circular_time_elapsed, ACTION_WIDGET_SEEK_BACKWARD, 204)
-        setBroadcast(context, views, CircularMusicWidgetProvider::class.java, R.id.widget_circular_time_total, ACTION_WIDGET_SEEK_FORWARD, 205)
+        val subtitle = if (!song?.artist.isNullOrBlank() && !song?.album.isNullOrBlank()) {
+            "${song?.artist} • ${song?.album}"
+        } else if (!song?.artist.isNullOrBlank()) {
+            song?.artist ?: ""
+        } else {
+            song?.album ?: "Offline Audio"
+        }
+        views.setTextViewText(R.id.widget_card_subtitle, subtitle)
+        views.setTextColor(R.id.widget_card_subtitle, colors.subtitleColor)
+
+        // 4. Render Circular Buttons in accent color with dark icons
+        val prevBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (44 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_card_btn_prev, prevBmp)
+
+        val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (48 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+            isPlaying = state.isPlaying,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_card_btn_play_pause, playPauseBmp)
+
+        val nextBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (44 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_card_btn_next, nextBmp)
+
+        // 5. Pending Intents
+        setBroadcast(context, views, CardMusicWidgetProvider::class.java, R.id.widget_card_btn_prev, ACTION_WIDGET_PREV, 101)
+        setBroadcast(context, views, CardMusicWidgetProvider::class.java, R.id.widget_card_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 102)
+        setBroadcast(context, views, CardMusicWidgetProvider::class.java, R.id.widget_card_btn_next, ACTION_WIDGET_NEXT, 103)
+
+        setOnClickOpenApp(context, views, R.id.widget_card_artwork)
+        setOnClickOpenApp(context, views, R.id.widget_card_title)
+        setOnClickOpenApp(context, views, R.id.widget_card_subtitle)
 
         appWidgetManager.updateAppWidget(widgetIds, views)
     }
@@ -289,66 +256,163 @@ object WidgetUpdateManager {
     private fun updateWideWidgets(
         context: Context,
         appWidgetManager: AppWidgetManager,
+        widgetIds: IntArray,
         state: PlaybackState,
         artworkBitmap: Bitmap?,
-        accentColor: Int
+        colors: WidgetBitmapRenderer.WidgetThemeColors
     ) {
-        val component = ComponentName(context, WideMusicWidgetProvider::class.java)
-        val widgetIds = appWidgetManager.getAppWidgetIds(component) ?: return
-        if (widgetIds.isEmpty()) return
-
         val views = RemoteViews(context.packageName, R.layout.widget_wide)
         val song = state.currentSong
+        val density = context.resources.displayMetrics.density
 
-        // Text & Progress
-        views.setTextViewText(R.id.widget_wide_title, song?.displayTitle ?: "OffGrid Music")
-        views.setTextViewText(R.id.widget_wide_subtitle, if (!song?.album.isNullOrBlank()) song?.album else "Offline Audio")
-        views.setTextViewText(R.id.widget_wide_artist, song?.displayArtist ?: "Tap to play")
+        // 1. Render wide card background
+        val bgBmp = WidgetBitmapRenderer.renderCardBackground(
+            context = context,
+            widthPx = (340 * density).toInt(),
+            heightPx = (150 * density).toInt(),
+            cornerRadiusDp = 28f,
+            bgColor = colors.containerBgColor,
+            borderColor = colors.containerBorderColor
+        )
+        views.setImageViewBitmap(R.id.widget_wide_bg, bgBmp)
 
+        // 2. Top-left favorite / music button
+        val isFav = song?.isFavorite == true
+        val favBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (32 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.FAVORITE,
+            isFavorite = isFav,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_wide_btn_favorite, favBmp)
+
+        // 3. Texts
         val currentSec = state.positionMs / 1000
         val durationSec = (if (state.durationMs > 0) state.durationMs else 0L) / 1000
-        views.setTextViewText(R.id.widget_wide_time_elapsed, formatTime(currentSec))
-        views.setTextViewText(R.id.widget_wide_time_total, formatTime(durationSec))
+        val durationStr = "${formatTime(currentSec)} / ${formatTime(durationSec)}"
 
-        val progress = if (state.durationMs > 0) ((state.positionMs.toDouble() / state.durationMs.toDouble()) * 100).toInt() else 0
-        views.setProgressBar(R.id.widget_wide_progress, 100, progress.coerceIn(0, 100), false)
-        val progressRatio = if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
-        val wideWaveBmp = WidgetBitmapRenderer.renderWaveformBarBitmap(
-            context, widthPx = 420, heightPx = 32, progressRatio = progressRatio, accentColor = accentColor
+        views.setTextViewText(R.id.widget_wide_title, song?.displayTitle ?: "OffGrid Music")
+        views.setTextColor(R.id.widget_wide_title, colors.titleColor)
+
+        val subtitle = if (!song?.artist.isNullOrBlank() && !song?.album.isNullOrBlank()) {
+            "${song?.artist} • ${song?.album}"
+        } else if (!song?.artist.isNullOrBlank()) {
+            song?.artist ?: ""
+        } else {
+            song?.album ?: "Offline Audio"
+        }
+        views.setTextViewText(R.id.widget_wide_subtitle, subtitle)
+        views.setTextColor(R.id.widget_wide_subtitle, colors.subtitleColor)
+
+        views.setTextViewText(R.id.widget_wide_duration, durationStr)
+        views.setTextColor(R.id.widget_wide_duration, colors.durationColor)
+
+        // 4. Circular Playback Controls Row
+        val prevBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (38 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+            iconColor = colors.iconColor
         )
-        views.setImageViewBitmap(R.id.widget_wide_waveform_progress, wideWaveBmp)
+        views.setImageViewBitmap(R.id.widget_wide_btn_prev, prevBmp)
 
-        // Rounded Artwork Bitmap & Blurred Background (from cache)
-        val roundedArt = WidgetBitmapRenderer.getRoundedArtwork(context, artworkBitmap, 200, 12f)
-        views.setImageViewBitmap(R.id.widget_wide_artwork, roundedArt)
+        val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (44 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+            isPlaying = state.isPlaying,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_wide_btn_play_pause, playPauseBmp)
 
-        val blurredBg = WidgetBitmapRenderer.getBlurredBackground(context, artworkBitmap, 480, 240, 20f)
-        views.setImageViewBitmap(R.id.widget_wide_background_overlay, blurredBg)
+        val nextBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (38 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_wide_btn_next, nextBmp)
 
-        // Play / Pause Icon
-        val playPauseRes = if (state.isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play
-        views.setImageViewResource(R.id.widget_wide_btn_play_pause, playPauseRes)
+        // 5. Right Artwork (rounded square ~20dp radius)
+        val artBmp = WidgetBitmapRenderer.renderRoundedArtwork(
+            source = artworkBitmap,
+            widthPx = (125 * density).toInt(),
+            heightPx = (125 * density).toInt(),
+            cornerRadiusDp = 20f,
+            context = context
+        )
+        views.setImageViewBitmap(R.id.widget_wide_artwork, artBmp)
 
-        // Favorite Icon
-        val isFav = song?.isFavorite == true
-        val favRes = if (isFav) R.drawable.ic_widget_favorite_active else R.drawable.ic_favorite_border
-        views.setImageViewResource(R.id.widget_wide_btn_favorite, favRes)
+        // 6. Pending Intents
+        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_favorite, ACTION_WIDGET_FAVORITE, 200)
+        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_prev, ACTION_WIDGET_PREV, 201)
+        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 202)
+        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_next, ACTION_WIDGET_NEXT, 203)
 
-        // Set Pending Intents - Only Album Art and Title/Artist open app
         setOnClickOpenApp(context, views, R.id.widget_wide_artwork)
         setOnClickOpenApp(context, views, R.id.widget_wide_title)
         setOnClickOpenApp(context, views, R.id.widget_wide_subtitle)
-        setOnClickOpenApp(context, views, R.id.widget_wide_artist)
 
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 301)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_next, ACTION_WIDGET_NEXT, 302)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_prev, ACTION_WIDGET_PREV, 303)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_favorite, ACTION_WIDGET_FAVORITE, 304)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_btn_shuffle, ACTION_WIDGET_SHUFFLE, 305)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_time_elapsed, ACTION_WIDGET_SEEK_BACKWARD, 306)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_time_total, ACTION_WIDGET_SEEK_FORWARD, 307)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_seek_backward, ACTION_WIDGET_SEEK_BACKWARD, 308)
-        setBroadcast(context, views, WideMusicWidgetProvider::class.java, R.id.widget_wide_seek_forward, ACTION_WIDGET_SEEK_FORWARD, 309)
+        appWidgetManager.updateAppWidget(widgetIds, views)
+    }
+
+    private fun updatePillWidgets(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        widgetIds: IntArray,
+        state: PlaybackState,
+        artworkBitmap: Bitmap?,
+        colors: WidgetBitmapRenderer.WidgetThemeColors
+    ) {
+        val views = RemoteViews(context.packageName, R.layout.widget_pill)
+        val density = context.resources.displayMetrics.density
+
+        // 1. Render stadium capsule background
+        val bgBmp = WidgetBitmapRenderer.renderPillBackground(
+            context = context,
+            widthPx = (240 * density).toInt(),
+            heightPx = (60 * density).toInt(),
+            bgColor = colors.containerBgColor,
+            borderColor = colors.containerBorderColor
+        )
+        views.setImageViewBitmap(R.id.widget_pill_bg, bgBmp)
+
+        // 2. Prominent Left Circular Play/Pause button
+        val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
+            context = context,
+            sizePx = (48 * density).toInt(),
+            buttonColor = colors.accentColor,
+            iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+            isPlaying = state.isPlaying,
+            iconColor = colors.iconColor
+        )
+        views.setImageViewBitmap(R.id.widget_pill_btn_play_pause, playPauseBmp)
+
+        // 3. Right Artwork with rounded right curve matching capsule
+        val artBmp = WidgetBitmapRenderer.renderPillArtwork(
+            source = artworkBitmap,
+            widthPx = (175 * density).toInt(),
+            heightPx = (50 * density).toInt(),
+            rightRadiusDp = 25f,
+            context = context
+        )
+        views.setImageViewBitmap(R.id.widget_pill_artwork, artBmp)
+
+        // 4. Duration text at bottom
+        val currentSec = state.positionMs / 1000
+        val durationSec = (if (state.durationMs > 0) state.durationMs else 0L) / 1000
+        val durationStr = "${formatTime(currentSec)} / ${formatTime(durationSec)}"
+        views.setTextViewText(R.id.widget_pill_duration, durationStr)
+
+        // 5. Pending Intents
+        setBroadcast(context, views, PillMusicWidgetProvider::class.java, R.id.widget_pill_btn_play_pause, ACTION_WIDGET_PLAY_PAUSE, 301)
+        setOnClickOpenApp(context, views, R.id.widget_pill_artwork)
+        setOnClickOpenApp(context, views, R.id.widget_pill_duration)
 
         appWidgetManager.updateAppWidget(widgetIds, views)
     }

@@ -5,15 +5,13 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Exclude personal device-local API keys from Cloud Backup -->
+        <exclude domain="file" path="gemini_user_key.dat" />
+        <exclude domain="file" path="gemini_user_key.fallback" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Exclude personal device-local API keys from Device Transfer -->
+        <exclude domain="file" path="gemini_user_key.dat" />
+        <exclude domain="file" path="gemini_user_key.fallback" />
     </device-transfer>
-    -->
 </data-extraction-rules>

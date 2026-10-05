@@ -59,6 +59,9 @@ interface SongDao {
     @Query("UPDATE songs SET isFavorite = :isFavorite WHERE id = :songId OR path = :path")
     suspend fun setFavoriteBySong(songId: Long, path: String, isFavorite: Boolean)
 
+    @Query("UPDATE songs SET isFavorite = :isFavorite WHERE id IN (:songIds)")
+    suspend fun setFavoritesBatch(songIds: List<Long>, isFavorite: Boolean = true)
+
     @Query("UPDATE songs SET isFavorite = 0")
     suspend fun clearAllFavorites()
 

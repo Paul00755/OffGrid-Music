@@ -6,8 +6,7 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Exclude personal device-local API keys from Android Cloud Backup -->
+    <exclude domain="file" path="gemini_user_key.dat" />
+    <exclude domain="file" path="gemini_user_key.fallback" />
 </full-backup-content>

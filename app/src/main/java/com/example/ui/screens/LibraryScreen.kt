@@ -116,26 +116,37 @@ fun LibraryScreen(
         }
     }
 
-    val processedSongs = remember(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) {
-        var list = if (searchQuery.isBlank()) allSongs
-        else allSongs.filter {
-            it.title.contains(searchQuery, ignoreCase = true) ||
-            it.artist.contains(searchQuery, ignoreCase = true) ||
-            it.album.contains(searchQuery, ignoreCase = true)
-        }
+    var processedSongs by remember(allSongs) {
+        mutableStateOf(allSongs)
+    }
 
-        if (filterFavoritesOnly) {
-            list = list.filter { it.isFavorite }
+    LaunchedEffect(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) {
+        if (allSongs.isEmpty()) {
+            processedSongs = emptyList()
+            return@LaunchedEffect
         }
+        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            var list = if (searchQuery.isBlank()) allSongs
+            else allSongs.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                it.artist.contains(searchQuery, ignoreCase = true) ||
+                it.album.contains(searchQuery, ignoreCase = true)
+            }
 
-        when (selectedSort) {
-            SortOption.TITLE -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayTitle })
-            SortOption.ARTIST -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayArtist }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayArtist })
-            SortOption.ALBUM -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum })
-            SortOption.RECENTLY_ADDED -> if (sortAscending) list.sortedByDescending { it.dateAdded } else list.sortedBy { it.dateAdded }
-            SortOption.RECENTLY_PLAYED -> if (sortAscending) list.sortedByDescending { it.lastPlayed } else list.sortedBy { it.lastPlayed }
-            SortOption.DURATION -> if (sortAscending) list.sortedBy { it.durationMs } else list.sortedByDescending { it.durationMs }
+            if (filterFavoritesOnly) {
+                list = list.filter { it.isFavorite }
+            }
+
+            when (selectedSort) {
+                SortOption.TITLE -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayTitle })
+                SortOption.ARTIST -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayArtist }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayArtist })
+                SortOption.ALBUM -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum })
+                SortOption.RECENTLY_ADDED -> if (sortAscending) list.sortedByDescending { it.dateAdded } else list.sortedBy { it.dateAdded }
+                SortOption.RECENTLY_PLAYED -> if (sortAscending) list.sortedByDescending { it.lastPlayed } else list.sortedBy { it.lastPlayed }
+                SortOption.DURATION -> if (sortAscending) list.sortedBy { it.durationMs } else list.sortedByDescending { it.durationMs }
+            }
         }
+        processedSongs = result
     }
 
     val isAlphabeticalSort = selectedSort == SortOption.TITLE || selectedSort == SortOption.ALBUM || selectedSort == SortOption.ARTIST
@@ -151,67 +162,94 @@ fun LibraryScreen(
         return if (ch in 'A'..'Z') ch.toString() else "#"
     }
 
-    val groupedAlphabetSongs = remember(processedSongs, isAlphabeticalSort, selectedSort, selectedCategory) {
-        if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
-            processedSongs.groupBy { getAlphabetLabel(it) }
-        } else {
-            emptyMap()
-        }
-    }
+    var groupedAlphabetSongs by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
+    var albums by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
+    var artists by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
+    var folders by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
 
-    val albums = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.ALBUMS) {
-            processedSongs.groupBy { it.displayAlbum }
-        } else {
-            emptyMap()
-        }
-    }
-    val albumsList = remember(albums) { albums.entries.toList() }
-
-    val artists = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.ARTISTS) {
-            processedSongs.groupBy { it.displayArtist }
-        } else {
-            emptyMap()
-        }
-    }
-    val artistsList = remember(artists) { artists.entries.toList() }
-
-    val folders = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.FOLDERS) {
-            processedSongs.groupBy { song ->
-                song.path.takeIf { p -> p.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
+    LaunchedEffect(processedSongs, isAlphabeticalSort, selectedSort, selectedCategory) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
+                groupedAlphabetSongs = processedSongs.groupBy { getAlphabetLabel(it) }
+            } else {
+                groupedAlphabetSongs = emptyMap()
             }
-        } else {
-            emptyMap()
+
+            if (selectedCategory == LibraryCategory.ALBUMS) {
+                albums = processedSongs.groupBy { it.displayAlbum }
+            } else {
+                albums = emptyMap()
+            }
+
+            if (selectedCategory == LibraryCategory.ARTISTS) {
+                artists = processedSongs.groupBy { it.displayArtist }
+            } else {
+                artists = emptyMap()
+            }
+
+            if (selectedCategory == LibraryCategory.FOLDERS) {
+                folders = processedSongs.groupBy { song ->
+                    song.path.takeIf { p -> p.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
+                }
+            } else {
+                folders = emptyMap()
+            }
         }
     }
+
+    val albumsList = remember(albums) { albums.entries.toList() }
+    val artistsList = remember(artists) { artists.entries.toList() }
     val foldersList = remember(folders) { folders.entries.toList() }
 
-    val fastScrollAlphabetProvider: ((Int) -> String?)? = remember(selectedCategory, isAlphabeticalSort, processedSongs, albums, artists, selectedSort) {
-        when {
-            selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort -> {
-                { idx: Int -> processedSongs.getOrNull(idx)?.let { getAlphabetLabel(it) } }
-            }
-            selectedCategory == LibraryCategory.ALBUMS -> {
-                val albumKeys = albums.keys.toList()
-                val provider: (Int) -> String? = { idx: Int ->
-                    val name = albumKeys.getOrNull(idx)?.trim()
-                    val ch = name?.firstOrNull()?.uppercaseChar() ?: '#'
-                    if (ch in 'A'..'Z') ch.toString() else "#"
+    val indexedAlphabetLabels = remember(selectedCategory, isAlphabeticalSort, groupedAlphabetSongs, processedSongs, albums, artists) {
+        if (!isAlphabeticalSort) {
+            emptyList<String?>()
+        } else {
+            when (selectedCategory) {
+                LibraryCategory.SONGS -> {
+                    if (groupedAlphabetSongs.isNotEmpty()) {
+                        val labels = mutableListOf<String?>()
+                        labels.add(null) // Controls / Shuffle button row at index 0
+                        groupedAlphabetSongs.forEach { (letter, songs) ->
+                            labels.add(letter) // stickyHeader
+                            repeat(songs.size) { labels.add(letter) } // song items
+                        }
+                        labels
+                    } else {
+                        val labels = mutableListOf<String?>()
+                        labels.add(null)
+                        processedSongs.forEach { song -> labels.add(getAlphabetLabel(song)) }
+                        labels
+                    }
                 }
-                provider
-            }
-            selectedCategory == LibraryCategory.ARTISTS -> {
-                val artistKeys = artists.keys.toList()
-                val provider: (Int) -> String? = { idx: Int ->
-                    val name = artistKeys.getOrNull(idx)?.trim()
-                    val ch = name?.firstOrNull()?.uppercaseChar() ?: '#'
-                    if (ch in 'A'..'Z') ch.toString() else "#"
+                LibraryCategory.ALBUMS -> {
+                    val labels = mutableListOf<String?>()
+                    labels.add(null) // Header row
+                    albums.keys.forEach { albumName ->
+                        val ch = albumName.trim().firstOrNull()?.uppercaseChar() ?: '#'
+                        labels.add(if (ch in 'A'..'Z') ch.toString() else "#")
+                    }
+                    labels
                 }
-                provider
+                LibraryCategory.ARTISTS -> {
+                    val labels = mutableListOf<String?>()
+                    labels.add(null) // Header row
+                    artists.keys.forEach { artistName ->
+                        val ch = artistName.trim().firstOrNull()?.uppercaseChar() ?: '#'
+                        labels.add(if (ch in 'A'..'Z') ch.toString() else "#")
+                    }
+                    labels
+                }
+                else -> emptyList()
             }
-            else -> null
+        }
+    }
+
+    val fastScrollAlphabetProvider: ((Int) -> String?)? = remember(isAlphabeticalSort, indexedAlphabetLabels) {
+        if (!isAlphabeticalSort || indexedAlphabetLabels.isEmpty()) {
+            null
+        } else {
+            { idx: Int -> indexedAlphabetLabels.getOrNull(idx) }
         }
     }
 
@@ -719,7 +757,7 @@ fun LibraryScreen(
                                     }
                                 }
 
-                                items(songsForLetter, key = { it.id }, contentType = { "song_item" }) { song ->
+                                items(songsForLetter, key = { "${it.id}_${it.path.hashCode()}" }, contentType = { "song_item" }) { song ->
                                     Box {
                                         SongItem(
                                             song = song,
@@ -772,7 +810,7 @@ fun LibraryScreen(
                                 }
                             }
                         } else {
-                            items(processedSongs, key = { it.id }, contentType = { "song_item" }) { song ->
+                            items(processedSongs, key = { "${it.id}_${it.path.hashCode()}" }, contentType = { "song_item" }) { song ->
                                 Box {
                                     SongItem(
                                         song = song,

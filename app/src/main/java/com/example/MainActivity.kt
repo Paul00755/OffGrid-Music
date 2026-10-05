@@ -113,6 +113,15 @@ class MainActivity : ComponentActivity() {
                 val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsState()
                 val playlistsLayout by viewModel.playlistsLayout.collectAsState()
 
+                val userAccount by viewModel.userAccount.collectAsState()
+                val effectiveDisplayName by viewModel.effectiveDisplayName.collectAsState()
+                val customAvatarUri by viewModel.customAvatarUri.collectAsState()
+                val customDisplayName by viewModel.customDisplayName.collectAsState()
+                val showAuthScreen by viewModel.showAuthScreen.collectAsState()
+                val showAccountScreen by viewModel.showAccountScreen.collectAsState()
+                val authUiState by viewModel.authUiState.collectAsState()
+                val syncStatus by viewModel.syncStatus.collectAsState()
+
                 var backPressedTime by remember { mutableLongStateOf(0L) }
                 var songForAddToPlaylist by remember { mutableStateOf<com.example.data.model.Song?>(null) }
                 var songForTagEditing by remember { mutableStateOf<com.example.data.model.Song?>(null) }
@@ -150,6 +159,10 @@ class MainActivity : ComponentActivity() {
                     val selectedSmartVal = viewModel.selectedSmartPlaylist.value
                     if (showNowPlaying) {
                         viewModel.showNowPlaying.value = false
+                    } else if (showAuthScreen) {
+                        viewModel.closeAuthScreen()
+                    } else if (showAccountScreen) {
+                        viewModel.closeAccountScreen()
                     } else if (selectedPlaylistVal != null) {
                         viewModel.selectPlaylist(null)
                     } else if (selectedSmartVal != null) {
@@ -159,7 +172,9 @@ class MainActivity : ComponentActivity() {
                     } else if (librarySearchQuery.isNotEmpty()) {
                         viewModel.librarySearchQuery.value = ""
                     } else if (selectedTab != NavTab.HOME) {
-                        viewModel.selectedTab.value = NavTab.HOME
+                        if (!viewModel.navigateBackTab()) {
+                            viewModel.selectedTab.value = NavTab.HOME
+                        }
                     } else {
                         val currentTime = System.currentTimeMillis()
                         if (currentTime - backPressedTime < 2000) {
@@ -234,7 +249,12 @@ class MainActivity : ComponentActivity() {
                                             .widthIn(max = 680.dp)
                                             .fillMaxWidth()
                                     ) {
-                                        if (playbackState.currentSong != null) {
+                                        val shouldShowMiniPlayer = playbackState.currentSong != null &&
+                                            !showAccountScreen &&
+                                            !showAuthScreen &&
+                                            selectedTab != NavTab.SETTINGS
+
+                                        if (shouldShowMiniPlayer) {
                                             val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsState()
                                             val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
                                             val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
@@ -262,9 +282,11 @@ class MainActivity : ComponentActivity() {
                                             selectedTab = selectedTab,
                                             playbackState = playbackState,
                                             onTabSelected = {
+                                                viewModel.closeAccountScreen()
+                                                viewModel.closeAuthScreen()
                                                 viewModel.selectPlaylist(null)
                                                 viewModel.selectSmartPlaylist(null)
-                                                viewModel.selectedTab.value = it
+                                                viewModel.navigateToTab(it)
                                             },
                                             onTogglePlayPause = { viewModel.togglePlayPause() },
                                             onOpenNowPlaying = { viewModel.showNowPlaying.value = true }
@@ -368,16 +390,16 @@ class MainActivity : ComponentActivity() {
                                             onPlaySongQueue = { song, queue -> viewModel.playSong(song, queue) },
                                             onTogglePlayPause = { viewModel.togglePlayPause() },
                                             onQuickShuffle = { viewModel.shuffleAndPlay() },
-                                            onScanClick = { viewModel.scanLibrary() },
+                                            onScanClick = { viewModel.quickScanAndCleanLibrary() },
                                             onFavoriteToggle = { viewModel.toggleFavorite(it) },
                                             onOpenNowPlaying = { viewModel.showNowPlaying.value = true },
                                             onOpenSettings = { section -> viewModel.openSettings(section) },
-                                            onOpenFavorites = { viewModel.selectedTab.value = NavTab.FAVORITES },
-                                            onOpenRecentlyPlayed = { viewModel.selectedTab.value = NavTab.RECENTLY_PLAYED },
-                                            onOpenStatsDetail = { viewModel.selectedTab.value = NavTab.STATS_DETAIL },
-                                            onOpenLibrary = { viewModel.selectedTab.value = NavTab.LIBRARY },
-                                            onOpenPlaylists = { viewModel.selectedTab.value = NavTab.PLAYLISTS },
-                                            onOpenSearch = { viewModel.selectedTab.value = NavTab.SEARCH },
+                                            onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
+                                            onOpenRecentlyPlayed = { viewModel.navigateToTab(NavTab.RECENTLY_PLAYED) },
+                                            onOpenStatsDetail = { viewModel.navigateToTab(NavTab.STATS_DETAIL) },
+                                            onOpenLibrary = { viewModel.navigateToTab(NavTab.LIBRARY) },
+                                            onOpenPlaylists = { viewModel.navigateToTab(NavTab.PLAYLISTS) },
+                                            onOpenSearch = { viewModel.navigateToTab(NavTab.SEARCH) },
                                             onSelectPlaylist = { viewModel.selectPlaylist(it) },
                                             onPlayNext = { viewModel.playNext(it) },
                                             onAddToQueue = { viewModel.addToQueue(it) },
@@ -394,7 +416,13 @@ class MainActivity : ComponentActivity() {
                                             speedDialSongs = speedDialSongs,
                                             onRefreshSpeedDial = { viewModel.refreshSpeedDial() },
                                             homeSections = homeSections,
-                                            playbackPositionFlow = viewModel.playbackPositionMs
+                                            playbackPositionFlow = viewModel.playbackPositionMs,
+                                            userAccount = userAccount,
+                                            effectiveDisplayName = effectiveDisplayName,
+                                            customAvatarUri = customAvatarUri,
+                                            onOpenAccount = { viewModel.openAccountScreen() },
+                                            onOpenAuth = { viewModel.openAuthScreen() },
+                                            onSignOut = { viewModel.signOut() }
                                          )
                                         NavTab.LIBRARY -> LibraryScreen(
                                             allSongs = allSongs,
@@ -404,10 +432,10 @@ class MainActivity : ComponentActivity() {
                                             onSongClick = { viewModel.playSong(it) },
                                             onPlayQueue = { queue, idx -> queue.getOrNull(idx)?.let { viewModel.playSong(it, queue) } },
                                             onFavoriteToggle = { viewModel.toggleFavorite(it) },
-                                            onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
-                                            onOpenSettings = { viewModel.selectedTab.value = NavTab.SETTINGS },
-                                            onOpenFavorites = { viewModel.selectedTab.value = NavTab.FAVORITES },
-                                            onOpenSearch = { viewModel.selectedTab.value = NavTab.SEARCH },
+                                            onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
+                                            onOpenSettings = { viewModel.openSettings() },
+                                            onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
+                                            onOpenSearch = { viewModel.navigateToTab(NavTab.SEARCH) },
                                             initialSortOption = librarySortOption,
                                             initialSortAscending = librarySortAscending,
                                             onSortChanged = { option, ascending -> viewModel.updateLibrarySort(option, ascending) },
@@ -468,10 +496,10 @@ class MainActivity : ComponentActivity() {
                                                         viewModel.selectPlaylist(importedPlaylist ?: com.example.data.model.Playlist(id = playlistId, name = name, songCount = songs.size))
                                                     }
                                                 },
-                                                onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
-                                                onOpenSearch = { viewModel.selectedTab.value = NavTab.SEARCH },
-                                                onOpenFavorites = { viewModel.selectedTab.value = NavTab.FAVORITES },
-                                                onOpenSettings = { viewModel.selectedTab.value = NavTab.SETTINGS },
+                                                onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
+                                                onOpenSearch = { viewModel.navigateToTab(NavTab.SEARCH) },
+                                                onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
+                                                onOpenSettings = { viewModel.openSettings() },
                                                 playlistsLayout = playlistsLayout
                                             )
                                         }
@@ -493,9 +521,13 @@ class MainActivity : ComponentActivity() {
                                             onAddToPlaylist = { songForAddToPlaylist = it },
                                             onDeleteSong = { song -> executeDeleteSong(song) },
                                             onEditTags = { songForTagEditing = it },
-                                            onOpenSettings = { viewModel.selectedTab.value = NavTab.SETTINGS },
-                                            onOpenFavorites = { viewModel.selectedTab.value = NavTab.FAVORITES },
-                                            onBackClick = { viewModel.selectedTab.value = NavTab.HOME }
+                                            onOpenSettings = { viewModel.openSettings() },
+                                            onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
+                                            onBackClick = {
+                                                if (!viewModel.navigateBackTab()) {
+                                                    viewModel.selectedTab.value = NavTab.HOME
+                                                }
+                                            }
                                         )
                                         NavTab.FAVORITES -> FavoritesScreen(
                                             favoriteSongs = favoriteSongs,
@@ -513,7 +545,12 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             },
                                             onClearAllFavorites = { viewModel.clearAllFavorites() },
-                                            onExploreLibrary = { viewModel.selectedTab.value = NavTab.LIBRARY },
+                                            onExploreLibrary = { viewModel.navigateToTab(NavTab.LIBRARY) },
+                                            onBackClick = {
+                                                if (!viewModel.navigateBackTab()) {
+                                                    viewModel.selectedTab.value = NavTab.HOME
+                                                }
+                                            },
                                             onPlayNext = { viewModel.playNext(it) },
                                             onAddToQueue = { viewModel.addToQueue(it) },
                                             onAddToPlaylist = { songForAddToPlaylist = it },
@@ -536,14 +573,14 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             },
                                             onClearHistory = { viewModel.clearRecentlyPlayed() },
-                                            onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
+                                            onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
                                             onPlayNext = { viewModel.playNext(it) },
                                             onAddToQueue = { viewModel.addToQueue(it) },
                                             onAddToPlaylist = { songForAddToPlaylist = it },
                                             onDeleteSong = { song -> executeDeleteSong(song) },
                                             onEditTags = { songForTagEditing = it },
                                             dailyStats = dailyStats7Days,
-                                            onOpenStatsDetail = { viewModel.selectedTab.value = NavTab.STATS_DETAIL }
+                                            onOpenStatsDetail = { viewModel.navigateToTab(NavTab.STATS_DETAIL) }
                                         )
                                         NavTab.STATS_DETAIL -> ListeningStatsDetailScreen(
                                             playbackState = playbackState,
@@ -557,198 +594,72 @@ class MainActivity : ComponentActivity() {
                                             getTopAlbumsSince = { start, limit -> viewModel.getTopAlbumsBetween(start, limit = limit) },
                                             onSongClick = { viewModel.playSong(it) },
                                             onPlayQueue = { song, queue -> viewModel.playSong(song, queue, sourceContext = "STATS_DETAIL") },
-                                            onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
-                                            onOpenRecentlyPlayed = { viewModel.selectedTab.value = NavTab.RECENTLY_PLAYED },
+                                            onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
+                                            onOpenRecentlyPlayed = { viewModel.navigateToTab(NavTab.RECENTLY_PLAYED) },
                                             loadWrappedData = { start, end -> viewModel.getWrappedDataForPeriod(start, end) }
                                         )
                                          NavTab.SETTINGS -> {
-                                            val reduceVolumeOnNotification by viewModel.reduceVolumeOnNotification.collectAsState()
-                                            val waveformStyle by viewModel.waveformStyle.collectAsState()
-                                            val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsState()
-                                            val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
-                                            val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
-                                            val themeMode by viewModel.themeMode.collectAsState()
-                                            val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
-                                            val normalizeAudio by viewModel.normalizeAudio.collectAsState()
-                                            val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
-                                            val fadeInOutMs by viewModel.fadeInOutMs.collectAsState()
-                                            val crossfadeDurationSec by viewModel.crossfadeDurationSec.collectAsState()
-                                            val shakeToSkip by viewModel.shakeToSkip.collectAsState()
-                                            val keepScreenAwake by viewModel.keepScreenAwake.collectAsState()
-                                            val audioBalance by viewModel.audioBalance.collectAsState()
-                                            val equalizerPreset by viewModel.equalizerPreset.collectAsState()
-                                            val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
-                                            val notificationEnabled by viewModel.notificationEnabled.collectAsState()
-
-                                            DisposableEffect(keepScreenAwake) {
-                                                if (keepScreenAwake) {
-                                                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                                                } else {
-                                                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                                                }
-                                                onDispose {
-                                                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                                                }
-                                            }
-
-                                            DisposableEffect(shakeToSkip) {
-                                                if (!shakeToSkip) return@DisposableEffect onDispose {}
-                                                val sensorManager = getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
-                                                val accelerometer = sensorManager?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
-                                                var lastShakeTime = 0L
-
-                                                val listener = object : android.hardware.SensorEventListener {
-                                                    override fun onSensorChanged(event: android.hardware.SensorEvent?) {
-                                                        if (event == null) return
-                                                        val x = event.values[0]
-                                                        val y = event.values[1]
-                                                        val z = event.values[2]
-                                                        val gForce = Math.sqrt((x * x + y * y + z * z).toDouble()).toFloat() / android.hardware.SensorManager.GRAVITY_EARTH
-                                                        if (gForce > 2.4f) {
-                                                            val now = System.currentTimeMillis()
-                                                            if (now - lastShakeTime > 1200L) {
-                                                                lastShakeTime = now
-                                                                viewModel.playbackManager.skipToNext()
-                                                            }
-                                                        }
-                                                    }
-                                                    override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
-                                                }
-
-                                                if (sensorManager != null && accelerometer != null) {
-                                                    sensorManager.registerListener(listener, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_UI)
-                                                }
-
-                                                onDispose {
-                                                    sensorManager?.unregisterListener(listener)
-                                                }
-                                            }
-
-                                            SettingsScreen(
-                                                folders = allFolders,
-                                                sleepTimerState = sleepTimerState,
-                                                waveformStyle = waveformStyle,
-                                                onSetWaveformStyle = { viewModel.setWaveformStyle(it) },
-                                                themeMode = themeMode,
-                                                onSetThemeMode = { viewModel.setThemeMode(it) },
-                                                uiTheme = uiTheme,
-                                                onSetUiTheme = { viewModel.setUiTheme(it) },
-                                                homeScreenLayout = homeScreenLayout,
-                                                onSetHomeScreenLayout = { viewModel.setHomeScreenLayout(it) },
-                                                nowPlayingLayout = nowPlayingLayout,
-                                                onSetNowPlayingLayout = { viewModel.setNowPlayingLayout(it) },
-                                                playlistsLayout = playlistsLayout,
-                                                onSetPlaylistsLayout = { viewModel.setPlaylistsLayout(it) },
-                                                isDynamicArtworkTheme = isDynamicArtworkTheme,
-                                                onSetDynamicArtworkTheme = { viewModel.setDynamicArtworkTheme(it) },
-                                                fetchOnlineArtworkHighRes = viewModel.fetchOnlineArtworkHighRes.collectAsState().value,
-                                                onSetFetchOnlineArtworkHighRes = { viewModel.setFetchOnlineArtworkHighRes(it) },
-                                                cacheLyricsEnabled = viewModel.cacheLyricsEnabled.collectAsState().value,
-                                                onSetCacheLyricsEnabled = { viewModel.setCacheLyricsEnabled(it) },
-                                                onClearLyricsCache = { viewModel.clearLyricsCache() },
-                                                cacheAlbumArtEnabled = viewModel.cacheAlbumArtEnabled.collectAsState().value,
-                                                onSetCacheAlbumArtEnabled = { viewModel.setCacheAlbumArtEnabled(it) },
-                                                onClearAlbumArtCache = { viewModel.clearAlbumArtCache() },
-                                                cacheSongArtWorkEnabled = viewModel.cacheSongArtWorkEnabled.collectAsState().value,
-                                                onSetCacheSongArtWorkEnabled = { viewModel.setCacheSongArtWorkEnabled(it) },
-                                                onClearSongArtCache = { viewModel.clearSongArtCache() },
-                                                lyricsCacheSize = viewModel.lyricsCacheSize.collectAsState().value,
-                                                albumArtCacheSize = viewModel.albumArtCacheSize.collectAsState().value,
-                                                songArtCacheSize = viewModel.songArtCacheSize.collectAsState().value,
-                                                totalCacheSize = viewModel.totalCacheSize.collectAsState().value,
-                                                onRefreshCacheSizes = { viewModel.refreshCacheSizes() },
-                                                onClearAllCaches = { viewModel.clearAllCaches() },
-                                                databaseStorageTier = viewModel.databaseStorageTier.collectAsState().value,
-                                                onSetDatabaseStorageTier = { viewModel.setDatabaseStorageTier(it) },
-                                                databaseStorageStats = viewModel.databaseStorageStats.collectAsState().value,
-                                                isOptimizingDatabase = viewModel.isOptimizingDatabase.collectAsState().value,
-                                                onOptimizeDatabase = { onComplete -> viewModel.optimizeDatabase(onComplete) },
-                                                onExportDatabaseBackup = { onComplete -> viewModel.exportDatabaseBackup(onComplete) },
-                                                onImportDatabaseBackup = { json, onComplete -> viewModel.importDatabaseBackup(json, onComplete) },
-                                                onRefreshDatabaseStats = { viewModel.refreshDatabaseStats() },
-                                                customEqBands = viewModel.customEqBands.collectAsState().value,
-                                                onSetCustomEqBands = { viewModel.setCustomEqBands(it) },
-                                                customBassBoost = viewModel.customBassBoost.collectAsState().value,
-                                                onSetCustomBassBoost = { viewModel.setCustomBassBoost(it) },
-                                                customVirtualizer = viewModel.customVirtualizer.collectAsState().value,
-                                                onSetCustomVirtualizer = { viewModel.setCustomVirtualizer(it) },
-                                                customAccentColor = customAccentColor,
-                                                onSetCustomAccentColor = { viewModel.setCustomAccentColor(it) },
-                                                accentColorPreset = accentColorPreset,
-                                                onSetAccentColorPreset = { viewModel.setAccentColorPreset(it) },
-                                                miniPlayerStyle = viewModel.miniPlayerStyle.collectAsState().value,
-                                                onSetMiniPlayerStyle = { viewModel.setMiniPlayerStyle(it) },
-                                                miniPlayerShowPrevious = miniPlayerShowPrevious,
-                                                onSetMiniPlayerShowPrevious = { viewModel.setMiniPlayerShowPrevious(it) },
-                                                miniPlayerShowNext = miniPlayerShowNext,
-                                                onSetMiniPlayerShowNext = { viewModel.setMiniPlayerShowNext(it) },
-                                                miniPlayerShowFavorite = miniPlayerShowFavorite,
-                                                onSetMiniPlayerShowFavorite = { viewModel.setMiniPlayerShowFavorite(it) },
-                                                gaplessPlayback = gaplessPlayback,
-                                                onSetGaplessPlayback = { viewModel.setGaplessPlayback(it) },
-                                                normalizeAudio = normalizeAudio,
-                                                onSetNormalizeAudio = { viewModel.setNormalizeAudio(it) },
-                                                autoPlayOnHeadphoneConnection = viewModel.autoPlayOnHeadphoneConnection.collectAsState().value,
-                                                onSetAutoPlayOnHeadphoneConnection = { viewModel.setAutoPlayOnHeadphoneConnection(it) },
-                                                pauseOnZeroVolume = pauseOnZeroVolume,
-                                                onSetPauseOnZeroVolume = { viewModel.setPauseOnZeroVolume(it) },
-                                                autoResumeOnVolumeIncrease = viewModel.autoResumeOnVolumeIncrease.collectAsState().value,
-                                                onSetAutoResumeOnVolumeIncrease = { viewModel.setAutoResumeOnVolumeIncrease(it) },
-                                                fadeInOutMs = fadeInOutMs,
-                                                onSetFadeInOutMs = { viewModel.setFadeInOutMs(it) },
-                                                crossfadeDurationSec = crossfadeDurationSec,
-                                                onSetCrossfadeDurationSec = { viewModel.setCrossfadeDurationSec(it) },
-                                                ignoreAudioDuration = viewModel.ignoreAudioDuration.collectAsState().value,
-                                                onSetIgnoreAudioDuration = { viewModel.setIgnoreAudioDuration(it) },
-                                                fadeInMs = viewModel.fadeInMs.collectAsState().value,
-                                                onSetFadeInMs = { viewModel.setFadeInMs(it) },
-                                                fadeOutMs = viewModel.fadeOutMs.collectAsState().value,
-                                                onSetFadeOutMs = { viewModel.setFadeOutMs(it) },
-                                                shakeToSkip = shakeToSkip,
-                                                onSetShakeToSkip = { viewModel.setShakeToSkip(it) },
-                                                keepScreenAwake = keepScreenAwake,
-                                                onSetKeepScreenAwake = { viewModel.setKeepScreenAwake(it) },
-                                                audioBalance = audioBalance,
-                                                onSetAudioBalance = { viewModel.setAudioBalance(it) },
-                                                equalizerPreset = equalizerPreset,
-                                                onSetEqualizerPreset = { viewModel.setEqualizerPreset(it) },
-                                                lyricsAutoScroll = lyricsAutoScroll,
-                                                onSetLyricsAutoScroll = { viewModel.setLyricsAutoScroll(it) },
-                                                reduceVolumeOnNotification = reduceVolumeOnNotification,
-                                                onSetReduceVolumeOnNotification = { viewModel.setReduceVolumeOnNotification(it) },
-                                                onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
-                                                onRemoveFolder = { viewModel.removeFolder(it) },
-                                                 scrobbleThresholdType = viewModel.scrobbleThresholdType.collectAsState().value,
-                                                 onSetScrobbleThresholdType = { viewModel.setScrobbleThresholdType(it) },
-                                                 scrobbleThresholdValue = viewModel.scrobbleThresholdValue.collectAsState().value,
-                                                 onSetScrobbleThresholdValue = { viewModel.setScrobbleThresholdValue(it) },
+                                             com.example.ui.screens.SettingsTabRoute(
+                                                 viewModel = viewModel,
+                                                 allFolders = allFolders,
+                                                 sleepTimerState = sleepTimerState,
+                                                 scanProgress = scanProgress,
+                                                 userAccount = userAccount,
+                                                 effectiveDisplayName = effectiveDisplayName,
+                                                 customAvatarUri = customAvatarUri,
+                                                 syncStatus = syncStatus,
+                                                 uiTheme = uiTheme,
+                                                 homeScreenLayout = homeScreenLayout,
+                                                 nowPlayingLayout = nowPlayingLayout,
+                                                 playlistsLayout = playlistsLayout,
+                                                 isDynamicArtworkTheme = isDynamicArtworkTheme,
+                                                 customAccentColor = customAccentColor,
+                                                 accentColorPreset = accentColorPreset,
                                                  recentSearches = recentSearches,
-                                                 onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
-                                                 onClearRecentSearches = { viewModel.clearRecentSearches() },
-                                                onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
-                                                onStartSongCountTimer = { viewModel.startSleepTimerSongs(it) },
-                                                onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
-                                                onCancelSleepTimer = { viewModel.cancelSleepTimer() },
-                                                onScanLibrary = { viewModel.scanLibrary() },
-                                                onQuickScanAndCleanLibrary = { viewModel.quickScanAndCleanLibrary() },
-                                                onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
-                                                highRefreshRate = viewModel.highRefreshRate.collectAsState().value,
-                                                onSetHighRefreshRate = { viewModel.setHighRefreshRate(it) },
-                                                alwaysShuffleMode = viewModel.alwaysShuffleMode.collectAsState().value,
-                                                onSetAlwaysShuffleMode = { viewModel.setAlwaysShuffleMode(it) },
-                                                gesturePlaybackEnabled = viewModel.gesturePlaybackEnabled.collectAsState().value,
-                                                onSetGesturePlaybackEnabled = { viewModel.setGesturePlaybackEnabled(it) },
-                                                homeSections = homeSections,
-                                                onSetHomeSections = { viewModel.setHomeSections(it) },
-                                                addToQueuePosition = viewModel.addToQueuePosition.collectAsState().value,
-                                                onSetAddToQueuePosition = { viewModel.setAddToQueuePosition(it) },
-                                                playlistAddSongPosition = viewModel.playlistAddSongPosition.collectAsState().value,
-                                                onSetPlaylistAddSongPosition = { viewModel.setPlaylistAddSongPosition(it) },
-                                                scanProgress = scanProgress,
-                                                initialTargetSection = viewModel.settingsTargetSection.collectAsState().value
-                                            )
-                                        }
+                                                 homeSections = homeSections
+                                             )
+                                         }
                                     }
+                                }
+
+                                if (showAuthScreen) {
+                                    val passwordResetState by viewModel.passwordResetState.collectAsState()
+                                    com.example.ui.screens.AuthScreen(
+                                        authUiState = authUiState,
+                                        passwordResetState = passwordResetState,
+                                        onSignInWithGoogle = { activity -> viewModel.signInWithGoogle(activity) },
+                                        onSignInWithEmail = { e, p -> viewModel.signInWithEmail(e, p) },
+                                        onSignUpWithEmail = { e, p, n -> viewModel.signUpWithEmail(e, p, n) },
+                                        onForgotPassword = { e -> viewModel.sendPasswordReset(e) },
+                                        onDismissPasswordReset = { viewModel.resetPasswordResetState() },
+                                        onContinueWithoutSignUp = { viewModel.continueWithoutSignUp() },
+                                        onDismissError = { viewModel.resetAuthUiState() },
+                                        onBackClick = { viewModel.closeAuthScreen() }
+                                    )
+                                }
+
+                                if (showAccountScreen) {
+                                    com.example.ui.screens.AccountScreen(
+                                        userAccount = userAccount,
+                                        customDisplayName = customDisplayName,
+                                        customAvatarUri = customAvatarUri,
+                                        effectiveDisplayName = effectiveDisplayName,
+                                        syncStatus = syncStatus,
+                                        backupStatus = viewModel.backupStatus.collectAsState().value,
+                                        lastSyncedTimestamp = viewModel.lastSyncedTimestamp.collectAsState().value,
+                                        lastBackupTimestamp = viewModel.lastBackupTimestamp.collectAsState().value,
+                                        automaticBackupEnabled = viewModel.automaticBackupEnabled.collectAsState().value,
+                                        backupFrequency = viewModel.backupFrequency.collectAsState().value,
+                                        onToggleAutomaticBackup = { viewModel.setAutomaticBackupEnabled(it) },
+                                        onSelectFrequency = { viewModel.setBackupFrequency(it) },
+                                        onSyncNow = { viewModel.triggerCloudSync() },
+                                        onBackupNow = { viewModel.triggerBackupNow() },
+                                        onOpenAuth = { viewModel.openAuthScreen() },
+                                        onUpdateDisplayName = { viewModel.updateUserDisplayName(it) },
+                                        onUpdateAvatar = { viewModel.updateProfileAvatar(it) },
+                                        onSignOut = { viewModel.signOut() },
+                                        onBackClick = { viewModel.closeAccountScreen() }
+                                    )
                                 }
                             }
                         }
@@ -764,6 +675,13 @@ class MainActivity : ComponentActivity() {
                             val keepScreenAwakeSetting by viewModel.keepScreenAwake.collectAsState()
                             val gesturePlaybackEnabled by viewModel.gesturePlaybackEnabled.collectAsState()
                             val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
+                            val isTranscribeTranslateEnabled by viewModel.isTranscribeTranslateEnabled.collectAsState()
+                            val audioTranscribeMode by viewModel.audioTranscribeMode.collectAsState()
+                            val audioTranscribeTargetLang by viewModel.audioTranscribeTargetLang.collectAsState()
+                            val isTranscribingLyrics by viewModel.isTranscribingLyrics.collectAsState()
+                            val transcribeStatusMessage by viewModel.transcribeStatusMessage.collectAsState()
+                            val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsState()
+                            val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsState()
                             NowPlayingScreen(
                                 playbackState = playbackState,
                                 currentLyrics = currentLyrics,
@@ -824,7 +742,21 @@ class MainActivity : ComponentActivity() {
                                 onSearchLyricsCandidates = { query, force -> viewModel.searchLyricsCandidates(query, force) },
                                 lyricsSearchResults = viewModel.lyricsSearchResults.collectAsState().value,
                                 isSearchingLyrics = viewModel.isSearchingLyrics.collectAsState().value,
-                                onApplyLyricsCandidate = { viewModel.applySelectedLyrics(it) }
+                                onApplyLyricsCandidate = { viewModel.applySelectedLyrics(it) },
+                                isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                                audioTranscribeMode = audioTranscribeMode,
+                                audioTranscribeTargetLang = audioTranscribeTargetLang,
+                                isTranscribingLyrics = isTranscribingLyrics,
+                                transcribeStatusMessage = transcribeStatusMessage,
+                                transcribeErrorMessage = transcribeErrorMessage,
+                                canUndoLyrics = canUndoLyrics,
+                                transcribeLyricsPreview = viewModel.transcribeLyricsPreview.collectAsState().value,
+                                onSaveTranscribedLyrics = { preview -> viewModel.saveTranscribedLyrics(preview) },
+                                onDiscardTranscribedLyrics = { viewModel.discardTranscribedLyrics() },
+                                onTranslateLyrics = { song, lang -> viewModel.translateLyricsForSong(song, lang) },
+                                onTranscribeAudio = { song, lang -> viewModel.transcribeAudioForSong(song, lang) },
+                                onUndoLyricsChanges = { songId -> viewModel.undoLyricsChanges(songId) },
+                                onClearTranscribeError = { viewModel.clearTranscribeError() }
                             )
                         }
 

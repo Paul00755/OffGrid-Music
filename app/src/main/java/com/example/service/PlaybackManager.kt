@@ -60,6 +60,8 @@ class PlaybackManager(
 
     init {
         activeInstance = this
+        sleepTimerManager.isPlaybackActive = { player.isPlaying }
+        sleepTimerManager.onTimerExpired = { handleSleepTimerExpired() }
     }
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
     val stereoBalanceProcessor = StereoBalanceAudioProcessor()
@@ -125,6 +127,7 @@ class PlaybackManager(
                     .build(),
                 false
             )
+            setHandleAudioBecomingNoisy(true)
             playWhenReady = true
         }
 
@@ -300,6 +303,7 @@ class PlaybackManager(
                 } catch (_: Exception) {}
                 updateNotificationLayout()
                 MusicPlaybackService.instance?.triggerNotificationUpdate()
+                com.example.widget.WidgetBitmapRenderer.invalidateSong(songId)
                 com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
         }
@@ -485,6 +489,9 @@ class PlaybackManager(
                     }
                     startProgressTracker()
                 } else {
+                    if (isCrossfadeTransitioning) {
+                        cancelCrossfade(resetVolume = true)
+                    }
                     val curPos = if (player.currentPosition >= 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
                     currentPositionMs = curPos
                     _playbackPositionMs.value = curPos
@@ -511,27 +518,49 @@ class PlaybackManager(
                 hasTriggeredCrossfadeTransition = false
                 if (targetMediaId != null) {
                     audioNormalizerProcessor.setTrack(targetMediaId)
-                    crossfadeNormalizerProcessor.setTrack(targetMediaId)
+                    if (!wasCrossfading) {
+                        crossfadeNormalizerProcessor.setTrack(targetMediaId)
+                    }
                 } else {
                     audioNormalizerProcessor.resetNormalizer()
-                    crossfadeNormalizerProcessor.resetNormalizer()
+                    if (!wasCrossfading) {
+                        crossfadeNormalizerProcessor.resetNormalizer()
+                    }
                 }
                 flushSession(isFinal = true)
                 
+                val isNaturalTransition = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
-                    val transitionFadeMs = if (fadeInMs > 0) fadeInMs else 0
-                    if (transitionFadeMs > 0) {
-                        performVolumeRampUp(transitionFadeMs, startVolume = 0.0f, targetVolume = 1.0f)
+                    // Critical fix for smooth transition without volume changes:
+                    // Natural transitions (REASON_AUTO or REASON_REPEAT) must NEVER ramp volume down or up!
+                    // Full volume (1.0f) is maintained continuously.
+                    if (!isNaturalTransition && fadeInMs > 0) {
+                        performVolumeRampUp(fadeInMs, startVolume = 0.0f, targetVolume = 1.0f)
                     } else {
                         fadeJob?.cancel()
                         fadeJob = null
                         player.volume = 1.0f
                     }
+
+                    // Gapless vs Non-Gapless Playback:
+                    // When gapless is disabled and a natural transition occurs, insert a clean 250ms inter-track pause
+                    if (!gaplessPlayback && isNaturalTransition) {
+                        try {
+                            player.pause()
+                            scope.launch(Dispatchers.Main) {
+                                delay(250)
+                                if (_playbackState.value.isPlaying || player.playWhenReady) {
+                                    player.play()
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
 
                 val queue = _playbackState.value.queue
                 val playerIdx = player.currentMediaItemIndex
-                val index = if (playerIdx in queue.indices && (targetMediaId == null || queue[playerIdx].id == targetMediaId)) {
+                val index = if (playerIdx in queue.indices) {
                     playerIdx
                 } else if (targetMediaId != null) {
                     val foundIndex = queue.indexOfFirst { it.id == targetMediaId }
@@ -554,18 +583,22 @@ class PlaybackManager(
                         newTrackId = newSongId,
                         oldSessionId = oldSession?.sessionId
                     )
-                } else {
-                    if (oldSession != null) {
-                        sleepTimerManager.onSongFinished(oldSession.trackId, isQualified = isOldQualified, sessionId = oldSession.sessionId)
-                    }
-                    false
-                }
+                } else false
 
-                if (isTrackSleepFinalStop) {
-                    android.util.Log.d("SleepTimer", "G becomes current → position 0:00")
-                    android.util.Log.d("SleepTimer", "Playback stopped")
+                val isTimeSleepFinalStop = if (sleepState.isActive && sleepState.mode == "TIME" && sleepState.finishLastSong) {
+                    sleepState.isWaitingForCurrentTrackToEnd || sleepState.remainingSeconds <= 0L
+                } else false
+
+                if (isTrackSleepFinalStop || isTimeSleepFinalStop) {
+                    if (isTimeSleepFinalStop) {
+                        android.util.Log.d("SleepTimer", "TIME mode finishLastTrack: current track completed → transitioning to next track ($newSongId) at 0:00 and stopping")
+                        sleepTimerManager.cancelTimer()
+                    } else {
+                        android.util.Log.d("SleepTimer", "G becomes current → position 0:00")
+                        android.util.Log.d("SleepTimer", "Playback stopped")
+                    }
                     cancelCrossfade(resetVolume = true)
-                    // Update state to the new song (Song G) so Now Playing screen transits to Song G
+                    // Update state to the new song so Now Playing screen transits to it
                     if (index in queue.indices) {
                         val song = queue[index]
                         _playbackState.value = _playbackState.value.copy(
@@ -611,7 +644,9 @@ class PlaybackManager(
                 if (index in queue.indices) {
                     val song = queue[index]
                     audioNormalizerProcessor.setTrack(song.id, song.path)
-                    crossfadeNormalizerProcessor.setTrack(song.id, song.path)
+                    if (!wasCrossfading) {
+                        crossfadeNormalizerProcessor.setTrack(song.id, song.path)
+                    }
                     if (isRestoringPlayback) {
                         return
                     }
@@ -694,8 +729,15 @@ class PlaybackManager(
                                     player.volume = 1.0f
                                 } catch (_: Exception) {}
                             }
-                        } else {
-                            sleepTimerManager.onSongFinished(finishedSongId, isQualified = isQualified, sessionId = session?.sessionId)
+                        } else if (sleepState.isActive && sleepState.mode == "TIME") {
+                            sleepTimerManager.cancelTimer()
+                            sleepTimerStopped = true
+                            try {
+                                player.pause()
+                                player.playWhenReady = false
+                                player.seekTo(player.currentMediaItemIndex, 0L)
+                                player.volume = 1.0f
+                            } catch (_: Exception) {}
                         }
                         flushSession(isFinal = true)
 
@@ -850,7 +892,26 @@ class PlaybackManager(
         val isCurrentlyPlaying = player.isPlaying || _playbackState.value.isPlaying
 
         val playerMediaIndex = player.currentMediaItemIndex
-        val newIndex = if (playerMediaIndex in newQueue.indices && currentSong != null && newQueue[playerMediaIndex].id == currentSong.id) {
+
+        // Tag each occurrence with an occurrence counter so duplicate song instances have distinct tokens
+        fun tagQueue(q: List<Song>): List<Pair<Long, Int>> {
+            val map = mutableMapOf<Long, Int>()
+            return q.map { s ->
+                val count = map.getOrDefault(s.id, 0)
+                map[s.id] = count + 1
+                Pair(s.id, count)
+            }
+        }
+
+        val currentTagged = tagQueue(currentQueue)
+        val newTagged = tagQueue(newQueue)
+
+        val currentToken = if (playerMediaIndex in currentTagged.indices) currentTagged[playerMediaIndex] else null
+        val tokenNewIndex = if (currentToken != null) newTagged.indexOf(currentToken) else -1
+
+        val newIndex = if (tokenNewIndex >= 0) {
+            tokenNewIndex
+        } else if (playerMediaIndex in newQueue.indices && currentSong != null && newQueue[playerMediaIndex].id == currentSong.id) {
             playerMediaIndex
         } else if (currentSong != null) {
             val idx = newQueue.indexOfFirst { it.id == currentSong.id }
@@ -873,25 +934,14 @@ class PlaybackManager(
                     currentCounts == newCounts)
 
             if (isSameMultiset) {
-                // Tag each occurrence with an occurrence counter so duplicate song instances have distinct tokens
-                fun tagQueue(q: List<Song>): List<Pair<Long, Int>> {
-                    val map = mutableMapOf<Long, Int>()
-                    return q.map { s ->
-                        val count = map.getOrDefault(s.id, 0)
-                        map[s.id] = count + 1
-                        Pair(s.id, count)
-                    }
-                }
-
-                val currentTagged = tagQueue(currentQueue).toMutableList()
-                val newTagged = tagQueue(newQueue)
+                val currentTaggedMutable = currentTagged.toMutableList()
 
                 for (targetIdx in newTagged.indices) {
                     val targetToken = newTagged[targetIdx]
-                    val currIdx = currentTagged.indexOf(targetToken)
+                    val currIdx = currentTaggedMutable.indexOf(targetToken)
                     if (currIdx != -1 && currIdx != targetIdx) {
-                        currentTagged.removeAt(currIdx)
-                        currentTagged.add(targetIdx, targetToken)
+                        currentTaggedMutable.removeAt(currIdx)
+                        currentTaggedMutable.add(targetIdx, targetToken)
                         player.moveMediaItem(currIdx, targetIdx)
                     }
                 }
@@ -1043,6 +1093,19 @@ class PlaybackManager(
             )
             updateNotificationLayout()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val curSong = _playbackState.value.currentSong
+                    val songDur = if (curSong != null && curSong.durationMs > 0L) curSong.durationMs else _playbackState.value.durationMs
+                    userPreferences.saveLastPlaybackState(
+                        songId = curSong?.id ?: 0L,
+                        position = player.currentPosition,
+                        queueIds = newQueue.map { it.id },
+                        queueIndex = newCurrentIndex,
+                        duration = songDur
+                    )
+                } catch (_: Exception) {}
+            }
         }
 
         return removedCount
@@ -1055,17 +1118,60 @@ class PlaybackManager(
     fun playNext(songs: List<Song>) {
         if (songs.isEmpty()) return
         val currentQueue = _playbackState.value.queue.toMutableList()
-        val insertIndex = if (currentQueue.isEmpty()) 0 else (_playbackState.value.queueIndex + 1).coerceAtMost(currentQueue.size)
+        val currentIndex = if (player.currentMediaItemIndex in currentQueue.indices) {
+            player.currentMediaItemIndex
+        } else if (_playbackState.value.queueIndex in currentQueue.indices) {
+            _playbackState.value.queueIndex
+        } else {
+            -1
+        }
+        val insertIndex = if (currentQueue.isEmpty()) {
+            0
+        } else if (currentIndex >= 0) {
+            (currentIndex + 1).coerceAtMost(currentQueue.size)
+        } else {
+            currentQueue.size
+        }
 
         currentQueue.addAll(insertIndex, songs)
         val mediaItems = songs.map { buildMediaItem(it) }
         player.addMediaItems(insertIndex, mediaItems)
 
+        if (originalQueue.isNotEmpty()) {
+            val newOriginal = originalQueue.toMutableList()
+            val origIndex = if (currentIndex in originalQueue.indices && _playbackState.value.currentSong != null && originalQueue[currentIndex].id == _playbackState.value.currentSong?.id) {
+                currentIndex
+            } else if (_playbackState.value.currentSong != null) {
+                val found = newOriginal.indexOfFirst { it.id == _playbackState.value.currentSong?.id }
+                if (found >= 0) found else newOriginal.size
+            } else {
+                newOriginal.size
+            }
+            val origInsert = (origIndex + 1).coerceIn(0, newOriginal.size)
+            newOriginal.addAll(origInsert, songs)
+            originalQueue = newOriginal
+        } else {
+            originalQueue = currentQueue
+        }
+
+        val activeIndex = player.currentMediaItemIndex.takeIf { it in currentQueue.indices } ?: currentIndex.coerceAtLeast(0)
         _playbackState.value = _playbackState.value.copy(
             queue = currentQueue,
-            queueIndex = player.currentMediaItemIndex,
-            currentSong = currentQueue.getOrNull(player.currentMediaItemIndex)
+            queueIndex = activeIndex,
+            currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
+        scope.launch(Dispatchers.IO) {
+            try {
+                val curSong = _playbackState.value.currentSong
+                userPreferences.saveLastPlaybackState(
+                    songId = curSong?.id ?: 0L,
+                    position = player.currentPosition,
+                    queueIds = currentQueue.map { it.id },
+                    queueIndex = activeIndex,
+                    duration = _playbackState.value.durationMs
+                )
+            } catch (_: Exception) {}
+        }
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1082,10 +1188,16 @@ class PlaybackManager(
         if (songs.isEmpty()) return
         val currentQueue = _playbackState.value.queue.toMutableList()
         val insertAtTop = addToQueuePosition.equals("TOP_NEXT", ignoreCase = true)
-        val currentIndex = player.currentMediaItemIndex
+        val currentIndex = if (player.currentMediaItemIndex in currentQueue.indices) {
+            player.currentMediaItemIndex
+        } else if (_playbackState.value.queueIndex in currentQueue.indices) {
+            _playbackState.value.queueIndex
+        } else {
+            -1
+        }
 
-        val insertIndex = if (insertAtTop && currentIndex in currentQueue.indices && _playbackState.value.currentSong != null) {
-            currentIndex + 1
+        val insertIndex = if (insertAtTop && currentIndex >= 0 && _playbackState.value.currentSong != null) {
+            (currentIndex + 1).coerceAtMost(currentQueue.size)
         } else {
             currentQueue.size
         }
@@ -1105,9 +1217,16 @@ class PlaybackManager(
 
         if (originalQueue.isNotEmpty()) {
             val newOriginal = originalQueue.toMutableList()
-            val origCurrentIndex = newOriginal.indexOfFirst { it.id == _playbackState.value.currentSong?.id }
-            if (insertAtTop && origCurrentIndex in newOriginal.indices) {
-                newOriginal.addAll(origCurrentIndex + 1, songs)
+            val origIndex = if (currentIndex in originalQueue.indices && _playbackState.value.currentSong != null && originalQueue[currentIndex].id == _playbackState.value.currentSong?.id) {
+                currentIndex
+            } else if (_playbackState.value.currentSong != null) {
+                val found = newOriginal.indexOfFirst { it.id == _playbackState.value.currentSong?.id }
+                if (found >= 0) found else newOriginal.size
+            } else {
+                newOriginal.size
+            }
+            if (insertAtTop && origIndex in newOriginal.indices) {
+                newOriginal.addAll((origIndex + 1).coerceIn(0, newOriginal.size), songs)
             } else {
                 newOriginal.addAll(songs)
             }
@@ -1116,11 +1235,24 @@ class PlaybackManager(
             originalQueue = currentQueue
         }
 
+        val activeIndex = player.currentMediaItemIndex.takeIf { it in currentQueue.indices } ?: currentIndex.coerceAtLeast(0)
         _playbackState.value = _playbackState.value.copy(
             queue = currentQueue,
-            queueIndex = player.currentMediaItemIndex,
-            currentSong = currentQueue.getOrNull(player.currentMediaItemIndex)
+            queueIndex = activeIndex,
+            currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
+        scope.launch(Dispatchers.IO) {
+            try {
+                val curSong = _playbackState.value.currentSong
+                userPreferences.saveLastPlaybackState(
+                    songId = curSong?.id ?: 0L,
+                    position = player.currentPosition,
+                    queueIds = currentQueue.map { it.id },
+                    queueIndex = activeIndex,
+                    duration = _playbackState.value.durationMs
+                )
+            } catch (_: Exception) {}
+        }
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1141,6 +1273,7 @@ class PlaybackManager(
         isRestoringPlayback = true
         currentPositionMs = safePos
         _playbackPositionMs.value = safePos
+        originalQueue = songs
 
         _playbackState.value = _playbackState.value.copy(
             queue = songs,
@@ -1279,6 +1412,7 @@ class PlaybackManager(
         forceShuffle: Boolean? = null
     ) {
         if (songs.isEmpty()) return
+        cancelCrossfade(resetVolume = true)
         startMusicPlaybackService()
         fadeJob?.cancel()
         fadeJob = null
@@ -1490,6 +1624,12 @@ class PlaybackManager(
             if (!autoPlayOnHeadphoneConnection) return@launch
             if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
+            // If the volume is set to zero, do NOT auto-play
+            if (isVolumeZero()) {
+                android.util.Log.d(TAG, "Volume is set to zero; skipping auto-play on headphone connection")
+                return@launch
+            }
+
             // If the device disconnects immediately, do not incorrectly start playback afterward
             if (!isDeviceStillPresent(key, type)) {
                 android.util.Log.d(TAG, "Device $deviceName disconnected immediately; aborting auto-play")
@@ -1513,6 +1653,11 @@ class PlaybackManager(
                 if (!autoPlayOnHeadphoneConnection) return@launch
                 if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
+                if (isVolumeZero()) {
+                    android.util.Log.d(TAG, "Volume is set to zero; skipping auto-play from broadcast")
+                    return@launch
+                }
+
                 resumePlaybackOnHeadphoneConnect()
             }
         }
@@ -1530,6 +1675,10 @@ class PlaybackManager(
     private fun resumePlaybackOnHeadphoneConnect() {
         try {
             if (player.isPlaying || _playbackState.value.isPlaying) return
+            if (isVolumeZero()) {
+                android.util.Log.d(TAG, "Volume is set to zero; skipping resumePlaybackOnHeadphoneConnect")
+                return
+            }
 
             if (player.mediaItemCount > 0) {
                 if (player.playbackState == Player.STATE_ENDED) {
@@ -1813,6 +1962,10 @@ class PlaybackManager(
         try {
             crossfadePlayer.stop()
             crossfadePlayer.clearMediaItems()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                currentPreferredDevice?.let { crossfadePlayer.setPreferredAudioDevice(it) }
+            }
+            crossfadeNormalizerProcessor.setTrack(currentSong.id, currentSong.path)
             val outgoingItem = buildMediaItem(currentSong)
             crossfadePlayer.setMediaItem(outgoingItem, currentPos)
             crossfadePlayer.volume = initialPlayerVol
@@ -1826,9 +1979,9 @@ class PlaybackManager(
 
         // Track B (incoming) begins immediately on player from 0:00, starting at volume 0.0f
         try {
+            audioNormalizerProcessor.setTrack(targetSong.id, targetSong.path)
             player.seekTo(targetIndex, 0L)
             player.volume = 0.0f
-            player.prepare()
             player.play()
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error advancing player to incoming track", e)
@@ -2209,7 +2362,9 @@ class PlaybackManager(
         progressUpdateJob = scope.launch(Dispatchers.Main) {
             try {
                 var lastWidgetSec = -1L
+                var inCrossfadeZone = false
                 while (player.isPlaying || (player.playWhenReady && player.playbackState == Player.STATE_BUFFERING)) {
+                    inCrossfadeZone = false
                     if (player.isPlaying) {
                         val currentPos = player.currentPosition
                         val rawDur = player.duration
@@ -2225,7 +2380,7 @@ class PlaybackManager(
                         val isRepeatOne = _playbackState.value.repeatMode == Player.REPEAT_MODE_ONE
                         val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
                         val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 2000L
-                        val inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
+                        inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
 
                         if (inCrossfadeZone && !hasTriggeredCrossfadeTransition && !isCrossfadeTransitioning) {
                             val nextIdx = if (player.hasNextMediaItem()) {
@@ -2275,20 +2430,10 @@ class PlaybackManager(
                                 }
                             }
                         }
-
-                        // Check if sleep timer is waiting for current track to reach complete duration in TIME mode
-                        if (sleepState.isActive) {
-                            val isWaitingInTime = (sleepState.mode == "TIME" && (sleepState.isWaitingForCurrentTrackToEnd || sleepState.remainingSeconds <= 0L))
-                            if (isWaitingInTime && totalDur > 0L && currentPos >= (totalDur - 350L)) {
-                                val currId = _playbackState.value.currentSong?.id
-                                val sess = activeSession
-                                val isQualified = sess?.let { it.scrobbleRecorded || it.sleepTimerDecremented || isSongQualified(it.accumulatedListenedMs, it.totalDurationMs) } ?: true
-                                sleepTimerManager.onSongFinished(currId, isQualified = isQualified, sessionId = sess?.sessionId)
-                            }
-                        }
                     }
 
-                    val loopDelay = if (crossfadeDurationSec > 0) 100L else 250L
+                    val inCrossfadeWindow = crossfadeDurationSec > 0 && inCrossfadeZone
+                    val loopDelay = if (inCrossfadeWindow) 100L else 250L
                     delay(loopDelay)
                 }
             } catch (_: Exception) {}
@@ -2300,27 +2445,8 @@ class PlaybackManager(
             stopProgressTracker()
             flushSession(isFinal = true)
 
-            val currentlyPlaying = try { player.isPlaying } catch (_: Exception) { false }
-            if (currentlyPlaying) {
-                performVolumeRampDown(1000) {
-                    try {
-                        player.pause()
-                        player.playWhenReady = false
-                        player.volume = 1.0f
-                    } catch (_: Exception) {}
-                    _playbackState.value = _playbackState.value.copy(isPlaying = false)
-                    updateNotificationLayout()
-                    com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-                }
-            } else {
-                try {
-                    player.pause()
-                    player.playWhenReady = false
-                } catch (_: Exception) {}
-                _playbackState.value = _playbackState.value.copy(isPlaying = false)
-                updateNotificationLayout()
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-            }
+            // Stop playback immediately
+            pause()
 
             val currentSong = _playbackState.value.currentSong
             val currentIdx = _playbackState.value.queueIndex
@@ -2378,17 +2504,18 @@ class PlaybackManager(
     }
 
     fun updateSongInQueue(updatedSong: Song) {
-        com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id)
         val currentQueue = _playbackState.value.queue.toMutableList()
         val index = currentQueue.indexOfFirst { it.id == updatedSong.id }
         if (index >= 0) {
             currentQueue[index] = updatedSong
-            val isCurrent = _playbackState.value.currentSong?.id == updatedSong.id
-            val newCurrentSong = if (isCurrent) updatedSong else _playbackState.value.currentSong
-            _playbackState.value = _playbackState.value.copy(
-                queue = currentQueue,
-                currentSong = newCurrentSong
-            )
+        }
+        val isCurrent = _playbackState.value.currentSong?.id == updatedSong.id
+        val newCurrentSong = if (isCurrent) updatedSong else _playbackState.value.currentSong
+        _playbackState.value = _playbackState.value.copy(
+            queue = currentQueue,
+            currentSong = newCurrentSong
+        )
+        if (index >= 0) {
             try {
                 val activePlayingIndex = player.currentMediaItemIndex
                 // Only replace queued items that are not currently actively playing to avoid audio interruption
@@ -2397,14 +2524,35 @@ class PlaybackManager(
                     player.replaceMediaItem(index, newMediaItem)
                 }
             } catch (_: Exception) {}
+        }
+        if (isCurrent && !updatedSong.artworkUri.isNullOrBlank()) {
+            scope.launch(Dispatchers.IO) {
+                val bmp = ArtworkManager.decodeBitmapFromUri(context, updatedSong.artworkUri)
+                if (bmp != null) {
+                    ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp)
+                    try {
+                        val stream = java.io.ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
+                        val bytes = stream.toByteArray()
+                        ArtworkManager.putNotificationArtwork(updatedSong.id, bytes, bmp)
+                    } catch (_: Throwable) {}
+                }
+                withContext(Dispatchers.Main) {
+                    updateNotificationLayout()
+                    MusicPlaybackService.instance?.triggerNotificationUpdate()
+                    com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
+                    com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                }
+            }
+        } else {
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         }
     }
 
     fun updateCurrentSongArtwork(songId: Long, artworkUri: String) {
-        com.example.util.ArtworkManager.invalidateNotificationArtwork(songId)
         val currentSong = _playbackState.value.currentSong
         val newCurrentSong = if (currentSong?.id == songId) currentSong.copy(artworkUri = artworkUri) else currentSong
         val newQueue = _playbackState.value.queue.map {
@@ -2425,9 +2573,29 @@ class PlaybackManager(
                 player.replaceMediaItem(targetIdx, buildMediaItem(newQueue[targetIdx], loadArtworkBytes = false))
             } catch (_: Exception) {}
         }
-        updateNotificationLayout()
-        MusicPlaybackService.instance?.triggerNotificationUpdate()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        
+        // Instantly decode and cache the new artwork bitmap for lockscreen and status bar notifications
+        scope.launch(Dispatchers.IO) {
+            val bmp = ArtworkManager.decodeBitmapFromUri(context, artworkUri)
+                ?: ArtworkManager.getOrExtractArtworkUri(context, songId, newCurrentSong?.path ?: "", newCurrentSong?.albumId ?: 0L)?.let {
+                    ArtworkManager.decodeBitmapFromUri(context, it)
+                }
+            if (bmp != null) {
+                ArtworkManager.putCachedNotificationBitmap(songId, bmp)
+                try {
+                    val stream = java.io.ByteArrayOutputStream()
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
+                    val bytes = stream.toByteArray()
+                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp)
+                } catch (_: Throwable) {}
+            }
+            withContext(Dispatchers.Main) {
+                updateNotificationLayout()
+                MusicPlaybackService.instance?.triggerNotificationUpdate()
+                com.example.widget.WidgetBitmapRenderer.invalidateSong(songId)
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            }
+        }
     }
 
     fun updateSongFavoriteStatus(songId: Long, isFavorite: Boolean) {
@@ -2457,10 +2625,27 @@ class PlaybackManager(
         }
     }
 
+    var currentPreferredDevice: android.media.AudioDeviceInfo? = null
+
+    fun isVolumeZero(): Boolean {
+        val curVol = audioManager?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
+        return curVol == 0
+    }
+
     fun setPreferredAudioDevice(deviceInfo: android.media.AudioDeviceInfo?) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             try {
+                currentPreferredDevice = deviceInfo
                 player.setPreferredAudioDevice(deviceInfo)
+                crossfadePlayer.setPreferredAudioDevice(deviceInfo)
+                // When actively playing, immediately flush and re-route audio to switch output instantly
+                if (player.isPlaying) {
+                    val currentPos = player.currentPosition
+                    player.seekTo(currentPos)
+                } else if (crossfadePlayer.isPlaying) {
+                    val currentPos = crossfadePlayer.currentPosition
+                    crossfadePlayer.seekTo(currentPos)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }

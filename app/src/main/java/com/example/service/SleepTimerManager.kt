@@ -44,13 +44,16 @@ data class SleepTimerState(
 )
 
 class SleepTimerManager(
-    private val scope: CoroutineScope,
-    private val isPlaybackActive: (() -> Boolean)? = null,
-    private val onTimerExpired: () -> Unit
+    externalScope: CoroutineScope? = null,
+    var isPlaybackActive: (() -> Boolean)? = null,
+    var onTimerExpired: () -> Unit = {}
 ) {
     companion object {
         private const val TAG = "SleepTimer"
     }
+
+    // Use a persistent supervisor scope so background playback timer survives Activity lifecycles
+    private val scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
 
     private val _state = MutableStateFlow(SleepTimerState())
     val state: StateFlow<SleepTimerState> = _state.asStateFlow()
@@ -65,6 +68,8 @@ class SleepTimerManager(
     fun startTimerMinutes(minutes: Int, finishLastSong: Boolean = false) {
         cancelTimer()
         val durationSec = minutes * 60L
+        val targetEndTimeMs = android.os.SystemClock.elapsedRealtime() + durationSec * 1000L
+
         _state.value = SleepTimerState(
             isActive = true,
             remainingSeconds = durationSec,
@@ -75,17 +80,30 @@ class SleepTimerManager(
         )
 
         timerJob = scope.launch(Dispatchers.Main) {
-            var current = durationSec
-            while (current > 0) {
-                delay(1000)
-                current--
-                _state.value = _state.value.copy(remainingSeconds = current)
+            while (true) {
+                delay(500)
+                val remainingMs = targetEndTimeMs - android.os.SystemClock.elapsedRealtime()
+                if (remainingMs <= 0L) {
+                    break
+                }
+                val secLeft = (remainingMs / 1000L).coerceAtLeast(0L)
+                if (_state.value.remainingSeconds != secLeft) {
+                    _state.value = _state.value.copy(remainingSeconds = secLeft)
+                }
             }
+
             val playing = isPlaybackActive?.invoke() ?: false
+            android.util.Log.d(TAG, "TIME sleep timer countdown reached 0. finishLastSong=$finishLastSong, isPlaying=$playing")
+
             if (!finishLastSong || !playing) {
-                cancelTimer()
+                // Scenario 1: Stop immediately
+                android.util.Log.d(TAG, "Stopping playback immediately (Scenario 1)")
+                _state.value = SleepTimerState()
+                timerJob = null
                 onTimerExpired()
             } else {
+                // Scenario 2: Wait for current track to finish, then transit to next song and stop at 0:00
+                android.util.Log.d(TAG, "Waiting for current track to complete before stopping (Scenario 2)")
                 _state.value = _state.value.copy(
                     remainingSeconds = 0L,
                     isWaitingForCurrentTrackToEnd = true
@@ -405,7 +423,14 @@ class SleepTimerManager(
     fun toggleFinishLastSong() {
         val curr = _state.value
         if (curr.isActive) {
-            _state.value = curr.copy(finishLastSong = !curr.finishLastSong)
+            val newFinish = !curr.finishLastSong
+            _state.value = curr.copy(finishLastSong = newFinish)
+            if (!newFinish && (curr.isWaitingForCurrentTrackToEnd || curr.remainingSeconds <= 0L)) {
+                _state.value = SleepTimerState()
+                timerJob?.cancel()
+                timerJob = null
+                onTimerExpired()
+            }
         }
     }
 

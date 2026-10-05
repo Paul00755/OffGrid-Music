@@ -72,6 +72,11 @@ fun HomeScreenMinimalFeed(
     getDurationPlayedBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Long> = { _, _ -> kotlinx.coroutines.flow.flowOf(0L) },
     getTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
     getUniqueTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
+    userAccount: com.example.auth.UserAccount? = null,
+    effectiveDisplayName: String = "Music Lover",
+    customAvatarUri: String? = null,
+    onOpenAccount: () -> Unit = {},
+    onOpenAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -102,7 +107,10 @@ fun HomeScreenMinimalFeed(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(
                         onClick = onOpenDrawer,
                         modifier = Modifier.size(36.dp)
@@ -112,21 +120,46 @@ fun HomeScreenMinimalFeed(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = greeting,
+                            text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Light,
                             color = BentoTextPrimary,
-                            letterSpacing = (-0.5).sp
+                            letterSpacing = (-0.5).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${allSongs.size} tracks available",
+                            text = userAccount?.email ?: "${allSongs.size} tracks available",
                             fontSize = 11.sp,
-                            color = BentoTextSecondary
+                            color = BentoTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
+                    IconButton(
+                        onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        if (!avatarUrl.isNullOrBlank()) {
+                            coil.compose.AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = "Account",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.size(28.dp).clip(CircleShape)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (userAccount != null) Icons.Default.Person else Icons.Default.AccountCircle,
+                                contentDescription = "Account",
+                                tint = if (userAccount != null) BentoPrimary else BentoTextPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                     IconButton(onClick = onOpenSearch, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
                     }

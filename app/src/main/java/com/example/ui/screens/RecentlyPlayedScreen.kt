@@ -631,10 +631,7 @@ fun RecentlyPlayedScreen(
                 FastScrollbar(
                     listState = listState,
                     totalItems = filteredSongs.size,
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    itemLabelProvider = { idx ->
-                        filteredSongs.getOrNull(idx)?.title?.firstOrNull()?.uppercaseChar()?.toString()
-                    }
+                    modifier = Modifier.align(Alignment.CenterEnd)
                 )
             }
         }

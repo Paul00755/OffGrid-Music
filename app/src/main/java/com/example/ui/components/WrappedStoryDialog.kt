@@ -71,6 +71,17 @@ fun WrappedStoryDialog(
         }
     }
     var selectedShareRange by remember { mutableStateOf(defaultRange) }
+    var activeWrappedData by remember(wrappedData) { mutableStateOf(wrappedData) }
+
+    LaunchedEffect(defaultRange, loadWrappedData) {
+        if (loadWrappedData != null && defaultRange != null) {
+            val (start, end) = defaultRange.getTimeRange()
+            try {
+                val loaded = loadWrappedData(start, end)
+                activeWrappedData = loaded
+            } catch (_: Exception) {}
+        }
+    }
 
     if (showSharePeriodDialog) {
         SharePeriodSelectionDialog(
@@ -89,7 +100,7 @@ fun WrappedStoryDialog(
 
     if (showShareCardDialog) {
         ShareStatsCardDialog(
-            wrappedData = wrappedData,
+            wrappedData = activeWrappedData,
             timePeriodTitle = selectedShareRange.displayLabel,
             initialRange = selectedShareRange,
             initialPeriod = selectedShareRange.period,
@@ -288,13 +299,13 @@ fun WrappedStoryDialog(
                         label = "slide_transition"
                     ) { slide ->
                         when (slide) {
-                            0 -> SlideMinutesAndArchetype(wrappedData)
-                            1 -> SlideTopTrack(wrappedData, onPlaySong)
-                            2 -> SlideTop5Leaderboard(wrappedData, onPlaySong)
-                            3 -> SlideTopArtistsAlbums(wrappedData)
-                            4 -> SlideTimeOfDay(wrappedData)
+                            0 -> SlideMinutesAndArchetype(activeWrappedData, timePeriodTitle)
+                            1 -> SlideTopTrack(activeWrappedData, onPlaySong)
+                            2 -> SlideTop5Leaderboard(activeWrappedData, onPlaySong)
+                            3 -> SlideTopArtistsAlbums(activeWrappedData)
+                            4 -> SlideTimeOfDay(activeWrappedData)
                             5 -> SlideSummaryCard(
-                                data = wrappedData,
+                                data = activeWrappedData,
                                 timePeriodTitle = timePeriodTitle,
                                 onPlayTopQueue = onPlayTopQueue,
                                 onDismiss = onDismiss,
@@ -332,7 +343,7 @@ fun WrappedStoryDialog(
 }
 
 @Composable
-private fun SlideMinutesAndArchetype(data: WrappedData) {
+private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -367,7 +378,23 @@ private fun SlideMinutesAndArchetype(data: WrappedData) {
             }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = BentoAccentPinkText.copy(alpha = 0.18f),
+            border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = 0.4f)),
+            modifier = Modifier.padding(bottom = 12.dp)
+        ) {
+            Text(
+                text = timePeriodTitle.uppercase(),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+                color = BentoAccentPinkText,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
 
         Text(
             text = "YOU LISTENED FOR",
@@ -383,8 +410,10 @@ private fun SlideMinutesAndArchetype(data: WrappedData) {
             fontWeight = FontWeight.ExtraBold,
             color = Color.White
         )
+        val daysCount = data.activeDaysCount.coerceAtLeast(if (data.totalTracks > 0 || data.totalMinutes > 0) 1 else 0)
+        val daysText = if (daysCount == 1) "1 active listening day" else "$daysCount active listening days"
         Text(
-            text = "Across ${data.activeDaysCount} active listening days • ${data.totalTracks} total plays",
+            text = "Across $daysText • ${data.totalTracks} total plays",
             fontSize = 13.sp,
             color = Color.White.copy(alpha = 0.8f),
             modifier = Modifier.padding(top = 4.dp)

@@ -20,6 +20,21 @@ import com.example.service.SleepTimerManager
 import com.example.service.SleepTimerState
 import com.example.ui.components.NavTab
 import com.example.util.TransliterationUtil
+import com.example.auth.AuthManager
+import com.example.auth.UserAccount
+import com.example.auth.AuthUiState
+import com.example.auth.PasswordResetUiState
+import com.example.auth.GoogleSignInCancelledException
+import android.app.Activity
+import android.net.Uri
+import com.example.service.transcription.AudioTranscribeMode
+import com.example.service.transcription.TranscribeLanguage
+import com.example.service.transcription.GeminiLyricsService
+import com.example.service.transcription.LyricsTranslationCache
+import com.example.service.transcription.AudioRecordHelper
+import com.example.service.transcription.SecureApiKeyStore
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -41,11 +56,264 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     val preferences: UserPreferencesRepository = UserPreferencesRepository(application)
-    val sleepTimerManager: SleepTimerManager = SleepTimerManager(
-        scope = viewModelScope,
-        isPlaybackActive = { playbackManager.player.isPlaying },
-        onTimerExpired = { playbackManager.handleSleepTimerExpired() }
+    val authManager: AuthManager = AuthManager.getInstance(application)
+    val cloudSyncRepository: com.example.data.sync.CloudSyncRepository = com.example.data.sync.CloudSyncRepository.getInstance(
+        context = application,
+        songDao = db.songDao(),
+        playlistDao = db.playlistDao(),
+        historyDao = db.historyDao(),
+        smartPlaylistDao = db.smartPlaylistDao(),
+        userPreferences = preferences
     )
+
+    val syncStatus: StateFlow<com.example.data.sync.SyncStatus> = cloudSyncRepository.syncStatus
+    val backupStatus: StateFlow<com.example.data.sync.BackupStatus> = cloudSyncRepository.backupStatus
+    val lastSyncedTimestamp: StateFlow<Long> = cloudSyncRepository.lastSyncedTimestamp
+    val lastBackupTimestamp: StateFlow<Long> = cloudSyncRepository.lastBackupTimestamp
+
+    val automaticBackupEnabled: StateFlow<Boolean> = preferences.automaticBackupEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val backupFrequency: StateFlow<com.example.data.sync.BackupFrequency> = preferences.backupFrequency
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.example.data.sync.BackupFrequency.WEEKLY)
+
+    fun triggerCloudSync() {
+        cloudSyncRepository.performSyncNow()
+    }
+
+    fun triggerBackupNow() {
+        cloudSyncRepository.triggerBackupNow()
+    }
+
+    fun setAutomaticBackupEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setAutomaticBackupEnabled(enabled)
+            val freq = preferences.backupFrequency.first()
+            com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
+        }
+    }
+
+    fun setBackupFrequency(frequency: com.example.data.sync.BackupFrequency) {
+        viewModelScope.launch {
+            preferences.setBackupFrequency(frequency)
+            val isEnabled = preferences.automaticBackupEnabled.first()
+            if (isEnabled) {
+                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, true)
+            }
+        }
+    }
+
+    val userAccount: StateFlow<UserAccount?> = authManager.userAccountFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val skipAuthPrompt: StateFlow<Boolean> = preferences.skipAuthPrompt
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val customDisplayName: StateFlow<String?> = preferences.customDisplayName
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val customAvatarUri: StateFlow<String?> = preferences.customAvatarUri
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    // User-facing display name with fallback to Firebase displayName or email prefix or Guest
+    val effectiveDisplayName: StateFlow<String> = combine(userAccount, customDisplayName) { account, customName ->
+        customName?.takeIf { it.isNotBlank() }
+            ?: account?.displayName?.takeIf { it.isNotBlank() }
+            ?: account?.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
+            ?: "Music Lover"
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "Music Lover")
+
+    val authUiState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
+    val showAuthScreen = MutableStateFlow(false)
+    val showAccountScreen = MutableStateFlow(false)
+
+    private var passwordResetJob: kotlinx.coroutines.Job? = null
+    val passwordResetState = MutableStateFlow<PasswordResetUiState>(PasswordResetUiState.Idle)
+
+    fun resetAuthUiState() {
+        authUiState.value = AuthUiState.Idle
+    }
+
+    fun resetPasswordResetState() {
+        passwordResetJob?.cancel()
+        passwordResetJob = null
+        passwordResetState.value = PasswordResetUiState.Idle
+    }
+
+    fun openAuthScreen() {
+        authUiState.value = AuthUiState.Idle
+        showAuthScreen.value = true
+    }
+
+    fun closeAuthScreen() {
+        showAuthScreen.value = false
+        authUiState.value = AuthUiState.Idle
+    }
+
+    fun openAccountScreen() {
+        showAccountScreen.value = true
+    }
+
+    fun closeAccountScreen() {
+        showAccountScreen.value = false
+    }
+
+    fun continueWithoutSignUp() {
+        viewModelScope.launch {
+            preferences.setSkipAuthPrompt(true)
+            showAuthScreen.value = false
+            authUiState.value = AuthUiState.Idle
+        }
+    }
+
+    fun signInWithGoogle(activity: Activity) {
+        viewModelScope.launch {
+            authUiState.value = AuthUiState.Loading
+            val result = authManager.signInWithGoogle(activity)
+            result.fold(
+                onSuccess = {
+                    authUiState.value = AuthUiState.Success("Signed in successfully with Google")
+                    preferences.setSkipAuthPrompt(true)
+                    showAuthScreen.value = false
+                },
+                onFailure = { error ->
+                    if (error is GoogleSignInCancelledException ||
+                        error.message?.contains("cancelled", ignoreCase = true) == true ||
+                        error.message?.contains("canceled", ignoreCase = true) == true) {
+                        authUiState.value = AuthUiState.Idle
+                    } else {
+                        authUiState.value = AuthUiState.Error(error.message ?: "Google sign-in failed")
+                    }
+                }
+            )
+        }
+    }
+
+    fun signInWithEmail(email: String, pass: String) {
+        if (email.isBlank() || pass.isBlank()) {
+            authUiState.value = AuthUiState.Error("Please enter both email and password")
+            return
+        }
+        viewModelScope.launch {
+            authUiState.value = AuthUiState.Loading
+            val result = authManager.signInWithEmail(email, pass)
+            result.fold(
+                onSuccess = {
+                    authUiState.value = AuthUiState.Success("Signed in successfully")
+                    preferences.setSkipAuthPrompt(true)
+                    showAuthScreen.value = false
+                },
+                onFailure = { error ->
+                    authUiState.value = AuthUiState.Error(error.message ?: "Sign in failed")
+                }
+            )
+        }
+    }
+
+    fun signUpWithEmail(email: String, pass: String, displayName: String?) {
+        if (email.isBlank() || pass.isBlank()) {
+            authUiState.value = AuthUiState.Error("Please enter both email and password")
+            return
+        }
+        if (pass.length < 6) {
+            authUiState.value = AuthUiState.Error("Password must be at least 6 characters")
+            return
+        }
+        viewModelScope.launch {
+            authUiState.value = AuthUiState.Loading
+            val result = authManager.signUpWithEmail(email, pass, displayName)
+            result.fold(
+                onSuccess = {
+                    if (!displayName.isNullOrBlank()) {
+                        preferences.setCustomDisplayName(displayName.trim())
+                    }
+                    authUiState.value = AuthUiState.Success("Account created successfully")
+                    preferences.setSkipAuthPrompt(true)
+                    showAuthScreen.value = false
+                },
+                onFailure = { error ->
+                    authUiState.value = AuthUiState.Error(error.message ?: "Sign up failed")
+                }
+            )
+        }
+    }
+
+    fun sendPasswordReset(email: String, onDone: ((Boolean, String) -> Unit)? = null) {
+        val currentState = passwordResetState.value
+        // Block action if currently sending or within the 60-second cooldown
+        if (currentState is PasswordResetUiState.Sending || currentState is PasswordResetUiState.SentCooldown) {
+            onDone?.invoke(false, "Please wait for cooldown to finish before requesting another email.")
+            return
+        }
+
+        val trimmedEmail = email.trim()
+        if (trimmedEmail.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
+            val errorMsg = "Please enter a valid email address."
+            passwordResetState.value = PasswordResetUiState.Error(errorMsg)
+            onDone?.invoke(false, errorMsg)
+            return
+        }
+
+        passwordResetJob?.cancel()
+        passwordResetJob = viewModelScope.launch {
+            passwordResetState.value = PasswordResetUiState.Sending
+            val result = authManager.sendPasswordReset(trimmedEmail)
+            result.fold(
+                onSuccess = {
+                    val successMsg = "Password reset email sent.\nCheck your inbox and spam folder.\nYou can request another email in 60 seconds."
+                    onDone?.invoke(true, successMsg)
+                    for (remaining in 60 downTo 1) {
+                        passwordResetState.value = PasswordResetUiState.SentCooldown(
+                            secondsRemaining = remaining,
+                            message = successMsg
+                        )
+                        kotlinx.coroutines.delay(1000L)
+                    }
+                    passwordResetState.value = PasswordResetUiState.ReadyToResend(
+                        message = "Password reset email sent.\nDidn't receive it? You can now request another email."
+                    )
+                },
+                onFailure = { error ->
+                    val errorMsg = error.message ?: "Failed to send reset email. Please try again."
+                    passwordResetState.value = PasswordResetUiState.Error(errorMsg)
+                    onDone?.invoke(false, errorMsg)
+                }
+            )
+        }
+    }
+
+    fun updateUserDisplayName(newName: String) {
+        viewModelScope.launch {
+            preferences.setCustomDisplayName(newName.trim())
+            if (userAccount.value != null) {
+                authManager.updateDisplayName(newName.trim())
+            }
+        }
+    }
+
+    fun updateProfileAvatar(uri: String?) {
+        viewModelScope.launch {
+            preferences.setCustomAvatarUri(uri)
+            if (userAccount.value != null && uri != null) {
+                try {
+                    authManager.updatePhotoUrl(Uri.parse(uri))
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun signOut(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            cloudSyncRepository.onAuthStateChanged(null)
+            authManager.signOut()
+            preferences.setCustomDisplayName(null)
+            preferences.setCustomAvatarUri(null)
+            showAccountScreen.value = false
+            onComplete()
+        }
+    }
+
+    val sleepTimerManager: SleepTimerManager = SleepTimerManager()
     val playbackManager: PlaybackManager = PlaybackManager(application, viewModelScope, sleepTimerManager)
     val lyricsFetcher: LyricsFetcher = LyricsFetcher(db.lyricsDao(), application)
     val audioRouteManager: com.example.util.AudioRouteManager = com.example.util.AudioRouteManager(application)
@@ -54,12 +322,39 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectAudioRoute(device: com.example.util.AudioRouteDevice) {
         audioRouteManager.selectRoute(device)
-        playbackManager.setPreferredAudioDevice(device.rawDeviceInfo)
+        val resolvedDevice = audioRouteManager.resolveDeviceInfo(device)
+        playbackManager.setPreferredAudioDevice(resolvedDevice)
     }
     fun launchSystemOutputSwitcher(context: android.content.Context) = audioRouteManager.launchSystemOutputSwitcher(context)
 
     // UI Navigation State
     val selectedTab = MutableStateFlow(NavTab.HOME)
+    private val tabHistory = java.util.ArrayDeque<NavTab>()
+
+    fun navigateToTab(tab: NavTab) {
+        val current = selectedTab.value
+        if (current != tab) {
+            tabHistory.remove(tab)
+            tabHistory.addLast(current)
+            selectedTab.value = tab
+        }
+    }
+
+    fun navigateBackTab(): Boolean {
+        while (tabHistory.isNotEmpty()) {
+            val prev = tabHistory.removeLast()
+            if (prev != selectedTab.value) {
+                selectedTab.value = prev
+                return true
+            }
+        }
+        if (selectedTab.value != NavTab.HOME) {
+            selectedTab.value = NavTab.HOME
+            return true
+        }
+        return false
+    }
+
     val settingsTargetSection = MutableStateFlow<String?>(null)
     val showNowPlaying = MutableStateFlow(false)
     val searchTabQuery = MutableStateFlow("")
@@ -71,7 +366,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSettings(section: String? = null) {
         settingsTargetSection.value = section
-        selectedTab.value = NavTab.SETTINGS
+        navigateToTab(NavTab.SETTINGS)
     }
 
     fun dismissSplash() {
@@ -118,7 +413,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Lazily, "MIDNIGHT_OBSIDIAN")
     val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_DYNAMIC")
     val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Lazily, "MINIMAL_GLASS")
-    val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_GRID")
+    val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Lazily, "GLOW_CARDS")
     val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Lazily, "RECENTLY_ADDED")
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Lazily, "GRID")
@@ -144,6 +439,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val gaplessPlayback: StateFlow<Boolean> = preferences.gaplessPlayback.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val normalizeAudio: StateFlow<Boolean> = preferences.normalizeAudio.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val autoPlayOnHeadphoneConnection: StateFlow<Boolean> = preferences.autoPlayOnHeadphoneConnection.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val autoPlayOnAppStartup: StateFlow<Boolean> = preferences.autoPlayOnAppStartup.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val addToQueuePosition: StateFlow<String> = preferences.addToQueuePosition.stateIn(viewModelScope, SharingStarted.Lazily, "BOTTOM")
     val playlistAddSongPosition: StateFlow<String> = preferences.playlistAddSongPosition.stateIn(viewModelScope, SharingStarted.Lazily, "BOTTOM")
     val crossfadeDurationSec: StateFlow<Int> = preferences.crossfadeDurationSec.stateIn(viewModelScope, SharingStarted.Lazily, 0)
@@ -195,6 +491,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val equalizerManager get() = playbackManager.equalizerManager
 
     init {
+        repository.cloudSyncRepository = cloudSyncRepository
+        scanner.onScanCompletedListener = {
+            cloudSyncRepository.onLibraryScanCompleted()
+        }
+        viewModelScope.launch {
+            userAccount.collect { account ->
+                cloudSyncRepository.onAuthStateChanged(account?.uid)
+            }
+        }
+        viewModelScope.launch {
+            val enabled = preferences.automaticBackupEnabled.first()
+            val freq = preferences.backupFrequency.first()
+            if (enabled) {
+                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, true)
+            }
+        }
         scanner.startAutoDetection()
         viewModelScope.launch(Dispatchers.IO) {
             scanner.detectAndImportNewSongs()
@@ -218,19 +530,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            playbackState
-                .map { it.currentSong?.id to it.currentSong?.artworkUri }
-                .distinctUntilChanged()
-                .collect { (songId, artUri) ->
-                    if (songId != null && !artUri.isNullOrBlank()) {
-                        val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColor(application, artUri)
-                        if (extracted != null) {
-                            _dynamicArtworkColor.value = extracted
-                        }
-                    } else if (songId == null) {
-                        _dynamicArtworkColor.value = null
-                    }
+            kotlinx.coroutines.flow.combine(
+                playbackState.map { it.currentSong }.distinctUntilChanged(),
+                isDynamicArtworkTheme
+            ) { song, isDynamic ->
+                Pair(song, isDynamic)
+            }.collect { (song, isDynamic) ->
+                if (isDynamic && song != null) {
+                    val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(getApplication(), song)
+                    _dynamicArtworkColor.value = extracted
+                } else {
+                    _dynamicArtworkColor.value = null
                 }
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            }
+        }
+        audioRouteManager.onDeviceSelected = { resolvedDev ->
+            playbackManager.setPreferredAudioDevice(resolvedDev)
         }
         viewModelScope.launch {
             autoPlayOnHeadphoneConnection.collect { enabled ->
@@ -316,6 +632,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode)
             preferences.setUiTheme(fallback.id)
         }
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
 
     fun setUiTheme(themeId: String) = viewModelScope.launch {
@@ -326,6 +643,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
             preferences.setThemeMode(newMode)
         }
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
     fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch { preferences.setHomeScreenLayout(layoutId) }
     fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch { 
@@ -341,9 +659,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch { preferences.setPlaylistsLayout(layoutId) }
     fun setWaveformStyle(style: String) = viewModelScope.launch { preferences.setWaveformStyle(style) }
     fun setAmoledMode(enabled: Boolean) = viewModelScope.launch { preferences.setAmoledMode(enabled) }
-    fun setAccentColorPreset(preset: String) = viewModelScope.launch { preferences.setAccentColorPreset(preset) }
-    fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch { preferences.setCustomAccentColor(colorInt) }
-    fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch { preferences.setDynamicArtworkTheme(enabled) }
+    fun setAccentColorPreset(preset: String) = viewModelScope.launch { 
+        preferences.setAccentColorPreset(preset)
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+    }
+    fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch { 
+        preferences.setCustomAccentColor(colorInt)
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+    }
+    fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch { 
+        preferences.setDynamicArtworkTheme(enabled)
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+    }
     fun setCornerRadiusDp(radius: Int) = viewModelScope.launch { preferences.setCornerRadiusDp(radius) }
     fun setFontSizeScale(scale: String) = viewModelScope.launch { preferences.setFontSizeScale(scale) }
     fun setArtworkSize(size: String) = viewModelScope.launch { preferences.setArtworkSize(size) }
@@ -370,6 +697,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricsFontSize(size: String) = viewModelScope.launch { preferences.setLyricsFontSize(size) }
     fun setNotificationEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setNotificationEnabled(enabled) }
     fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnHeadphoneConnection(enabled) }
+    fun setAutoPlayOnAppStartup(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnAppStartup(enabled) }
     fun setPauseOnZeroVolume(enabled: Boolean) = viewModelScope.launch { preferences.setPauseOnZeroVolume(enabled) }
     fun setAutoResumeOnVolumeIncrease(enabled: Boolean) = viewModelScope.launch { preferences.setAutoResumeOnVolumeIncrease(enabled) }
     private var ignoreDurationJob: kotlinx.coroutines.Job? = null
@@ -546,9 +874,53 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentLyrics = MutableStateFlow<Lyrics?>(null)
     val currentLyrics: StateFlow<Lyrics?> = _currentLyrics.asStateFlow()
 
+    // Audio & Lyrics Transcription / Translation State
+    val secureApiKeyStore = SecureApiKeyStore(getApplication())
+    val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Eagerly, "TRANSCRIBE")
+    val audioTranscribeTargetLang = preferences.audioTranscribeTargetLang.stateIn(viewModelScope, SharingStarted.Eagerly, "ta")
+
+    private val _hasUserApiKey = MutableStateFlow(secureApiKeyStore.hasApiKey())
+    val hasUserApiKey: StateFlow<Boolean> = _hasUserApiKey.asStateFlow()
+
+    private val _maskedApiKey = MutableStateFlow(secureApiKeyStore.getMaskedApiKey())
+    val maskedApiKey: StateFlow<String?> = _maskedApiKey.asStateFlow()
+
+    private val _isKeyValidating = MutableStateFlow(false)
+    val isKeyValidating: StateFlow<Boolean> = _isKeyValidating.asStateFlow()
+
+    private val _keyValidationErrorMessage = MutableStateFlow<String?>(null)
+    val keyValidationErrorMessage: StateFlow<String?> = _keyValidationErrorMessage.asStateFlow()
+
+    private val _isTranscribingLyrics = MutableStateFlow(false)
+    val isTranscribingLyrics: StateFlow<Boolean> = _isTranscribingLyrics.asStateFlow()
+
+    private val _transcribeStatusMessage = MutableStateFlow<String?>(null)
+    val transcribeStatusMessage: StateFlow<String?> = _transcribeStatusMessage.asStateFlow()
+
+    private val _transcribeErrorMessage = MutableStateFlow<String?>(null)
+    val transcribeErrorMessage: StateFlow<String?> = _transcribeErrorMessage.asStateFlow()
+
+    private val _transcribeLyricsPreview = MutableStateFlow<com.example.service.transcription.TranscribeLyricsPreview?>(null)
+    val transcribeLyricsPreview: StateFlow<com.example.service.transcription.TranscribeLyricsPreview?> = _transcribeLyricsPreview.asStateFlow()
+
+    private val previousLyricsHistory = ConcurrentHashMap<Long, Lyrics?>()
+    private val _canUndoLyricsForCurrentSong = MutableStateFlow(false)
+    val canUndoLyricsForCurrentSong: StateFlow<Boolean> = _canUndoLyricsForCurrentSong.asStateFlow()
+
+    val geminiLyricsService = GeminiLyricsService(application)
+    val audioRecordHelper = AudioRecordHelper(application)
+
     init {
         refreshCacheSizes()
         refreshDatabaseStats()
+
+        viewModelScope.launch {
+            // Automatically turn toggle OFF if no key is saved
+            if (preferences.isTranscribeTranslateEnabled.first() && !secureApiKeyStore.hasApiKey()) {
+                preferences.setTranscribeTranslateEnabled(false)
+            }
+        }
 
         viewModelScope.launch {
             repository.checkAndSeedInitialData()
@@ -586,7 +958,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else emptyList()
 
                 val finalQueue = if (restoredQueue.isNotEmpty()) restoredQueue else loadedSongs
-                val finalIndex = if (lastSongId > 0) {
+                val finalIndex = if (lastIdx in finalQueue.indices && lastSongId > 0 && finalQueue[lastIdx].id == lastSongId) {
+                    lastIdx
+                } else if (lastSongId > 0) {
                     val idx = finalQueue.indexOfFirst { it.id == lastSongId }
                     if (idx >= 0) idx else lastIdx.coerceIn(finalQueue.indices)
                 } else {
@@ -602,6 +976,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else finalQueue
 
                 playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
+                val shouldAutoPlay = preferences.autoPlayOnAppStartup.first()
+                if (shouldAutoPlay && queueWithCorrectDuration.isNotEmpty() && !playbackManager.isVolumeZero()) {
+                    playbackManager.play()
+                }
             }
         }
 
@@ -642,6 +1020,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         lastLyricsSearchSongId = null
                         lastLyricsSearchQuery = ""
                         cachedLyricsCandidates = emptyList()
+                        _canUndoLyricsForCurrentSong.value = previousLyricsHistory.containsKey(song.id)
+                        _transcribeErrorMessage.value = null
                         // Instantly reset _currentLyrics to loading state for this specific song ID
                         _currentLyrics.value = com.example.data.model.Lyrics(
                             songId = song.id,
@@ -731,7 +1111,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playSong(song: Song, queue: List<Song> = allSongs.value, sourceContext: String = "UNKNOWN") {
-        val index = queue.indexOf(song).coerceAtLeast(0)
+        val index = queue.indexOfFirst { it.id == song.id }.let { if (it >= 0) it else queue.indexOf(song).coerceAtLeast(0) }
         playbackManager.playQueue(queue, index, sourceContext)
     }
 
@@ -1090,11 +1470,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 newLyrics = newLyrics,
                 context = getApplication()
             )
-            com.example.util.ArtworkManager.invalidateSongArtwork(getApplication(), updatedSong.id)
-            if (!updatedSong.artworkUri.isNullOrBlank()) {
-                com.example.ui.components.ArtworkResolutionCache.cache[updatedSong.id] = updatedSong.artworkUri
+            val finalArt = updatedSong.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(getApplication(), updatedSong.id, updatedSong.path)
+            com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id)
+            if (!finalArt.isNullOrBlank()) {
+                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, finalArt)
+                // Pre-decode bitmap for notification so status bar and lockscreen get it instantaneously
+                try {
+                    val bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(getApplication(), finalArt, 512)
+                    if (bmp != null) {
+                        com.example.util.ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp)
+                        val stream = java.io.ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
+                        com.example.util.ArtworkManager.putNotificationArtwork(updatedSong.id, stream.toByteArray(), bmp)
+                    }
+                } catch (_: Throwable) {}
+            } else {
+                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, null)
             }
+            com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
             playbackManager.updateSongInQueue(updatedSong)
+            if (!finalArt.isNullOrBlank()) {
+                playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt)
+            }
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.service.MusicPlaybackService.instance?.triggerNotificationUpdate()
             if (playbackState.value.currentSong?.id == updatedSong.id) {
                 _currentLyrics.value = lyricsFetcher.getOrFetchLyrics(updatedSong)
                 val artUri = updatedSong.artworkUri
@@ -1116,6 +1515,511 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLyricsSyncOffset(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
+    }
+
+    // =========================================================================
+    // AUDIO TRANSCRIBE & LYRICS TRANSLATION (GEMINI AI ENGINE)
+    // =========================================================================
+
+    fun setTranscribeTranslateEnabled(enabled: Boolean, onNeedsKey: (() -> Unit)? = null) = viewModelScope.launch {
+        if (enabled) {
+            if (!secureApiKeyStore.hasApiKey()) {
+                preferences.setTranscribeTranslateEnabled(false)
+                onNeedsKey?.invoke()
+            } else {
+                preferences.setTranscribeTranslateEnabled(true)
+            }
+        } else {
+            preferences.setTranscribeTranslateEnabled(false)
+        }
+    }
+
+    fun saveUserApiKey(rawKey: String, onResult: (Boolean, String?) -> Unit) = viewModelScope.launch {
+        _isKeyValidating.value = true
+        _keyValidationErrorMessage.value = null
+        val validation = geminiLyricsService.validateApiKey(rawKey)
+        if (validation.isSuccess) {
+            val saved = secureApiKeyStore.saveApiKey(rawKey)
+            if (saved) {
+                preferences.setTranscribeTranslateEnabled(true)
+                _hasUserApiKey.value = true
+                _maskedApiKey.value = secureApiKeyStore.getMaskedApiKey()
+                _isKeyValidating.value = false
+                onResult(true, null)
+            } else {
+                _isKeyValidating.value = false
+                val msg = "Unable to store API key securely on device."
+                _keyValidationErrorMessage.value = msg
+                onResult(false, msg)
+            }
+        } else {
+            _isKeyValidating.value = false
+            val ex = validation.exceptionOrNull()
+            val msg = if (ex is java.io.IOException) {
+                "Network error connecting to Gemini API. Please check your internet connection."
+            } else {
+                ex?.message ?: "Invalid Gemini API key. Please check your key and try again."
+            }
+            _keyValidationErrorMessage.value = msg
+            // If the user entered an invalid key, turn toggle OFF
+            if (ex !is java.io.IOException || !secureApiKeyStore.hasApiKey()) {
+                preferences.setTranscribeTranslateEnabled(false)
+            }
+            onResult(false, msg)
+        }
+    }
+
+    fun deleteUserApiKey() = viewModelScope.launch {
+        secureApiKeyStore.deleteApiKey()
+        preferences.setTranscribeTranslateEnabled(false)
+        _hasUserApiKey.value = false
+        _maskedApiKey.value = null
+        _keyValidationErrorMessage.value = null
+    }
+
+    fun clearKeyValidationError() {
+        _keyValidationErrorMessage.value = null
+    }
+
+    fun setAudioTranscribeMode(mode: String) = viewModelScope.launch {
+        preferences.setAudioTranscribeMode(mode)
+    }
+
+    fun setAudioTranscribeTargetLang(langCode: String) = viewModelScope.launch {
+        preferences.setAudioTranscribeTargetLang(langCode)
+    }
+
+    fun clearTranscribeError() {
+        _transcribeErrorMessage.value = null
+    }
+
+    fun translateLyricsForSong(song: Song, targetLanguage: TranscribeLanguage) = viewModelScope.launch(Dispatchers.IO) {
+        if (_isTranscribingLyrics.value) return@launch
+
+        val apiKey = secureApiKeyStore.getApiKey()
+        if (apiKey.isNullOrBlank()) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                preferences.setTranscribeTranslateEnabled(false)
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        // Before starting processing, verify connection
+        val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
+        if (connectionCheck.isFailure) {
+            val ex = connectionCheck.exceptionOrNull()
+            withContext(Dispatchers.Main) {
+                if (ex is java.io.IOException) {
+                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    preferences.setTranscribeTranslateEnabled(false)
+                }
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        val current = _currentLyrics.value
+        if (current == null || (current.plainLyrics.isNullOrBlank() && current.syncedLyricsJson.isNullOrBlank())) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = "Lyrics are required for translation. Please use Transcribe Audio or add lyrics for this track."
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        withContext(Dispatchers.Main) {
+            _isTranscribingLyrics.value = true
+            _transcribeStatusMessage.value = "Translating lyrics to ${targetLanguage.englishName}..."
+            _transcribeErrorMessage.value = null
+        }
+
+        try {
+            val sourceHash = LyricsTranslationCache.computeSourceLyricsHash(current.plainLyrics, current.syncedLyricsJson)
+            val cached = LyricsTranslationCache.get(
+                context = getApplication(),
+                songId = song.id,
+                mode = AudioTranscribeMode.TRANSLATE,
+                targetLang = targetLanguage,
+                sourceLyricsHash = sourceHash
+            )
+
+            val (plainResult, syncedJsonResult) = if (cached != null) {
+                Pair(cached.plainLyrics, cached.syncedLyricsJson)
+            } else {
+                val inputLrc = if (!current.syncedLyricsJson.isNullOrBlank()) {
+                    com.example.util.LrcParser.formatSyncedJsonToLrc(current.syncedLyricsJson) ?: (current.plainLyrics ?: "")
+                } else {
+                    current.plainLyrics ?: ""
+                }
+
+                val result = geminiLyricsService.translateLyrics(inputLrc, targetLanguage, apiKey)
+                if (result.isFailure) {
+                    val ex = result.exceptionOrNull()
+                    val err = if (ex is SecurityException) {
+                        preferences.setTranscribeTranslateEnabled(false)
+                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    } else if (ex is java.io.IOException) {
+                        "Network error connecting to Gemini API. Please check your internet connection."
+                    } else {
+                        ex?.message ?: "Lyrics translation failed."
+                    }
+                    withContext(Dispatchers.Main) {
+                        _transcribeErrorMessage.value = err
+                        _isTranscribingLyrics.value = false
+                        _transcribeStatusMessage.value = null
+                    }
+                    return@launch
+                }
+                val res = result.getOrThrow()
+                LyricsTranslationCache.put(
+                    context = getApplication(),
+                    songId = song.id,
+                    mode = AudioTranscribeMode.TRANSLATE,
+                    targetLang = targetLanguage,
+                    sourceLyricsHash = sourceHash,
+                    plainLyrics = res.first,
+                    syncedLyricsJson = res.second
+                )
+                res
+            }
+
+            if (plainResult.isBlank() && syncedJsonResult.isNullOrBlank()) {
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = "Translation returned an empty result."
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                _transcribeLyricsPreview.value = com.example.service.transcription.TranscribeLyricsPreview(
+                    song = song,
+                    mode = AudioTranscribeMode.TRANSLATE,
+                    targetLanguage = targetLanguage,
+                    plainLyrics = plainResult,
+                    syncedLyricsJson = syncedJsonResult,
+                    source = "Translated (${targetLanguage.englishName})"
+                )
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                if (e is SecurityException) {
+                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    preferences.setTranscribeTranslateEnabled(false)
+                } else if (e is java.io.IOException) {
+                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    _transcribeErrorMessage.value = e.message ?: "Translation error occurred"
+                }
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        }
+    }
+
+    fun transcribeAudioForSong(
+        song: Song,
+        targetLanguage: TranscribeLanguage
+    ) = viewModelScope.launch(Dispatchers.IO) {
+        if (_isTranscribingLyrics.value) return@launch
+
+        val apiKey = secureApiKeyStore.getApiKey()
+        if (apiKey.isNullOrBlank()) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                preferences.setTranscribeTranslateEnabled(false)
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        // Before starting processing, verify connection
+        val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
+        if (connectionCheck.isFailure) {
+            val ex = connectionCheck.exceptionOrNull()
+            withContext(Dispatchers.Main) {
+                if (ex is java.io.IOException) {
+                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    preferences.setTranscribeTranslateEnabled(false)
+                }
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        withContext(Dispatchers.Main) {
+            _isTranscribingLyrics.value = true
+            _transcribeStatusMessage.value = "Transcribing vocals from audio..."
+            _transcribeErrorMessage.value = null
+        }
+
+        try {
+            val cached = LyricsTranslationCache.get(
+                context = getApplication(),
+                songId = song.id,
+                mode = AudioTranscribeMode.TRANSCRIBE,
+                targetLang = targetLanguage,
+                sourceLyricsHash = null
+            )
+
+            val (plainResult, syncedJsonResult) = if (cached != null) {
+                Pair(cached.plainLyrics, cached.syncedLyricsJson)
+            } else {
+                val targetFile = File(song.path)
+                if (!targetFile.exists() || targetFile.length() == 0L) {
+                    withContext(Dispatchers.Main) {
+                        _transcribeErrorMessage.value = "Audio file not accessible: ${song.displayTitle}"
+                        _isTranscribingLyrics.value = false
+                        _transcribeStatusMessage.value = null
+                    }
+                    return@launch
+                }
+
+                val result = geminiLyricsService.transcribeAudio(targetFile, song, targetLanguage, apiKey)
+                if (result.isFailure) {
+                    val ex = result.exceptionOrNull()
+                    val err = if (ex is SecurityException) {
+                        preferences.setTranscribeTranslateEnabled(false)
+                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    } else if (ex is java.io.IOException) {
+                        "Network error connecting to Gemini API. Please check your internet connection."
+                    } else {
+                        ex?.message ?: "Audio transcription failed."
+                    }
+                    withContext(Dispatchers.Main) {
+                        _transcribeErrorMessage.value = err
+                        _isTranscribingLyrics.value = false
+                        _transcribeStatusMessage.value = null
+                    }
+                    return@launch
+                }
+                val res = result.getOrThrow()
+                LyricsTranslationCache.put(
+                    context = getApplication(),
+                    songId = song.id,
+                    mode = AudioTranscribeMode.TRANSCRIBE,
+                    targetLang = targetLanguage,
+                    sourceLyricsHash = null,
+                    plainLyrics = res.first,
+                    syncedLyricsJson = res.second
+                )
+                res
+            }
+
+            if (plainResult.isBlank() && syncedJsonResult.isNullOrBlank()) {
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = "Transcription returned an empty result."
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                _transcribeLyricsPreview.value = com.example.service.transcription.TranscribeLyricsPreview(
+                    song = song,
+                    mode = AudioTranscribeMode.TRANSCRIBE,
+                    targetLanguage = targetLanguage,
+                    plainLyrics = plainResult,
+                    syncedLyricsJson = syncedJsonResult,
+                    source = "Transcribed (${targetLanguage.englishName})"
+                )
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                if (e is SecurityException) {
+                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    preferences.setTranscribeTranslateEnabled(false)
+                } else if (e is java.io.IOException) {
+                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    _transcribeErrorMessage.value = e.message ?: "Transcription error occurred"
+                }
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        }
+    }
+
+    fun saveTranscribedLyrics(preview: com.example.service.transcription.TranscribeLyricsPreview) = viewModelScope.launch(Dispatchers.IO) {
+        previousLyricsHistory[preview.song.id] = _currentLyrics.value
+
+        val entity = com.example.data.local.LyricsEntity(
+            songId = preview.song.id,
+            plainLyrics = preview.plainLyrics,
+            syncedLyricsJson = preview.syncedLyricsJson,
+            isCached = true,
+            source = preview.source
+        )
+        db.lyricsDao().insertLyrics(entity)
+
+        // Generate .lrc format content with timestamps if synced or plain lines
+        val lrcContent = if (!preview.syncedLyricsJson.isNullOrBlank()) {
+            com.example.util.LrcParser.formatSyncedJsonToLrc(preview.syncedLyricsJson) ?: preview.plainLyrics
+        } else {
+            preview.plainLyrics
+        }
+
+        // Clean song title for safe file naming
+        val rawTitle = preview.song.title.ifBlank { preview.song.displayTitle }
+        val safeFileName = rawTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "song_${preview.song.id}" }
+        val lrcFileName = "$safeFileName.lrc"
+
+        try {
+            // 1. Save companion .lrc file in the same folder as the audio track if accessible
+            if (preview.song.path.isNotBlank()) {
+                val audioFile = java.io.File(preview.song.path)
+                val parentDir = audioFile.parentFile
+                if (parentDir != null && parentDir.exists()) {
+                    try {
+                        val companionNamed = java.io.File(parentDir, lrcFileName)
+                        companionNamed.writeText(lrcContent, Charsets.UTF_8)
+                        val companionAudio = java.io.File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
+                        if (companionAudio.name != companionNamed.name) {
+                            companionAudio.writeText(lrcContent, Charsets.UTF_8)
+                        }
+                        android.media.MediaScannerConnection.scanFile(
+                            getApplication(),
+                            arrayOf(companionNamed.absolutePath),
+                            arrayOf("text/plain", "application/x-lrc"),
+                            null
+                        )
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // 2. Save into public external storage Music/Lyrics directory
+            try {
+                val publicMusicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                val publicLyricsFolder = java.io.File(publicMusicDir, "Lyrics")
+                if (!publicLyricsFolder.exists()) publicLyricsFolder.mkdirs()
+                val publicLrcFile = java.io.File(publicLyricsFolder, lrcFileName)
+                publicLrcFile.writeText(lrcContent, Charsets.UTF_8)
+                android.media.MediaScannerConnection.scanFile(
+                    getApplication(),
+                    arrayOf(publicLrcFile.absolutePath),
+                    arrayOf("text/plain", "application/x-lrc"),
+                    null
+                )
+            } catch (_: Exception) {}
+
+            // 2b. Android 10+ MediaStore direct export to device storage
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                try {
+                    val resolver = getApplication<android.app.Application>().contentResolver
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, lrcFileName)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_MUSIC}/Lyrics")
+                    }
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                        ?: resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { os ->
+                            os.write(lrcContent.toByteArray(Charsets.UTF_8))
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 3. Save into app's external files directory as backup
+            try {
+                val appLyricsDir = getApplication<android.app.Application>().getExternalFilesDir("Lyrics")
+                if (appLyricsDir != null) {
+                    if (!appLyricsDir.exists()) appLyricsDir.mkdirs()
+                    java.io.File(appLyricsDir, lrcFileName).writeText(lrcContent, Charsets.UTF_8)
+                }
+            } catch (_: Exception) {}
+
+            // 4. Update internal cache file
+            try {
+                val cacheLyricsFile = getApplication<android.app.Application>().cacheDir.resolve("lyrics").resolve("${preview.song.id}.lrc")
+                cacheLyricsFile.parentFile?.mkdirs()
+                cacheLyricsFile.writeText(lrcContent, Charsets.UTF_8)
+            } catch (_: Exception) {}
+
+            // 5. Try updating tags directly on device storage audio file (ID3v2 for MP3)
+            try {
+                com.example.util.AudioTagWriter.writeAudioTags(
+                    context = getApplication(),
+                    songPath = preview.song.path,
+                    contentUriString = preview.song.contentUriString,
+                    songId = preview.song.id,
+                    newTitle = preview.song.title,
+                    newArtist = preview.song.artist,
+                    newAlbum = preview.song.album,
+                    newArtworkUri = preview.song.artworkUri,
+                    newLyrics = lrcContent
+                )
+            } catch (_: Exception) {}
+
+        } catch (e: Exception) {
+            android.util.Log.w("MusicViewModel", "Could not write local .lrc file: ${e.message}")
+        }
+
+        withContext(Dispatchers.Main) {
+            if (playbackState.value.currentSong?.id == preview.song.id) {
+                _currentLyrics.value = entity.toDomainModel()
+            }
+            _transcribeLyricsPreview.value = null
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Saved lyrics to local device as $lrcFileName",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun discardTranscribedLyrics() {
+        _transcribeLyricsPreview.value = null
+    }
+
+    fun undoLyricsChanges(songId: Long) = viewModelScope.launch(Dispatchers.IO) {
+        if (!previousLyricsHistory.containsKey(songId)) return@launch
+        val previous = previousLyricsHistory.remove(songId)
+
+        if (previous == null || (previous.plainLyrics.isNullOrBlank() && previous.syncedLyricsJson.isNullOrBlank())) {
+            // Restore to NO lyrics state
+            db.lyricsDao().deleteLyrics(songId)
+            withContext(Dispatchers.Main) {
+                if (playbackState.value.currentSong?.id == songId) {
+                    _currentLyrics.value = null
+                    _canUndoLyricsForCurrentSong.value = false
+                }
+            }
+        } else {
+            // Restore exact previous lyrics entity
+            val entity = com.example.data.local.LyricsEntity(
+                songId = songId,
+                plainLyrics = previous.plainLyrics,
+                syncedLyricsJson = previous.syncedLyricsJson,
+                isCached = previous.isCached,
+                source = previous.source
+            )
+            db.lyricsDao().insertLyrics(entity)
+            withContext(Dispatchers.Main) {
+                if (playbackState.value.currentSong?.id == songId) {
+                    _currentLyrics.value = entity.toDomainModel()
+                    _canUndoLyricsForCurrentSong.value = false
+                }
+            }
+        }
     }
 
     suspend fun getWrappedDataForPeriod(startTime: Long, endTime: Long = 9223372036854775807L): WrappedData {

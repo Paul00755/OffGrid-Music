@@ -5,8 +5,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.Player
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -53,6 +59,13 @@ import com.example.ui.theme.*
 import com.example.util.AudioRouteDevice
 import com.example.util.AudioRouteInfo
 import com.example.util.HapticUtils
+import com.example.service.transcription.AudioTranscribeMode
+import com.example.service.transcription.TranscribeLanguage
+import com.example.service.transcription.TranscribeLyricsPreview
+import com.example.ui.components.TranscribeLanguageDialog
+import com.example.ui.components.TranscribePreviewDialog
+import com.example.ui.components.LyricsOffsetDialog
+import java.io.File
 
 @Composable
 fun NowPlayingScreen(
@@ -99,6 +112,20 @@ fun NowPlayingScreen(
     lyricsAutoScroll: Boolean = true,
     onSaveLyricsOffset: ((Long, Long) -> Unit)? = null,
     onGetLyricsOffset: ((Long) -> Long)? = null,
+    isTranscribeTranslateEnabled: Boolean = false,
+    audioTranscribeMode: String = "OFF",
+    audioTranscribeTargetLang: String = "ta",
+    isTranscribingLyrics: Boolean = false,
+    transcribeStatusMessage: String? = null,
+    transcribeErrorMessage: String? = null,
+    canUndoLyrics: Boolean = false,
+    transcribeLyricsPreview: TranscribeLyricsPreview? = null,
+    onSaveTranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
+    onDiscardTranscribedLyrics: () -> Unit = {},
+    onTranslateLyrics: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
+    onTranscribeAudio: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
+    onUndoLyricsChanges: (Long) -> Unit = {},
+    onClearTranscribeError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val livePositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsState().value else playbackState.positionMs
@@ -387,7 +414,30 @@ fun NowPlayingScreen(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     val lrcPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = remember {
+            object : androidx.activity.result.contract.ActivityResultContract<Unit, Uri?>() {
+                override fun createIntent(context: android.content.Context, input: Unit): android.content.Intent {
+                    return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                        type = "text/plain"
+                        putExtra(
+                            android.content.Intent.EXTRA_MIME_TYPES,
+                            arrayOf(
+                                "text/plain",
+                                "application/x-lrc",
+                                "text/x-lrc",
+                                "application/lrc",
+                                "text/lrc"
+                            )
+                        )
+                    }
+                }
+
+                override fun parseResult(resultCode: Int, intent: android.content.Intent?): Uri? {
+                    return if (intent == null || resultCode != android.app.Activity.RESULT_OK) null else intent.data
+                }
+            }
+        }
     ) { uri: Uri? ->
         if (uri != null) {
             var fileName = ""
@@ -402,13 +452,19 @@ fun NowPlayingScreen(
             if (fileName.isBlank()) {
                 fileName = uri.lastPathSegment?.substringAfterLast('/') ?: ""
             }
-            if (!fileName.lowercase().endsWith(".lrc") && !fileName.lowercase().endsWith(".txt")) {
-                android.widget.Toast.makeText(context, "Invalid file format. Please select a .lrc lyrics file.", android.widget.Toast.LENGTH_LONG).show()
+            val cleanName = try { android.net.Uri.decode(fileName) } catch (_: Exception) { fileName }
+            val mimeType = try { context.contentResolver.getType(uri) ?: "" } catch (_: Exception) { "" }
+            if (mimeType.startsWith("audio/") || cleanName.lowercase().endsWith(".mp3") || cleanName.lowercase().endsWith(".m4a") || cleanName.lowercase().endsWith(".flac") || cleanName.lowercase().endsWith(".wav") || cleanName.lowercase().endsWith(".ogg")) {
+                android.widget.Toast.makeText(context, "Audio files cannot be selected for lyrics. Only .lrc files are supported.", android.widget.Toast.LENGTH_LONG).show()
+                return@rememberLauncherForActivityResult
+            }
+            if (!cleanName.lowercase().endsWith(".lrc")) {
+                android.widget.Toast.makeText(context, "Invalid format. Only .lrc lyrics files are supported.", android.widget.Toast.LENGTH_LONG).show()
                 return@rememberLauncherForActivityResult
             }
             try {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val text = stream.bufferedReader().readText()
+                    val text = stream.bufferedReader(Charsets.UTF_8).readText()
                     if (text.isNotBlank()) {
                         onCustomLrcSelected(text)
                         android.widget.Toast.makeText(context, "Lyrics loaded successfully", android.widget.Toast.LENGTH_SHORT).show()
@@ -761,7 +817,7 @@ fun NowPlayingScreen(
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(20.dp))
-                        .background(BentoCardSurface.copy(alpha = 0.95f))
+                        .background(Color(0xFF09090E))
                         .border(1.dp, BentoBorder.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
                         .padding(12.dp)
                 ) {
@@ -781,9 +837,23 @@ fun NowPlayingScreen(
                         onSeekTo = onSeekTo,
                         onForceFetchLyrics = { onForceFetchLyrics(song) },
                         onOpenSearchLyrics = { showSearchLyricsDialog = true },
-                        onPickLrcFile = { lrcPickerLauncher.launch(arrayOf("text/plain", "application/x-lrc", "text/lrc", "text/x-lrc", "application/octet-stream")) },
+                        onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
                         onCloseLyrics = { showLyricsView = false },
-                        coroutineScope = coroutineScope
+                        coroutineScope = coroutineScope,
+                        isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                        audioTranscribeMode = audioTranscribeMode,
+                        audioTranscribeTargetLang = audioTranscribeTargetLang,
+                        isTranscribingLyrics = isTranscribingLyrics,
+                        transcribeStatusMessage = transcribeStatusMessage,
+                        transcribeErrorMessage = transcribeErrorMessage,
+                        canUndoLyrics = canUndoLyrics,
+                        transcribeLyricsPreview = transcribeLyricsPreview,
+                        onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                        onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                        onTranslateLyrics = onTranslateLyrics,
+                        onTranscribeAudio = onTranscribeAudio,
+                        onUndoLyricsChanges = onUndoLyricsChanges,
+                        onClearTranscribeError = onClearTranscribeError
                     )
                 }
             }
@@ -979,7 +1049,7 @@ fun NowPlayingScreen(
                                     leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary) },
                                     onClick = {
                                         showOptionsMenu = false
-                                        lrcPickerLauncher.launch(arrayOf("text/plain", "application/x-lrc", "text/lrc", "text/x-lrc", "application/octet-stream"))
+                                        lrcPickerLauncher.launch(Unit)
                                     }
                                 )
                                 DropdownMenuItem(
@@ -1302,7 +1372,7 @@ fun NowPlayingScreen(
                         leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary) },
                         onClick = {
                             showOptionsMenu = false
-                            lrcPickerLauncher.launch(arrayOf("text/plain", "application/x-lrc", "text/lrc", "text/x-lrc", "application/octet-stream"))
+                            lrcPickerLauncher.launch(Unit)
                         }
                     )
                     DropdownMenuItem(
@@ -1381,7 +1451,7 @@ fun NowPlayingScreen(
         enter = slideInVertically { it },
         exit = slideOutVertically { it }
     ) {
-        val lyricsBg = BentoBackground.copy(alpha = 0.97f)
+        val lyricsBg = Color(0xFF09090E)
 
         Box(
             modifier = Modifier
@@ -1413,9 +1483,23 @@ fun NowPlayingScreen(
                 onSeekTo = onSeekTo,
                 onForceFetchLyrics = { onForceFetchLyrics(song) },
                 onOpenSearchLyrics = { showSearchLyricsDialog = true },
-                onPickLrcFile = { lrcPickerLauncher.launch(arrayOf("text/plain", "application/x-lrc", "text/lrc", "text/x-lrc", "application/octet-stream")) },
+                onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
                 onCloseLyrics = { showLyricsView = false },
-                coroutineScope = coroutineScope
+                coroutineScope = coroutineScope,
+                isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                audioTranscribeMode = audioTranscribeMode,
+                audioTranscribeTargetLang = audioTranscribeTargetLang,
+                isTranscribingLyrics = isTranscribingLyrics,
+                transcribeStatusMessage = transcribeStatusMessage,
+                transcribeErrorMessage = transcribeErrorMessage,
+                canUndoLyrics = canUndoLyrics,
+                transcribeLyricsPreview = transcribeLyricsPreview,
+                onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                onTranslateLyrics = onTranslateLyrics,
+                onTranscribeAudio = onTranscribeAudio,
+                onUndoLyricsChanges = onUndoLyricsChanges,
+                onClearTranscribeError = onClearTranscribeError
             )
         }
     }
@@ -1509,6 +1593,15 @@ fun NowPlayingScreen(
                 shape = RoundedCornerShape(16.dp)
             )
         }
+
+        // Preview Transcribed / Translated Lyrics Dialog
+        if (transcribeLyricsPreview != null) {
+            TranscribePreviewDialog(
+                preview = transcribeLyricsPreview,
+                onSave = { editedPreview -> onSaveTranscribedLyrics(editedPreview) },
+                onDiscard = onDiscardTranscribedLyrics
+            )
+        }
     }
 }
 
@@ -1531,13 +1624,29 @@ private fun LyricsPanelContent(
     onOpenSearchLyrics: () -> Unit = {},
     onPickLrcFile: () -> Unit,
     onCloseLyrics: () -> Unit,
-    coroutineScope: kotlinx.coroutines.CoroutineScope
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    isTranscribeTranslateEnabled: Boolean = false,
+    audioTranscribeMode: String = "OFF",
+    audioTranscribeTargetLang: String = "ta",
+    isTranscribingLyrics: Boolean = false,
+    transcribeStatusMessage: String? = null,
+    transcribeErrorMessage: String? = null,
+    canUndoLyrics: Boolean = false,
+    transcribeLyricsPreview: TranscribeLyricsPreview? = null,
+    onSaveTranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
+    onDiscardTranscribedLyrics: () -> Unit = {},
+    onTranslateLyrics: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
+    onTranscribeAudio: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
+    onUndoLyricsChanges: (Long) -> Unit = {},
+    onClearTranscribeError: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var syncOffsetMs by remember(song.id) {
         mutableLongStateOf(onGetLyricsOffset?.invoke(song.id) ?: 0L)
     }
-    var showSyncOffsetDialog by remember { mutableStateOf(false) }
+    var showOffsetDialog by remember { mutableStateOf(false) }
+    var showTranscribeDialog by remember { mutableStateOf(false) }
+    var transcribeDialogInitialMode by remember { mutableStateOf(AudioTranscribeMode.TRANSLATE) }
 
     val effectivePositionMs = (positionMs + syncOffsetMs).coerceAtLeast(0L)
     val syncedLines = remember(currentLyrics) {
@@ -1548,7 +1657,9 @@ private fun LyricsPanelContent(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+    Box(modifier = Modifier.fillMaxSize().background(if (isDarkTheme) Color(0xFF09090E) else MaterialTheme.colorScheme.background)) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -1564,7 +1675,7 @@ private fun LyricsPanelContent(
                             text = "Lyrics",
                             fontSize = if (isLandscape) 18.sp else 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = BentoTextPrimary
+                            color = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground
                         )
                         if (syncedLines.isNotEmpty()) {
                             Box(
@@ -1577,10 +1688,10 @@ private fun LyricsPanelContent(
                         } else if (!currentLyrics?.plainLyrics.isNullOrBlank()) {
                             Box(
                                 modifier = Modifier
-                                    .background(BentoCardPurple, CircleShape)
+                                    .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant, CircleShape)
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text("PLAIN TEXT", fontSize = 10.sp, color = BentoTextSecondary, fontWeight = FontWeight.Medium)
+                                Text("PLAIN TEXT", fontSize = 10.sp, color = if (isDarkTheme) BentoTextSecondary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
@@ -1593,31 +1704,68 @@ private fun LyricsPanelContent(
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onOpenSearchLyrics, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.Search, contentDescription = "Find Lyrics", tint = BentoPrimary, modifier = Modifier.size(20.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val hasLyrics = syncedLines.isNotEmpty() || !currentLyrics?.plainLyrics.isNullOrBlank()
+
+                    // Top Bar Search Lyrics Icon Button
+                    IconButton(
+                        onClick = {
+                            com.example.util.HapticUtils.performClickHaptic(context)
+                            onOpenSearchLyrics()
+                        },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant)
+                            .testTag("lyrics_top_bar_search_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search lyrics",
+                            tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
 
-                    if (isLandscape) {
-                        IconButton(onClick = onForceFetchLyrics, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = "Auto Fetch", tint = BentoPrimary, modifier = Modifier.size(20.dp))
+                    // Offset button (on tab bar - text represent)
+                    if (syncedLines.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                com.example.util.HapticUtils.performClickHaptic(context)
+                                showOffsetDialog = true
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground)
+                            ),
+                            modifier = Modifier.testTag("lyrics_offset_tab_button")
+                        ) {
+                            val offsetText = if (syncOffsetMs == 0L) {
+                                "Offset"
+                            } else {
+                                val sec = syncOffsetMs / 1000.0
+                                if (syncOffsetMs > 0) "Offset +${"%.1f".format(sec)}s" else "Offset ${"%.1f".format(sec)}s"
+                            }
+                            Text(offsetText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    if (syncedLines.isNotEmpty()) {
-                        TextButton(
-                            onClick = { showSyncOffsetDialog = true },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (syncOffsetMs != 0L) BentoPrimary else BentoTextSecondary
-                            )
+                    if (isTranscribeTranslateEnabled) {
+                        IconButton(
+                            onClick = {
+                                transcribeDialogInitialMode = if (hasLyrics) AudioTranscribeMode.TRANSLATE else AudioTranscribeMode.TRANSCRIBE
+                                showTranscribeDialog = true
+                            },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF00E5FF).copy(alpha = 0.16f))
                         ) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (syncOffsetMs == 0L) "Sync Offset" else "${if (syncOffsetMs > 0) "+" else ""}${String.format(java.util.Locale.US, "%.1f", syncOffsetMs / 1000f)}s",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                imageVector = if (hasLyrics) Icons.Default.Translate else Icons.Default.GraphicEq,
+                                contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (🎼)",
+                                tint = Color(0xFF00E5FF),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -1636,12 +1784,12 @@ private fun LyricsPanelContent(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(BentoCardPurple)
+                                .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Close Lyrics",
-                                tint = BentoTextPrimary,
+                                tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -1650,6 +1798,88 @@ private fun LyricsPanelContent(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+
+            // AI Transcription / Translation Progress State
+            AnimatedVisibility(
+                visible = isTranscribingLyrics,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    color = Color(0xFF00E5FF).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color(0xFF00E5FF),
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = transcribeStatusMessage ?: "Processing lyrics...",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = BentoTextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            // AI Transcription / Translation Error Banner
+            AnimatedVisibility(
+                visible = transcribeErrorMessage != null,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                val hasLyrics = syncedLines.isNotEmpty() || !currentLyrics?.plainLyrics.isNullOrBlank()
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    color = Color(0xFFFF5252).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xFFFF5252), modifier = Modifier.size(16.dp))
+                        Text(
+                            text = transcribeErrorMessage ?: "An error occurred",
+                            fontSize = 11.5.sp,
+                            color = BentoTextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = {
+                                onClearTranscribeError()
+                                transcribeDialogInitialMode = if (hasLyrics) AudioTranscribeMode.TRANSLATE else AudioTranscribeMode.TRANSCRIBE
+                                showTranscribeDialog = true
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("Retry", fontSize = 11.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(
+                            onClick = onClearTranscribeError,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = BentoTextSecondary, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+            }
 
             if (syncedLines.isNotEmpty()) {
                 val listState = rememberLazyListState()
@@ -1762,16 +1992,21 @@ private fun LyricsPanelContent(
                                 label = "lyricScale"
                             )
 
+                            val activeLineBg = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.32f) else ambientThemeColor.copy(alpha = 0.20f)
+                            val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.65f) else ambientThemeColor.copy(alpha = 0.85f)
+                            val currentLineTextColor = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground
+                            val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f)
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(
-                                        if (isCurrentLine) ambientThemeColor.copy(alpha = 0.32f) else Color.Transparent
+                                        if (isCurrentLine) activeLineBg else Color.Transparent
                                     )
                                     .border(
                                         width = if (isCurrentLine) 1.5.dp else 0.dp,
-                                        color = if (isCurrentLine) ambientThemeColor.copy(alpha = 0.65f) else Color.Transparent,
+                                        color = if (isCurrentLine) activeLineBorder else Color.Transparent,
                                         shape = RoundedCornerShape(14.dp)
                                     )
                                     .clickable {
@@ -1783,30 +2018,48 @@ private fun LyricsPanelContent(
                                     .padding(vertical = if (isLandscape) 10.dp else 12.dp, horizontal = 16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = lineText,
-                                    fontSize = if (isCurrentLine) (if (isLandscape) 19.sp else 22.sp) else (if (isLandscape) 14.sp else 15.sp),
-                                    fontWeight = if (isCurrentLine) FontWeight.Bold else FontWeight.SemiBold,
-                                    color = if (isCurrentLine) BentoTextPrimary else BentoTextSecondary,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer {
-                                            scaleX = lineScale
-                                            scaleY = lineScale
-                                            alpha = if (isCurrentLine) 1.0f else 0.70f
-                                        }
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    if (isCurrentLine && syncOffsetMs != 0L) {
+                                        val effectiveLineTime = (timeMs - syncOffsetMs).coerceAtLeast(0L)
+                                        val min = (effectiveLineTime / 1000) / 60
+                                        val sec = (effectiveLineTime / 1000) % 60
+                                        val offsetSec = syncOffsetMs / 1000.0
+                                        val offsetLabel = if (syncOffsetMs > 0) "+${"%.1f".format(offsetSec)}s" else "${"%.1f".format(offsetSec)}s"
+                                        Text(
+                                            text = "%02d:%02d (%s offset)".format(min, sec, offsetLabel),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoPrimary,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = lineText,
+                                        fontSize = if (isCurrentLine) (if (isLandscape) 19.sp else 22.sp) else (if (isLandscape) 14.sp else 16.sp),
+                                        fontWeight = if (isCurrentLine) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (isCurrentLine) currentLineTextColor else inactiveLineTextColor,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .graphicsLayer {
+                                                scaleX = lineScale
+                                                scaleY = lineScale
+                                                alpha = if (isCurrentLine) 1.0f else (if (isDarkTheme) 0.70f else 0.65f)
+                                            }
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // Sync button & Sync Offset pill at bottom-left:
-                    // The Sync button jumps to the offset-adjusted current line (activeIndex).
-                    // If an offset is configured, show the offset pill and the Sync button when applicable.
-                    val isOffsetDurationSet = syncOffsetMs != 0L
+                    // Floating Sync, Offset, and Search buttons at bottom-left:
+                    // All appear and disappear together following the exact same auto-reveal and auto-hide logic!
                     androidx.compose.animation.AnimatedVisibility(
-                        visible = shouldShowSyncButton || isOffsetDurationSet,
+                        visible = shouldShowSyncButton,
                         enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
                         exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(),
                         modifier = Modifier
@@ -1814,58 +2067,89 @@ private fun LyricsPanelContent(
                             .padding(start = 16.dp, bottom = 16.dp)
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (shouldShowSyncButton) {
-                                Button(
-                                    onClick = {
-                                        com.example.util.HapticUtils.performClickHaptic(context)
-                                        userHasManuallyScrolled = false
-                                        onUserIsScrollingChange(false)
-                                        coroutineScope.launch {
-                                            if (activeIndex in syncedLines.indices) {
-                                                listState.animateScrollToItem(activeIndex)
-                                            }
+                            Button(
+                                onClick = {
+                                    com.example.util.HapticUtils.performClickHaptic(context)
+                                    userHasManuallyScrolled = false
+                                    onUserIsScrollingChange(false)
+                                    coroutineScope.launch {
+                                        if (activeIndex in syncedLines.indices) {
+                                            listState.animateScrollToItem(activeIndex)
                                         }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary),
-                                    shape = RoundedCornerShape(20.dp),
-                                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                                ) {
-                                    Icon(Icons.Default.Sync, contentDescription = "Sync to current line", tint = BentoOnPrimary, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Sync", color = BentoOnPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary),
+                                shape = RoundedCornerShape(20.dp),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Default.Sync, contentDescription = "Sync to current line", tint = BentoOnPrimary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sync", color = BentoOnPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            // Offset option with icon represent alone
+                            Surface(
+                                onClick = {
+                                    com.example.util.HapticUtils.performClickHaptic(context)
+                                    showOffsetDialog = true
+                                },
+                                shape = CircleShape,
+                                color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color(0xFF1E1E2C) else MaterialTheme.colorScheme.surfaceVariant),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                ),
+                                shadowElevation = 6.dp,
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .testTag("lyrics_offset_sync_icon_button")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = "Adjust lyrics offset",
+                                        tint = if (syncOffsetMs != 0L) BentoOnPrimary else (if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
 
-                            Surface(
-                                onClick = { showSyncOffsetDialog = true },
-                                color = BentoCardSurface.copy(alpha = 0.95f),
+                            // Search lyrics option (with icon and search lyrics label, auto-hides and auto-reveals alongside sync and offset)
+                            Button(
+                                onClick = {
+                                    com.example.util.HapticUtils.performClickHaptic(context)
+                                    onOpenSearchLyrics()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isDarkTheme) Color(0xFF1E1E2C) else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.dp,
+                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                ),
                                 shape = RoundedCornerShape(20.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.6f)),
-                                shadowElevation = 4.dp
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.testTag("lyrics_search_bottom_button")
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Tune,
-                                        contentDescription = "Adjust Sync Offset",
-                                        modifier = Modifier.size(14.dp),
-                                        tint = if (syncOffsetMs != 0L) BentoPrimary else BentoTextSecondary
-                                    )
-                                    val offsetLabel = if (syncOffsetMs == 0L) "Offset" else "${if (syncOffsetMs > 0) "+" else ""}${String.format(java.util.Locale.US, "%.1f", syncOffsetMs / 1000f)}s"
-                                    Text(
-                                        text = offsetLabel,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (syncOffsetMs != 0L) BentoPrimary else BentoTextSecondary
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search lyrics",
+                                    tint = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Search Lyrics",
+                                    color = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -1892,7 +2176,7 @@ private fun LyricsPanelContent(
                                     text = lineText,
                                     fontSize = if (isLandscape) 15.sp else 16.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = BentoTextPrimary,
+                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.92f) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.92f),
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -1900,14 +2184,25 @@ private fun LyricsPanelContent(
                         }
                         item {
                             Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedButton(
-                                onClick = onPickLrcFile,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.6f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoPrimary)
-                            ) {
-                                Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Change or Pick .LRC File", fontSize = 12.sp, color = BentoPrimary)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = onPickLrcFile,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoPrimary)
+                                ) {
+                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Change or Pick .LRC", fontSize = 12.sp, color = BentoPrimary)
+                                }
+                                OutlinedButton(
+                                    onClick = onOpenSearchLyrics,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoPrimary)
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Search Online", fontSize = 12.sp, color = BentoPrimary)
+                                }
                             }
                         }
                     }
@@ -1947,22 +2242,51 @@ private fun LyricsPanelContent(
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = onForceFetchLyrics,
-                                    colors = ButtonDefaults.buttonColors(containerColor = BentoCardDarkPurple)
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
+                                    )
                                 ) {
-                                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = BentoTextPrimary, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Auto Fetch", fontSize = 12.sp, color = BentoTextPrimary)
+                                    Text("Auto Fetch", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Button(
                                     onClick = onPickLrcFile,
-                                    colors = ButtonDefaults.buttonColors(containerColor = BentoCardDarkPurple)
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
+                                    )
                                 ) {
-                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoTextPrimary, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Local .LRC", fontSize = 12.sp, color = BentoTextPrimary)
+                                    Text("Local .LRC", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Button(
+                                    onClick = onOpenSearchLyrics,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Search", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            if (isTranscribeTranslateEnabled) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        transcribeDialogInitialMode = AudioTranscribeMode.TRANSCRIBE
+                                        showTranscribeDialog = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF).copy(alpha = 0.22f)),
+                                    border = BorderStroke(1.dp, Color(0xFF00E5FF))
+                                ) {
+                                    Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Transcribe Audio (🎼)", fontSize = 12.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1971,160 +2295,48 @@ private fun LyricsPanelContent(
             } // Close else
         } // Close main Column
 
-        // Bottom Right Floating "Find Lyrics" button (only in portrait mode since header has it in landscape)
-        if (!isLandscape) {
-            SmallFloatingActionButton(
-                onClick = onOpenSearchLyrics,
-                containerColor = BentoPrimary,
-                contentColor = BentoOnPrimary,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 12.dp, end = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Search, contentDescription = "Find Lyrics", modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Search Lyrics", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        // Language & Operation Selection Dialog
+        if (showTranscribeDialog) {
+            val configuredLang = TranscribeLanguage.fromCode(audioTranscribeTargetLang)
+            val configuredMode = AudioTranscribeMode.fromId(audioTranscribeMode)
+            val hasExistingLyrics = syncedLines.isNotEmpty() || !currentLyrics?.plainLyrics.isNullOrBlank()
+
+            TranscribeLanguageDialog(
+                song = song,
+                initialMode = if (configuredMode != AudioTranscribeMode.OFF) configuredMode else transcribeDialogInitialMode,
+                initialLanguage = configuredLang,
+                hasExistingLyrics = hasExistingLyrics,
+                onDismiss = { showTranscribeDialog = false },
+                onStartOperation = { mode, language ->
+                    showTranscribeDialog = false
+                    if (mode == AudioTranscribeMode.TRANSCRIBE) {
+                        onTranscribeAudio(song, language)
+                    } else if (mode == AudioTranscribeMode.TRANSLATE) {
+                        onTranslateLyrics(song, language)
+                    }
                 }
-            }
+            )
         }
 
-        // Lyrics Sync Offset Adjustment Dialog
-        if (showSyncOffsetDialog) {
-            AlertDialog(
-                onDismissRequest = { showSyncOffsetDialog = false },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = null,
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(28.dp)
-                    )
-                },
-                title = {
-                    Text(
-                        text = "Lyrics Sync Offset",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = BentoTextPrimary
-                    )
-                },
-                text = {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = song.displayTitle,
-                            fontSize = 13.sp,
-                            color = BentoTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+        // Preview Transcribed / Translated Lyrics Dialog
+        if (transcribeLyricsPreview != null) {
+            TranscribePreviewDialog(
+                preview = transcribeLyricsPreview,
+                onSave = { editedPreview -> onSaveTranscribedLyrics(editedPreview) },
+                onDiscard = onDiscardTranscribedLyrics
+            )
+        }
 
-                        // Current offset value display
-                        Surface(
-                            color = if (syncOffsetMs != 0L) BentoPrimary.copy(alpha = 0.15f) else BentoCardPurple,
-                            shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (syncOffsetMs != 0L) BentoPrimary.copy(alpha = 0.4f) else BentoBorder
-                            ),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
-                            ) {
-                                Text(
-                                    text = String.format(java.util.Locale.US, "%+.2fs", syncOffsetMs / 1000f),
-                                    fontSize = 28.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (syncOffsetMs != 0L) BentoPrimary else BentoTextPrimary
-                                )
-                                Text(
-                                    text = when {
-                                        syncOffsetMs > 0 -> "Lyrics advanced by +${String.format(java.util.Locale.US, "%.2f", syncOffsetMs / 1000f)}s (appears earlier)"
-                                        syncOffsetMs < 0 -> "Lyrics delayed by ${String.format(java.util.Locale.US, "%.2f", syncOffsetMs / 1000f)}s (appears later)"
-                                        else -> "Default timing (0.00s)"
-                                    },
-                                    fontSize = 11.sp,
-                                    color = BentoTextSecondary
-                                )
-                            }
-                        }
-
-                        // Quick Step Buttons
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            listOf(-500L to "-0.5s", -100L to "-0.1s", 0L to "Reset", 100L to "+0.1s", 500L to "+0.5s").forEach { (delta, label) ->
-                                TextButton(
-                                    onClick = {
-                                        val newOffset = if (delta == 0L) 0L else (syncOffsetMs + delta).coerceIn(-10000L, 10000L)
-                                        syncOffsetMs = newOffset
-                                        onSaveLyricsOffset?.invoke(song.id, newOffset)
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        contentColor = if (delta == 0L) Color(0xFFFF5252) else BentoPrimary
-                                    )
-                                ) {
-                                    Text(
-                                        text = label,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        // Continuous Slider (-5s to +5s)
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Slider(
-                                value = (syncOffsetMs / 100f).coerceIn(-50f, 50f),
-                                onValueChange = { sliderVal ->
-                                    val newOffset = (sliderVal * 100f).toLong()
-                                    syncOffsetMs = newOffset
-                                    onSaveLyricsOffset?.invoke(song.id, newOffset)
-                                },
-                                valueRange = -50f..50f,
-                                steps = 99,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = BentoPrimary,
-                                    activeTrackColor = BentoPrimary,
-                                    inactiveTrackColor = BentoBorder
-                                )
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("-5.0s (Later / Delayed)", fontSize = 10.sp, color = BentoTextSecondary)
-                                Text("+5.0s (Earlier / Advanced)", fontSize = 10.sp, color = BentoTextSecondary)
-                            }
-                        }
-                    }
+        // Lyrics Offset Adjustment Dialog
+        if (showOffsetDialog) {
+            LyricsOffsetDialog(
+                song = song,
+                currentOffsetMs = syncOffsetMs,
+                onOffsetChanged = { newOffset ->
+                    syncOffsetMs = newOffset
+                    onSaveLyricsOffset?.invoke(song.id, newOffset)
                 },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            onSaveLyricsOffset?.invoke(song.id, syncOffsetMs)
-                            showSyncOffsetDialog = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
-                    ) {
-                        Text("Done", color = BentoOnPrimary, fontWeight = FontWeight.Bold)
-                    }
-                },
-                containerColor = BentoCardSurface,
-                shape = RoundedCornerShape(24.dp)
+                onDismiss = { showOffsetDialog = false }
             )
         }
     }

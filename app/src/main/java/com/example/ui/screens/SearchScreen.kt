@@ -24,7 +24,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,21 +82,46 @@ fun SearchScreen(
 
     val searchResultsListState = rememberLazyListState()
     var isSearchHeaderVisible by remember { mutableStateOf(true) }
-    var lastFirstVisibleIndex by remember { mutableIntStateOf(0) }
-    var lastFirstVisibleOffset by remember { mutableIntStateOf(0) }
+    var previousIndex by remember { mutableIntStateOf(0) }
+    var previousScrollOffset by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(searchResultsListState.firstVisibleItemIndex, searchResultsListState.firstVisibleItemScrollOffset) {
-        val currentIndex = searchResultsListState.firstVisibleItemIndex
-        val currentOffset = searchResultsListState.firstVisibleItemScrollOffset
-        if (currentIndex == 0 && currentOffset < 20) {
-            isSearchHeaderVisible = true
-        } else if (currentIndex > lastFirstVisibleIndex || (currentIndex == lastFirstVisibleIndex && currentOffset > lastFirstVisibleOffset + 12)) {
-            isSearchHeaderVisible = false
-        } else if (currentIndex < lastFirstVisibleIndex || (currentIndex == lastFirstVisibleIndex && currentOffset < lastFirstVisibleOffset - 12)) {
-            isSearchHeaderVisible = true
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val delta = available.y
+                if (delta < -8f) {
+                    // User slides down through content -> auto hide input box
+                    if (isSearchHeaderVisible) {
+                        isSearchHeaderVisible = false
+                    }
+                } else if (delta > 8f) {
+                    // User slides up -> smoothly re-appear
+                    if (!isSearchHeaderVisible) {
+                        isSearchHeaderVisible = true
+                    }
+                }
+                return Offset.Zero
+            }
         }
-        lastFirstVisibleIndex = currentIndex
-        lastFirstVisibleOffset = currentOffset
+    }
+
+    LaunchedEffect(searchResultsListState) {
+        snapshotFlow {
+            Pair(searchResultsListState.firstVisibleItemIndex, searchResultsListState.firstVisibleItemScrollOffset)
+        }.collect { (currentIndex, currentOffset) ->
+            if (currentIndex == 0 && currentOffset <= 10) {
+                isSearchHeaderVisible = true
+            } else if (currentIndex > previousIndex || (currentIndex == previousIndex && currentOffset > previousScrollOffset + 10)) {
+                isSearchHeaderVisible = false
+            } else if (currentIndex < previousIndex || (currentIndex == previousIndex && currentOffset < previousScrollOffset - 10)) {
+                isSearchHeaderVisible = true
+            }
+            previousIndex = currentIndex
+            previousScrollOffset = currentOffset
+        }
     }
 
     val query = searchQuery.trim()
@@ -128,7 +157,9 @@ fun SearchScreen(
     }
 
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .nestedScroll(nestedScrollConnection),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(
@@ -266,8 +297,8 @@ fun SearchScreen(
         // Search Input Bar (Animated auto-hide on scroll)
         AnimatedVisibility(
             visible = isSearchHeaderVisible,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
+            enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(250)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(250)),
+            exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(250)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(200))
         ) {
             Column {
                 TextField(
@@ -383,6 +414,7 @@ fun SearchScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     LazyColumn(
+                        state = searchResultsListState,
                         contentPadding = PaddingValues(bottom = 120.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {

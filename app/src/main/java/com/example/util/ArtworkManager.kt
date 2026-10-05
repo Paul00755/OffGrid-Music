@@ -65,6 +65,45 @@ object ArtworkManager {
         }
     }
 
+    fun decodeBitmapFromUri(context: Context, uriString: String?, targetSize: Int = 512): Bitmap? {
+        if (uriString.isNullOrBlank()) return null
+        return try {
+            val stream: java.io.InputStream? = when {
+                uriString.startsWith("file://") -> {
+                    val p = Uri.parse(uriString).path
+                    if (p != null && File(p).exists()) java.io.FileInputStream(p) else null
+                }
+                uriString.startsWith("/") -> {
+                    val f = File(uriString)
+                    if (f.exists()) java.io.FileInputStream(f) else null
+                }
+                uriString.startsWith("content://") -> {
+                    context.contentResolver.openInputStream(Uri.parse(uriString))
+                }
+                uriString.startsWith("http://") || uriString.startsWith("https://") -> {
+                    val conn = java.net.URL(uriString).openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    conn.inputStream
+                }
+                else -> {
+                    val f = File(uriString)
+                    if (f.exists()) java.io.FileInputStream(f) else context.contentResolver.openInputStream(Uri.parse(uriString))
+                }
+            }
+            stream?.use { input ->
+                val bytes = input.readBytes()
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                options.inSampleSize = calculateInSampleSize(options, targetSize, targetSize)
+                options.inJustDecodeBounds = false
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     fun getNotificationArtworkBytes(
         context: Context,
         songId: Long,
@@ -312,21 +351,40 @@ object ArtworkManager {
 
         // 5. MediaStore album art
         if (albumId > 0) {
-            try {
-                val albumArtUri = ContentUris.withAppendedId(
-                    Uri.parse("content://media/external/audio/albumart"),
-                    albumId
-                )
-                context.contentResolver.openInputStream(albumArtUri)?.use {
-                    val bytes = it.readBytes()
-                    if (bytes.isNotEmpty()) {
-                        val cacheDir = File(context.cacheDir, CACHE_DIR_NAME)
-                        if (!cacheDir.exists()) cacheDir.mkdirs()
-                        FileOutputStream(cacheFile).use { out -> out.write(bytes) }
-                        return bytes
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                try {
+                    val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
+                    val thumb = context.contentResolver.loadThumbnail(albumUri, android.util.Size(512, 512), null)
+                    if (thumb != null) {
+                        val stream = java.io.ByteArrayOutputStream()
+                        thumb.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                        thumb.recycle()
+                        val bytes = stream.toByteArray()
+                        if (bytes.isNotEmpty()) {
+                            val cacheDir = File(context.cacheDir, CACHE_DIR_NAME)
+                            if (!cacheDir.exists()) cacheDir.mkdirs()
+                            FileOutputStream(cacheFile).use { out -> out.write(bytes) }
+                            return bytes
+                        }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            } else {
+                try {
+                    val albumArtUri = ContentUris.withAppendedId(
+                        Uri.parse("content://media/external/audio/albumart"),
+                        albumId
+                    )
+                    context.contentResolver.openInputStream(albumArtUri)?.use {
+                        val bytes = it.readBytes()
+                        if (bytes.isNotEmpty()) {
+                            val cacheDir = File(context.cacheDir, CACHE_DIR_NAME)
+                            if (!cacheDir.exists()) cacheDir.mkdirs()
+                            FileOutputStream(cacheFile).use { out -> out.write(bytes) }
+                            return bytes
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
         return null
@@ -403,6 +461,7 @@ object ArtworkManager {
             try {
                 FileOutputStream(persistentFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                    out.flush()
                 }
             } catch (_: Exception) {}
             return Uri.fromFile(persistentFile).toString()
@@ -420,26 +479,39 @@ object ArtworkManager {
                     return@withContext uriStr
                 }
             } catch (_: Exception) {}
+        } else if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q && albumId > 0L) {
+            try {
+                val albumArtUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+                context.contentResolver.openInputStream(albumArtUri)?.use { input ->
+                    val bmp = BitmapFactory.decodeStream(input)
+                    if (bmp != null) {
+                        val uriStr = saveArtworkBitmap(bmp)
+                        bmp.recycle()
+                        ArtworkResolutionCache.cache[songId] = uriStr
+                        return@withContext uriStr
+                    }
+                }
+            } catch (_: Exception) {}
         }
 
-        // 3. Extract Embedded Picture from the actual audio file (content URI or file path)
+        // 3. Extract Embedded Picture from the actual audio file (direct file path first, then content URI)
         if (songId > 0L || filePath.isNotBlank()) {
             val mmr = MediaMetadataRetriever()
             try {
                 var setSuccess = false
-                if (songId > 0L) {
-                    try {
-                        val songContentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
-                        mmr.setDataSource(context, songContentUri)
-                        setSuccess = true
-                    } catch (_: Exception) {}
-                }
-                if (!setSuccess && filePath.isNotBlank()) {
+                if (filePath.isNotBlank()) {
                     val f = File(filePath)
                     if (f.exists()) {
                         mmr.setDataSource(filePath)
                         setSuccess = true
                     }
+                }
+                if (!setSuccess && songId > 0L) {
+                    try {
+                        val songContentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
+                        mmr.setDataSource(context, songContentUri)
+                        setSuccess = true
+                    } catch (_: Exception) {}
                 }
 
                 if (setSuccess) {

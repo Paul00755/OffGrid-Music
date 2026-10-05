@@ -142,8 +142,9 @@ fun FastScrollbar(
         }
     }
 
-    // Ultra-slim width placed strictly against the right edge (14.dp width) to completely avoid intercepting song 3-dot action buttons
-    val touchWidthDp = 14.dp
+    // Expanded touch target (22.dp) for effortless grabbing without needing pixel-perfect edge taps,
+    // while keeping thumb slim (12.dp) and safe from adjacent action items
+    val touchWidthDp = 22.dp
 
     Box(
         modifier = modifier

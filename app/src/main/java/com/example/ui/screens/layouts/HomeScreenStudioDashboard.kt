@@ -82,6 +82,11 @@ fun HomeScreenStudioDashboard(
     getDurationPlayedBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Long> = { _, _ -> kotlinx.coroutines.flow.flowOf(0L) },
     getTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
     getUniqueTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
+    userAccount: com.example.auth.UserAccount? = null,
+    effectiveDisplayName: String = "Music Lover",
+    customAvatarUri: String? = null,
+    onOpenAccount: () -> Unit = {},
+    onOpenAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -133,12 +138,51 @@ fun HomeScreenStudioDashboard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(greeting, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                        Text("STUDIO MASTER DECK", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoPrimary, letterSpacing = 1.sp)
+                        Text(
+                            text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = userAccount?.email ?: "STUDIO MASTER DECK",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoPrimary,
+                            letterSpacing = 1.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
+                    IconButton(
+                        onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(BentoCardDarkPurple)
+                    ) {
+                        if (!avatarUrl.isNullOrBlank()) {
+                            coil.compose.AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = "Account",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.size(28.dp).clip(CircleShape)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (userAccount != null) Icons.Default.Person else Icons.Default.AccountCircle,
+                                contentDescription = "Account",
+                                tint = if (userAccount != null) BentoPrimary else BentoTextPrimary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = onOpenSearch,
                         modifier = Modifier

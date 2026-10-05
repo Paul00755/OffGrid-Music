@@ -10,12 +10,31 @@ import com.example.data.model.Song
 
 object WidgetBitmapRenderer {
 
+    data class WidgetThemeColors(
+        val accentColor: Int,
+        val containerBgColor: Int,
+        val containerBorderColor: Int,
+        val iconColor: Int,
+        val titleColor: Int,
+        val subtitleColor: Int,
+        val durationColor: Int
+    )
+
+    enum class ButtonIconType {
+        PREV,
+        PLAY_PAUSE,
+        NEXT,
+        FAVORITE
+    }
+
     private var cachedSongKey: String? = null
     private var cachedSourceBitmap: Bitmap? = null
-    private var cachedAccentColor: Int = 0xFF10B981.toInt()
-    private var cachedRoundedArt56: Bitmap? = null
-    private var cachedRoundedArt60: Bitmap? = null
-    private var cachedBlurredBg: Bitmap? = null
+    private var cachedColors: WidgetThemeColors? = null
+
+    // Cache rendered bitmaps to avoid GC pressure
+    private val buttonBitmapCache = mutableMapOf<String, Bitmap>()
+    private val backgroundBitmapCache = mutableMapOf<String, Bitmap>()
+    private val artworkBitmapCache = mutableMapOf<String, Bitmap>()
 
     @Synchronized
     fun getOrLoadSongBitmap(context: Context, song: Song?): Bitmap? {
@@ -23,131 +42,97 @@ object WidgetBitmapRenderer {
             clearCache()
             return null
         }
-        val key = "${song.id}_${song.artworkUri ?: song.contentUriString}"
-        if (key == cachedSongKey && cachedSourceBitmap != null) {
+        val key = "${song.id}_${song.displayTitle}_${song.artworkUri ?: song.contentUriString}"
+        if (key == cachedSongKey && cachedSourceBitmap != null && !cachedSourceBitmap!!.isRecycled) {
             return cachedSourceBitmap
         }
 
+        clearCache()
         val bmp = loadSongBitmap(context, song)
         cachedSongKey = key
         cachedSourceBitmap = bmp
-        cachedAccentColor = extractDominantAccentColor(bmp)
-        cachedRoundedArt56 = null
-        cachedRoundedArt60 = null
-        cachedBlurredBg = null
+        cachedColors = computeThemeColors(bmp)
         return bmp
     }
 
     @Synchronized
-    fun getCachedAccentColor(): Int = cachedAccentColor
-
-    @Synchronized
-    fun getCachedArtwork(): Bitmap? = cachedSourceBitmap
-
-    @Synchronized
-    fun getRoundedArtwork(context: Context, source: Bitmap?, sizePx: Int, cornerRadiusDp: Float): Bitmap {
-        if (sizePx == 180 && cachedRoundedArt56 != null) return cachedRoundedArt56!!
-        if (sizePx == 200 && cachedRoundedArt60 != null) return cachedRoundedArt60!!
-        val bmp = createRoundedArtworkBitmap(source, sizePx, cornerRadiusDp, context)
-        if (sizePx == 180) cachedRoundedArt56 = bmp
-        if (sizePx == 200) cachedRoundedArt60 = bmp
-        return bmp
-    }
-
-    @Synchronized
-    fun getBlurredBackground(context: Context, source: Bitmap?, widthPx: Int, heightPx: Int, cornerRadiusDp: Float): Bitmap {
-        if (cachedBlurredBg != null) return cachedBlurredBg!!
-        val bmp = createBlurredBackground(source, widthPx, heightPx, cornerRadiusDp, context)
-        cachedBlurredBg = bmp
-        return bmp
+    fun getThemeColors(
+        songBitmap: Bitmap?,
+        isDynamicTheme: Boolean = true,
+        manualAccentColor: Int? = null
+    ): WidgetThemeColors {
+        val colors = computeThemeColors(songBitmap, isDynamicTheme, manualAccentColor)
+        cachedColors = colors
+        return colors
     }
 
     @Synchronized
     fun clearCache() {
         cachedSongKey = null
         cachedSourceBitmap = null
-        cachedAccentColor = 0xFF10B981.toInt()
-        cachedRoundedArt56 = null
-        cachedRoundedArt60 = null
-        cachedBlurredBg = null
+        cachedColors = null
+        buttonBitmapCache.clear()
+        backgroundBitmapCache.clear()
+        artworkBitmapCache.clear()
     }
 
-    fun loadSongBitmap(context: Context, song: Song?): Bitmap? {
-        if (song == null) return null
-        val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id)
-        val artUriStr = song.artworkUri ?: cachedDisk ?: song.contentUriString
-        if (artUriStr.isBlank()) return null
+    @Synchronized
+    fun invalidateSong(songId: Long) {
+        clearCache()
+    }
 
-        try {
-            val uri = Uri.parse(artUriStr)
-            if (artUriStr.startsWith("content://")) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val thumb = context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
-                        if (thumb != null) return thumb
-                    } catch (_: Exception) {}
-                }
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val options = BitmapFactory.Options().apply { 
-                        inSampleSize = 1
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                    }
-                    val bmp = BitmapFactory.decodeStream(stream, null, options)
-                    if (bmp != null) return bmp
-                }
-            } else if (artUriStr.startsWith("file://") || artUriStr.startsWith("/")) {
-                val path = if (artUriStr.startsWith("file://")) uri.path else artUriStr
-                if (path != null) {
-                    val options = BitmapFactory.Options().apply { 
-                        inSampleSize = 1
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                    }
-                    val bmp = BitmapFactory.decodeFile(path, options)
-                    if (bmp != null) return bmp
-                }
-            } else if (artUriStr.startsWith("http://") || artUriStr.startsWith("https://")) {
-                try {
-                    val url = java.net.URL(artUriStr)
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 3000
-                    conn.readTimeout = 3000
-                    conn.inputStream.use { stream ->
-                        val bmp = BitmapFactory.decodeStream(stream)
-                        if (bmp != null) return bmp
-                    }
-                } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
-
-        // Fallback: Try MediaMetadataRetriever
-        return try {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(context, Uri.parse(song.contentUriString))
-                val artBytes = retriever.embeddedPicture
-                if (artBytes != null) {
-                    val options = BitmapFactory.Options().apply { 
-                        inSampleSize = 1
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                    }
-                    BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, options)
-                } else null
-            } finally {
-                try { retriever.release() } catch (_: Throwable) {}
-            }
-        } catch (_: Exception) {
-            null
+    fun computeThemeColors(
+        bitmap: Bitmap?,
+        isDynamicTheme: Boolean = true,
+        manualAccentColor: Int? = null
+    ): WidgetThemeColors {
+        val accent = if (isDynamicTheme) {
+            val extracted = extractDominantAccentColor(bitmap)
+            extracted ?: manualAccentColor ?: Color.parseColor("#FF9100")
+        } else {
+            manualAccentColor ?: Color.parseColor("#FF9100")
         }
+        val r = Color.red(accent)
+        val g = Color.green(accent)
+        val b = Color.blue(accent)
+
+        // Dark harmonized plum/charcoal container tint matching the screenshot
+        val bgR = (r * 0.12f + 14 * 0.88f).toInt().coerceIn(0, 255)
+        val bgG = (g * 0.10f + 10 * 0.90f).toInt().coerceIn(0, 255)
+        val bgB = (b * 0.12f + 16 * 0.88f).toInt().coerceIn(0, 255)
+        val containerBg = Color.rgb(bgR, bgG, bgB)
+
+        // Subtle dark glow border stroke
+        val strokeR = (r * 0.35f + 25 * 0.65f).toInt().coerceIn(0, 255)
+        val strokeG = (g * 0.30f + 18 * 0.70f).toInt().coerceIn(0, 255)
+        val strokeB = (b * 0.35f + 30 * 0.65f).toInt().coerceIn(0, 255)
+        val containerBorder = Color.rgb(strokeR, strokeG, strokeB)
+
+        // Deep dark glyph color for high-contrast visibility on accent circle
+        val iconColor = Color.rgb(18, 8, 14)
+
+        return WidgetThemeColors(
+            accentColor = accent,
+            containerBgColor = containerBg,
+            containerBorderColor = containerBorder,
+            iconColor = iconColor,
+            titleColor = accent,
+            subtitleColor = Color.parseColor("#B8A2AC"),
+            durationColor = Color.parseColor("#E8D0D8")
+        )
     }
 
-    fun extractDominantAccentColor(bitmap: Bitmap?): Int {
-        if (bitmap == null) return 0xFF10B981.toInt() // Default emerald green accent
+    fun extractDominantAccentColor(bitmap: Bitmap?): Int? {
+        if (bitmap == null || bitmap.isRecycled) return null
         try {
-            val scaled = Bitmap.createScaledBitmap(bitmap, 16, 16, false)
+            val scaled = Bitmap.createScaledBitmap(bitmap, 24, 24, false)
+            var bestColor = Color.parseColor("#FF4B72")
+            var maxVibrancy = -1f
+
             var totalR = 0
             var totalG = 0
             var totalB = 0
-            var count = 0
+            var validCount = 0
 
             for (x in 0 until scaled.width) {
                 for (y in 0 until scaled.height) {
@@ -158,270 +143,540 @@ object WidgetBitmapRenderer {
 
                     val max = maxOf(r, g, b)
                     val min = minOf(r, g, b)
-                    if (max > 40 && min < 235 && (max - min) > 12) {
+                    val saturation = if (max > 0) (max - min).toFloat() / max else 0f
+                    val brightness = max / 255f
+
+                    // Seek saturated, lively pixels that aren't too dark or blown out
+                    if (brightness in 0.25f..0.92f && saturation > 0.25f) {
+                        val vibrancy = saturation * brightness
+                        if (vibrancy > maxVibrancy) {
+                            maxVibrancy = vibrancy
+                            bestColor = pixel
+                        }
+                    }
+
+                    if (max > 30 && min < 240) {
                         totalR += r
                         totalG += g
                         totalB += b
-                        count++
+                        validCount++
                     }
                 }
             }
-            if (count > 0) {
-                return Color.rgb(totalR / count, totalG / count, totalB / count)
+
+            if (maxVibrancy > 0.15f) {
+                return bestColor
+            } else if (validCount > 0) {
+                return Color.rgb(totalR / validCount, totalG / validCount, totalB / validCount)
             }
         } catch (_: Exception) {}
-        return 0xFF10B981.toInt()
+        return Color.parseColor("#FF4B72")
     }
 
-    fun createRoundedArtworkBitmap(source: Bitmap?, sizePx: Int, cornerRadiusDp: Float, context: Context): Bitmap {
+    fun loadSongBitmap(context: Context, song: Song?): Bitmap? {
+        if (song == null) return null
+
+        // 1. Check authoritative in-memory notification bitmap
+        val memBmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id)
+        if (memBmp != null && !memBmp.isRecycled) return memBmp
+
+        // 2. Check in-memory notification artwork bytes
+        val memBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(song.id)
+        if (memBytes != null && memBytes.isNotEmpty()) {
+            try {
+                val bmp = BitmapFactory.decodeByteArray(memBytes, 0, memBytes.size)
+                if (bmp != null) {
+                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                    return bmp
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 3. Resolve effective image URI (manual cover, cached disk, artworkUri)
+        val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+        val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
+        val artUriStr = manualCover ?: song.artworkUri ?: cachedDisk
+
+        if (!artUriStr.isNullOrBlank()) {
+            try {
+                val uri = Uri.parse(artUriStr)
+                if (artUriStr.startsWith("content://")) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        try {
+                            val thumb = context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
+                            if (thumb != null) {
+                                com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, thumb)
+                                return thumb
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = 1
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                        }
+                        val bmp = BitmapFactory.decodeStream(stream, null, options)
+                        if (bmp != null) {
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            return bmp
+                        }
+                    }
+                } else if (artUriStr.startsWith("file://") || artUriStr.startsWith("/")) {
+                    val path = if (artUriStr.startsWith("file://")) uri.path else artUriStr
+                    if (path != null && java.io.File(path).exists()) {
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = 1
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                        }
+                        val bmp = BitmapFactory.decodeFile(path, options)
+                        if (bmp != null) {
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            return bmp
+                        }
+                    }
+                } else if (artUriStr.startsWith("http://") || artUriStr.startsWith("https://")) {
+                    try {
+                        val url = java.net.URL(artUriStr)
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 3000
+                        conn.readTimeout = 3000
+                        conn.inputStream.use { stream ->
+                            val bmp = BitmapFactory.decodeStream(stream)
+                            if (bmp != null) {
+                                com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                                return bmp
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 4. Synchronous extraction via ArtworkManager (embedded tags in file)
+        try {
+            val rawBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                context,
+                song.id,
+                song.path,
+                song.albumId,
+                song.artworkUri
+            )
+            if (rawBytes != null && rawBytes.isNotEmpty()) {
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = 1
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+                if (bmp != null) {
+                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                    return bmp
+                }
+            }
+        } catch (_: Throwable) {}
+
+        // 5. Fallback: MediaMetadataRetriever
+        return try {
+            val retriever = MediaMetadataRetriever()
+            try {
+                var setOk = false
+                if (song.contentUriString.isNotBlank()) {
+                    try {
+                        retriever.setDataSource(context, Uri.parse(song.contentUriString))
+                        setOk = true
+                    } catch (_: Exception) {}
+                }
+                if (!setOk && song.path.isNotBlank() && java.io.File(song.path).exists()) {
+                    retriever.setDataSource(song.path)
+                    setOk = true
+                }
+                if (setOk) {
+                    val artBytes = retriever.embeddedPicture
+                    if (artBytes != null) {
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = 1
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                        }
+                        val bmp = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, options)
+                        if (bmp != null) {
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            bmp
+                        } else null
+                    } else null
+                } else null
+            } finally {
+                try { retriever.release() } catch (_: Throwable) {}
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    @Synchronized
+    fun renderCardBackground(
+        context: Context,
+        widthPx: Int,
+        heightPx: Int,
+        cornerRadiusDp: Float,
+        bgColor: Int,
+        borderColor: Int
+    ): Bitmap {
+        val key = "bg_${widthPx}_${heightPx}_${cornerRadiusDp}_${bgColor}_${borderColor}"
+        backgroundBitmapCache[key]?.let { if (!it.isRecycled) return it }
+
         val density = context.resources.displayMetrics.density
         val radiusPx = cornerRadiusDp * density
 
-        val output = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        val strokeWidth = 1.5f * density
+        val halfStroke = strokeWidth / 2f
+        val rect = RectF(halfStroke, halfStroke, widthPx - halfStroke, heightPx - halfStroke)
+
+        // Fill background
+        paint.style = Paint.Style.FILL
+        paint.color = bgColor
+        canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+
+        // Draw subtle neon glow border
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = strokeWidth
+        paint.color = borderColor
+        canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+
+        backgroundBitmapCache[key] = bitmap
+        return bitmap
+    }
+
+    @Synchronized
+    fun renderPillBackground(
+        context: Context,
+        widthPx: Int,
+        heightPx: Int,
+        bgColor: Int,
+        borderColor: Int
+    ): Bitmap {
+        val key = "pill_${widthPx}_${heightPx}_${bgColor}_${borderColor}"
+        backgroundBitmapCache[key]?.let { if (!it.isRecycled) return it }
+
+        val density = context.resources.displayMetrics.density
+        val radiusPx = heightPx / 2f
+
+        val bitmap = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        val strokeWidth = 1.5f * density
+        val halfStroke = strokeWidth / 2f
+        val rect = RectF(halfStroke, halfStroke, widthPx - halfStroke, heightPx - halfStroke)
+
+        paint.style = Paint.Style.FILL
+        paint.color = bgColor
+        canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = strokeWidth
+        paint.color = borderColor
+        canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+
+        backgroundBitmapCache[key] = bitmap
+        return bitmap
+    }
+
+    @Synchronized
+    fun renderCircularButton(
+        context: Context,
+        sizePx: Int,
+        buttonColor: Int,
+        iconType: ButtonIconType,
+        isPlaying: Boolean = false,
+        isFavorite: Boolean = false,
+        iconColor: Int = Color.rgb(18, 8, 14)
+    ): Bitmap {
+        val key = "btn_${sizePx}_${buttonColor}_${iconType}_${isPlaying}_${isFavorite}_${iconColor}"
+        buttonBitmapCache[key]?.let { if (!it.isRecycled) return it }
+
+        val bitmap = Bitmap.createBitmap(sizePx.coerceAtLeast(1), sizePx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        val center = sizePx / 2f
+        val radius = center - 1f
+
+        // Draw solid circular accent button background
+        paint.style = Paint.Style.FILL
+        paint.color = buttonColor
+        canvas.drawCircle(center, center, radius, paint)
+
+        // Draw centered dark icon
+        paint.color = iconColor
+        paint.style = Paint.Style.FILL
+
+        when (iconType) {
+            ButtonIconType.PLAY_PAUSE -> {
+                if (isPlaying) {
+                    // Draw Pause Bars ||
+                    val barWidth = sizePx * 0.10f
+                    val barHeight = sizePx * 0.38f
+                    val gap = sizePx * 0.08f
+                    val corner = barWidth / 2f
+
+                    val leftBar = RectF(
+                        center - gap - barWidth,
+                        center - (barHeight / 2f),
+                        center - gap,
+                        center + (barHeight / 2f)
+                    )
+                    val rightBar = RectF(
+                        center + gap,
+                        center - (barHeight / 2f),
+                        center + gap + barWidth,
+                        center + (barHeight / 2f)
+                    )
+                    canvas.drawRoundRect(leftBar, corner, corner, paint)
+                    canvas.drawRoundRect(rightBar, corner, corner, paint)
+                } else {
+                    // Draw Play Triangle |>
+                    val triSize = sizePx * 0.36f
+                    val offsetX = sizePx * 0.04f
+                    val path = Path().apply {
+                        moveTo(center - (triSize * 0.42f) + offsetX, center - (triSize * 0.55f))
+                        lineTo(center + (triSize * 0.58f) + offsetX, center)
+                        lineTo(center - (triSize * 0.42f) + offsetX, center + (triSize * 0.55f))
+                        close()
+                    }
+                    canvas.drawPath(path, paint)
+                }
+            }
+            ButtonIconType.NEXT -> {
+                // Draw >>|
+                val arrowWidth = sizePx * 0.16f
+                val arrowHeight = sizePx * 0.34f
+                val barWidth = sizePx * 0.06f
+                val barHeight = sizePx * 0.34f
+                val halfH = arrowHeight / 2f
+                val gap = sizePx * 0.02f
+
+                // First arrow
+                val path1 = Path().apply {
+                    moveTo(center - arrowWidth - gap, center - halfH)
+                    lineTo(center - gap, center)
+                    lineTo(center - arrowWidth - gap, center + halfH)
+                    close()
+                }
+                canvas.drawPath(path1, paint)
+
+                // Second arrow
+                val path2 = Path().apply {
+                    moveTo(center, center - halfH)
+                    lineTo(center + arrowWidth, center)
+                    lineTo(center, center + halfH)
+                    close()
+                }
+                canvas.drawPath(path2, paint)
+
+                // End vertical bar
+                val barRect = RectF(
+                    center + arrowWidth + gap,
+                    center - (barHeight / 2f),
+                    center + arrowWidth + gap + barWidth,
+                    center + (barHeight / 2f)
+                )
+                canvas.drawRoundRect(barRect, barWidth / 2f, barWidth / 2f, paint)
+            }
+            ButtonIconType.PREV -> {
+                // Draw |<<
+                val arrowWidth = sizePx * 0.16f
+                val arrowHeight = sizePx * 0.34f
+                val barWidth = sizePx * 0.06f
+                val barHeight = sizePx * 0.34f
+                val halfH = arrowHeight / 2f
+                val gap = sizePx * 0.02f
+
+                // Start vertical bar
+                val barRect = RectF(
+                    center - arrowWidth - gap - barWidth,
+                    center - (barHeight / 2f),
+                    center - arrowWidth - gap,
+                    center + (barHeight / 2f)
+                )
+                canvas.drawRoundRect(barRect, barWidth / 2f, barWidth / 2f, paint)
+
+                // First arrow
+                val path1 = Path().apply {
+                    moveTo(center, center - halfH)
+                    lineTo(center - arrowWidth, center)
+                    lineTo(center, center + halfH)
+                    close()
+                }
+                canvas.drawPath(path1, paint)
+
+                // Second arrow
+                val path2 = Path().apply {
+                    moveTo(center + arrowWidth + gap, center - halfH)
+                    lineTo(center + gap, center)
+                    lineTo(center + arrowWidth + gap, center + halfH)
+                    close()
+                }
+                canvas.drawPath(path2, paint)
+            }
+            ButtonIconType.FAVORITE -> {
+                if (isFavorite) {
+                    // Draw Filled Heart ♥
+                    val heartScale = sizePx * 0.38f
+                    val path = Path()
+                    val x = center
+                    val y = center + (heartScale * 0.1f)
+                    val w = heartScale * 0.6f
+                    val h = heartScale * 0.5f
+
+                    path.moveTo(x, y + h * 0.6f)
+                    path.cubicTo(x - w * 1.2f, y - h * 0.2f, x - w * 0.7f, y - h * 1.1f, x, y - h * 0.4f)
+                    path.cubicTo(x + w * 0.7f, y - h * 1.1f, x + w * 1.2f, y - h * 0.2f, x, y + h * 0.6f)
+                    path.close()
+                    canvas.drawPath(path, paint)
+                } else {
+                    // Draw Music Note ♫
+                    paint.textSize = sizePx * 0.44f
+                    paint.textAlign = Paint.Align.CENTER
+                    val yPos = center - ((paint.descent() + paint.ascent()) / 2f)
+                    canvas.drawText("♫", center, yPos, paint)
+                }
+            }
+        }
+
+        buttonBitmapCache[key] = bitmap
+        return bitmap
+    }
+
+    @Synchronized
+    fun renderRoundedArtwork(
+        source: Bitmap?,
+        widthPx: Int,
+        heightPx: Int,
+        cornerRadiusDp: Float,
+        context: Context
+    ): Bitmap {
+        val key = "art_${source?.hashCode()}_${widthPx}_${heightPx}_${cornerRadiusDp}"
+        artworkBitmapCache[key]?.let { if (!it.isRecycled) return it }
+
+        val density = context.resources.displayMetrics.density
+        val radiusPx = cornerRadiusDp * density
+
+        val output = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val rect = RectF(0f, 0f, sizePx.toFloat(), sizePx.toFloat())
+        val rect = RectF(0f, 0f, widthPx.toFloat(), heightPx.toFloat())
 
-        if (source != null) {
-            val scaled = Bitmap.createScaledBitmap(source, sizePx, sizePx, true)
-            paint.shader = BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        if (source != null && !source.isRecycled) {
+            // Scale center-crop to fill width x height
+            val srcW = source.width.toFloat()
+            val srcH = source.height.toFloat()
+            val scale = maxOf(widthPx / srcW, heightPx / srcH)
+            val scaledW = srcW * scale
+            val scaledH = srcH * scale
+            val dx = (widthPx - scaledW) / 2f
+            val dy = (heightPx - scaledH) / 2f
+
+            val matrix = Matrix().apply {
+                setScale(scale, scale)
+                postTranslate(dx, dy)
+            }
+            val shader = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(matrix)
+            }
+            paint.shader = shader
             canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
         } else {
-            // Gradient fallback
+            // Elegant gradient placeholder
             val gradient = LinearGradient(
-                0f, 0f, sizePx.toFloat(), sizePx.toFloat(),
-                Color.parseColor("#374151"), Color.parseColor("#111827"), Shader.TileMode.CLAMP
+                0f, 0f, widthPx.toFloat(), heightPx.toFloat(),
+                Color.parseColor("#2E101D"), Color.parseColor("#15080E"),
+                Shader.TileMode.CLAMP
             )
             paint.shader = gradient
             canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
 
             paint.shader = null
-            paint.color = Color.parseColor("#9CA3AF")
-            paint.textSize = sizePx * 0.45f
+            paint.color = Color.parseColor("#FF4B72")
+            paint.alpha = 180
+            paint.textSize = minOf(widthPx, heightPx) * 0.35f
             paint.textAlign = Paint.Align.CENTER
-            val yPos = (sizePx / 2f) - ((paint.descent() + paint.ascent()) / 2f)
-            canvas.drawText("♪", sizePx / 2f, yPos, paint)
+            val yPos = (heightPx / 2f) - ((paint.descent() + paint.ascent()) / 2f)
+            canvas.drawText("♪", widthPx / 2f, yPos, paint)
         }
+
+        artworkBitmapCache[key] = output
         return output
     }
 
-    fun createBlurredBackground(source: Bitmap?, widthPx: Int, heightPx: Int, cornerRadiusDp: Float, context: Context): Bitmap {
-        val density = context.resources.displayMetrics.density
-        val radiusPx = cornerRadiusDp * density
+    @Synchronized
+    fun renderPillArtwork(
+        source: Bitmap?,
+        widthPx: Int,
+        heightPx: Int,
+        rightRadiusDp: Float,
+        context: Context
+    ): Bitmap {
+        val key = "pill_art_${source?.hashCode()}_${widthPx}_${heightPx}_${rightRadiusDp}"
+        artworkBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
-        val output = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+        val density = context.resources.displayMetrics.density
+        val radiusPx = rightRadiusDp * density
+
+        val output = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val rect = RectF(0f, 0f, widthPx.toFloat(), heightPx.toFloat())
 
-        if (source != null) {
-            // Draw scaled down and stretched artwork to simulate smooth blur
-            val smallSize = 32
-            val smallBmp = Bitmap.createScaledBitmap(source, smallSize, smallSize, true)
-            val scaledShader = BitmapShader(
-                Bitmap.createScaledBitmap(smallBmp, widthPx, heightPx, true),
-                Shader.TileMode.CLAMP,
+        // Path with rounded right corners only
+        val path = Path().apply {
+            moveTo(0f, 0f)
+            lineTo(widthPx - radiusPx, 0f)
+            quadTo(widthPx.toFloat(), 0f, widthPx.toFloat(), radiusPx)
+            lineTo(widthPx.toFloat(), heightPx - radiusPx)
+            quadTo(widthPx.toFloat(), heightPx.toFloat(), widthPx - radiusPx, heightPx.toFloat())
+            lineTo(0f, heightPx.toFloat())
+            close()
+        }
+
+        if (source != null && !source.isRecycled) {
+            val srcW = source.width.toFloat()
+            val srcH = source.height.toFloat()
+            val scale = maxOf(widthPx / srcW, heightPx / srcH)
+            val scaledW = srcW * scale
+            val scaledH = srcH * scale
+            val dx = (widthPx - scaledW) / 2f
+            val dy = (heightPx - scaledH) / 2f
+
+            val matrix = Matrix().apply {
+                setScale(scale, scale)
+                postTranslate(dx, dy)
+            }
+            val shader = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(matrix)
+            }
+            paint.shader = shader
+            canvas.drawPath(path, paint)
+        } else {
+            val gradient = LinearGradient(
+                0f, 0f, widthPx.toFloat(), heightPx.toFloat(),
+                Color.parseColor("#2E101D"), Color.parseColor("#15080E"),
                 Shader.TileMode.CLAMP
             )
-            paint.shader = scaledShader
-            canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+            paint.shader = gradient
+            canvas.drawPath(path, paint)
 
-            // Dark vignette overlay
             paint.shader = null
-            paint.color = Color.parseColor("#B30A0E17")
-            canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
-        } else {
-            paint.color = Color.parseColor("#E60F172A")
-            canvas.drawRoundRect(rect, radiusPx, radiusPx, paint)
+            paint.color = Color.parseColor("#FF4B72")
+            paint.alpha = 180
+            paint.textSize = heightPx * 0.4f
+            paint.textAlign = Paint.Align.CENTER
+            val yPos = (heightPx / 2f) - ((paint.descent() + paint.ascent()) / 2f)
+            canvas.drawText("♪", widthPx / 2f, yPos, paint)
         }
+
+        artworkBitmapCache[key] = output
         return output
-    }
-
-    private var cachedDiscBaseKey: String? = null
-    private var cachedDiscBaseBmp: Bitmap? = null
-
-    @Synchronized
-    fun createCircularWidgetBitmap(
-        context: Context,
-        sourceArtwork: Bitmap?,
-        progressRatio: Float,
-        accentColor: Int,
-        sizePx: Int = 220
-    ): Bitmap {
-        val center = sizePx / 2f
-        val strokeWidthPx = (sizePx * 0.038f).coerceIn(6f, 14f)
-        val radius = center - (strokeWidthPx / 2f) - 2f
-
-        val discKey = "${sourceArtwork?.hashCode()}_${sizePx}"
-        var baseBmp = if (cachedDiscBaseKey == discKey && cachedDiscBaseBmp != null && !cachedDiscBaseBmp!!.isRecycled) {
-            cachedDiscBaseBmp
-        } else {
-            val base = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-            val baseCanvas = Canvas(base)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                isFilterBitmap = true
-                isDither = true
-            }
-
-            // 1. Dark Base Disc Background
-            paint.style = Paint.Style.FILL
-            paint.color = Color.parseColor("#12141C")
-            baseCanvas.drawCircle(center, center, radius, paint)
-
-            // 2. Artwork Disc / Texture with Radial Dark Vignette
-            if (sourceArtwork != null && !sourceArtwork.isRecycled) {
-                try {
-                    val smallArt = Bitmap.createScaledBitmap(sourceArtwork, sizePx, sizePx, true)
-                    val artPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        isFilterBitmap = true
-                        isDither = true
-                        shader = BitmapShader(smallArt, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    }
-                    baseCanvas.drawCircle(center, center, radius, artPaint)
-
-                    val vignetteGradient = RadialGradient(
-                        center, center, radius,
-                        intArrayOf(Color.parseColor("#590A0C14"), Color.parseColor("#F20A0C14")),
-                        floatArrayOf(0.25f, 1.0f),
-                        Shader.TileMode.CLAMP
-                    )
-                    val vigPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        shader = vignetteGradient
-                    }
-                    baseCanvas.drawCircle(center, center, radius, vigPaint)
-                } catch (_: Exception) {}
-            } else {
-                val gradient = RadialGradient(
-                    center, center, radius,
-                    intArrayOf(Color.parseColor("#2A2E3D"), Color.parseColor("#10131A")),
-                    floatArrayOf(0.2f, 1.0f),
-                    Shader.TileMode.CLAMP
-                )
-                paint.shader = gradient
-                baseCanvas.drawCircle(center, center, radius, paint)
-            }
-
-            // Inactive background ring track on base
-            paint.shader = null
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = strokeWidthPx
-            paint.strokeCap = Paint.Cap.ROUND
-            paint.color = Color.parseColor("#4DFFFFFF")
-            val ringRect = RectF(center - radius, center - radius, center + radius, center + radius)
-            baseCanvas.drawArc(ringRect, 0f, 360f, false, paint)
-
-            cachedDiscBaseKey = discKey
-            cachedDiscBaseBmp = base
-            base
-        }
-
-        // Create working output bitmap and draw base
-        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        if (baseBmp != null && !baseBmp.isRecycled) {
-            canvas.drawBitmap(baseBmp, 0f, 0f, null)
-        }
-
-        // Active progress arc
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            isFilterBitmap = true
-            isDither = true
-            style = Paint.Style.STROKE
-            strokeWidth = strokeWidthPx
-            strokeCap = Paint.Cap.ROUND
-            color = if (accentColor != 0) accentColor else Color.parseColor("#10B981")
-        }
-        val ringRect = RectF(center - radius, center - radius, center + radius, center + radius)
-        val sweepAngle = (progressRatio.coerceIn(0f, 1f) * 360f)
-        if (sweepAngle > 0f) {
-            canvas.drawArc(ringRect, -90f, sweepAngle, false, paint)
-        }
-
-        return bitmap
-    }
-
-    private var cachedWaveformProgress: Float = -1f
-    private var cachedWaveformColor: Int = -1
-    private var cachedWaveformBmp: Bitmap? = null
-
-    // Generates a rich, seekable audio waveform progress bar bitmap for widgets
-    @Synchronized
-    fun renderWaveformBarBitmap(
-        context: Context,
-        widthPx: Int = 420,
-        heightPx: Int = 36,
-        progressRatio: Float = 0f,
-        accentColor: Int = 0xFFFF9100.toInt(),
-        barCount: Int = 38
-    ): Bitmap {
-        val clampedProgress = progressRatio.coerceIn(0f, 1f)
-        if (cachedWaveformBmp != null &&
-            cachedWaveformBmp!!.width == widthPx &&
-            cachedWaveformBmp!!.height == heightPx &&
-            cachedWaveformColor == accentColor &&
-            kotlin.math.abs(cachedWaveformProgress - clampedProgress) < 0.008f
-        ) {
-            return cachedWaveformBmp!!
-        }
-
-        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-        val totalSpacing = (barCount - 1) * 2f
-        val barWidth = ((widthPx - totalSpacing) / barCount).coerceAtLeast(3.5f)
-        val centerY = heightPx / 2f
-
-        val harmonicPattern = floatArrayOf(
-            0.30f, 0.45f, 0.65f, 0.42f, 0.78f, 0.92f, 0.55f, 0.85f,
-            0.62f, 0.98f, 0.72f, 0.48f, 0.86f, 1.00f, 0.68f, 0.42f,
-            0.75f, 0.90f, 0.58f, 0.80f, 0.94f, 0.52f, 0.84f, 0.66f,
-            0.92f, 0.60f, 0.42f, 0.78f, 0.96f, 0.68f, 0.46f, 0.82f,
-            0.64f, 0.45f, 0.32f, 0.22f
-        )
-
-        val currentActiveWidth = widthPx * clampedProgress
-
-        for (i in 0 until barCount) {
-            val x = i * (barWidth + 2f)
-            val patternHeight = harmonicPattern[i % harmonicPattern.size]
-            val barHeight = ((heightPx - 4f) * patternHeight).coerceAtLeast(4f)
-            val top = centerY - (barHeight / 2f)
-            val bottom = centerY + (barHeight / 2f)
-
-            val isPlayed = (x + barWidth / 2f) <= currentActiveWidth
-            if (isPlayed) {
-                paint.color = if (accentColor != 0) accentColor else 0xFF8B5CF6.toInt()
-                paint.alpha = 245
-            } else {
-                paint.color = Color.WHITE
-                paint.alpha = 50
-            }
-            val cornerRadius = barWidth / 2f
-            canvas.drawRoundRect(x, top, x + barWidth, bottom, cornerRadius, cornerRadius, paint)
-        }
-
-        // Seeker cursor line at playback position
-        if (currentActiveWidth > 2f && currentActiveWidth < widthPx - 2f) {
-            paint.color = Color.WHITE
-            paint.alpha = 255
-            val thumbWidth = 5f
-            val thumbHeight = heightPx * 0.92f
-            val thumbTop = centerY - (thumbHeight / 2f)
-            canvas.drawRoundRect(
-                currentActiveWidth - (thumbWidth / 2f),
-                thumbTop,
-                currentActiveWidth + (thumbWidth / 2f),
-                thumbTop + thumbHeight,
-                2.5f,
-                2.5f,
-                paint
-            )
-        }
-
-        cachedWaveformProgress = clampedProgress
-        cachedWaveformColor = accentColor
-        cachedWaveformBmp = bitmap
-        return bitmap
     }
 }

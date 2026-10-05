@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -45,6 +46,8 @@ import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
 import com.example.data.model.FolderInfo
 import com.example.service.SleepTimerState
+import com.example.service.transcription.AudioTranscribeMode
+import com.example.service.transcription.TranscribeLanguage
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
@@ -57,7 +60,8 @@ enum class SettingsSection(val title: String, val icon: androidx.compose.ui.grap
     CACHE("Cache & Storage", Icons.Default.Storage),
     PLAYBACK("Playback & Timers", Icons.Default.PlayCircle),
     LIBRARY("Library & Folders", Icons.Default.Folder),
-    OTHER("Other & Privacy", Icons.Default.Security)
+    OTHER("Other & Privacy", Icons.Default.Security),
+    CLOUD_SYNC("Cloud & Sync", Icons.Default.CloudSync)
 }
 
 private fun matchesSettingsSearch(query: String, vararg keywords: String): Boolean {
@@ -480,7 +484,7 @@ fun SettingsScreen(
     onSetHomeScreenLayout: (String) -> Unit = {},
     nowPlayingLayout: String = "MODERN_BENTO",
     onSetNowPlayingLayout: (String) -> Unit = {},
-    playlistsLayout: String = "BENTO_GRID",
+    playlistsLayout: String = "GLOW_CARDS",
     onSetPlaylistsLayout: (String) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
@@ -533,6 +537,17 @@ fun SettingsScreen(
     onSetNormalizeAudio: (Boolean) -> Unit = {},
     autoPlayOnHeadphoneConnection: Boolean = false,
     onSetAutoPlayOnHeadphoneConnection: (Boolean) -> Unit = {},
+    autoPlayOnAppStartup: Boolean = false,
+    onSetAutoPlayOnAppStartup: (Boolean) -> Unit = {},
+    isTranscribeTranslateEnabled: Boolean = false,
+    onSetTranscribeTranslateEnabled: (Boolean) -> Unit = {},
+    hasUserApiKey: Boolean = false,
+    maskedApiKey: String? = null,
+    isKeyValidating: Boolean = false,
+    keyValidationErrorMessage: String? = null,
+    onSaveUserApiKey: (String, (Boolean, String?) -> Unit) -> Unit = { _, _ -> },
+    onDeleteUserApiKey: () -> Unit = {},
+    onClearKeyValidationError: () -> Unit = {},
     pauseOnZeroVolume: Boolean = false,
     onSetPauseOnZeroVolume: (Boolean) -> Unit = {},
     autoResumeOnVolumeIncrease: Boolean = false,
@@ -587,6 +602,22 @@ fun SettingsScreen(
     onScanLibrary: () -> Unit = {},
     onQuickScanAndCleanLibrary: () -> Unit = {},
     scanProgress: com.example.scanner.ScanProgress = com.example.scanner.ScanProgress(),
+    userAccount: com.example.auth.UserAccount? = null,
+    effectiveDisplayName: String = "Music Lover",
+    customAvatarUri: String? = null,
+    syncStatus: com.example.data.sync.SyncStatus = com.example.data.sync.SyncStatus.Idle,
+    backupStatus: com.example.data.sync.BackupStatus = com.example.data.sync.BackupStatus.Idle,
+    lastSyncedTimestamp: Long = 0L,
+    lastBackupTimestamp: Long = 0L,
+    automaticBackupEnabled: Boolean = false,
+    backupFrequency: com.example.data.sync.BackupFrequency = com.example.data.sync.BackupFrequency.WEEKLY,
+    onToggleAutomaticBackup: (Boolean) -> Unit = {},
+    onSelectFrequency: (com.example.data.sync.BackupFrequency) -> Unit = {},
+    onTriggerSync: () -> Unit = {},
+    onTriggerBackup: () -> Unit = {},
+    onSignOut: () -> Unit = {},
+    onOpenAccount: () -> Unit = {},
+    onOpenAuth: () -> Unit = {},
     onBackClick: () -> Unit = {},
     initialTargetSection: String? = null,
     modifier: Modifier = Modifier
@@ -603,9 +634,41 @@ fun SettingsScreen(
                 "PLAYBACK", "TIMER" -> SettingsSection.PLAYBACK
                 "LIBRARY", "FOLDERS" -> SettingsSection.LIBRARY
                 "OTHER", "PRIVACY" -> SettingsSection.OTHER
+                "CLOUD", "SYNC", "CLOUD_SYNC", "ACCOUNT" -> SettingsSection.CLOUD_SYNC
                 else -> SettingsSection.ALL
             }
         )
+    }
+
+    val tabHistory = remember { mutableStateListOf<SettingsSection>() }
+    var apiKeyInput by remember { mutableStateOf("") }
+    var isEditingApiKey by remember { mutableStateOf(false) }
+    var showKeyText by remember { mutableStateOf(false) }
+
+    fun navigateToSection(newSection: SettingsSection) {
+        if (selectedSection != newSection) {
+            tabHistory.add(selectedSection)
+            selectedSection = newSection
+        }
+    }
+
+    fun handleBack() {
+        if (searchQuery.isNotEmpty()) {
+            searchQuery = ""
+            return
+        }
+        if (tabHistory.isNotEmpty()) {
+            val previous = tabHistory.removeAt(tabHistory.lastIndex)
+            selectedSection = previous
+        } else if (selectedSection != SettingsSection.ALL) {
+            selectedSection = SettingsSection.ALL
+        } else {
+            onBackClick()
+        }
+    }
+
+    BackHandler(enabled = true) {
+        handleBack()
     }
 
     var selectedLayoutCustomizerScreen by remember { mutableStateOf("NOW_PLAYING") }
@@ -1192,6 +1255,7 @@ fun SettingsScreen(
         searchQuery,
         "audio", "sound", "normalize", "normalization", "normalize audio", "loudness", "crossfade", "fade", "fading", "gapless", "volume", "balance", "channel",
         "stereo", "pan", "left", "right", "equalizer", "eq", "bands", "bass", "bassboost", "boost",
+        "transcribe", "translate", "tamil", "tanglish", "hindi", "malayalam", "vocal", "lyrics translation",
         "virtualizer", "3d", "spatial", "preset", "normal", "rock", "pop", "classical", "jazz",
         "dance", "electronic", "vocal", "acoustic", "flat", "notification", "duck", "ducking",
         "earbud", "headphone", "speaker", "pause on zero", "auto resume", "decibel", "hz"
@@ -1224,7 +1288,7 @@ fun SettingsScreen(
         "minutes", "finish last song", "track count", "song count", "shake", "shake to skip",
         "sensor", "gesture", "gestures", "swipe", "swipe to skip", "tap to play", "album art gesture", "shuffle", "always shuffle", "screen", "awake", "keep screen awake",
         "scrobble", "duration", "percentage", "completion", "threshold", "resume", "bluetooth",
-        "headset", "headphone", "earbud", "unplug", "loop", "repeat", "autoplay", "track", "count", "queue", "add to queue", "add to queue position", "playlist", "add to playlist"
+        "headset", "headphone", "earbud", "unplug", "loop", "repeat", "autoplay", "startup", "app startup", "track", "count", "queue", "add to queue", "add to queue position", "playlist", "add to playlist"
     )
 
     val cacheMatches = matchesSettingsSearch(
@@ -1249,7 +1313,13 @@ fun SettingsScreen(
         "version", "system health", "build", "other"
     )
 
-    val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches
+    val cloudSyncMatches = matchesSettingsSearch(
+        searchQuery,
+        "cloud", "sync", "synchronize", "backup", "restore", "account", "login", "sign in", "sign out",
+        "firebase", "google", "profile", "cross device", "favorites", "playlists", "history", "avatar"
+    )
+
+    val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches
 
     val showAudio = if (isSearching) audioMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.AUDIO)
     val showUi = if (isSearching) uiMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.UI)
@@ -1258,6 +1328,7 @@ fun SettingsScreen(
     val showCache = if (isSearching) cacheMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CACHE)
     val showLibrary = if (isSearching) libraryMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.LIBRARY)
     val showOther = if (isSearching) otherMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.OTHER)
+    val showCloudSync = if (isSearching) cloudSyncMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC)
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -1271,6 +1342,99 @@ fun SettingsScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // User Account Tile / Card in Settings
+            item(key = "settings_account_tile") {
+                val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
+                Surface(
+                    onClick = {
+                        if (userAccount != null) onOpenAccount() else onOpenAuth()
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    color = BentoCardSurface,
+                    border = BorderStroke(1.dp, BentoBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = BentoPrimary.copy(alpha = 0.16f),
+                            border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.4f)),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            if (!avatarPhoto.isNullOrBlank()) {
+                                coil.compose.AsyncImage(
+                                    model = avatarPhoto,
+                                    contentDescription = "Profile Photo",
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else if (userAccount != null) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = (effectiveDisplayName.firstOrNull() ?: 'U').uppercase(),
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoPrimary
+                                    )
+                                }
+                            } else {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountCircle,
+                                        contentDescription = "Profile Photo",
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (userAccount != null) effectiveDisplayName else "Account & Profile",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (userAccount != null) BentoPrimary.copy(alpha = 0.15f) else Color(0xFF00E676).copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = if (userAccount != null) userAccount.friendlyProviderName else "Offline Mode",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (userAccount != null) BentoPrimary else Color(0xFF00E676),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = userAccount?.email ?: "Tap to sign in or create an account",
+                                fontSize = 12.sp,
+                                color = BentoTextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = null,
+                            tint = BentoTextSubtle
+                        )
+                    }
+                }
+            }
+
             // 1. Futuristic Hero Dashboard Header
             item(key = "settings_hero_dashboard") {
                 Surface(
@@ -1313,7 +1477,7 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
                                 onClick = {
                                     HapticUtils.performClickHaptic(context)
-                                    onBackClick()
+                                    handleBack()
                                 },
                                 modifier = Modifier.size(38.dp)
                             ) {
@@ -1415,6 +1579,7 @@ fun SettingsScreen(
                                 SettingsSection.CACHE -> Color(0xFF00E676)
                                 SettingsSection.LIBRARY -> Color(0xFF2979FF)
                                 SettingsSection.OTHER -> Color(0xFFFF5252)
+                                SettingsSection.CLOUD_SYNC -> Color(0xFF00E5FF)
                             }
                             val chipBg = if (isSelected) sectionAccent.copy(alpha = 0.12f) else BentoCardSurface
                             val chipBorder = if (isSelected) sectionAccent.copy(alpha = 0.38f) else BentoBorder.copy(alpha = 0.28f)
@@ -1426,7 +1591,7 @@ fun SettingsScreen(
                                 modifier = Modifier.clickable {
                                     HapticUtils.performClickHaptic(context)
                                     searchQuery = ""
-                                    selectedSection = section
+                                    navigateToSection(section)
                                 }
                             ) {
                                 Row(
@@ -1615,6 +1780,300 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
+                        // Transcribe / Translate Lyrics Feature
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Enable Transcribe/Translate Lyrics Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF00E5FF).copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Translate,
+                                            contentDescription = null,
+                                            tint = Color(0xFF00E5FF),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "Enable Transcribe/Translate Lyrics",
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoTextPrimary
+                                        )
+                                        Text(
+                                            text = if (isTranscribeTranslateEnabled) "Transcribe vocals or translate lyrics via Gemini AI" else "Default OFF — no Gemini API requests",
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+                                }
+
+                                Switch(
+                                    checked = isTranscribeTranslateEnabled,
+                                    onCheckedChange = { enable ->
+                                        HapticUtils.performClickHaptic(context)
+                                        if (enable) {
+                                            if (hasUserApiKey) {
+                                                onSetTranscribeTranslateEnabled(true)
+                                            } else {
+                                                // Prompt user to enter their API key; keep toggle OFF until validly saved
+                                                isEditingApiKey = true
+                                                onSetTranscribeTranslateEnabled(false)
+                                            }
+                                        } else {
+                                            onSetTranscribeTranslateEnabled(false)
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.Black,
+                                        checkedTrackColor = Color(0xFF00E5FF),
+                                        uncheckedThumbColor = BentoTextSubtle,
+                                        uncheckedTrackColor = BentoBorder
+                                    )
+                                )
+                            }
+
+                            // Gemini API Key Configuration Area (Shown when enabled, or when user opens input)
+                            if (isTranscribeTranslateEnabled || isEditingApiKey) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = BentoCardSurface,
+                                    border = BorderStroke(1.dp, if (hasUserApiKey && !isEditingApiKey) Color(0xFF00E5FF).copy(alpha = 0.35f) else BentoBorder.copy(alpha = 0.5f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        if (hasUserApiKey && !isEditingApiKey) {
+                                            // Configured state without exposing the full key
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.VpnKey,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF00E5FF),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Column {
+                                                        Text(
+                                                            text = "Gemini API Key",
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = BentoTextPrimary
+                                                        )
+                                                        Text(
+                                                            text = maskedApiKey ?: "••••••••••••",
+                                                            fontSize = 11.5.sp,
+                                                            color = BentoTextSecondary
+                                                        )
+                                                    }
+                                                }
+
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFF00E676).copy(alpha = 0.15f)
+                                                ) {
+                                                    Text(
+                                                        text = "Configured",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF00E676),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            // Action Buttons: Edit / Replace Key and Delete Key
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        apiKeyInput = ""
+                                                        isEditingApiKey = true
+                                                        onClearKeyValidationError()
+                                                    },
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    border = BorderStroke(1.dp, BentoBorder)
+                                                ) {
+                                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.dp), tint = BentoTextPrimary)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Edit / Replace", fontSize = 11.sp, color = BentoTextPrimary)
+                                                }
+
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        onDeleteUserApiKey()
+                                                        isEditingApiKey = false
+                                                        apiKeyInput = ""
+                                                    },
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.5f))
+                                                ) {
+                                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color(0xFFFF5252))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Delete Key", fontSize = 11.sp, color = Color(0xFFFF5252))
+                                                }
+                                            }
+                                        } else {
+                                            // Input / Replace Key Field
+                                            Text(
+                                                text = if (isEditingApiKey && hasUserApiKey) "Replace Gemini API Key" else "Configure Gemini API Key",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoTextPrimary
+                                            )
+                                            Text(
+                                                text = "Enter your Google Gemini API key to enable lyrics transcription and translation. Your key is stored securely on device (AES-256 GCM) and is never synchronized to Firestore or cloud backup.",
+                                                fontSize = 11.sp,
+                                                color = BentoTextSecondary
+                                            )
+
+                                            OutlinedTextField(
+                                                value = apiKeyInput,
+                                                onValueChange = {
+                                                    apiKeyInput = it
+                                                    if (keyValidationErrorMessage != null) {
+                                                        onClearKeyValidationError()
+                                                    }
+                                                },
+                                                label = { Text("Gemini API Key", fontSize = 12.sp) },
+                                                placeholder = { Text("AIzaSy...", fontSize = 12.sp, color = BentoTextSubtle) },
+                                                singleLine = true,
+                                                visualTransformation = if (showKeyText) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                                trailingIcon = {
+                                                    IconButton(onClick = { showKeyText = !showKeyText }, modifier = Modifier.size(28.dp)) {
+                                                        Icon(
+                                                            imageVector = if (showKeyText) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                            contentDescription = if (showKeyText) "Hide key" else "Show key",
+                                                            tint = BentoTextSecondary,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                isError = keyValidationErrorMessage != null,
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedBorderColor = Color(0xFF00E5FF),
+                                                    unfocusedBorderColor = BentoBorder,
+                                                    focusedLabelColor = Color(0xFF00E5FF),
+                                                    errorBorderColor = Color(0xFFFF5252)
+                                                )
+                                            )
+
+                                            if (keyValidationErrorMessage != null) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFFFF5252).copy(alpha = 0.15f),
+                                                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f)),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xFFFF5252), modifier = Modifier.size(14.dp))
+                                                        Text(
+                                                            text = keyValidationErrorMessage ?: "",
+                                                            fontSize = 11.sp,
+                                                            color = BentoTextPrimary,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        IconButton(onClick = onClearKeyValidationError, modifier = Modifier.size(20.dp)) {
+                                                            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = BentoTextSecondary, modifier = Modifier.size(12.dp))
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                if (isEditingApiKey && hasUserApiKey) {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            isEditingApiKey = false
+                                                            apiKeyInput = ""
+                                                            onClearKeyValidationError()
+                                                        },
+                                                        modifier = Modifier.weight(1f),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                    ) {
+                                                        Text("Cancel", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                                    }
+                                                }
+
+                                                Button(
+                                                    onClick = {
+                                                        onSaveUserApiKey(apiKeyInput.trim()) { success, _ ->
+                                                            if (success) {
+                                                                isEditingApiKey = false
+                                                                apiKeyInput = ""
+                                                            }
+                                                        }
+                                                    },
+                                                    enabled = apiKeyInput.isNotBlank() && !isKeyValidating,
+                                                    modifier = Modifier.weight(1.2f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                                ) {
+                                                    if (isKeyValidating) {
+                                                        CircularProgressIndicator(
+                                                            color = Color.Black,
+                                                            strokeWidth = 2.dp,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text("Validating...", fontSize = 11.5.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                                    } else {
+                                                        Icon(Icons.Default.Check, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("Save & Validate Key", fontSize = 11.5.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        SettingsDivider()
+
                         // L/R Audio Balance with Stereo Bar Indicator
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
@@ -1781,7 +2240,11 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .padding(end = 8.dp)
+                                ) {
                                     Text("Curated Themes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                                     Text("Switch high-fidelity palettes with bespoke accent gradients", fontSize = 11.5.sp, color = BentoTextSecondary)
                                 }
@@ -1795,19 +2258,27 @@ fun SettingsScreen(
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFFBB86FC),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                                     )
                                 }
                             }
 
                             val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
-                            val compatibleThemes = remember(themeMode, isSystemDark) {
-                                com.example.ui.theme.AppUiTheme.getCompatibleThemes(themeMode, isSystemDark)
+                            val compatibleThemes = remember(themeMode, isSystemDark, uiTheme) {
+                                val list = com.example.ui.theme.AppUiTheme.getCompatibleThemes(themeMode, isSystemDark)
+                                val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme)
+                                if (list.none { it.id.equals(currentTheme.id, ignoreCase = true) }) {
+                                    listOf(currentTheme) + list
+                                } else {
+                                    list
+                                }
                             }
 
                             LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                             ) {
                                 items(compatibleThemes, key = { it.id }, contentType = { "theme_preview" }) { theme ->
                                     val isSelected = uiTheme.equals(theme.id, ignoreCase = true)
@@ -2555,6 +3026,18 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
+                        // Autoplay on App Startup
+                        SettingsToggleRow(
+                            title = "Autoplay music on app startup",
+                            subtitle = "Automatically begin music playback when the app is launched",
+                            checked = autoPlayOnAppStartup,
+                            onCheckedChange = onSetAutoPlayOnAppStartup,
+                            icon = Icons.Default.PlayCircle,
+                            accentColor = Color(0xFFFF9100)
+                        )
+
+                        SettingsDivider()
+
                         // Gesture-based Playback Control
                         SettingsToggleRow(
                             title = "Album Art Gestures",
@@ -3221,33 +3704,6 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
-                        // Full Rescan Media Library
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Full Rescan Media Library", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                Text("Deep scan across all storage partitions and custom included directories", fontSize = 11.5.sp, color = BentoTextSecondary)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onScanLibrary()
-                                    android.widget.Toast.makeText(context, "Full library scan started", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                enabled = !isCurrentlyScanning,
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF2979FF)),
-                                border = BorderStroke(1.dp, Color(0xFF2979FF).copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("Full Scan", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            }
-                        }
-
-                        SettingsDivider()
-
                         // Custom Music Folders
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -3450,6 +3906,233 @@ fun SettingsScreen(
                 }
             }
 
+            // ==========================================
+            // SECTION 8: CLOUD & CROSS-DEVICE SYNC
+            // ==========================================
+            if (showCloudSync) {
+                item(key = "settings_cloud_sync_header") {
+                    SettingsSectionHeader(
+                        title = "Cloud & Cross-Device Sync",
+                        subtitle = "Real-time Google Cloud backup for favorites, playlists, statistics and settings",
+                        kicker = "CLOUD & DATA BACKUP",
+                        icon = Icons.Default.CloudSync,
+                        accentColor = Color(0xFF00E5FF)
+                    )
+                }
+
+                item(key = "settings_cloud_sync_card") {
+                    SettingsCardContainer(accentGlow = Color(0xFF00E5FF)) {
+                        // User Account Summary Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF00E5FF).copy(alpha = 0.16f),
+                                border = BorderStroke(1.5.dp, Color(0xFF00E5FF).copy(alpha = 0.45f)),
+                                modifier = Modifier.size(46.dp)
+                            ) {
+                                if (!avatarPhoto.isNullOrBlank()) {
+                                    coil.compose.AsyncImage(
+                                        model = avatarPhoto,
+                                        contentDescription = "Avatar",
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                    )
+                                } else if (userAccount != null) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = (effectiveDisplayName.firstOrNull() ?: 'U').uppercase(),
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF00E5FF)
+                                        )
+                                    }
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.AccountCircle,
+                                            contentDescription = "Avatar",
+                                            tint = Color(0xFF00E5FF),
+                                            modifier = Modifier.size(30.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (userAccount != null) effectiveDisplayName else "Local Guest Profile",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (userAccount != null) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color(0xFF00E676).copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = if (userAccount != null) userAccount.friendlyProviderName else "Offline Only",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (userAccount != null) Color(0xFF00E5FF) else Color(0xFF00E676),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = userAccount?.email ?: "Sign in to backup your favorites, playlists & stats across devices",
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        SettingsDivider()
+
+                        // Cloud Synchronization & Backup Section
+                        com.example.ui.components.CloudSyncBackupSection(
+                            automaticBackupEnabled = automaticBackupEnabled,
+                            onToggleAutomaticBackup = onToggleAutomaticBackup,
+                            backupFrequency = backupFrequency,
+                            onSelectFrequency = onSelectFrequency,
+                            lastSyncedTimestamp = lastSyncedTimestamp,
+                            lastBackupTimestamp = lastBackupTimestamp,
+                            syncStatus = syncStatus,
+                            backupStatus = backupStatus,
+                            onSyncNow = onTriggerSync,
+                            onBackupNow = onTriggerBackup,
+                            isUserSignedIn = userAccount != null,
+                            onOpenAuth = onOpenAuth
+                        )
+
+                        SettingsDivider()
+
+                        // What gets synced summary tiles
+                        Text(
+                            text = "AUTOMATICALLY SYNCHRONIZED",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSubtle,
+                            letterSpacing = 1.sp
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                Triple(Icons.Default.Favorite, "Favorites", "Hearted songs"),
+                                Triple(Icons.AutoMirrored.Filled.QueueMusic, "Playlists", "Custom playlists"),
+                                Triple(Icons.Default.Insights, "Statistics", "Listening history"),
+                                Triple(Icons.Default.Tune, "Preferences", "Theme & audio EQ")
+                            ).forEach { (icon, title, desc) ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = BentoCardPurple,
+                                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = null,
+                                            tint = Color(0xFF00E5FF),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = title,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Text(
+                                            text = desc,
+                                            fontSize = 9.sp,
+                                            color = BentoTextSecondary,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        SettingsDivider()
+
+                        // Manage Account / Auth Actions
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (userAccount != null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onOpenAccount()
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Account Details", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onSignOut()
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, BentoError.copy(alpha = 0.5f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoError),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Sign Out", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onOpenAuth()
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF00E5FF),
+                                        contentColor = Color.Black
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Sign In or Register with Cloud", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // No Search Results State
             if (isSearching && !anyMatches) {
                 item(key = "settings_empty_search") {
@@ -3500,22 +4183,30 @@ fun ThemePreviewCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val cardBorderColor = if (isSelected) {
+        theme.previewPrimary
+    } else if (theme.isDark) {
+        BentoBorder.copy(alpha = 0.55f)
+    } else {
+        Color(0xFFCBD5E1)
+    }
+
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = theme.previewBg,
         border = BorderStroke(
-            width = if (isSelected) 2.5.dp else 1.dp,
-            color = if (isSelected) theme.previewPrimary else BentoBorder.copy(alpha = 0.55f)
+            width = if (isSelected) 2.dp else 1.dp,
+            color = cardBorderColor
         ),
         modifier = modifier
-            .width(170.dp)
-            .height(148.dp)
+            .width(168.dp)
+            .height(160.dp)
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
             Column(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Top: Theme Accent Dots and Active checkmark
                 Row(
@@ -3523,7 +4214,10 @@ fun ThemePreviewCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(theme.previewPrimary))
                         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(theme.previewAccent))
                         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(theme.previewSurface))
@@ -3534,13 +4228,16 @@ fun ThemePreviewCard(
                             color = theme.previewPrimary,
                             modifier = Modifier.size(20.dp)
                         ) {
+                            val lum = 0.299f * theme.previewPrimary.red + 0.587f * theme.previewPrimary.green + 0.114f * theme.previewPrimary.blue
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Active",
-                                tint = if (theme.isDark && theme != AppUiTheme.PURE_AMOLED) Color.Black else Color.White,
+                                tint = if (lum > 0.55f) Color.Black else Color.White,
                                 modifier = Modifier.padding(3.dp)
                             )
                         }
+                    } else {
+                        Spacer(modifier = Modifier.size(20.dp))
                     }
                 }
 
@@ -3549,7 +4246,9 @@ fun ThemePreviewCard(
                     shape = RoundedCornerShape(8.dp),
                     color = theme.previewSurface,
                     border = BorderStroke(0.75.dp, theme.previewPrimary.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
@@ -3582,19 +4281,20 @@ fun ThemePreviewCard(
                     }
                 }
 
-                // Bottom: Title & Subtitle
-                Column {
+                // Bottom: Title & Subtitle with guaranteed spacing and overflow protection
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = theme.displayName,
-                        fontSize = 12.sp,
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (theme.isDark) Color.White else Color(0xFF0F172A),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = theme.subtitle,
-                        fontSize = 9.5.sp,
+                        fontSize = 10.sp,
                         color = if (theme.isDark) Color(0xFFA1A1AA) else Color(0xFF64748B),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -179,6 +181,12 @@ fun HomeScreen(
     onRefreshSpeedDial: () -> Unit = {},
     homeSections: List<String> = listOf("speed_dial", "continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
     playbackPositionFlow: kotlinx.coroutines.flow.StateFlow<Long>? = null,
+    userAccount: com.example.auth.UserAccount? = null,
+    effectiveDisplayName: String = "Music Lover",
+    customAvatarUri: String? = null,
+    onOpenAccount: () -> Unit = {},
+    onOpenAuth: () -> Unit = {},
+    onSignOut: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedMostPlayedFilter by remember { mutableStateOf(MostPlayedFilter.SEVEN_DAYS) }
@@ -235,42 +243,202 @@ fun HomeScreen(
                     .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {
-                // Sidebar Header
+                // Sidebar Header with Account Section
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(BentoPrimary.copy(alpha = 0.08f))
-                        .padding(horizontal = 20.dp, vertical = 22.dp)
+                        .padding(horizontal = 20.dp, vertical = 20.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = CircleShape,
-                            color = BentoPrimary.copy(alpha = 0.12f),
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.GraphicEq,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = BentoPrimary.copy(alpha = 0.15f),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.GraphicEq,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "OFFGRID MUSIC",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoTextPrimary,
+                                letterSpacing = 0.6.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Account Card inside Drawer
+                    val isLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
+                    val avatarUrl = customAvatarUri ?: (if (isLoggedIn) userAccount?.photoUrl else null)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                coroutineScope.launch { drawerState.close() }
+                                if (isLoggedIn) onOpenAccount() else onOpenAuth()
+                            }
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = BentoPrimary.copy(alpha = 0.18f),
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    if (!avatarUrl.isNullOrBlank()) {
+                                        coil.compose.AsyncImage(
+                                            model = avatarUrl,
+                                            contentDescription = "Profile Photo",
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                        )
+                                    } else if (isLoggedIn && !userAccount?.displayName.isNullOrBlank()) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = userAccount!!.displayName!!.trim().first().uppercase(),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 17.sp,
+                                                color = BentoPrimary
+                                            )
+                                        }
+                                    } else if (isLoggedIn && !userAccount?.email.isNullOrBlank()) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = userAccount!!.email!!.trim().first().uppercase(),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 17.sp,
+                                                color = BentoPrimary
+                                            )
+                                        }
+                                    } else {
+                                        // When not logged in using Google account or email:
+                                        // Show normal portrait (AccountCircle, matching top nav bar) instead of displaying letter M
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.AccountCircle,
+                                                contentDescription = "Profile Photo",
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (isLoggedIn) effectiveDisplayName else "Welcome to OffGrid",
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = BentoTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (isLoggedIn) (userAccount?.email ?: "Account connected") else "Offline mode active",
+                                        fontSize = 11.sp,
+                                        color = BentoTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (isLoggedIn) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = BentoPrimary.copy(alpha = 0.14f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                coroutineScope.launch { drawerState.close() }
+                                                onOpenAccount()
+                                            }
+                                    ) {
+                                        Text(
+                                            text = "Manage Account",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoPrimary,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 6.dp)
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFFFF5252).copy(alpha = 0.12f),
+                                        modifier = Modifier
+                                            .clickable {
+                                                coroutineScope.launch { drawerState.close() }
+                                                onSignOut()
+                                            }
+                                    ) {
+                                        Text(
+                                            text = "Sign Out",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFFF5252),
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                } else {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = BentoPrimary,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                coroutineScope.launch { drawerState.close() }
+                                                onOpenAuth()
+                                            }
+                                    ) {
+                                        Text(
+                                            text = "Sign In / Register",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoOnPrimary,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 7.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "OFFGRID MUSIC",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = BentoTextPrimary,
-                            letterSpacing = 0.6.sp
-                        )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = "${allSongs.size} Songs • ${allPlaylists.size} Playlists",
-                        fontSize = 12.sp,
-                        color = BentoTextSecondary
+                        fontSize = 11.5.sp,
+                        color = BentoTextSubtle
                     )
                 }
 
@@ -456,6 +624,11 @@ fun HomeScreen(
                     getDurationPlayedBetween = getDurationPlayedBetween,
                     getTrackCountBetween = getTrackCountBetween,
                     getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                    userAccount = userAccount,
+                    effectiveDisplayName = effectiveDisplayName,
+                    customAvatarUri = customAvatarUri,
+                    onOpenAccount = onOpenAccount,
+                    onOpenAuth = onOpenAuth,
                     modifier = modifier
                 )
             }
@@ -501,6 +674,11 @@ fun HomeScreen(
                     getDurationPlayedBetween = getDurationPlayedBetween,
                     getTrackCountBetween = getTrackCountBetween,
                     getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                    userAccount = userAccount,
+                    effectiveDisplayName = effectiveDisplayName,
+                    customAvatarUri = customAvatarUri,
+                    onOpenAccount = onOpenAccount,
+                    onOpenAuth = onOpenAuth,
                     modifier = modifier
                 )
             }
@@ -547,6 +725,11 @@ fun HomeScreen(
                     getDurationPlayedBetween = getDurationPlayedBetween,
                     getTrackCountBetween = getTrackCountBetween,
                     getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                    userAccount = userAccount,
+                    effectiveDisplayName = effectiveDisplayName,
+                    customAvatarUri = customAvatarUri,
+                    onOpenAccount = onOpenAccount,
+                    onOpenAuth = onOpenAuth,
                     modifier = modifier
                 )
             }
@@ -560,6 +743,7 @@ fun HomeScreen(
                 ) {
                 // Header Row with Time-Based Greeting, Sidebar Drawer Toggle, and Top Nav Search Option
                 item {
+                    val isTopLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -592,7 +776,7 @@ fun HomeScreen(
 
                             Column {
                                 Text(
-                                    text = greeting,
+                                    text = if (isTopLoggedIn) "Welcome, $effectiveDisplayName" else greeting,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = BentoTextPrimary,
@@ -600,7 +784,7 @@ fun HomeScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "OffGrid Music",
+                                    text = if (isTopLoggedIn) (userAccount?.email ?: "OffGrid Music") else "OffGrid Music",
                                     fontSize = 11.5.sp,
                                     color = BentoTextSecondary,
                                     maxLines = 1,
@@ -610,6 +794,36 @@ fun HomeScreen(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // User Account Avatar Button
+                            val topAvatar = customAvatarUri ?: (if (isTopLoggedIn) userAccount?.photoUrl else null)
+                            Surface(
+                                onClick = {
+                                    if (isTopLoggedIn) onOpenAccount() else onOpenAuth()
+                                },
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                if (!topAvatar.isNullOrBlank()) {
+                                    coil.compose.AsyncImage(
+                                        model = topAvatar,
+                                        contentDescription = "User Account",
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                    )
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isTopLoggedIn) Icons.Default.Person else Icons.Default.AccountCircle,
+                                            contentDescription = "User Account",
+                                            tint = if (isTopLoggedIn) BentoPrimary else BentoTextPrimary,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                }
+                            }
+
                             Surface(
                                 onClick = onOpenSearch,
                                 shape = CircleShape,

@@ -10,9 +10,8 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val playbackManager = PlaybackManager.activeInstance
-        if (playbackManager != null) {
-            WidgetUpdateManager.updateAllWidgets(context, playbackManager.playbackState.value)
-        }
+        val state = playbackManager?.playbackState?.value ?: com.example.service.PlaybackState()
+        WidgetUpdateManager.updateAllWidgets(context, state)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,16 +22,10 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
             WidgetUpdateManager.ACTION_WIDGET_PLAY_PAUSE -> playbackManager?.togglePlayPause()
             WidgetUpdateManager.ACTION_WIDGET_NEXT -> playbackManager?.skipToNext()
             WidgetUpdateManager.ACTION_WIDGET_PREV -> playbackManager?.skipToPrevious()
-            WidgetUpdateManager.ACTION_WIDGET_FAVORITE -> {
-                playbackManager?.toggleCurrentSongFavorite()
-            }
-            WidgetUpdateManager.ACTION_WIDGET_SHUFFLE -> playbackManager?.toggleShuffle()
-            WidgetUpdateManager.ACTION_WIDGET_SEEK_FORWARD -> playbackManager?.seekForward()
-            WidgetUpdateManager.ACTION_WIDGET_SEEK_BACKWARD -> playbackManager?.seekBackward()
+            WidgetUpdateManager.ACTION_WIDGET_FAVORITE -> playbackManager?.toggleCurrentSongFavorite()
         }
 
-        if (playbackManager != null) {
-            WidgetUpdateManager.updateAllWidgets(context, playbackManager.playbackState.value)
-        }
+        val state = playbackManager?.playbackState?.value ?: com.example.service.PlaybackState()
+        WidgetUpdateManager.updateAllWidgets(context, state)
     }
 }

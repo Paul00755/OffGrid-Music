@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -73,6 +74,7 @@ class UserPreferencesRepository(private val context: Context) {
         val SCROBBLE_THRESHOLD_VALUE = intPreferencesKey("scrobble_threshold_value") // e.g. 30 (sec or %)
         val HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
         val ALWAYS_SHUFFLE_MODE = booleanPreferencesKey("always_shuffle_mode")
+        val AUTOPLAY_ON_APP_STARTUP = booleanPreferencesKey("autoplay_on_app_startup")
         val GESTURE_PLAYBACK_ENABLED = booleanPreferencesKey("gesture_playback_enabled")
         val FETCH_ONLINE_ARTWORK_HIGH_RES = booleanPreferencesKey("fetch_online_artwork_high_res")
 
@@ -97,6 +99,280 @@ class UserPreferencesRepository(private val context: Context) {
 
         // Database Storage Tier ("STANDARD", "EXPANDED", "MAXIMUM")
         val DATABASE_STORAGE_TIER = stringPreferencesKey("database_storage_tier")
+
+        // User Account & Profile Preferences
+        val SKIP_AUTH_PROMPT = booleanPreferencesKey("skip_auth_prompt")
+        val CUSTOM_DISPLAY_NAME = stringPreferencesKey("custom_display_name")
+        val CUSTOM_AVATAR_URI = stringPreferencesKey("custom_avatar_uri")
+        val SETTINGS_LAST_UPDATED_AT = longPreferencesKey("settings_last_updated_at")
+
+        // Cloud Backup & Sync Scheduling
+        val AUTOMATIC_BACKUP_ENABLED = booleanPreferencesKey("automatic_backup_enabled")
+        val BACKUP_FREQUENCY = stringPreferencesKey("backup_frequency") // "DAILY", "WEEKLY", "MONTHLY"
+        val LAST_SYNCED_TIMESTAMP = longPreferencesKey("last_synced_timestamp")
+        val LAST_BACKUP_TIMESTAMP = longPreferencesKey("last_backup_timestamp")
+        val LAST_BACKUP_DATA_HASH = stringPreferencesKey("last_backup_data_hash")
+
+        // Audio & Lyrics Transcription / Translation
+        val TRANSCRIBE_TRANSLATE_ENABLED = booleanPreferencesKey("transcribe_translate_enabled")
+        val AUDIO_TRANSCRIBE_MODE = stringPreferencesKey("audio_transcribe_mode") // "OFF", "TRANSCRIBE", "TRANSLATE"
+        val AUDIO_TRANSCRIBE_TARGET_LANG = stringPreferencesKey("audio_transcribe_target_lang") // "en", "ta", "hi", "ml"
+    }
+
+    val isTranscribeTranslateEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false
+    }
+
+    val audioTranscribeMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF"
+    }
+
+    val audioTranscribeTargetLang: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta"
+    }
+
+    suspend fun setTranscribeTranslateEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setAudioTranscribeMode(mode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] = mode
+        }
+    }
+
+    suspend fun setAudioTranscribeTargetLang(langCode: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = langCode
+        }
+    }
+
+    val automaticBackupEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: false
+    }
+
+    val backupFrequency: Flow<com.example.data.sync.BackupFrequency> = context.dataStore.data.map { prefs ->
+        com.example.data.sync.BackupFrequency.fromString(prefs[PreferenceKeys.BACKUP_FREQUENCY])
+    }
+
+    val lastSyncedTimestamp: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_SYNCED_TIMESTAMP] ?: 0L
+    }
+
+    val lastBackupTimestamp: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_BACKUP_TIMESTAMP] ?: 0L
+    }
+
+    val lastBackupDataHash: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_BACKUP_DATA_HASH] ?: ""
+    }
+
+    suspend fun setAutomaticBackupEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setBackupFrequency(frequency: com.example.data.sync.BackupFrequency) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.BACKUP_FREQUENCY] = frequency.name
+        }
+    }
+
+    suspend fun setLastSyncedTimestamp(timestamp: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LAST_SYNCED_TIMESTAMP] = timestamp
+        }
+    }
+
+    suspend fun setLastBackupTimestamp(timestamp: Long, hash: String? = null) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LAST_BACKUP_TIMESTAMP] = timestamp
+            if (hash != null) {
+                prefs[PreferenceKeys.LAST_BACKUP_DATA_HASH] = hash
+            }
+        }
+    }
+
+    val settingsLastUpdatedAt: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
+    }
+
+    suspend fun touchSettingsUpdatedAt(timestamp: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = timestamp
+        }
+    }
+
+    suspend fun exportUserSettings(): com.example.data.sync.CloudUserSettings {
+        val prefs = context.dataStore.data.first()
+        return com.example.data.sync.CloudUserSettings(
+            themeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK",
+            uiTheme = prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN",
+            homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC",
+            nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS",
+            playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "GLOW_CARDS",
+            accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE",
+            customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0,
+            dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true,
+            amoledMode = prefs[PreferenceKeys.AMOLED_MODE] ?: false,
+            cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16,
+            fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM",
+            artworkSize = prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM",
+            showArtist = prefs[PreferenceKeys.SHOW_ARTIST] ?: true,
+            showAlbum = prefs[PreferenceKeys.SHOW_ALBUM] ?: true,
+            showAudioOutput = prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: true,
+            miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: "FLOATING",
+            miniPlayerShowPrevious = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: true,
+            miniPlayerShowNext = prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: true,
+            miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: true,
+            waveformStyle = prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE",
+            lyricsFetchMode = prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: "WIFI_ONLY",
+            lyricsAutoScroll = prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: true,
+            lyricsFontSize = prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: "MEDIUM",
+            gaplessPlayback = prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: true,
+            crossfadeDurationSec = prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: 0,
+            normalizeAudio = prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: false,
+            autoPlayOnHeadphoneConnection = prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false,
+            pauseOnZeroVolume = prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: true,
+            autoResumeOnVolumeIncrease = prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: true,
+            fadeInOutMs = prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000,
+            fadeInMs = prefs[PreferenceKeys.FADE_IN_MS] ?: 1000,
+            fadeOutMs = prefs[PreferenceKeys.FADE_OUT_MS] ?: 1000,
+            shakeToSkip = prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: false,
+            keepScreenAwake = prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: false,
+            audioBalance = prefs[PreferenceKeys.AUDIO_BALANCE] ?: 0f,
+            equalizerPreset = prefs[PreferenceKeys.EQUALIZER_PRESET] ?: "NORMAL",
+            customEqBands = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0",
+            customBassBoost = prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0,
+            customVirtualizer = prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0,
+            reduceVolumeOnNotification = prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true,
+            scrobbleThresholdType = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS",
+            scrobbleThresholdValue = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30,
+            repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: 0,
+            shuffleMode = prefs[PreferenceKeys.SHUFFLE_MODE] ?: false,
+            alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: false,
+            gesturePlaybackEnabled = prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: true,
+            highRefreshRate = prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true,
+            addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM",
+            playlistAddSongPosition = prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM",
+            playlistViewMode = prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID",
+            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
+            databaseStorageTier = prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED",
+            customDisplayName = prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME],
+            customAvatarUri = prefs[PreferenceKeys.CUSTOM_AVATAR_URI],
+            updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: System.currentTimeMillis()
+        )
+    }
+
+    suspend fun importUserSettings(cloud: com.example.data.sync.CloudUserSettings, checkTimestamp: Boolean = true): Boolean {
+        var applied = false
+        context.dataStore.edit { prefs ->
+            val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
+            if (!checkTimestamp || cloud.updatedAt >= localUpdated) {
+                prefs[PreferenceKeys.THEME_MODE] = cloud.themeMode
+                prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
+                prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout
+                prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = cloud.nowPlayingLayout
+                prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = cloud.playlistsLayout
+                prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
+                prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
+                prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
+                prefs[PreferenceKeys.AMOLED_MODE] = cloud.amoledMode
+                prefs[PreferenceKeys.CORNER_RADIUS_DP] = cloud.cornerRadiusDp
+                prefs[PreferenceKeys.FONT_SIZE_SCALE] = cloud.fontSizeScale
+                prefs[PreferenceKeys.ARTWORK_SIZE] = cloud.artworkSize
+                prefs[PreferenceKeys.SHOW_ARTIST] = cloud.showArtist
+                prefs[PreferenceKeys.SHOW_ALBUM] = cloud.showAlbum
+                prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = cloud.showAudioOutput
+                prefs[PreferenceKeys.MINI_PLAYER_STYLE] = cloud.miniPlayerStyle
+                prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = cloud.miniPlayerShowPrevious
+                prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = cloud.miniPlayerShowNext
+                prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = cloud.miniPlayerShowFavorite
+                prefs[PreferenceKeys.WAVEFORM_STYLE] = cloud.waveformStyle
+                prefs[PreferenceKeys.LYRICS_FETCH_MODE] = cloud.lyricsFetchMode
+                prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = cloud.lyricsAutoScroll
+                prefs[PreferenceKeys.LYRICS_FONT_SIZE] = cloud.lyricsFontSize
+                prefs[PreferenceKeys.GAPLESS_PLAYBACK] = cloud.gaplessPlayback
+                prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = cloud.crossfadeDurationSec
+                prefs[PreferenceKeys.NORMALIZE_AUDIO] = cloud.normalizeAudio
+                prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = cloud.autoPlayOnHeadphoneConnection
+                prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = cloud.pauseOnZeroVolume
+                prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = cloud.autoResumeOnVolumeIncrease
+                prefs[PreferenceKeys.FADE_IN_OUT_MS] = cloud.fadeInOutMs
+                prefs[PreferenceKeys.FADE_IN_MS] = cloud.fadeInMs
+                prefs[PreferenceKeys.FADE_OUT_MS] = cloud.fadeOutMs
+                prefs[PreferenceKeys.SHAKE_TO_SKIP] = cloud.shakeToSkip
+                prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] = cloud.keepScreenAwake
+                prefs[PreferenceKeys.AUDIO_BALANCE] = cloud.audioBalance
+                prefs[PreferenceKeys.EQUALIZER_PRESET] = cloud.equalizerPreset
+                prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = cloud.customEqBands
+                prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = cloud.customBassBoost
+                prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = cloud.customVirtualizer
+                prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = cloud.reduceVolumeOnNotification
+                prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = cloud.scrobbleThresholdType
+                prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = cloud.scrobbleThresholdValue
+                prefs[PreferenceKeys.REPEAT_MODE] = cloud.repeatMode
+                prefs[PreferenceKeys.SHUFFLE_MODE] = cloud.shuffleMode
+                prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = cloud.alwaysShuffleMode
+                prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = cloud.gesturePlaybackEnabled
+                prefs[PreferenceKeys.HIGH_REFRESH_RATE] = cloud.highRefreshRate
+                prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = cloud.addToQueuePosition
+                prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = cloud.playlistAddSongPosition
+                prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = cloud.playlistViewMode
+                prefs[PreferenceKeys.HOME_SECTIONS] = cloud.homeSections
+                prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = cloud.databaseStorageTier
+                if (!cloud.customDisplayName.isNullOrBlank()) {
+                    prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME] = cloud.customDisplayName
+                }
+                if (!cloud.customAvatarUri.isNullOrBlank()) {
+                    prefs[PreferenceKeys.CUSTOM_AVATAR_URI] = cloud.customAvatarUri
+                }
+                prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = cloud.updatedAt
+                applied = true
+            }
+        }
+        return applied
+    }
+
+    val skipAuthPrompt: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.SKIP_AUTH_PROMPT] ?: false
+    }
+
+    suspend fun setSkipAuthPrompt(skip: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SKIP_AUTH_PROMPT] = skip
+        }
+    }
+
+    val customDisplayName: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME]
+    }
+
+    suspend fun setCustomDisplayName(name: String?) {
+        context.dataStore.edit { prefs ->
+            if (name != null) {
+                prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME] = name
+            } else {
+                prefs.remove(PreferenceKeys.CUSTOM_DISPLAY_NAME)
+            }
+        }
+    }
+
+    val customAvatarUri: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.CUSTOM_AVATAR_URI]
+    }
+
+    suspend fun setCustomAvatarUri(uri: String?) {
+        context.dataStore.edit { prefs ->
+            if (uri != null) {
+                prefs[PreferenceKeys.CUSTOM_AVATAR_URI] = uri
+            } else {
+                prefs.remove(PreferenceKeys.CUSTOM_AVATAR_URI)
+            }
+        }
     }
 
     val databaseStorageTier: Flow<String> = context.dataStore.data.map { prefs ->
@@ -128,6 +404,7 @@ class UserPreferencesRepository(private val context: Context) {
     @Volatile var cachedCacheSongArtWorkEnabled: Boolean = true
         private set
     @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = false
+    @Volatile var cachedAutoPlayOnAppStartup: Boolean = false
 
     init {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -148,6 +425,11 @@ class UserPreferencesRepository(private val context: Context) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 autoPlayOnHeadphoneConnection.collect { cachedAutoPlayOnHeadphoneConnection = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                autoPlayOnAppStartup.collect { cachedAutoPlayOnAppStartup = it }
             } catch (_: Exception) {}
         }
     }
@@ -217,7 +499,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val playlistsLayout: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "BENTO_GRID"
+        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "GLOW_CARDS"
     }
 
     val isDynamicArtworkTheme: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -343,6 +625,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     val autoPlayOnHeadphoneConnection: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false
+    }
+
+    val autoPlayOnAppStartup: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: false
     }
 
     val crossfadeDurationSec: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -541,6 +827,11 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = enabled }
     }
 
+    suspend fun setAutoPlayOnAppStartup(enabled: Boolean) {
+        cachedAutoPlayOnAppStartup = enabled
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] = enabled }
+    }
+
     suspend fun setCrossfadeDurationSec(sec: Int) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = sec }
     }
@@ -576,9 +867,9 @@ class UserPreferencesRepository(private val context: Context) {
         try {
             val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
             if (offsetMs == 0L) {
-                sp.edit().remove("offset_$songId").apply()
+                sp.edit().remove("offset_$songId").commit()
             } else {
-                sp.edit().putLong("offset_$songId", offsetMs).apply()
+                sp.edit().putLong("offset_$songId", offsetMs).commit()
             }
         } catch (_: Exception) {}
     }

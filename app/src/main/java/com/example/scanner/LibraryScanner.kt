@@ -91,6 +91,7 @@ class LibraryScanner(
     private var contentObserver: ContentObserver? = null
     private val activeFileObservers = mutableListOf<FileObserver>()
     private var debounceJob: Job? = null
+    var onScanCompletedListener: (() -> Unit)? = null
 
     init {
         // Automatically start real-time observation for newly added songs
@@ -456,6 +457,7 @@ class LibraryScanner(
                     isFinished = true
                 )
                 Log.i(TAG, "Auto-detected and imported ${newlyFoundSongs.size} new songs. Total: $totalCount")
+                try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
                 return@withContext newlyFoundSongs.size
             }
 
@@ -791,6 +793,7 @@ class LibraryScanner(
                     isScanning = false,
                     isFinished = true
                 )
+                try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in scanLibrary", e)
                 _scanProgress.value = ScanProgress(

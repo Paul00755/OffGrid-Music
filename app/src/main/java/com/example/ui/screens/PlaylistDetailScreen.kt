@@ -50,11 +50,11 @@ data class PlaylistSongEntry(val stableKey: String, val song: Song)
 
 fun buildPlaylistEntries(songs: List<Song>, playlistId: Long): List<PlaylistSongEntry> {
     val occurrences = mutableMapOf<Long, Int>()
-    return songs.map { song ->
+    return songs.mapIndexed { index, song ->
         val count = occurrences.getOrDefault(song.id, 0) + 1
         occurrences[song.id] = count
         PlaylistSongEntry(
-            stableKey = "pl_${playlistId}_${song.id}_occ${count}",
+            stableKey = "pl_${playlistId}_${song.id}_${count}_${index}_${song.path.hashCode()}",
             song = song
         )
     }
@@ -179,7 +179,13 @@ fun PlaylistDetailScreen(
                 val remainingEntries = localEntries.filter { entry -> newIds.contains(entry.song.id) }.toMutableList()
                 val addedSongs = playlistSongs.filter { song -> !existingMap.containsKey(song.id) }
                 if (addedSongs.isNotEmpty()) {
-                    val newEntries = buildPlaylistEntries(addedSongs, playlist.id)
+                    val baseIndex = remainingEntries.size + 1
+                    val newEntries = addedSongs.mapIndexed { idx, song ->
+                        PlaylistSongEntry(
+                            stableKey = "pl_${playlist.id}_${song.id}_added_${baseIndex + idx}_${song.path.hashCode()}",
+                            song = song
+                        )
+                    }
                     val firstAddedId = addedSongs.first().id
                     val isAddedAtTop = playlistSongs.firstOrNull()?.id == firstAddedId
                     if (isAddedAtTop) {
@@ -195,8 +201,21 @@ fun PlaylistDetailScreen(
                 if (lastSavedOrderIds != null && newIds == lastSavedOrderIds) {
                     lastSavedOrderIds = null
                 }
-                // Under NO circumstances do we reset or overwrite localEntries when the set of songs is unchanged.
+                // Under NO circumstances do we reset or reorder localEntries when the set of songs is unchanged.
                 // In Custom Order mode, localEntries is the true source of order.
+                // CRITICAL FIX: Live update song metadata (title, artist, album, artwork, lyrics) for existing entries!
+                val updatedSongMap = playlistSongs.associateBy { it.id }
+                for (i in localEntries.indices) {
+                    val currentEntry = localEntries[i]
+                    val updated = updatedSongMap[currentEntry.song.id]
+                    if (updated != null && (updated != currentEntry.song ||
+                            updated.title != currentEntry.song.title ||
+                            updated.artist != currentEntry.song.artist ||
+                            updated.album != currentEntry.song.album ||
+                            updated.artworkUri != currentEntry.song.artworkUri)) {
+                        localEntries[i] = currentEntry.copy(song = updated)
+                    }
+                }
             }
         }
     }
@@ -218,6 +237,30 @@ fun PlaylistDetailScreen(
     }
 
     val displaySongs = remember(displayEntries) { displayEntries.map { it.song } }
+
+    val fastScrollAlphabetProvider: ((Int) -> String?)? = remember(selectedSortOrder, displaySongs) {
+        when (selectedSortOrder) {
+            PlaylistSortOrder.TITLE -> {
+                { idx: Int ->
+                    val songIdx = idx - 3
+                    if (songIdx >= 0) displaySongs.getOrNull(songIdx)?.displayTitle?.trim()?.firstOrNull()?.uppercaseChar()?.toString() else null
+                }
+            }
+            PlaylistSortOrder.ARTIST -> {
+                { idx: Int ->
+                    val songIdx = idx - 3
+                    if (songIdx >= 0) displaySongs.getOrNull(songIdx)?.displayArtist?.trim()?.firstOrNull()?.uppercaseChar()?.toString() else null
+                }
+            }
+            PlaylistSortOrder.ALBUM -> {
+                { idx: Int ->
+                    val songIdx = idx - 3
+                    if (songIdx >= 0) displaySongs.getOrNull(songIdx)?.displayAlbum?.trim()?.firstOrNull()?.uppercaseChar()?.toString() else null
+                }
+            }
+            else -> null
+        }
+    }
 
     val m3uExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("audio/x-mpegurl")
@@ -676,7 +719,9 @@ fun PlaylistDetailScreen(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(end = 16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // Interactive Reorder Drag Handle (Only active in Custom Order)
@@ -743,12 +788,16 @@ fun PlaylistDetailScreen(
         }
     }
 
-        FastScrollbar(
-            listState = listState,
-            totalItems = displaySongs.size + 3,
-            bottomPadding = 120.dp,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        if (displaySongs.size > 5) {
+            FastScrollbar(
+                listState = listState,
+                totalItems = displaySongs.size + 3,
+                itemLabelProvider = fastScrollAlphabetProvider,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 16.dp, top = 8.dp, bottom = 120.dp)
+            )
+        }
     }
 
     // Rename Playlist Dialog

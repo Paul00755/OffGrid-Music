@@ -80,7 +80,7 @@ fun PlaylistsScreen(
     onOpenSearch: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    playlistsLayout: String = "BENTO_GRID",
+    playlistsLayout: String = "GLOW_CARDS",
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -202,6 +202,7 @@ fun PlaylistsScreen(
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
             val results = mutableListOf<M3uImportResult>()
+            var invalidFileCount = 0
             uris.forEach { uri ->
                 var fileName = ""
                 try {
@@ -215,10 +216,30 @@ fun PlaylistsScreen(
                 if (fileName.isBlank()) {
                     fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "Playlist_${System.currentTimeMillis()}"
                 }
+                val cleanName = try { android.net.Uri.decode(fileName) } catch (_: Exception) { fileName }
+                val isM3uFormat = cleanName.lowercase().endsWith(".m3u") || cleanName.lowercase().endsWith(".m3u8")
+
+                if (!isM3uFormat) {
+                    invalidFileCount++
+                    return@forEach
+                }
+
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
-                        val content = stream.bufferedReader().readText()
-                        val playlistName = fileName.substringBeforeLast('.')
+                        // Safely read text up to 2MB to prevent OOM on non-playlist files
+                        val content = stream.bufferedReader(Charsets.UTF_8).use { reader ->
+                            val sb = StringBuilder()
+                            val buffer = CharArray(4096)
+                            var charsRead: Int
+                            var totalChars = 0
+                            while (reader.read(buffer).also { charsRead = it } != -1) {
+                                sb.append(buffer, 0, charsRead)
+                                totalChars += charsRead
+                                if (totalChars > 2 * 1024 * 1024) break
+                            }
+                            sb.toString()
+                        }
+                        val playlistName = cleanName.substringBeforeLast('.')
                         val result = M3uParser.parseM3uContent(playlistName, content, allSongs)
                         results.add(result)
                     }
@@ -227,13 +248,17 @@ fun PlaylistsScreen(
                 }
             }
 
+            if (invalidFileCount > 0) {
+                Toast.makeText(context, "Only .m3u playlist files are allowed. $invalidFileCount non-.m3u file(s) were ignored.", Toast.LENGTH_LONG).show()
+            }
+
             if (results.isNotEmpty()) {
                 if (results.size == 1) {
                     importResultDialog = results.first()
                 } else {
                     multiImportResultDialog = results
                 }
-            } else {
+            } else if (invalidFileCount == 0) {
                 Toast.makeText(context, "No valid playlists found in selected files", Toast.LENGTH_SHORT).show()
             }
         }
@@ -273,7 +298,7 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "text/plain", "application/octet-stream", "*/*")) },
+                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
                 modifier = modifier
             )
         }
@@ -298,7 +323,7 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "text/plain", "application/octet-stream", "*/*")) },
+                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
                 modifier = modifier
             )
         }
@@ -323,7 +348,7 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "text/plain", "application/octet-stream", "*/*")) },
+                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
                 modifier = modifier
             )
         }
@@ -445,7 +470,7 @@ fun PlaylistsScreen(
 
                 // Import M3U Button
                 Surface(
-                    onClick = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "audio/mpegurl", "audio/m3u", "text/plain")) },
+                    onClick = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
                     shape = CircleShape,
                     color = BentoCardSurface,
                     border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),

@@ -473,7 +473,7 @@ fun LazyListScope.renderHomeFeedSections(
                                     expanded = true,
                                     song = song,
                                     onDismissRequest = { showMenu = false },
-                                    onPlayNow = { onSongClick(song) },
+                                    onPlayNow = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
                                     onPlayNext = { onPlayNext(song) },
                                     onAddToQueue = { onAddToQueue(song) },
                                     onAddToPlaylist = { onAddToPlaylist(song) },

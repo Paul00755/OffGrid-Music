@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">OffGrid Music</string>
+    <string name="widget_card_description">Music Player Card widget with artwork and controls</string>
+    <string name="widget_wide_description">Wide Music Player widget with split artwork and controls</string>
+    <string name="widget_pill_description">Compact Pill Music Player widget with play and artwork</string>
 </resources>

@@ -34,17 +34,18 @@ data class Song(
             else -> Uri.EMPTY
         }
 
-    val displayTitle: String
-        get() {
-            val raw = title.ifBlank { path.substringAfterLast('/').substringBeforeLast('.') }
-            return com.example.util.TagCleaner.cleanTitle(raw, path.substringAfterLast('/'))
-        }
+    val displayTitle: String by lazy(LazyThreadSafetyMode.NONE) {
+        val raw = title.ifBlank { path.substringAfterLast('/').substringBeforeLast('.') }
+        com.example.util.TagCleaner.cleanTitle(raw, path.substringAfterLast('/'))
+    }
 
-    val displayArtist: String
-        get() = if (artist.isBlank() || artist.contains("unknown", ignoreCase = true)) "Unknown Artist" else artist
+    val displayArtist: String by lazy(LazyThreadSafetyMode.NONE) {
+        if (artist.isBlank() || artist.contains("unknown", ignoreCase = true)) "Unknown Artist" else artist
+    }
 
-    val displayAlbum: String
-        get() = if (album.isBlank() || album.contains("unknown", ignoreCase = true)) "Unknown Album" else album
+    val displayAlbum: String by lazy(LazyThreadSafetyMode.NONE) {
+        if (album.isBlank() || album.contains("unknown", ignoreCase = true)) "Unknown Album" else album
+    }
 }
 
 data class Album(

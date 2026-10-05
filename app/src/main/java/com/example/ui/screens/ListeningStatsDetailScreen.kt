@@ -107,8 +107,16 @@ fun ListeningStatsDetailScreen(
     val lifetimeTopSongsFlow = remember { getMostPlayedSongsSince(0L, 5) }
     val lifetimeTopSongs by lifetimeTopSongsFlow.collectAsState(initial = emptyList())
 
+    val daysForPeriod = remember(selectedPeriod) {
+        when (selectedPeriod) {
+            DetailedStatsPeriod.SEVEN_DAYS -> 7
+            DetailedStatsPeriod.THIRTY_DAYS -> 30
+            DetailedStatsPeriod.NINETY_DAYS -> 90
+            DetailedStatsPeriod.ALL_TIME -> 365
+        }
+    }
     // Filtered period Flows
-    val dailyStatsFlow = remember { getDailyStats(7) }
+    val dailyStatsFlow = remember(daysForPeriod) { getDailyStats(daysForPeriod) }
     val dailyStats by dailyStatsFlow.collectAsState(initial = emptyList())
 
     val timeOfDayFlow = remember(filterStartTimeMs) { getTimeOfDayStats(filterStartTimeMs) }
@@ -134,8 +142,20 @@ fun ListeningStatsDetailScreen(
     val topAlbumsFlow = remember(filterStartTimeMs) { getTopAlbumsSince(filterStartTimeMs, 10) }
     val topAlbums by topAlbumsFlow.collectAsState(initial = emptyList())
 
+    var periodLoadedWrappedData by remember { mutableStateOf<WrappedData?>(null) }
+    LaunchedEffect(filterStartTimeMs, loadWrappedData) {
+        if (loadWrappedData != null) {
+            try {
+                periodLoadedWrappedData = loadWrappedData(filterStartTimeMs, Long.MAX_VALUE)
+            } catch (_: Exception) {}
+        }
+    }
+
     // Compute Wrapped Data
-    val wrappedData = remember(totalDurationMs, trackCount, uniqueTrackCount, topSongs, topArtists, topAlbums, timeOfDay, dailyStats, mostPlayedLifetimeSong) {
+    val wrappedData = remember(periodLoadedWrappedData, totalDurationMs, trackCount, uniqueTrackCount, topSongs, topArtists, topAlbums, timeOfDay, dailyStats, mostPlayedLifetimeSong) {
+        if (periodLoadedWrappedData != null) {
+            return@remember periodLoadedWrappedData!!
+        }
         val effectiveTopSong = topSongs.firstOrNull() ?: mostPlayedLifetimeSong
         val effectiveTopSongs = if (topSongs.isNotEmpty()) topSongs else (if (mostPlayedLifetimeSong != null) listOf(mostPlayedLifetimeSong) else emptyList())
         val totalMins = totalDurationMs / (1000L * 60L)

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.example.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -18,6 +19,71 @@ object ArtworkColorExtractor {
     fun clearCache() {
         colorCache.evictAll()
         failedCache.evictAll()
+    }
+
+    suspend fun extractPrimaryColorForSong(context: Context, song: Song?): Color? {
+        if (song == null) return null
+        val cacheKey = "song_${song.id}_${song.artworkUri ?: ""}"
+        synchronized(this) {
+            colorCache.get(cacheKey)?.let { return it }
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                // 1. Try fast in-memory bitmap from ArtworkManager
+                val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id)
+                if (cachedBmp != null && !cachedBmp.isRecycled) {
+                    val color = findProminentColor(cachedBmp)
+                    if (color != null) {
+                        synchronized(this@ArtworkColorExtractor) {
+                            colorCache.put(cacheKey, color)
+                        }
+                        return@withContext color
+                    }
+                }
+
+                // 2. Try URI extraction if artworkUri is present
+                val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+                val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
+                val effectiveUri = manualCover ?: song.artworkUri ?: cachedDisk
+
+                if (!effectiveUri.isNullOrBlank()) {
+                    val uriColor = extractPrimaryColor(context, effectiveUri)
+                    if (uriColor != null) {
+                        synchronized(this@ArtworkColorExtractor) {
+                            colorCache.put(cacheKey, uriColor)
+                        }
+                        return@withContext uriColor
+                    }
+                }
+
+                // 3. Fallback to extracting bytes via ArtworkManager
+                val rawBytes = ArtworkManager.getNotificationArtworkBytes(
+                    context,
+                    song.id,
+                    song.path,
+                    song.albumId,
+                    song.artworkUri
+                )
+                if (rawBytes != null && rawBytes.isNotEmpty()) {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+                    if (bmp != null) {
+                        val color = findProminentColor(bmp)
+                        bmp.recycle()
+                        if (color != null) {
+                            synchronized(this@ArtworkColorExtractor) {
+                                colorCache.put(cacheKey, color)
+                            }
+                            return@withContext color
+                        }
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     suspend fun extractPrimaryColor(context: Context, artworkUriStr: String?): Color? {

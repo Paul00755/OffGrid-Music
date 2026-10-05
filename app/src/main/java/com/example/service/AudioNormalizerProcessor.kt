@@ -130,14 +130,11 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
         val key = if (trackId > 0) "id_$trackId" else (trackPath?.trim() ?: "")
         currentTrackKey = key
         val cachedGain = if (key.isNotBlank()) NormalizationCache.getGain(key) else null
-        if (cachedGain != null && cachedGain in minGain..maxGain) {
-            currentGain = cachedGain
-            integratedLoudness = (targetLoudness / cachedGain).coerceIn(minSilenceLoudness, 20000f)
-        } else {
-            // Start normally without waiting several seconds for analysis
-            integratedLoudness = targetLoudness
-            currentGain = 1.0f
+        val target = if (cachedGain != null && cachedGain in minGain..maxGain) cachedGain else 1.0f
+        if (currentGain !in minGain..maxGain) {
+            currentGain = target
         }
+        integratedLoudness = (targetLoudness / target).coerceIn(minSilenceLoudness, 20000f)
         resetFilterState()
         processedBlocksCount = 0
     }
@@ -145,13 +142,11 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
     fun resetNormalizer() {
         val key = currentTrackKey
         val cachedGain = if (key.isNotBlank()) NormalizationCache.getGain(key) else null
-        if (cachedGain != null && cachedGain in minGain..maxGain) {
-            currentGain = cachedGain
-            integratedLoudness = (targetLoudness / cachedGain).coerceIn(minSilenceLoudness, 20000f)
-        } else {
-            integratedLoudness = targetLoudness
-            currentGain = 1.0f
+        val target = if (cachedGain != null && cachedGain in minGain..maxGain) cachedGain else 1.0f
+        if (currentGain !in minGain..maxGain) {
+            currentGain = target
         }
+        integratedLoudness = (targetLoudness / target).coerceIn(minSilenceLoudness, 20000f)
         resetFilterState()
         processedBlocksCount = 0
     }

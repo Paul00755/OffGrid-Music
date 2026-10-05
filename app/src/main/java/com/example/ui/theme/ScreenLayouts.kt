@@ -125,7 +125,7 @@ enum class PlaylistsLayout(
 
     companion object {
         fun fromId(id: String?): PlaylistsLayout {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: BENTO_GRID
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: GLOW_CARDS
         }
     }
 }

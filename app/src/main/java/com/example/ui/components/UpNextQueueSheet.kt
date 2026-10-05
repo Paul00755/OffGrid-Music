@@ -81,7 +81,7 @@ fun UpNextQueueSheet(
             val count = occurrenceMap.getOrDefault(song.id, 0)
             occurrenceMap[song.id] = count + 1
             QueueEntryItem(
-                stableKey = "q_${song.id}_occ${count}_${song.path.hashCode()}",
+                stableKey = "q_${song.id}_occ${count}_${song.path.hashCode()}_${song.artworkUri ?: ""}_${song.title.hashCode()}",
                 song = song
             )
         }
@@ -98,15 +98,31 @@ fun UpNextQueueSheet(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { 68.dp.toPx() }
 
-    val safeInitialIndex = remember(currentIndex, localQueue.size) {
-        if (localQueue.isNotEmpty() && currentIndex >= 0) {
-            (currentIndex - 1).coerceIn(0, localQueue.size - 1)
+    val currentActualIndex = if (currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id)) {
+        currentIndex
+    } else if (currentIndex in localQueue.indices) {
+        currentIndex
+    } else {
+        val found = localQueue.indexOfFirst { it.song.id == currentSong?.id }
+        if (found >= 0) found else 0
+    }
+
+    val safeInitialIndex = remember(currentActualIndex, localQueue.size) {
+        if (localQueue.isNotEmpty() && currentActualIndex in localQueue.indices) {
+            (currentActualIndex - 1).coerceIn(0, localQueue.size - 1)
         } else 0
     }
 
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = safeInitialIndex
     )
+
+    LaunchedEffect(currentActualIndex) {
+        if (localQueue.isNotEmpty() && currentActualIndex in localQueue.indices) {
+            val targetScroll = (currentActualIndex - 1).coerceAtLeast(0)
+            listState.animateScrollToItem(targetScroll)
+        }
+    }
 
     // Reorderable list state with background thread offloading
     val reorderableState = rememberReorderableLazyListState(
@@ -309,8 +325,7 @@ fun UpNextQueueSheet(
                     ) {
                         // Currently Playing Section
                         if (currentSong != null) {
-                            val currentQueuePos = localQueue.indexOfFirst { it.song.id == currentSong.id }
-                            val displayNum = if (currentQueuePos >= 0) currentQueuePos + 1 else 1
+                            val displayNum = if (currentActualIndex in localQueue.indices) currentActualIndex + 1 else 1
 
                             item(key = "header_now_playing") {
                                 Text(
@@ -405,16 +420,13 @@ fun UpNextQueueSheet(
                         }
 
                         // Up Next Queue Items with Unique Composite Keys & Native Performance
-                        val currentSongId = currentSong?.id
-                        val currentQueuePos = localQueue.indexOfFirst { it.song.id == currentSongId }
-
                         itemsIndexed(
                             items = localQueue,
                             key = { _, entry -> entry.stableKey }
                         ) { index, entry ->
                             val song = entry.song
-                            val isCurrent = currentSongId != null && song.id == currentSongId && (currentQueuePos == -1 || index == currentQueuePos)
-                            val isPlayed = !isCurrent && currentQueuePos >= 0 && index < currentQueuePos
+                            val isCurrent = index == currentActualIndex
+                            val isPlayed = !isCurrent && index < currentActualIndex
                             val isDragging = reorderableState.draggedIndex == index
 
                             Box(
@@ -598,9 +610,7 @@ fun UpNextQueueSheet(
                                                     onMoveToTop = {
                                                         if (index > 0 && index in localQueue.indices) {
                                                             val itm = localQueue.removeAt(index)
-                                                            val topTarget = if (currentSong != null) {
-                                                                (localQueue.indexOfFirst { it.song.id == currentSong.id } + 1).coerceIn(0, localQueue.size)
-                                                            } else 0
+                                                            val topTarget = (currentActualIndex + 1).coerceIn(0, localQueue.size)
                                                             localQueue.add(topTarget, itm)
                                                             onUpdateQueue?.invoke(localQueue.map { it.song })
                                                         }

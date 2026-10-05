@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:name=".MusicApplication"
@@ -73,44 +74,23 @@
         </receiver>
 
         <receiver
-            android:name=".widget.CompactMusicWidgetProvider"
-            android:label="Compact Music Player (4x2)"
+            android:name=".widget.CardMusicWidgetProvider"
+            android:label="Card Music Player (3x3)"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
                 <action android:name="com.example.widget.ACTION_NEXT" />
                 <action android:name="com.example.widget.ACTION_PREV" />
-                <action android:name="com.example.widget.ACTION_FAVORITE" />
-                <action android:name="com.example.widget.ACTION_SHUFFLE" />
-                <action android:name="com.example.widget.ACTION_REPEAT" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/widget_compact_info" />
-        </receiver>
-
-        <receiver
-            android:name=".widget.CircularMusicWidgetProvider"
-            android:label="Circular Music Player (2x2)"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
-                <action android:name="com.example.widget.ACTION_NEXT" />
-                <action android:name="com.example.widget.ACTION_PREV" />
-                <action android:name="com.example.widget.ACTION_FAVORITE" />
-                <action android:name="com.example.widget.ACTION_SHUFFLE" />
-                <action android:name="com.example.widget.ACTION_REPEAT" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_circular_info" />
+                android:resource="@xml/widget_card_info" />
         </receiver>
 
         <receiver
             android:name=".widget.WideMusicWidgetProvider"
-            android:label="Wide Music Player (5x2)"
+            android:label="Wide Music Player (4x2)"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -118,12 +98,23 @@
                 <action android:name="com.example.widget.ACTION_NEXT" />
                 <action android:name="com.example.widget.ACTION_PREV" />
                 <action android:name="com.example.widget.ACTION_FAVORITE" />
-                <action android:name="com.example.widget.ACTION_SHUFFLE" />
-                <action android:name="com.example.widget.ACTION_REPEAT" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_wide_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.PillMusicWidgetProvider"
+            android:label="Pill Music Player (3x1)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pill_info" />
         </receiver>
 
         <provider

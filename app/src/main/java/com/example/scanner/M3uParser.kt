@@ -13,7 +13,16 @@ data class M3uImportResult(
 object M3uParser {
 
     fun parseM3uContent(playlistName: String, content: String, allSongs: List<Song>): M3uImportResult {
-        val lines = content.lines()
+        if (content.isBlank() || content.take(200).contains('\u0000')) {
+            // Binary or empty content detected, prevent crash and return empty result safely
+            return M3uImportResult(playlistName, 0, emptyList(), emptyList())
+        }
+
+        val lines = try {
+            content.lines()
+        } catch (_: Exception) {
+            return M3uImportResult(playlistName, 0, emptyList(), emptyList())
+        }
         val totalEntries = mutableListOf<String>()
         var lastExtInfTitle: String? = null
 

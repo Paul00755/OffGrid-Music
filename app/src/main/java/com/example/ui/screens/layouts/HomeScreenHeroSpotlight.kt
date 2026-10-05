@@ -81,6 +81,11 @@ fun HomeScreenHeroSpotlight(
     getDurationPlayedBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Long> = { _, _ -> kotlinx.coroutines.flow.flowOf(0L) },
     getTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
     getUniqueTrackCountBetween: (Long, Long) -> kotlinx.coroutines.flow.Flow<Int> = { _, _ -> kotlinx.coroutines.flow.flowOf(0) },
+    userAccount: com.example.auth.UserAccount? = null,
+    effectiveDisplayName: String = "Music Lover",
+    customAvatarUri: String? = null,
+    onOpenAccount: () -> Unit = {},
+    onOpenAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -125,7 +130,7 @@ fun HomeScreenHeroSpotlight(
 
                     Column {
                         Text(
-                            text = greeting,
+                            text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextPrimary,
@@ -133,7 +138,7 @@ fun HomeScreenHeroSpotlight(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Spotlight Studio",
+                            text = userAccount?.email ?: "Spotlight Studio",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = BentoPrimary,
@@ -143,6 +148,30 @@ fun HomeScreenHeroSpotlight(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
+                    IconButton(
+                        onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(BentoCardDarkPurple)
+                    ) {
+                        if (!avatarUrl.isNullOrBlank()) {
+                            coil.compose.AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = "Account",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (userAccount != null) Icons.Default.Person else Icons.Default.AccountCircle,
+                                contentDescription = "Account",
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = onOpenSearch,
                         modifier = Modifier
