@@ -548,6 +548,7 @@ class PlaybackManager(
                     if (!gaplessPlayback && isNaturalTransition) {
                         try {
                             player.pause()
+                            player.seekTo(0L)
                             scope.launch(Dispatchers.Main) {
                                 delay(250)
                                 if (_playbackState.value.isPlaying || player.playWhenReady) {
@@ -1956,43 +1957,37 @@ class PlaybackManager(
         isCrossfadeTransitioning = true
 
         val initialPlayerVol = player.volume.coerceIn(0.1f, 1.0f)
-        val currentPos = player.currentPosition.coerceAtLeast(0L)
-
-        // Track A (outgoing) continues playing and fading out smoothly on crossfadePlayer
-        try {
-            crossfadePlayer.stop()
-            crossfadePlayer.clearMediaItems()
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                currentPreferredDevice?.let { crossfadePlayer.setPreferredAudioDevice(it) }
-            }
-            crossfadeNormalizerProcessor.setTrack(currentSong.id, currentSong.path)
-            val outgoingItem = buildMediaItem(currentSong)
-            crossfadePlayer.setMediaItem(outgoingItem, currentPos)
-            crossfadePlayer.volume = initialPlayerVol
-            crossfadePlayer.prepare()
-            crossfadePlayer.play()
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "Error preparing crossfadePlayer for outgoing track", e)
-            isCrossfadeTransitioning = false
-            return
-        }
-
-        // Track B (incoming) begins immediately on player from 0:00, starting at volume 0.0f
-        try {
-            audioNormalizerProcessor.setTrack(targetSong.id, targetSong.path)
-            player.seekTo(targetIndex, 0L)
-            player.volume = 0.0f
-            player.play()
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "Error advancing player to incoming track", e)
-            try { crossfadePlayer.stop() } catch (_: Exception) {}
-            player.volume = 1.0f
-            isCrossfadeTransitioning = false
-            return
-        }
 
         crossfadeJob = scope.launch(Dispatchers.Main) {
             try {
+                // 1. Prepare crossfadePlayer with the outgoing track A while primary player continues playing track A uninterrupted
+                crossfadePlayer.stop()
+                crossfadePlayer.clearMediaItems()
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    currentPreferredDevice?.let { crossfadePlayer.setPreferredAudioDevice(it) }
+                }
+                crossfadeNormalizerProcessor.setTrack(currentSong.id, currentSong.path)
+                val currentPos = player.currentPosition.coerceAtLeast(0L)
+                val outgoingItem = buildMediaItem(currentSong)
+                crossfadePlayer.setMediaItem(outgoingItem, currentPos)
+                crossfadePlayer.volume = initialPlayerVol
+                crossfadePlayer.prepare()
+
+                // Wait for crossfadePlayer to be ready (up to 200ms) so audio flows without any silence gap
+                var waitElapsed = 0L
+                while (crossfadePlayer.playbackState != Player.STATE_READY && waitElapsed < 200L && coroutineContext[Job]?.isActive == true) {
+                    delay(16L)
+                    waitElapsed += 16L
+                }
+
+                // 2. Start crossfadePlayer on outgoing track A, and transition primary player to incoming track B from 0:00
+                crossfadePlayer.play()
+                audioNormalizerProcessor.setTrack(targetSong.id, targetSong.path)
+                player.seekTo(targetIndex, 0L)
+                player.volume = 0.0f
+                player.play()
+
+                // 3. Smooth Equal-Power Crossfade curves (sine / cosine energy conservation)
                 val steps = (fadeDuration / 25L).coerceIn(20, 300).toInt()
                 val stepDelay = (fadeDuration / steps).coerceAtLeast(16L)
 

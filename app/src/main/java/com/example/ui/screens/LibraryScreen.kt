@@ -116,16 +116,10 @@ fun LibraryScreen(
         }
     }
 
-    var processedSongs by remember(allSongs) {
-        mutableStateOf(allSongs)
-    }
-
-    LaunchedEffect(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) {
+    val processedSongs = remember(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) {
         if (allSongs.isEmpty()) {
-            processedSongs = emptyList()
-            return@LaunchedEffect
-        }
-        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            emptyList()
+        } else {
             var list = if (searchQuery.isBlank()) allSongs
             else allSongs.filter {
                 it.title.contains(searchQuery, ignoreCase = true) ||
@@ -146,7 +140,6 @@ fun LibraryScreen(
                 SortOption.DURATION -> if (sortAscending) list.sortedBy { it.durationMs } else list.sortedByDescending { it.durationMs }
             }
         }
-        processedSongs = result
     }
 
     val isAlphabeticalSort = selectedSort == SortOption.TITLE || selectedSort == SortOption.ALBUM || selectedSort == SortOption.ARTIST
@@ -162,38 +155,37 @@ fun LibraryScreen(
         return if (ch in 'A'..'Z') ch.toString() else "#"
     }
 
-    var groupedAlphabetSongs by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
-    var albums by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
-    var artists by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
-    var folders by remember { mutableStateOf<Map<String, List<Song>>>(emptyMap()) }
+    val groupedAlphabetSongs = remember(processedSongs, isAlphabeticalSort, selectedCategory) {
+        if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
+            processedSongs.groupBy { getAlphabetLabel(it) }
+        } else {
+            emptyMap()
+        }
+    }
 
-    LaunchedEffect(processedSongs, isAlphabeticalSort, selectedSort, selectedCategory) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
-                groupedAlphabetSongs = processedSongs.groupBy { getAlphabetLabel(it) }
-            } else {
-                groupedAlphabetSongs = emptyMap()
-            }
+    val albums = remember(processedSongs, selectedCategory) {
+        if (selectedCategory == LibraryCategory.ALBUMS) {
+            processedSongs.groupBy { it.displayAlbum }
+        } else {
+            emptyMap()
+        }
+    }
 
-            if (selectedCategory == LibraryCategory.ALBUMS) {
-                albums = processedSongs.groupBy { it.displayAlbum }
-            } else {
-                albums = emptyMap()
-            }
+    val artists = remember(processedSongs, selectedCategory) {
+        if (selectedCategory == LibraryCategory.ARTISTS) {
+            processedSongs.groupBy { it.displayArtist }
+        } else {
+            emptyMap()
+        }
+    }
 
-            if (selectedCategory == LibraryCategory.ARTISTS) {
-                artists = processedSongs.groupBy { it.displayArtist }
-            } else {
-                artists = emptyMap()
+    val folders = remember(processedSongs, selectedCategory) {
+        if (selectedCategory == LibraryCategory.FOLDERS) {
+            processedSongs.groupBy { song ->
+                song.path.takeIf { p -> p.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
             }
-
-            if (selectedCategory == LibraryCategory.FOLDERS) {
-                folders = processedSongs.groupBy { song ->
-                    song.path.takeIf { p -> p.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
-                }
-            } else {
-                folders = emptyMap()
-            }
+        } else {
+            emptyMap()
         }
     }
 

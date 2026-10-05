@@ -184,6 +184,10 @@ fun FavoritesScreen(
         )
     }
 
+    androidx.activity.compose.BackHandler {
+        onBackClick()
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -199,7 +203,7 @@ fun FavoritesScreen(
             IconButton(
                 onClick = onBackClick,
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(surfaceVariantColor.copy(alpha = 0.65f))
                     .testTag("favorites_back_button")
@@ -208,7 +212,7 @@ fun FavoritesScreen(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back to previous tab",
                     tint = BentoTextPrimary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
