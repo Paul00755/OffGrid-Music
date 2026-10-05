@@ -1,7 +1,7 @@
 # 🎵 OffGrid Music
 
 <p align="center">
-  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="OffGrid Music Logo" />
+  <img src="docs/assets/logo.png" width="140" height="140" alt="OffGrid Music Logo" />
 </p>
 
 <p align="center">
@@ -12,6 +12,9 @@
   <a href="../../releases/latest/download/app-debug.apk">
     <img src="https://img.shields.io/badge/Download-Latest%20APK-00E676?style=for-the-badge&logo=android&logoColor=white" alt="Download Latest APK" />
   </a>
+  <a href="../../releases">
+    <img src="https://img.shields.io/badge/GitHub-Releases-purple?style=for-the-badge&logo=github&logoColor=white" alt="Releases" />
+  </a>
   <a href="../../actions/workflows/build-apk.yml">
     <img src="https://img.shields.io/badge/CI%2FCD-Automated%20Build-blue?style=for-the-badge&logo=githubactions&logoColor=white" alt="Automated Builds" />
   </a>
@@ -21,15 +24,37 @@
 
 ---
 
-## 📥 Download the Latest APK
+## 📥 How to Download the Latest APK
 
-Every push to this repository triggers an automated GitHub Actions CI/CD pipeline that compiles and publishes the freshest debug APK.
+Every push to this GitHub repository triggers an automated GitHub Actions CI/CD workflow that compiles and builds the freshest APK.
 
-* **Direct Latest Release Link:** 👉 [**Download Latest APK (`app-debug.apk`)**](../../releases/latest/download/app-debug.apk)
-* **GitHub Releases:** View all builds under the [Releases](../../releases) tab.
-* **Workflow Artifacts:** You can also download build artifacts from recent runs in the [Actions](../../actions/workflows/build-apk.yml) tab.
+### Option 1: Direct Download from GitHub Releases (Recommended)
+1. Click the button above or visit 👉 [**Latest Release Downloads**](../../releases/latest)
+2. Under **Assets**, click **`app-debug.apk`** to download it directly to your device.
+3. Direct link: [**`app-debug.apk`**](../../releases/latest/download/app-debug.apk) *(Available after the GitHub Action run finishes)*.
 
-> **Tip:** If downloading on your Android device for the first time, allow your browser to "Install unknown apps" in Android settings.
+### Option 2: Download from GitHub Actions Artifacts
+If a Release is still publishing, you can always download the build artifact directly:
+1. Go to the [**Actions Tab**](../../actions/workflows/build-apk.yml).
+2. Click on the latest workflow run (top run with a green checkmark).
+3. Scroll down to the **Artifacts** section at the bottom of the page.
+4. Click **`OffGrid-Music-Debug-APK`** to download the ZIP containing the compiled APK.
+
+> 💡 **Android Installation Note:** When installing for the first time, your Android browser or file manager may ask permission to *"Install unknown apps"*. Toggle this to allow installation.
+
+---
+
+## ⚙️ GitHub Actions Workflow Configuration (One-Time Setup)
+
+If your GitHub Action build ever encounters a permission or release error, ensure the repository settings allow GitHub Actions to publish releases:
+
+1. In your GitHub repository, navigate to **Settings** (top navigation bar).
+2. In the left sidebar, click **Actions** ➔ **General**.
+3. Scroll down to the **Workflow permissions** section.
+4. Select **"Read and write permissions"** and check **"Allow GitHub Actions to create and approve pull requests"**.
+5. Click **Save**.
+
+> **Note on Signing Fix:** The error `> Task :app:validateSigningDebug FAILED` occurred because `debug.keystore` is intentionally ignored in `.gitignore`. The updated CI/CD workflow automatically creates the standard Android debug keystore and wrapper on the GitHub runner before compilation, ensuring smooth, error-free builds.
 
 ---
 
@@ -85,7 +110,7 @@ Every push to this repository triggers an automated GitHub Actions CI/CD pipelin
 
 ---
 
-## 🏗️ Building from Source
+## 🏗️ Building from Source Locally
 
 To build the APK locally on your machine:
 

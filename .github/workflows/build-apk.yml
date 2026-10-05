@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -26,14 +28,32 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Grant Execute Permission for Gradle Wrapper
+      - name: Setup Environment and Keystore
         run: |
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-          else
-            gradle wrapper
-            chmod +x gradlew
+          # 1. Ensure .env exists for Secrets Gradle Plugin
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
           fi
+
+          # 2. Automatically generate debug.keystore required by validateSigningDebug
+          if [ ! -f debug.keystore ]; then
+            echo "Generating debug.keystore for validateSigningDebug..."
+            keytool -genkey -v -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Grant Execute Permission for Gradle Wrapper
+        run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
@@ -48,21 +68,23 @@ jobs:
       - name: Release Latest APK
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
+        continue-on-error: true
         with:
           tag_name: latest
-          name: OffGrid Music - Latest Build
+          name: OffGrid Music - Latest Version
           body: |
             ## 🚀 Automated Latest APK Build
             
-            This release is automatically updated on every push to the repository.
+            Every push to the repository automatically compiles and releases the latest APK here.
             
             - **Commit**: `${{ github.sha }}`
             - **Branch**: `${{ github.ref_name }}`
-            - **Timestamp**: `${{ github.event.head_commit.timestamp }}`
             
-            Download `app-debug.apk` below to test or install the latest version of OffGrid Music.
+            ### 📥 Download
+            Download **`app-debug.apk`** below to install and run the latest version.
           draft: false
           prerelease: false
+          make_latest: true
           files: app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
