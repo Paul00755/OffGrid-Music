@@ -70,6 +70,7 @@ class UserPreferencesRepository(private val context: Context) {
         val AUDIO_BALANCE = floatPreferencesKey("audio_balance") // -1.0f .. 1.0f
         val EQUALIZER_PRESET = stringPreferencesKey("equalizer_preset") // "NORMAL", "BASS_BOOST", "TREBLE_BOOST", "VOCAL", "ROCK", "POP"
         val REDUCE_VOLUME_ON_NOTIFICATION = booleanPreferencesKey("reduce_volume_on_notification")
+        val PLAY_DURING_CAMERA = booleanPreferencesKey("play_during_camera")
         val SCROBBLE_THRESHOLD_TYPE = stringPreferencesKey("scrobble_threshold_type") // "SECONDS" or "PERCENTAGE"
         val SCROBBLE_THRESHOLD_VALUE = intPreferencesKey("scrobble_threshold_value") // e.g. 30 (sec or %)
         val HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
@@ -250,6 +251,7 @@ class UserPreferencesRepository(private val context: Context) {
             customBassBoost = prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0,
             customVirtualizer = prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0,
             reduceVolumeOnNotification = prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true,
+            playDuringCamera = prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: false,
             scrobbleThresholdType = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS",
             scrobbleThresholdValue = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30,
             repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: 0,
@@ -330,6 +332,7 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = cloud.customBassBoost
                 prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = cloud.customVirtualizer
                 prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = cloud.reduceVolumeOnNotification
+                prefs[PreferenceKeys.PLAY_DURING_CAMERA] = cloud.playDuringCamera
                 prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = cloud.scrobbleThresholdType
                 prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = cloud.scrobbleThresholdValue
                 prefs[PreferenceKeys.REPEAT_MODE] = cloud.repeatMode
@@ -755,6 +758,10 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true
     }
 
+    val playDuringCamera: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: false
+    }
+
     val scrobbleThresholdType: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS"
     }
@@ -773,6 +780,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setReduceVolumeOnNotification(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = enabled }
+    }
+
+    suspend fun setPlayDuringCamera(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.PLAY_DURING_CAMERA] = enabled }
     }
 
     suspend fun setPauseOnZeroVolume(enabled: Boolean) {

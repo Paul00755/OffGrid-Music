@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  <a href="releases/latest/download/app-debug.apk">
+  <a href="https://github.com/Paul00755/OffGrid-Music/releases/latest/download/app-debug.apk">
     <img src="https://img.shields.io/badge/Download-Latest%20APK-00E676?style=for-the-badge&logo=android&logoColor=white" alt="Download Latest APK" />
   </a>
-  <a href="releases">
+  <a href="https://github.com/Paul00755/OffGrid-Music/releases">
     <img src="https://img.shields.io/badge/GitHub-Releases-purple?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Releases" />
   </a>
-  <a href="actions/workflows/build-apk.yml">
+  <a href="https://github.com/Paul00755/OffGrid-Music/actions">
     <img src="https://img.shields.io/badge/CI%2FCD-Automated%20Build-blue?style=for-the-badge&logo=githubactions&logoColor=white" alt="Automated Builds" />
   </a>
   <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
@@ -28,12 +28,20 @@
 
 You can get the latest APK in multiple ways:
 
-1. **Direct Download**: Click the **[Download Latest APK](releases/latest/download/app-debug.apk)** badge above.
-2. **Releases Page**: Browse all tagged versions on the **[Releases](releases)** page and download `app-debug.apk`.
-3. **CI/CD Build Artifacts (Immediate)**: If no formal release has been published yet, download the newly compiled APK directly from GitHub Actions:
-   - Navigate to the **[Actions tab](actions)**.
-   - Click the latest **Build and Release Android APK** run.
-   - Scroll to the **Artifacts** section at the bottom and download **`OffGrid-Music-Debug-APK`**.
+1. **Direct Download (Recommended)**:
+   - Click the **[Download Latest APK](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/app-debug.apk)** badge at the top.
+   - Or click [Releases Latest Download](https://github.com/Paul00755/OffGrid-Music/releases/download/latest/app-debug.apk).
+   - This directly downloads the raw `app-debug.apk` file ready to install on your Android device.
+
+2. **Releases Page**:
+   - Browse all tagged versions on the **[Releases](https://github.com/Paul00755/OffGrid-Music/releases)** page.
+   - Expand the **Assets** dropdown under the latest release and tap `app-debug.apk`.
+
+3. **CI/CD Build Artifacts**:
+   - Navigate to the **[Actions tab](https://github.com/Paul00755/OffGrid-Music/actions)**.
+   - Click the most recent workflow run.
+   - Under the **Artifacts** section at the bottom, tap **`OffGrid-Music-Debug-APK`**.
+   - ⚠️ **Important**: GitHub packages Actions artifacts as a `.zip` archive. When downloading from the Actions tab, you must first extract the `.zip` file on your phone using your Files app to get `app-debug.apk` before tapping to install.
 
 > [!TIP]
 > **Enabling Automated Releases on your GitHub repository:**

@@ -52,7 +52,9 @@ class MusicApplication : Application(), ImageLoaderFactory {
                 }
             }
 
-            // 2. Verify Room Database readiness and execute storage & metrics maintenance
+            // 2. Defer heavy Room database opening & maintenance until after cold startup
+            kotlinx.coroutines.delay(8000)
+
             val db = AppDatabase.getInstance(this)
             val dbName = db.openHelper.databaseName
             val isOpenable = db.openHelper.readableDatabase.isOpen

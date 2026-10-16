@@ -70,6 +70,14 @@ class PlaybackManager(
         sleepTimerManager.onTimerExpired = { handleSleepTimerExpired() }
     }
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+    val audioFocusManager = AudioFocusManager(
+        context = context,
+        isPlayingProvider = { player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying },
+        onPauseRequested = { pause() },
+        onResumeRequested = { play() },
+        onDuckRequested = { duckVol -> player.volume = duckVol },
+        onRestoreVolumeRequested = { player.volume = 1.0f }
+    )
     val stereoBalanceProcessor = StereoBalanceAudioProcessor()
     val audioNormalizerProcessor = AudioNormalizerProcessor()
 
@@ -104,7 +112,7 @@ class PlaybackManager(
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                 .setUsage(C.USAGE_MEDIA)
                 .build(),
-            true
+            false
         )
         setHandleAudioBecomingNoisy(true)
         setWakeMode(C.WAKE_MODE_LOCAL)
@@ -122,20 +130,26 @@ class PlaybackManager(
         }
     }
 
-    val crossfadePlayer: ExoPlayer = ExoPlayer.Builder(context, crossfadeRenderersFactory)
-        .setUsePlatformDiagnostics(false)
-        .build()
-        .apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .setUsage(C.USAGE_MEDIA)
-                    .build(),
-                false
-            )
-            setHandleAudioBecomingNoisy(true)
-            setWakeMode(C.WAKE_MODE_LOCAL)
-            playWhenReady = true
+    private var _crossfadePlayer: ExoPlayer? = null
+    val crossfadePlayer: ExoPlayer
+        get() {
+            return _crossfadePlayer ?: synchronized(this) {
+                _crossfadePlayer ?: ExoPlayer.Builder(context, crossfadeRenderersFactory)
+                    .setUsePlatformDiagnostics(false)
+                    .build()
+                    .apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                                .setUsage(C.USAGE_MEDIA)
+                                .build(),
+                            false
+                        )
+                        setHandleAudioBecomingNoisy(true)
+                        setWakeMode(C.WAKE_MODE_LOCAL)
+                        playWhenReady = true
+                    }.also { _crossfadePlayer = it }
+            }
         }
 
     private var crossfadeJob: Job? = null
@@ -329,8 +343,8 @@ class PlaybackManager(
         isCrossfadeTransitioning = false
         hasTriggeredCrossfadeTransition = false
         try {
-            crossfadePlayer.stop()
-            crossfadePlayer.clearMediaItems()
+            _crossfadePlayer?.stop()
+            _crossfadePlayer?.clearMediaItems()
         } catch (_: Exception) {}
         if (resetVolume) {
             player.volume = 1.0f
@@ -1945,18 +1959,16 @@ class PlaybackManager(
         } catch (_: Exception) {}
     }
 
-    var reduceVolumeOnNotification: Boolean = true
+    var reduceVolumeOnNotification: Boolean
+        get() = audioFocusManager.reduceVolumeOnNotification
         set(value) {
-            field = value
-            try {
-                player.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .setUsage(C.USAGE_MEDIA)
-                        .build(),
-                    value // handle audio focus ducking
-                )
-            } catch (_: Exception) {}
+            audioFocusManager.reduceVolumeOnNotification = value
+        }
+
+    var ignoreTransientFocusLoss: Boolean
+        get() = audioFocusManager.ignoreTransientFocusLoss
+        set(value) {
+            audioFocusManager.ignoreTransientFocusLoss = value
         }
     private var fadeJob: Job? = null
 
@@ -2153,6 +2165,7 @@ class PlaybackManager(
     }
 
     fun play() {
+        audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
         player.volume = 1.0f
@@ -2183,6 +2196,7 @@ class PlaybackManager(
     }
 
     fun playWithFade(customFadeInMs: Int? = null) {
+        audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
         val duration = customFadeInMs ?: fadeInMs
@@ -2619,7 +2633,8 @@ class PlaybackManager(
         notificationArtworkJob = null
         stopProgressTracker()
         cancelCrossfade(resetVolume = true)
-        try { crossfadePlayer.release() } catch (e: Exception) {}
+        audioFocusManager.abandonAudioFocus()
+        try { _crossfadePlayer?.release(); _crossfadePlayer = null } catch (e: Exception) {}
         try { mediaSession.release() } catch (e: Exception) {}
         player.release()
     }
@@ -2770,14 +2785,14 @@ class PlaybackManager(
             try {
                 currentPreferredDevice = deviceInfo
                 player.setPreferredAudioDevice(deviceInfo)
-                crossfadePlayer.setPreferredAudioDevice(deviceInfo)
+                _crossfadePlayer?.setPreferredAudioDevice(deviceInfo)
                 // When actively playing, immediately flush and re-route audio to switch output instantly
                 if (player.isPlaying) {
                     val currentPos = player.currentPosition
                     player.seekTo(currentPos)
-                } else if (crossfadePlayer.isPlaying) {
-                    val currentPos = crossfadePlayer.currentPosition
-                    crossfadePlayer.seekTo(currentPos)
+                } else if (_crossfadePlayer?.isPlaying == true) {
+                    val currentPos = _crossfadePlayer?.currentPosition ?: 0L
+                    _crossfadePlayer?.seekTo(currentPos)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

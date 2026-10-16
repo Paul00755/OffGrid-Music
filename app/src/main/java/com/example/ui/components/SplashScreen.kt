@@ -40,42 +40,42 @@ fun SplashScreen(
 
     LaunchedEffect(Unit) {
         animationStarted = true
-        delay(1650)
+        delay(450)
         onDismiss()
     }
 
     val scaleAnimate by animateFloatAsState(
-        targetValue = if (animationStarted) 1f else 0.65f,
+        targetValue = if (animationStarted) 1f else 0.85f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            stiffness = Spring.StiffnessMedium
         ),
         label = "splashScale"
     )
 
     val alphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 500, easing = LinearOutSlowInEasing),
+        animationSpec = tween(durationMillis = 200, easing = LinearOutSlowInEasing),
         label = "splashAlpha"
     )
 
     val textAlphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 600, delayMillis = 300, easing = LinearOutSlowInEasing),
+        animationSpec = tween(durationMillis = 200, delayMillis = 50, easing = LinearOutSlowInEasing),
         label = "splashTextAlpha"
     )
 
     val sloganAlphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 650, delayMillis = 550, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 200, delayMillis = 100, easing = FastOutSlowInEasing),
         label = "splashSloganAlpha"
     )
 
     val sloganTranslationY by animateFloatAsState(
-        targetValue = if (animationStarted) 0f else 24f,
+        targetValue = if (animationStarted) 0f else 12f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
-            stiffness = Spring.StiffnessMediumLow
+            stiffness = Spring.StiffnessMedium
         ),
         label = "splashSloganY"
     )

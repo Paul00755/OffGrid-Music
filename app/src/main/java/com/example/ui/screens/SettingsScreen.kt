@@ -592,6 +592,8 @@ fun SettingsScreen(
     onSetLyricsAutoScroll: (Boolean) -> Unit = {},
     reduceVolumeOnNotification: Boolean = true,
     onSetReduceVolumeOnNotification: (Boolean) -> Unit = {},
+    pauseDuringCamera: Boolean = true,
+    onSetPauseDuringCamera: (Boolean) -> Unit = {},
     scrobbleThresholdType: String = "PERCENTAGE",
     onSetScrobbleThresholdType: (String) -> Unit = {},
     scrobbleThresholdValue: Int = 50,
@@ -1972,6 +1974,18 @@ fun SettingsScreen(
                             checked = reduceVolumeOnNotification,
                             onCheckedChange = onSetReduceVolumeOnNotification,
                             icon = Icons.Default.NotificationsActive,
+                            accentColor = Color(0xFF00E5FF)
+                        )
+
+                        SettingsDivider()
+
+                        // Auto-Pause for Camera & System Audio
+                        SettingsToggleRow(
+                            title = "Auto-Pause for Camera & System Audio",
+                            subtitle = "Cleanly pauses playback when camera or other audio apps open, and immediately resumes when camera is closed to prevent stuttering",
+                            checked = pauseDuringCamera,
+                            onCheckedChange = onSetPauseDuringCamera,
+                            icon = Icons.Default.PhotoCamera,
                             accentColor = Color(0xFF00E5FF)
                         )
 

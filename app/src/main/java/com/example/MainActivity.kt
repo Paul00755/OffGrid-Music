@@ -38,6 +38,7 @@ import com.example.ui.components.NavTab
 import com.example.ui.screens.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MusicViewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -59,11 +60,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Automatically clean up any polluted duplicate artwork cache files on startup
-        com.example.util.ArtworkManager.purgePollutedArtworkCache(this)
+        // Asynchronously clean up any polluted duplicate artwork cache in background
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.example.util.ArtworkManager.purgePollutedArtworkCache(applicationContext)
+        }
 
         checkPermissions()
-        triggerQuickScan()
         registerMediaStoreObserver()
 
         setContent {
@@ -238,6 +240,11 @@ class MainActivity : ComponentActivity() {
                         val highRefreshRateSetting by viewModel.highRefreshRate.collectAsState()
                         LaunchedEffect(highRefreshRateSetting) {
                             applyHighRefreshRate(highRefreshRateSetting)
+                        }
+
+                        LaunchedEffect(Unit) {
+                            kotlinx.coroutines.delay(800)
+                            triggerQuickScan()
                         }
 
                         val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
@@ -893,7 +900,7 @@ class MainActivity : ComponentActivity() {
                         AnimatedVisibility(
                             visible = showSplash,
                             enter = fadeIn(),
-                            exit = fadeOut(tween(400))
+                            exit = fadeOut(tween(250))
                         ) {
                             com.example.ui.components.SplashScreen(
                                 onDismiss = { viewModel.dismissSplash() }

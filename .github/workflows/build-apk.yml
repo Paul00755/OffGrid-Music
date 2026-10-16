@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -70,26 +70,49 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-      - name: Release Latest APK
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: softprops/action-gh-release@v2
-        continue-on-error: true
-        with:
-          tag_name: latest
-          name: OffGrid Music - Latest Version
-          body: |
-            ## 🚀 Automated Latest APK Build
-            
-            Every push to the repository automatically compiles and releases the latest APK here.
-            
-            - **Commit**: `${{ github.sha }}`
-            - **Branch**: `${{ github.ref_name }}`
-            
-            ### 📥 Download
-            Download **`app-debug.apk`** below to install and run the latest version.
-          draft: false
-          prerelease: false
-          make_latest: true
-          files: app/build/outputs/apk/debug/*.apk
+      - name: Publish GitHub Release (Latest & Versioned APK)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Locate the compiled APK
+          APK_PATH=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "Error: No APK found in app/build/outputs/apk/debug/"
+            exit 1
+          fi
+          echo "Found compiled APK: $APK_PATH"
+
+          # 2. Configure git bot for tagging
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 3. Force-update the 'latest' git tag to this exact commit
+          git tag -f latest "${{ github.sha }}"
+          git push -f origin latest || true
+
+          # 4. Create or update the 'latest' release using GitHub CLI
+          if gh release view latest >/dev/null 2>&1; then
+            echo "Release 'latest' exists. Updating APK asset with --clobber..."
+            gh release upload latest "$APK_PATH" --clobber
+            gh release edit latest \
+              --title "OffGrid Music - Latest Version" \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **app-debug.apk** below to install." \
+              --target "${{ github.sha }}" \
+              --latest
+          else
+            echo "Creating initial 'latest' release..."
+            gh release create latest "$APK_PATH" \
+              --title "OffGrid Music - Latest Version" \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **app-debug.apk** below to install." \
+              --target "${{ github.sha }}" \
+              --latest
+          fi
+
+          # 5. Also create an immutable versioned release for this build run
+          RUN_TAG="build-${{ github.run_number }}"
+          echo "Publishing versioned release $RUN_TAG..."
+          gh release create "$RUN_TAG" "$APK_PATH" \
+            --title "OffGrid Music Build #${{ github.run_number }}" \
+            --notes "Automated build for commit \`${{ github.sha }}\` on branch \`${{ github.ref_name }}\`." \
+            --target "${{ github.sha }}" || true

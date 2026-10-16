@@ -462,6 +462,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val audioBalance: StateFlow<Float> = preferences.audioBalance.stateIn(viewModelScope, SharingStarted.Lazily, 0f)
     val equalizerPreset: StateFlow<String> = preferences.equalizerPreset.stateIn(viewModelScope, SharingStarted.Lazily, "NORMAL")
     val reduceVolumeOnNotification: StateFlow<Boolean> = preferences.reduceVolumeOnNotification.stateIn(viewModelScope, SharingStarted.Lazily, true)
+    val playDuringCamera: StateFlow<Boolean> = preferences.playDuringCamera.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val scrobbleThresholdType: StateFlow<String> = preferences.scrobbleThresholdType.stateIn(viewModelScope, SharingStarted.Lazily, "SECONDS")
     val scrobbleThresholdValue: StateFlow<Int> = preferences.scrobbleThresholdValue.stateIn(viewModelScope, SharingStarted.Lazily, 30)
     val highRefreshRate: StateFlow<Boolean> = preferences.highRefreshRate.stateIn(viewModelScope, SharingStarted.Lazily, true)
@@ -600,6 +601,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
+            playDuringCamera.collect { enabled ->
+                playbackManager.ignoreTransientFocusLoss = enabled
+            }
+        }
+        viewModelScope.launch {
             audioBalance.collect { balance ->
                 playbackManager.setAudioBalance(balance)
             }
@@ -705,6 +711,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnHeadphoneConnection(enabled) }
     fun setAutoPlayOnAppStartup(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnAppStartup(enabled) }
     fun setPauseOnZeroVolume(enabled: Boolean) = viewModelScope.launch { preferences.setPauseOnZeroVolume(enabled) }
+    fun setPlayDuringCamera(enabled: Boolean) = viewModelScope.launch { preferences.setPlayDuringCamera(enabled) }
     fun setAutoResumeOnVolumeIncrease(enabled: Boolean) = viewModelScope.launch { preferences.setAutoResumeOnVolumeIncrease(enabled) }
     private var ignoreDurationJob: kotlinx.coroutines.Job? = null
     fun setIgnoreAudioDuration(sec: Int) {
@@ -918,9 +925,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val audioRecordHelper = AudioRecordHelper(application)
 
     init {
-        refreshCacheSizes()
-        refreshDatabaseStats()
-
         viewModelScope.launch {
             // Automatically turn toggle OFF if no key is saved
             if (preferences.isTranscribeTranslateEnabled.first() && !secureApiKeyStore.hasApiKey()) {
