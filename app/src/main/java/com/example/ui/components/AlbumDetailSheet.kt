@@ -36,6 +36,7 @@ fun AlbumDetailSheet(
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
+    onOpenRemoveFromPlaylist: ((Song) -> Unit)? = null,
     onDeleteSong: (Song) -> Unit = {},
     onEditTags: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -237,6 +238,7 @@ fun AlbumDetailSheet(
                                 onPlayNext = { onPlayNext(song) },
                                 onAddToQueue = { onAddToQueue(song) },
                                 onAddToPlaylist = { onAddToPlaylist(song) },
+                                onOpenRemoveFromPlaylist = onOpenRemoveFromPlaylist?.let { cb -> { cb(song) } },
                                 onFavoriteToggle = { onFavoriteToggle(song) },
                                 onEditTags = if (onEditTags != null) { { onEditTags(song) } } else null,
                                 onDeleteSong = { onDeleteSong(song) }

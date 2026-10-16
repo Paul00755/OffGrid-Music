@@ -64,6 +64,25 @@ enum class SettingsSection(val title: String, val icon: androidx.compose.ui.grap
     CLOUD_SYNC("Cloud & Sync", Icons.Default.CloudSync)
 }
 
+data class SettingsCategoryCardItem(
+    val section: SettingsSection,
+    val title: String,
+    val subtitle: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accentColor: Color
+)
+
+val SETTINGS_CATEGORY_CARD_ITEMS = listOf(
+    SettingsCategoryCardItem(SettingsSection.AUDIO, "Audio & Sound", "Crossfade, Equalizer, Loudness normalization & Balance", Icons.Default.Equalizer, Color(0xFF00E5FF)),
+    SettingsCategoryCardItem(SettingsSection.UI, "UI & Theme", "Dark/Light/AMOLED, Dynamic colors & Screen layouts", Icons.Default.Palette, Color(0xFFBB86FC)),
+    SettingsCategoryCardItem(SettingsSection.HOME_FEED, "Home Feed", "Customize home sections, Reorder & Preset feeds", Icons.Default.DashboardCustomize, Color(0xFF7C4DFF)),
+    SettingsCategoryCardItem(SettingsSection.PLAYBACK, "Playback & Timers", "Sleep timer, Gestures, Shake to skip & Queue behavior", Icons.Default.PlayCircle, Color(0xFFFF9100)),
+    SettingsCategoryCardItem(SettingsSection.LIBRARY, "Library & Folders", "Scan device storage, Exclude folders & Tag cleaning", Icons.Default.Folder, Color(0xFF2979FF)),
+    SettingsCategoryCardItem(SettingsSection.CACHE, "Cache & Storage", "Artwork cache, Lyrics storage & SQLite database optimization", Icons.Default.Storage, Color(0xFF00E676)),
+    SettingsCategoryCardItem(SettingsSection.CLOUD_SYNC, "Cloud & Sync", "Google Account, Cloud backup & Cross-device sync", Icons.Default.CloudSync, Color(0xFF00E5FF)),
+    SettingsCategoryCardItem(SettingsSection.OTHER, "Other & Privacy", "Search history, Diagnostics logs, Crash reports & App info", Icons.Default.Security, Color(0xFFFF5252))
+)
+
 private fun matchesSettingsSearch(query: String, vararg keywords: String): Boolean {
     if (query.isBlank()) return false
     val cleanedQuery = query.trim().lowercase().replace("-", " ").replace("_", " ")
@@ -98,7 +117,6 @@ fun normalizeHomeSectionKey(key: String): String {
 }
 
 val ALL_HOME_SECTIONS = listOf(
-    HomeSectionDescriptor("speed_dial", "Speed Dial", "Quick 3x2 grid of top & favorite songs", Icons.Default.Speed, Color(0xFF00E5FF)),
     HomeSectionDescriptor("continue_listening", "Continue Listening", "Resume last active playback banner", Icons.Default.PlayCircle, Color(0xFFFF9100)),
     HomeSectionDescriptor("quick_actions", "Quick Actions", "Shuffle all tracks and quick navigation", Icons.Default.Shuffle, Color(0xFFFF4081)),
     HomeSectionDescriptor("listening_stats", "Listening Stats & Insights", "Minutes listened, day streak & top stats", Icons.Default.Insights, Color(0xFF00E676)),
@@ -197,10 +215,10 @@ fun HomeScreenSectionsManagerCard(
             )
             val presets = remember {
                 listOf(
-                    "Default Full" to listOf("speed_dial", "continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
-                    "Minimalist" to listOf("speed_dial", "recently_played", "most_played_playlists"),
+                    "Default Full" to listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
+                    "Minimalist" to listOf("recently_played", "most_played_playlists"),
                     "Discovery & Stats" to listOf("listening_stats", "most_played", "top_artists", "top_albums"),
-                    "Recents First" to listOf("recently_played", "recently_added", "speed_dial", "most_played_playlists")
+                    "Recents First" to listOf("recently_played", "recently_added", "most_played_playlists")
                 )
             }
             LazyRow(
@@ -652,9 +670,15 @@ fun SettingsScreen(
         }
     }
 
+    var showAllInOneList by remember { mutableStateOf(false) }
+
     fun handleBack() {
         if (searchQuery.isNotEmpty()) {
             searchQuery = ""
+            return
+        }
+        if (showAllInOneList) {
+            showAllInOneList = false
             return
         }
         if (tabHistory.isNotEmpty()) {
@@ -1321,14 +1345,16 @@ fun SettingsScreen(
 
     val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches
 
-    val showAudio = if (isSearching) audioMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.AUDIO)
-    val showUi = if (isSearching) uiMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.UI)
-    val showHomeFeed = if (isSearching) homeFeedMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.HOME_FEED)
-    val showPlayback = if (isSearching) playbackMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.PLAYBACK)
-    val showCache = if (isSearching) cacheMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CACHE)
-    val showLibrary = if (isSearching) libraryMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.LIBRARY)
-    val showOther = if (isSearching) otherMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.OTHER)
-    val showCloudSync = if (isSearching) cloudSyncMatches else (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC)
+    val isTopLevelHub = selectedSection == SettingsSection.ALL && !isSearching && !showAllInOneList
+
+    val showAudio = if (isSearching) audioMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.AUDIO))
+    val showUi = if (isSearching) uiMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.UI))
+    val showHomeFeed = if (isSearching) homeFeedMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.HOME_FEED))
+    val showPlayback = if (isSearching) playbackMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.PLAYBACK))
+    val showCache = if (isSearching) cacheMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CACHE))
+    val showLibrary = if (isSearching) libraryMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.LIBRARY))
+    val showOther = if (isSearching) otherMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.OTHER))
+    val showCloudSync = if (isSearching) cloudSyncMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC))
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -1654,6 +1680,177 @@ fun SettingsScreen(
                             ) {
                                 Text("Clear", fontSize = 12.sp, color = BentoPrimary)
                             }
+                        }
+                    }
+                }
+            }
+
+            if (isTopLevelHub) {
+                item(key = "settings_hub_title") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "CATEGORIES",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSecondary,
+                            letterSpacing = 1.2.sp
+                        )
+                        Text(
+                            text = "8 categories",
+                            fontSize = 11.sp,
+                            color = BentoTextSubtle
+                        )
+                    }
+                }
+
+                items(SETTINGS_CATEGORY_CARD_ITEMS, key = { it.section.name }) { catItem ->
+                    val sec = catItem.section
+                    val title = catItem.title
+                    val subtitle = catItem.subtitle
+                    val icon = catItem.icon
+                    val accent = catItem.accentColor
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            navigateToSection(sec)
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(accent.copy(alpha = 0.14f))
+                                    .border(BorderStroke(1.dp, accent.copy(alpha = 0.30f)), RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = accent,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = title,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 11.5.sp,
+                                    color = BentoTextSecondary,
+                                    lineHeight = 15.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = BentoTextSubtle,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                item(key = "settings_hub_view_all_footer") {
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            showAllInOneList = true
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = BentoCardSurface.copy(alpha = 0.6f),
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.25f)),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.List,
+                                contentDescription = null,
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Browse All Settings Continuously",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoPrimary
+                            )
+                        }
+                    }
+                }
+            } else if (!isSearching && selectedSection != SettingsSection.ALL) {
+                item(key = "settings_category_breadcrumb_header") {
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            handleBack()
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to categories",
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Settings",
+                                fontSize = 12.sp,
+                                color = BentoTextSecondary
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = BentoTextSubtle,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = selectedSection.title,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimary
+                            )
                         }
                     }
                 }

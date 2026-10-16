@@ -24,6 +24,7 @@ import kotlin.math.sin
 
 @Composable
 fun NowPlayingWaveformVisualizer(
+    trackId: Long? = null,
     progressMs: Long,
     durationMs: Long,
     isPlaying: Boolean,
@@ -36,12 +37,12 @@ fun NowPlayingWaveformVisualizer(
     val waveformColor = if (isDarkTheme) Color.White else Color.Black
     val inactiveTrackColor = waveformColor.copy(alpha = 0.22f)
 
-    val actualProgress = remember(progressMs, durationMs) {
+    val actualProgress = remember(trackId, progressMs, durationMs) {
         if (durationMs > 0) (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     }
 
-    var isDragging by remember { mutableStateOf(false) }
-    var dragProgress by remember { mutableFloatStateOf(0f) }
+    var isDragging by remember(trackId) { mutableStateOf(false) }
+    var dragProgress by remember(trackId) { mutableFloatStateOf(0f) }
 
     val displayProgress = if (isDragging) dragProgress else actualProgress
 
@@ -62,7 +63,7 @@ fun NowPlayingWaveformVisualizer(
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
-            .pointerInput(durationMs) {
+            .pointerInput(trackId, durationMs) {
                 detectTapGestures { offset ->
                     if (size.width > 0 && durationMs > 0) {
                         val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
@@ -70,7 +71,7 @@ fun NowPlayingWaveformVisualizer(
                     }
                 }
             }
-            .pointerInput(durationMs) {
+            .pointerInput(trackId, durationMs) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         isDragging = true

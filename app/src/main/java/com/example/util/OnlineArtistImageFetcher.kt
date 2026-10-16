@@ -83,88 +83,92 @@ object OnlineArtistImageFetcher {
                     cleanAlbum.isNotBlank() && cleanArtist.isNotBlank() -> "$cleanArtist $cleanAlbum"
                     else -> cleanAlbum
                 }
-                val encoded = URLEncoder.encode(queryTerm, "UTF-8")
 
-                // Step A: iTunes Track Search (Fetch Ultra-HD covers up to 1920x1080)
-                val itunesTrackUrl = URL("https://itunes.apple.com/search?term=$encoded&entity=song&limit=3")
-                val itunesConn = itunesTrackUrl.openConnection() as HttpURLConnection
-                itunesConn.connectTimeout = 3000
-                itunesConn.readTimeout = 3000
-                if (itunesConn.responseCode == 200) {
-                    val jsonStr = itunesConn.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(jsonStr)
-                    val results = json.optJSONArray("results")
-                    if (results != null && results.length() > 0) {
-                        val first = results.getJSONObject(0)
-                        var pic = first.optString("artworkUrl100")
-                        if (pic.isNotBlank() && pic.startsWith("http")) {
-                            pic = if (preferUltraHd) {
-                                pic.replace("100x100bb", "600x600bb")
-                            } else {
-                                pic.replace("100x100bb", "500x500bb")
-                            }
-                            if (cacheEnabled) {
-                                songCache[cacheKey] = pic
-                                context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)
-                                    .edit().putString(cacheKey, pic).apply()
-                                if (songId > 0L) {
-                                    context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                                        .edit().putString(songId.toString(), pic).apply()
-                                }
-                            }
-                            return@withContext pic
-                        }
-                    }
-                }
-
-                // Step B: Deezer Track Search (Ultra-HD / cover_xl 1000x1000)
-                val deezerTrackUrl = URL("https://api.deezer.com/search/track?q=$encoded")
-                val deezerConn = deezerTrackUrl.openConnection() as HttpURLConnection
-                deezerConn.connectTimeout = 3000
-                deezerConn.readTimeout = 3000
-                deezerConn.requestMethod = "GET"
-                if (deezerConn.responseCode == 200) {
-                    val jsonStr = deezerConn.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(jsonStr)
-                    val data = json.optJSONArray("data")
-                    if (data != null && data.length() > 0) {
-                        val first = data.getJSONObject(0)
-                        val albumObj = first.optJSONObject("album")
-                        if (albumObj != null) {
-                            val pic = albumObj.optString("cover_xl")
-                                .ifBlank { albumObj.optString("cover_big") }
-                                .ifBlank { albumObj.optString("cover_medium") }
-                            if (pic.isNotBlank() && pic.startsWith("http")) {
-                                if (cacheEnabled) {
-                                    songCache[cacheKey] = pic
-                                    context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)
-                                        .edit().putString(cacheKey, pic).apply()
-                                    if (songId > 0L) {
-                                        context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                                            .edit().putString(songId.toString(), pic).apply()
+                fun fetchItunes(term: String): String? {
+                    try {
+                        val enc = URLEncoder.encode(term, "UTF-8")
+                        val itunesTrackUrl = URL("https://itunes.apple.com/search?term=$enc&entity=song&limit=3")
+                        val itunesConn = itunesTrackUrl.openConnection() as HttpURLConnection
+                        itunesConn.connectTimeout = 3500
+                        itunesConn.readTimeout = 3500
+                        if (itunesConn.responseCode == 200) {
+                            val jsonStr = itunesConn.inputStream.bufferedReader().use { it.readText() }
+                            val json = JSONObject(jsonStr)
+                            val results = json.optJSONArray("results")
+                            if (results != null && results.length() > 0) {
+                                val first = results.getJSONObject(0)
+                                var pic = first.optString("artworkUrl100")
+                                if (pic.isNotBlank() && pic.startsWith("http")) {
+                                    return if (preferUltraHd) {
+                                        pic.replace("100x100bb", "600x600bb")
+                                    } else {
+                                        pic.replace("100x100bb", "500x500bb")
                                     }
                                 }
-                                return@withContext pic
                             }
                         }
-                    }
+                    } catch (_: Exception) {}
+                    return null
                 }
 
-                // Step C: Fallback to Album search if album name is provided
-                if (cleanAlbum.isNotBlank()) {
-                    val albumArt = getAlbumImageUrl(context, cleanAlbum, cleanArtist, preferUltraHd, cacheEnabled)
-                    if (!albumArt.isNullOrBlank()) {
-                        if (cacheEnabled) {
-                            songCache[cacheKey] = albumArt
-                            context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)
-                                .edit().putString(cacheKey, albumArt).apply()
-                            if (songId > 0L) {
-                                context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                                    .edit().putString(songId.toString(), albumArt).apply()
+                fun fetchDeezer(term: String): String? {
+                    try {
+                        val enc = URLEncoder.encode(term, "UTF-8")
+                        val deezerTrackUrl = URL("https://api.deezer.com/search/track?q=$enc")
+                        val deezerConn = deezerTrackUrl.openConnection() as HttpURLConnection
+                        deezerConn.connectTimeout = 3500
+                        deezerConn.readTimeout = 3500
+                        deezerConn.requestMethod = "GET"
+                        if (deezerConn.responseCode == 200) {
+                            val jsonStr = deezerConn.inputStream.bufferedReader().use { it.readText() }
+                            val json = JSONObject(jsonStr)
+                            val data = json.optJSONArray("data")
+                            if (data != null && data.length() > 0) {
+                                val first = data.getJSONObject(0)
+                                val albumObj = first.optJSONObject("album")
+                                if (albumObj != null) {
+                                    val pic = albumObj.optString("cover_xl")
+                                        .ifBlank { albumObj.optString("cover_big") }
+                                        .ifBlank { albumObj.optString("cover_medium") }
+                                    if (pic.isNotBlank() && pic.startsWith("http")) {
+                                        return pic
+                                    }
+                                }
                             }
                         }
-                        return@withContext albumArt
+                    } catch (_: Exception) {}
+                    return null
+                }
+
+                // Step A: Search iTunes with primary term (Artist + Title)
+                var resolvedOnline = fetchItunes(queryTerm)
+
+                // Step B: Search Deezer with primary term (Artist + Title)
+                if (resolvedOnline == null) {
+                    resolvedOnline = fetchDeezer(queryTerm)
+                }
+
+                // Step C: Search by distinct Album if provided
+                if (resolvedOnline == null && cleanAlbum.isNotBlank() && cleanArtist.isNotBlank()) {
+                    resolvedOnline = getAlbumImageUrl(context, cleanAlbum, cleanArtist, preferUltraHd, cacheEnabled)
+                }
+
+                // Step D: Only as a strict fallback if title is multi-word and distinctive (> 12 chars or > 2 words)
+                if (resolvedOnline == null && cleanTitle.length > 12 && cleanTitle.contains(" ")) {
+                    resolvedOnline = fetchItunes(cleanTitle) ?: fetchDeezer(cleanTitle)
+                }
+
+                if (!resolvedOnline.isNullOrBlank()) {
+                    if (cacheEnabled) {
+                        songCache[cacheKey] = resolvedOnline
+                        context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)
+                            .edit().putString(cacheKey, resolvedOnline).apply()
+                        if (songId > 0L) {
+                            context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
+                                .edit().putString(songId.toString(), resolvedOnline).apply()
+                        }
                     }
+                    return@withContext resolvedOnline
                 }
             } catch (_: Exception) {}
 

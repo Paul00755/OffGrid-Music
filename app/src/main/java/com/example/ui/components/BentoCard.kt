@@ -25,8 +25,8 @@ fun BentoCard(
     backgroundColor: Color = MaterialTheme.colorScheme.surface,
     gradient: Brush? = null,
     borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f),
-    shape: Shape = RoundedCornerShape(18.dp),
-    padding: Dp = 16.dp,
+    shape: Shape = RoundedCornerShape(14.dp),
+    padding: Dp = 12.dp,
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {

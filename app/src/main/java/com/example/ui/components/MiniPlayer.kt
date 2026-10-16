@@ -85,26 +85,26 @@ fun MiniPlayer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 // Album Art Thumbnail
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(BentoCardPurple),
                     contentAlignment = Alignment.Center
                 ) {
                     AlbumArtView(
                         song = song,
                         modifier = Modifier.fillMaxSize(),
-                        cornerRadius = 12
+                        cornerRadius = 10
                     )
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 // Song Info
                 Column(
@@ -112,22 +112,22 @@ fun MiniPlayer(
                 ) {
                     Text(
                         text = song.displayTitle,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = BentoTextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = song.displayArtist,
-                        fontSize = 12.sp,
+                        fontSize = 11.5.sp,
                         color = BentoTextSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
 
                 if (showFavorite && onFavoriteToggle != null) {
                     IconButton(

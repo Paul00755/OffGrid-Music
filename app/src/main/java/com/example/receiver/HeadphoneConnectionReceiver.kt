@@ -68,10 +68,14 @@ class HeadphoneConnectionReceiver : BroadcastReceiver() {
             val serviceIntent = Intent(context, MusicPlaybackService::class.java).apply {
                 this.action = MusicPlaybackService.ACTION_HEADPHONE_CONNECTED
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ContextCompat.startForegroundService(context, serviceIntent)
-            } else {
+            try {
                 context.startService(serviceIntent)
+            } catch (_: Exception) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        ContextCompat.startForegroundService(context, serviceIntent)
+                    } catch (_: Exception) {}
+                }
             }
         } catch (_: Exception) {}
     }

@@ -102,6 +102,8 @@ fun NowPlayingScreenHost(
             },
             onPlayNext = { viewModel.playNext(it) },
             onAddToPlaylist = onAddToPlaylist,
+            onGetPlaylistsContainingSong = { viewModel.getPlaylistsContainingSong(it) },
+            onRemoveFromPlaylist = { playlistId, songId -> viewModel.removeSongFromPlaylist(playlistId, songId) },
             onDeleteSong = onDeleteSong,
             onEditTags = onEditTags,
             onForceFetchLyrics = { viewModel.forceFetchLyrics(it) },

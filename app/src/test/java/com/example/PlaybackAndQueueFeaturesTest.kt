@@ -307,4 +307,99 @@ class PlaybackAndQueueFeaturesTest {
         com.example.util.ArtworkManager.invalidateNotificationArtwork(songId)
         assertNull(com.example.util.ArtworkManager.getCachedNotificationArtwork(songId))
     }
+
+    @Test
+    fun `test manual skip to next while paused starts next track at 0ms and remains paused`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        playbackManager.seekTo(90000L)
+        playbackManager.pause()
+        assertFalse(playbackManager.playbackState.value.isPlaying)
+        assertEquals(90000L, playbackManager.playbackPositionMs.value)
+
+        // Skip to next while paused
+        playbackManager.skipToNext()
+
+        val state = playbackManager.playbackState.value
+        assertEquals(sampleSongs[1].id, state.currentSong?.id)
+        assertEquals(1, state.queueIndex)
+        assertEquals(0L, state.positionMs)
+        assertEquals(0L, playbackManager.playbackPositionMs.value)
+        assertFalse("Track must remain paused when skipped while paused", state.isPlaying)
+
+        // Resume playback
+        playbackManager.play()
+        assertTrue(playbackManager.playbackState.value.isPlaying)
+        assertEquals(sampleSongs[1].id, playbackManager.playbackState.value.currentSong?.id)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test manual skip to next while playing starts next track at 0ms and continues playing`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        playbackManager.seekTo(45000L)
+        assertTrue(playbackManager.playbackState.value.isPlaying)
+
+        // Skip to next while playing
+        playbackManager.skipToNext()
+
+        val state = playbackManager.playbackState.value
+        assertEquals(sampleSongs[1].id, state.currentSong?.id)
+        assertEquals(1, state.queueIndex)
+        assertEquals(0L, state.positionMs)
+        assertEquals(0L, playbackManager.playbackPositionMs.value)
+        assertTrue("Track must continue playing when skipped while playing", state.isPlaying)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test manual skip to previous while paused starts track at 0ms and remains paused`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 2)
+        playbackManager.seekTo(1500L) // Under 3s to trigger skip to previous track
+        playbackManager.pause()
+        assertFalse(playbackManager.playbackState.value.isPlaying)
+
+        playbackManager.skipToPrevious()
+
+        val state = playbackManager.playbackState.value
+        assertEquals(sampleSongs[1].id, state.currentSong?.id)
+        assertEquals(1, state.queueIndex)
+        assertEquals(0L, state.positionMs)
+        assertEquals(0L, playbackManager.playbackPositionMs.value)
+        assertFalse("Track must remain paused when skipped to previous while paused", state.isPlaying)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test manual skip to previous rewinds to 0ms when past 3 seconds`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 1)
+        playbackManager.seekTo(10000L) // Past 3s
+        playbackManager.pause()
+        assertFalse(playbackManager.playbackState.value.isPlaying)
+
+        playbackManager.skipToPrevious()
+
+        val state = playbackManager.playbackState.value
+        assertEquals(sampleSongs[1].id, state.currentSong?.id)
+        assertEquals(1, state.queueIndex)
+        assertEquals(0L, state.positionMs)
+        assertEquals(0L, playbackManager.playbackPositionMs.value)
+        assertFalse(state.isPlaying)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test jumpToQueueIndex starts target track at 0ms`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        playbackManager.seekTo(70000L)
+
+        playbackManager.jumpToQueueIndex(4)
+
+        val state = playbackManager.playbackState.value
+        assertEquals(sampleSongs[4].id, state.currentSong?.id)
+        assertEquals(4, state.queueIndex)
+        assertEquals(0L, state.positionMs)
+        assertEquals(0L, playbackManager.playbackPositionMs.value)
+        assertTrue(state.isPlaying)
+        playbackManager.pause()
+    }
 }

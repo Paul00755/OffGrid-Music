@@ -37,6 +37,7 @@ fun ArtistDetailSheet(
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
+    onOpenRemoveFromPlaylist: ((Song) -> Unit)? = null,
     onDeleteSong: (Song) -> Unit = {},
     onEditTags: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -330,6 +331,7 @@ fun ArtistDetailSheet(
                         onAddToPlaylist(song)
                         selectedSongForMenu = null
                     },
+                    onOpenRemoveFromPlaylist = onOpenRemoveFromPlaylist?.let { cb -> { cb(song) } },
                     onFavoriteToggle = {
                         onFavoriteToggle(song)
                     },

@@ -70,29 +70,30 @@ class MusicApplication : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.12)
+                    .maxSizePercent(0.25)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(64L * 1024 * 1024)
+                    .maxSizeBytes(128L * 1024 * 1024)
                     .build()
             }
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .respectCacheHeaders(false)
-            .crossfade(true)
+            .crossfade(false)
             .build()
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         try {
-            if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
                 coil.Coil.imageLoader(this).memoryCache?.clear()
                 com.example.ui.components.ArtworkResolutionCache.clearMemory()
                 com.example.util.ArtworkColorExtractor.clearCache()
+                com.example.util.ArtworkManager.clearMemoryCache()
             }
         } catch (_: Exception) {}
     }
@@ -103,6 +104,7 @@ class MusicApplication : Application(), ImageLoaderFactory {
             coil.Coil.imageLoader(this).memoryCache?.clear()
             com.example.ui.components.ArtworkResolutionCache.clearMemory()
             com.example.util.ArtworkColorExtractor.clearCache()
+            com.example.util.ArtworkManager.clearMemoryCache()
         } catch (_: Exception) {}
     }
 }

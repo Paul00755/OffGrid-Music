@@ -102,7 +102,7 @@ fun AccountScreen(
         handleBack()
     }
 
-    val displayPhoto = customAvatarUri ?: userAccount?.photoUrl
+    val displayPhoto = if (userAccount != null) (customAvatarUri ?: userAccount.photoUrl) else null
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -203,25 +203,27 @@ fun AccountScreen(
                             }
                         }
 
-                        // Camera edit button
-                        Surface(
-                            onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            shape = CircleShape,
-                            color = BentoPrimary,
-                            border = BorderStroke(2.dp, BentoCardSurface),
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.PhotoCamera,
-                                    contentDescription = "Change photo",
-                                    tint = BentoOnPrimary,
-                                    modifier = Modifier.size(17.dp)
-                                )
+                        // Camera edit button (only for authenticated users)
+                        if (userAccount != null) {
+                            Surface(
+                                onClick = {
+                                    photoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                },
+                                shape = CircleShape,
+                                color = BentoPrimary,
+                                border = BorderStroke(2.dp, BentoCardSurface),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.PhotoCamera,
+                                        contentDescription = "Change photo",
+                                        tint = BentoOnPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -241,19 +243,21 @@ fun AccountScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        IconButton(
-                            onClick = {
-                                editedName = effectiveDisplayName
-                                showEditNameDialog = true
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit name",
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                        if (userAccount != null) {
+                            IconButton(
+                                onClick = {
+                                    editedName = effectiveDisplayName
+                                    showEditNameDialog = true
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit name",
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
 
@@ -395,29 +399,56 @@ fun AccountScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // Sign Out Button
-            OutlinedButton(
-                onClick = { showSignOutConfirmDialog = true },
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.5f)),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color(0xFFFF5252)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Logout,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "Sign Out",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
-                )
+            if (userAccount != null) {
+                // Sign Out Button
+                OutlinedButton(
+                    onClick = { showSignOutConfirmDialog = true },
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.5f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFFF5252)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Sign Out",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.5.sp
+                    )
+                }
+            } else {
+                // Guest State: Sign In / Register Button
+                Button(
+                    onClick = onOpenAuth,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BentoPrimary,
+                        contentColor = BentoOnPrimary
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Login,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Sign In or Connect Account",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.5.sp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

@@ -102,6 +102,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // User Account & Profile Preferences
         val SKIP_AUTH_PROMPT = booleanPreferencesKey("skip_auth_prompt")
+        val LAST_ACTIVE_UID = stringPreferencesKey("last_active_uid")
         val CUSTOM_DISPLAY_NAME = stringPreferencesKey("custom_display_name")
         val CUSTOM_AVATAR_URI = stringPreferencesKey("custom_avatar_uri")
         val SETTINGS_LAST_UPDATED_AT = longPreferencesKey("settings_last_updated_at")
@@ -259,11 +260,28 @@ class UserPreferencesRepository(private val context: Context) {
             addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM",
             playlistAddSongPosition = prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM",
             playlistViewMode = prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID",
-            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
+            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
             databaseStorageTier = prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED",
             customDisplayName = prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME],
             customAvatarUri = prefs[PreferenceKeys.CUSTOM_AVATAR_URI],
-            updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: System.currentTimeMillis()
+            ignoreAudioDuration = prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0,
+            librarySortOption = prefs[stringPreferencesKey("library_sort_option")] ?: "RECENTLY_ADDED",
+            librarySortAscending = prefs[booleanPreferencesKey("library_sort_ascending")] ?: true,
+            sleepTimerMode = prefs[PreferenceKeys.SLEEP_TIMER_MODE] ?: "TIME",
+            resumeOnBluetooth = prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: false,
+            pauseOnHeadsetUnplug = prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: true,
+            notificationEnabled = prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: true,
+            autoplayOnAppStartup = prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: false,
+            fetchOnlineArtworkHighRes = prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: true,
+            cacheLyricsEnabled = prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: true,
+            cacheAlbumArtEnabled = prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: true,
+            cacheSongArtWorkEnabled = prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: true,
+            transcribeTranslateEnabled = prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false,
+            audioTranscribeMode = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF",
+            audioTranscribeTargetLang = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta",
+            automaticBackupEnabled = prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: false,
+            backupFrequency = prefs[PreferenceKeys.BACKUP_FREQUENCY] ?: "WEEKLY",
+            updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
         )
     }
 
@@ -271,7 +289,7 @@ class UserPreferencesRepository(private val context: Context) {
         var applied = false
         context.dataStore.edit { prefs ->
             val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
-            if (!checkTimestamp || cloud.updatedAt >= localUpdated) {
+            if (!checkTimestamp || localUpdated == 0L || cloud.updatedAt >= localUpdated) {
                 prefs[PreferenceKeys.THEME_MODE] = cloud.themeMode
                 prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
                 prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout
@@ -330,7 +348,24 @@ class UserPreferencesRepository(private val context: Context) {
                 if (!cloud.customAvatarUri.isNullOrBlank()) {
                     prefs[PreferenceKeys.CUSTOM_AVATAR_URI] = cloud.customAvatarUri
                 }
-                prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = cloud.updatedAt
+                prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = cloud.ignoreAudioDuration
+                prefs[stringPreferencesKey("library_sort_option")] = cloud.librarySortOption
+                prefs[booleanPreferencesKey("library_sort_ascending")] = cloud.librarySortAscending
+                prefs[PreferenceKeys.SLEEP_TIMER_MODE] = cloud.sleepTimerMode
+                prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] = cloud.resumeOnBluetooth
+                prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] = cloud.pauseOnHeadsetUnplug
+                prefs[PreferenceKeys.NOTIFICATION_ENABLED] = cloud.notificationEnabled
+                prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] = cloud.autoplayOnAppStartup
+                prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = cloud.fetchOnlineArtworkHighRes
+                prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] = cloud.cacheLyricsEnabled
+                prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] = cloud.cacheAlbumArtEnabled
+                prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] = cloud.cacheSongArtWorkEnabled
+                prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = cloud.transcribeTranslateEnabled
+                prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] = cloud.audioTranscribeMode
+                prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = cloud.audioTranscribeTargetLang
+                prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = cloud.automaticBackupEnabled
+                prefs[PreferenceKeys.BACKUP_FREQUENCY] = cloud.backupFrequency
+                prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = if (cloud.updatedAt > 0L) cloud.updatedAt else System.currentTimeMillis()
                 applied = true
             }
         }
@@ -372,6 +407,35 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 prefs.remove(PreferenceKeys.CUSTOM_AVATAR_URI)
             }
+        }
+    }
+
+    val lastActiveUid: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.LAST_ACTIVE_UID]
+    }
+
+    suspend fun getLastActiveUid(): String? {
+        return context.dataStore.data.first()[PreferenceKeys.LAST_ACTIVE_UID]
+    }
+
+    suspend fun setLastActiveUid(uid: String?) {
+        context.dataStore.edit { prefs ->
+            if (uid != null) {
+                prefs[PreferenceKeys.LAST_ACTIVE_UID] = uid
+            } else {
+                prefs.remove(PreferenceKeys.LAST_ACTIVE_UID)
+            }
+        }
+    }
+
+    suspend fun resetAccountSpecificData() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(PreferenceKeys.CUSTOM_DISPLAY_NAME)
+            prefs.remove(PreferenceKeys.CUSTOM_AVATAR_URI)
+            prefs[PreferenceKeys.LAST_SYNCED_TIMESTAMP] = 0L
+            prefs[PreferenceKeys.LAST_BACKUP_TIMESTAMP] = 0L
+            prefs.remove(PreferenceKeys.LAST_BACKUP_DATA_HASH)
+            prefs.remove(PreferenceKeys.LAST_ACTIVE_UID)
         }
     }
 
@@ -464,7 +528,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val homeSections: Flow<List<String>> = context.dataStore.data.map { prefs ->
-        val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
+        val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
         raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
 

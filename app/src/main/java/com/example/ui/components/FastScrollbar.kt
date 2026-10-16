@@ -122,6 +122,22 @@ fun FastScrollbar(
         itemLabelProvider?.invoke(currentItemIndex)?.takeIf { it.isNotBlank() }
     } else null
 
+    var pendingTargetIndex by remember { mutableIntStateOf(-1) }
+
+    LaunchedEffect(isDragging) {
+        if (isDragging) {
+            while (isDragging) {
+                val target = pendingTargetIndex
+                if (target >= 0 && target != listState.firstVisibleItemIndex) {
+                    try {
+                        listState.scrollToItem(target)
+                    } catch (_: Exception) {}
+                }
+                kotlinx.coroutines.delay(16)
+            }
+        }
+    }
+
     fun scrollToFraction(fraction: Float) {
         val clamped = fraction.coerceIn(0f, 1f)
         dragFraction = clamped
@@ -133,18 +149,15 @@ fun FastScrollbar(
                 lastLabel = newLabel
                 HapticUtils.performTickHaptic(context)
             }
-            scrollJob?.cancel()
-            scrollJob = coroutineScope.launch {
-                try {
-                    listState.scrollToItem(targetIndex)
-                } catch (_: Exception) {}
-            }
+            pendingTargetIndex = targetIndex
         }
     }
 
     // Expanded touch target (22.dp) for effortless grabbing without needing pixel-perfect edge taps,
     // while keeping thumb slim (12.dp) and safe from adjacent action items
     val touchWidthDp = 22.dp
+
+    val usableHeightPx = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(0f)
 
     Box(
         modifier = modifier
@@ -157,42 +170,48 @@ fun FastScrollbar(
                 scaleY = scaleAnim
             }
             .pointerInput(totalItems) {
-                detectTapGestures { offset ->
-                    isVisible = true
-                    val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                    val relativeY = (offset.y - topPaddingPx - thumbHeightPx / 2).coerceIn(0f, usableHeight)
-                    val fraction = (relativeY / usableHeight).coerceIn(0f, 1f)
-                    scrollToFraction(fraction)
-                }
-            }
-            .pointerInput(totalItems) {
+                val touchSlopPx = 28.dp.toPx()
                 detectDragGestures(
                     onDragStart = { offset ->
-                        isDragging = true
-                        isVisible = true
                         val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                        val relativeY = (offset.y - topPaddingPx - thumbHeightPx / 2).coerceIn(0f, usableHeight)
-                        val fraction = (relativeY / usableHeight).coerceIn(0f, 1f)
-                        scrollToFraction(fraction)
+                        val currentThumbY = topPaddingPx + (usableHeight * (if (isDragging) dragFraction else stateScrollFraction))
+                        val thumbTop = currentThumbY - touchSlopPx
+                        val thumbBottom = currentThumbY + thumbHeightPx + touchSlopPx
+                        // Only engage fast-scrolling if the drag starts directly on or near the visible scrollbar thumb!
+                        // Tapping or dragging on the empty area below/above will NEVER teleport or drag the list down.
+                        if (offset.y in thumbTop..thumbBottom) {
+                            isDragging = true
+                            isVisible = true
+                            dragFraction = (if (isDragging) dragFraction else stateScrollFraction).coerceIn(0f, 1f)
+                        } else {
+                            isDragging = false
+                        }
                     },
                     onDragEnd = {
                         isDragging = false
+                        val target = pendingTargetIndex
+                        if (target >= 0) {
+                            coroutineScope.launch {
+                                try { listState.scrollToItem(target) } catch (_: Exception) {}
+                            }
+                        }
                     },
                     onDragCancel = {
                         isDragging = false
                     },
                     onDrag = { change, dragAmount ->
-                        change.consume()
-                        val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                        val deltaFraction = dragAmount.y / usableHeight
-                        val fraction = (dragFraction + deltaFraction).coerceIn(0f, 1f)
-                        scrollToFraction(fraction)
+                        if (isDragging) {
+                            change.consume()
+                            val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                            val deltaFraction = dragAmount.y / usableHeight
+                            val fraction = (dragFraction + deltaFraction).coerceIn(0f, 1f)
+                            scrollToFraction(fraction)
+                        }
                     }
                 )
             },
         contentAlignment = Alignment.TopEnd
     ) {
-        val usableHeightPx = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(0f)
 
         Row(
             modifier = Modifier

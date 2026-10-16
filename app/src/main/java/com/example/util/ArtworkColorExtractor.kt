@@ -230,9 +230,10 @@ object ArtworkColorExtractor {
         val rawColorInt = android.graphics.Color.rgb(avgR, avgG, avgB)
         android.graphics.Color.colorToHSV(rawColorInt, hsv)
 
-        // Keep extracted color vibrant and legible against dark themes
-        hsv[1] = hsv[1].coerceIn(0.45f, 0.88f)
-        hsv[2] = hsv[2].coerceIn(0.55f, 0.90f)
+        // Convert to clean, soft pastel colors: gentle saturation (0.28f - 0.52f) and high brightness (0.80f - 0.95f)
+        // Eliminates murky/dark colors during dynamic theming and ensures clean UI with high text legibility
+        hsv[1] = hsv[1].coerceIn(0.28f, 0.52f)
+        hsv[2] = hsv[2].coerceIn(0.80f, 0.95f)
 
         val adjustedColorInt = android.graphics.Color.HSVToColor(hsv)
         return Color(adjustedColorInt)

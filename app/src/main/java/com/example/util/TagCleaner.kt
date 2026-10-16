@@ -1,7 +1,5 @@
 package com.example.util
 
-import java.util.regex.Pattern
-
 object TagCleaner {
 
     private val SOURCE_KEYWORDS = listOf(
@@ -22,24 +20,86 @@ object TagCleaner {
         "store", "vip", "link", "top", "club", "is", "to", "ws"
     )
 
-    // Precompiled regex patterns for 100x performance boost (eliminates Pattern.compile overhead)
+    // Precompiled regex patterns for high performance
     private val WWW_REGEX = Regex("(?i)\\bwww\\.[a-zA-Z0-9-]+\\.[a-zA-Z0-9.]+\\b")
     private val sourceKwPattern = SOURCE_KEYWORDS.joinToString("|") { Regex.escape(it) }
     private val domainExtPattern = DOMAIN_EXTENSIONS.joinToString("|") { Regex.escape(it) }
 
     private val BRACKETED_SOURCES_REGEX = Regex("(?i)[\\[\\(][^\\]\\)]*?(?:" + sourceKwPattern + "|\\.(?:" + domainExtPattern + "))[^\\]\\)]*?[\\]\\)]")
-    private val BRACKETED_LABELS_REGEX = Regex("(?i)[\\[\\(][^\\]\\)]*?(?:320|128|256|64|kbps|mp3|download|video song|full video|official video|lyric video|audio song|video|movie|soundtrack|singer|singers|artist|composed by|sung by|music by|masstamilan|pagalworld|remix|mix|edit|remaster|remastered|deluxe|edition|bonus|live|extended|version|track)[^\\]\\)]*?[\\]\\)]")
+    private val BRACKETED_LABELS_REGEX = Regex(
+        "(?i)[\\[\\(][^\\]\\)]*?(?:" +
+        "320|128|256|64|kbps|mp3|download|video\\s*song|full\\s*video|official\\s*video|lyric\\s*video|audio\\s*song|" +
+        "official\\s*audio|movie\\s*song|movie\\s*name|video|movie|soundtrack|singer|singers|artist|composed by|sung by|music by|" +
+        "masstamilan|pagal\\s*world|pagalworld|pagalsong|tamil|malayalam|telugu|hindi|kannada|" +
+        "remix|mix|edit|remaster|remastered|deluxe|edition|bonus|live|extended|version|track|album|song" +
+        ")[^\\]\\)]*?[\\]\\)]"
+    )
     private val STANDALONE_VIDEO_AUDIO_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b(?:video\\s*song|full\\s*video(?:\\s*song)?|official\\s*video(?:\\s*song)?|lyric(?:s)?\\s*video|audio\\s*song|full\\s*audio(?:\\s*song)?|official\\s*audio)\\b[\\s-_~|/\\\\]*")
     private val WEBSITE_KEYWORDS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?\\b[\\s-_~|/\\\\]*")
     private val STANDALONE_DOMAINS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b[a-zA-Z0-9-]+\\.(?:" + domainExtPattern + ")\\b[\\s-_~|/\\\\]*")
     private val LEADING_TRACK_NUM_REGEX = Regex("^\\d{1,3}\\s*[-._]\\s*")
     private val TRAILING_DOMAIN_REGEX = Regex("(?i)\\.(?:" + domainExtPattern + ")\\b")
-    private val MASSTAMILAN_EXT_REGEX = Regex("(?i)\\.masstamilan\\b")
+    private val MASSTAMILAN_EXT_REGEX = Regex("(?i)\\.masstamilan[a-z0-9._-]*\\b")
     private val KBPS_REGEX = Regex("(?i)\\b(?:320|128|256|64)\\s*kbps\\b")
     private val EMPTY_BRACKETS_REGEX = Regex("[\\[\\(]\\s*[\\]\\)]")
     private val MULTI_SPACE_REGEX = Regex("\\s+")
     private val EDGE_PUNCT_REGEX = Regex("^[\\s-_~|/\\\\]+|[\\s-_~|/\\\\]+$")
     private val FALLBACK_CLEAN_REGEX = Regex("(?i)[\\s-_~|]*\\b(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?\\b[\\s-_~|]*")
+
+    // Controlled release/source/version suffix normalization regex
+    private val SOURCE_WEBSITE_SUFFIX_REGEX = Regex(
+        "(?i)(?:\\s*[-–—_~|/:]\\s*|\\s+)" +
+        "(?:" +
+            "v\\d{1,2}|ver\\s*\\d{1,2}|version\\s*\\d{1,2}|" +
+            "masstamilan[a-z0-9._-]*|" +
+            "pagal\\s*world[a-z0-9._-]*|pagalworld[a-z0-9._-]*|pagalsong[a-z0-9._-]*|pagalfree[a-z0-9._-]*|pagalnew[a-z0-9._-]*|" +
+            "isaimini[a-z0-9._-]*|starmusiq[a-z0-9._-]*|5starmusiq[a-z0-9._-]*|" +
+            "kuttyweb[a-z0-9._-]*|tamildada[a-z0-9._-]*|tamiltunes[a-z0-9._-]*|" +
+            "songspk[a-z0-9._-]*|mr[- ]*jatt[a-z0-9._-]*|pendujatt[a-z0-9._-]*|" +
+            "djpunjab[a-z0-9._-]*|djmaza[a-z0-9._-]*|wapking[a-z0-9._-]*|" +
+            "naasongs[a-z0-9._-]*|sensongs(?:mp3)?[a-z0-9._-]*|mp3chetta(?:_com)?[a-z0-9._-]*|" +
+            "mp3juices?[a-z0-9._-]*|mp3quack[a-z0-9._-]*|mp3mad[a-z0-9._-]*|mp3pawan[a-z0-9._-]*|" +
+            "ytmp3[a-z0-9._-]*|tubidy[a-z0-9._-]*|yt1s[a-z0-9._-]*|y2mate[a-z0-9._-]*|" +
+            "mobcup[a-z0-9._-]*|zedge[a-z0-9._-]*|songslover[a-z0-9._-]*|freshmaza[a-z0-9._-]*|" +
+            "(?:320|128|256|64)\\s*kbps|kbps|hq|hd|cdrip|dvdrip|webrip" +
+        ")\\s*$"
+    )
+
+    // Controlled generic noise suffix regex — strictly requires explicit separator preceding it
+    // to avoid deleting words when they legitimately belong to the title
+    private val GENERIC_NOISE_SUFFIX_REGEX = Regex(
+        "(?i)(?:\\s*[-–—_~|/:]\\s*)" +
+        "(?:" +
+            "video\\s*song|full\\s*video(?:\\s*song)?|official\\s*video(?:\\s*song)?|lyric(?:s)?\\s*video|" +
+            "audio\\s*song|full\\s*audio(?:\\s*song)?|official\\s*audio|" +
+            "movie\\s*song|movie\\s*name|" +
+            "tamil|malayalam|telugu|hindi|kannada|" +
+            "video|movie|album|song" +
+        ")\\s*$"
+    )
+
+    fun stripUnwantedReleaseSuffixes(title: String): String {
+        var text = title.trim()
+        var iterations = 0
+        while (iterations < 6) {
+            var next = text.replace(SOURCE_WEBSITE_SUFFIX_REGEX, "")
+                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\')
+            if (next.isNotBlank() && next != text) {
+                text = next
+                iterations++
+                continue
+            }
+            next = text.replace(GENERIC_NOISE_SUFFIX_REGEX, "")
+                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\')
+            if (next.isNotBlank() && next != text) {
+                text = next
+                iterations++
+                continue
+            }
+            break
+        }
+        return text.ifBlank { title }
+    }
 
     // Ultra-fast LRU cache for already cleaned strings
     private class FastLruCache<K, V>(private val maxSize: Int) : java.util.LinkedHashMap<K, V>(maxSize, 0.75f, true) {
@@ -51,50 +111,48 @@ object TagCleaner {
     private val cleanAlbumCache = FastLruCache<String, String>(1000)
 
     fun cleanTitle(rawTitle: String?, rawFilename: String): String {
-        val cacheKey = "${rawTitle ?: ""}|${rawFilename}"
+        val cacheKey = "${rawTitle ?: ""}|$rawFilename"
         synchronized(cleanTitleCache) {
             cleanTitleCache.get(cacheKey)?.let { return it }
         }
 
         var text = rawTitle?.takeIf { it.isNotBlank() } ?: rawFilename.substringBeforeLast('.')
 
-        // Fast-path: if text is already simple (no brackets, dots, www, urls, or weird symbols), skip heavy regex
-        if (!text.contains('[') && !text.contains('(') && !text.contains('.') &&
-            !text.contains("www", ignoreCase = true) && !text.contains("http", ignoreCase = true) &&
-            !text.contains("kbps", ignoreCase = true) && !text.contains("video", ignoreCase = true) &&
-            !text.contains("audio", ignoreCase = true) && !text.contains("topic", ignoreCase = true) &&
-            !text.contains("vevo", ignoreCase = true)
+        // Strip known file extensions if embedded in title or filename
+        val lowerText = text.lowercase()
+        if (lowerText.endsWith(".mp3") || lowerText.endsWith(".flac") || lowerText.endsWith(".m4a") ||
+            lowerText.endsWith(".aac") || lowerText.endsWith(".ogg") || lowerText.endsWith(".wav") ||
+            lowerText.endsWith(".opus") || lowerText.endsWith(".wma")
         ) {
-            val trimmed = text.trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\')
-            if (trimmed.isNotBlank()) {
-                synchronized(cleanTitleCache) { cleanTitleCache.put(cacheKey, trimmed) }
-                return trimmed
-            }
+            text = text.substringBeforeLast('.')
         }
 
         // 0. Remove www. prefix if present
         text = text.replace(WWW_REGEX, "")
 
-        // 1. Remove bracketed / parenthesized tags containing website sources, domains, etc.
+        // 1. Remove bracketed / parenthesized tags containing website sources, domains, or release labels
         text = text.replace(BRACKETED_SOURCES_REGEX, "")
         text = text.replace(BRACKETED_LABELS_REGEX, "")
 
-        // 2. Remove standalone phrases like "video song", "official video", "audio song", "full song"
-        text = text.replace(STANDALONE_VIDEO_AUDIO_REGEX, " ")
+        // 2. Strip unwanted release/source/version suffixes (e.g., "- masstamilan", "- pagal world - video song", "- Tamil")
+        text = stripUnwantedReleaseSuffixes(text)
 
-        // 3. Remove explicit website/source strings anywhere in the title
+        // 3. Remove standalone explicit website/source strings anywhere in the title
         text = text.replace(WEBSITE_KEYWORDS_REGEX, " ")
 
         // 4. Remove standalone domain tags
         text = text.replace(STANDALONE_DOMAINS_REGEX, " ")
 
-        // 5. Remove leading/trailing track numbers or prefixes
+        // 5. Remove leading track numbers or prefixes (e.g. "01 - " or "01. ")
         text = text.replace(LEADING_TRACK_NUM_REGEX, "")
 
         // 6. Remove leftover trailing domain extensions like ".so", ".com", or audio quality tags
         text = text.replace(TRAILING_DOMAIN_REGEX, "")
         text = text.replace(MASSTAMILAN_EXT_REGEX, "")
         text = text.replace(KBPS_REGEX, "")
+
+        // 7. Strip unwanted release/source/version suffixes again after removing in-between noise
+        text = stripUnwantedReleaseSuffixes(text)
 
         // 7. Clean up duplicate spaces, empty brackets, leading/trailing hyphens/underscores/dots
         text = text.replace(EMPTY_BRACKETS_REGEX, "")
@@ -103,6 +161,9 @@ object TagCleaner {
 
         // If title ends or starts with a trailing dash or bracketed tag
         text = text.replace(EDGE_PUNCT_REGEX, "")
+
+        // Final check on release suffixes after edge punctuation cleanup
+        text = stripUnwantedReleaseSuffixes(text)
 
         // Fallback if cleaning erased everything
         if (text.isBlank()) {

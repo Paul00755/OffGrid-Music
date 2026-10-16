@@ -259,23 +259,18 @@ class SleepTimerManager(
         // 1. If old track was marked as the final counted track (F)
         if (curr.isFinalTrack || curr.isFinalSleepTrack) {
             if (isOldEligible) {
-                // F genuinely completed -> new track is G -> STOP on G at 0:00!
+                // F completed -> new track is G -> STOP on G at 0:00!
                 _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
                 cancelTimer()
-                android.util.Log.d(TAG, "F completion → FINAL_TRACK_COMPLETED → stopping on next track at 0:00")
+                android.util.Log.d(TAG, "Final track completed → stopping on next track at 0:00")
                 return true
             } else {
-                // Final track was skipped without qualifying -> do not stop playback!
-                // The new track takes over as the final track candidate.
+                // Ineligible skip of final track: current track remains final track candidate
+                android.util.Log.d(TAG, "Ineligible skip of final track; new track $newOccurrence is final track candidate")
                 _state.value = curr.copy(
                     lastProcessedTrackIdentity = newOccurrence,
-                    finalTrackIdentity = newOccurrence,
-                    isFinalTrack = true,
-                    isFinalSleepTrack = true,
-                    stopPending = true,
-                    phase = TrackSleepTimerPhase.FINAL_TRACK
+                    finalTrackIdentity = newOccurrence
                 )
-                android.util.Log.d(TAG, "Final track skipped before qualifying → new candidate: $newOccurrence")
                 return false
             }
         }
@@ -291,12 +286,9 @@ class SleepTimerManager(
             // Baseline track A has completed without being counted.
             // New track (B) is starting as Count 1.
             completedEligibleTracks = 1
-        } else {
+        } else if (isOldEligible) {
             hasPassedInitialSong = true
-            if (isOldEligible) {
-                completedEligibleTracks++
-            }
-            // If !isOldEligible, old track was skipped without qualifying, so it does not consume a count
+            completedEligibleTracks++
         }
 
         val currentTrackNumber = completedEligibleTracks.coerceIn(1, curr.targetTrackCount)
@@ -353,7 +345,7 @@ class SleepTimerManager(
             return false
         } else if (curr.mode == "SONGS") {
             val wasEligible = isQualified
-            if (wasEligible && (curr.isFinalSleepTrack || curr.isFinalTrack || (completedEligibleTracks + 1 >= curr.targetTrackCount) || (curr.countedTrackCount >= curr.targetTrackCount))) {
+            if (wasEligible && (curr.isFinalSleepTrack || curr.isFinalTrack || (completedEligibleTracks >= curr.targetTrackCount) || (curr.countedTrackCount >= curr.targetTrackCount))) {
                 _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
                 cancelTimer()
                 android.util.Log.d(TAG, "F completion → FINAL_TRACK_COMPLETED")

@@ -84,6 +84,8 @@ fun LibraryScreen(
     onDeleteSong: (Song) -> Unit = {},
     onEditTags: ((Song) -> Unit)? = null,
     allPlaylists: List<Playlist> = emptyList(),
+    onGetPlaylistsContainingSong: suspend (Long) -> List<Playlist> = { emptyList() },
+    onRemoveFromPlaylist: (Long, Long) -> Unit = { _, _ -> },
     onShuffleAll: ((List<Song>) -> Unit)? = null,
     recentSearches: List<String> = emptyList(),
     onAddRecentSearch: (String) -> Unit = {},
@@ -105,9 +107,11 @@ fun LibraryScreen(
 
     var selectedSongForMenu by remember { mutableStateOf<Song?>(null) }
     var songForAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+    var songForRemoveFromPlaylist by remember { mutableStateOf<Song?>(null) }
     var selectedAlbumForSheet by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
     var selectedArtistForSheet by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
     var showDuplicateFinderSheet by remember { mutableStateOf(false) }
+    val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     // Search Header Visibility state optimized to avoid per-pixel recomposition
     val isSearchHeaderVisible by remember {
@@ -586,14 +590,14 @@ fun LibraryScreen(
                                 color = BentoPrimary
                             )
                             Text(
-                                text = "${scanProgress.displayTracksCount} tracks found",
+                                text = if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) "${scanProgress.validTracksFound} tracks indexed" else "${scanProgress.validTracksFound} tracks found",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = BentoPrimary
                             )
                         }
                         Text(
-                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning in progress (${scanProgress.currentFolder})..." else "Scanning in progress...",
+                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning (${scanProgress.currentFolder})..." else "Scanning...",
                             fontSize = 11.5.sp,
                             color = BentoTextSecondary
                         )
@@ -753,7 +757,7 @@ fun LibraryScreen(
                                     Box {
                                         SongItem(
                                             song = song,
-                                            isPlaying = playbackState.currentSong?.id == song.id,
+                                            isPlaying = currentPlayingSongId == song.id,
                                             onClick = {
                                                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                                                 onSongClick(song)
@@ -786,6 +790,10 @@ fun LibraryScreen(
                                                     if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                                                     songForAddToPlaylist = song
                                                 },
+                                                onOpenRemoveFromPlaylist = {
+                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                                                    songForRemoveFromPlaylist = song
+                                                },
                                                 onEditTags = if (onEditTags != null) {
                                                     {
                                                         if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
@@ -806,7 +814,7 @@ fun LibraryScreen(
                                 Box {
                                     SongItem(
                                         song = song,
-                                        isPlaying = playbackState.currentSong?.id == song.id,
+                                        isPlaying = currentPlayingSongId == song.id,
                                         onClick = {
                                             if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                                             onSongClick(song)
@@ -838,6 +846,10 @@ fun LibraryScreen(
                                             onAddToPlaylist = {
                                                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                                                 songForAddToPlaylist = song
+                                            },
+                                            onOpenRemoveFromPlaylist = {
+                                                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                                                songForRemoveFromPlaylist = song
                                             },
                                             onEditTags = if (onEditTags != null) {
                                                 {
@@ -984,6 +996,15 @@ fun LibraryScreen(
         )
     }
 
+    songForRemoveFromPlaylist?.let { targetSong ->
+        com.example.ui.components.RemoveFromPlaylistDialog(
+            song = targetSong,
+            onGetPlaylistsContainingSong = onGetPlaylistsContainingSong,
+            onRemoveFromPlaylist = onRemoveFromPlaylist,
+            onDismiss = { songForRemoveFromPlaylist = null }
+        )
+    }
+
     selectedAlbumForSheet?.let { (albumName, songs) ->
         com.example.ui.components.AlbumDetailSheet(
             albumName = albumName,
@@ -1011,6 +1032,10 @@ fun LibraryScreen(
             onAddToPlaylist = {
                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                 songForAddToPlaylist = it
+            },
+            onOpenRemoveFromPlaylist = {
+                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                songForRemoveFromPlaylist = it
             },
             onDeleteSong = {
                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
@@ -1046,6 +1071,10 @@ fun LibraryScreen(
             onAddToPlaylist = {
                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                 songForAddToPlaylist = it
+            },
+            onOpenRemoveFromPlaylist = {
+                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                songForRemoveFromPlaylist = it
             },
             onDeleteSong = {
                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)

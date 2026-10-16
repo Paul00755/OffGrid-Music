@@ -51,11 +51,30 @@ data class CloudUserSettings(
     val addToQueuePosition: String = "BOTTOM",
     val playlistAddSongPosition: String = "BOTTOM",
     val playlistViewMode: String = "GRID",
-    val homeSections: String = "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
+    val homeSections: String = "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
     val databaseStorageTier: String = "EXPANDED",
     val customDisplayName: String? = null,
     val customAvatarUri: String? = null,
-    val updatedAt: Long = System.currentTimeMillis(),
+    val avatarBase64: String? = null,
+    val photoUrl: String? = null,
+    val ignoreAudioDuration: Int = 0,
+    val librarySortOption: String = "RECENTLY_ADDED",
+    val librarySortAscending: Boolean = true,
+    val sleepTimerMode: String = "TIME",
+    val resumeOnBluetooth: Boolean = false,
+    val pauseOnHeadsetUnplug: Boolean = true,
+    val notificationEnabled: Boolean = true,
+    val autoplayOnAppStartup: Boolean = false,
+    val fetchOnlineArtworkHighRes: Boolean = true,
+    val cacheLyricsEnabled: Boolean = true,
+    val cacheAlbumArtEnabled: Boolean = true,
+    val cacheSongArtWorkEnabled: Boolean = true,
+    val transcribeTranslateEnabled: Boolean = false,
+    val audioTranscribeMode: String = "OFF",
+    val audioTranscribeTargetLang: String = "ta",
+    val automaticBackupEnabled: Boolean = false,
+    val backupFrequency: String = "WEEKLY",
+    val updatedAt: Long = 0L,
     val clientVersion: Int = 1
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
@@ -113,6 +132,25 @@ data class CloudUserSettings(
         "databaseStorageTier" to databaseStorageTier,
         "customDisplayName" to customDisplayName,
         "customAvatarUri" to customAvatarUri,
+        "avatarBase64" to avatarBase64,
+        "photoUrl" to photoUrl,
+        "ignoreAudioDuration" to ignoreAudioDuration,
+        "librarySortOption" to librarySortOption,
+        "librarySortAscending" to librarySortAscending,
+        "sleepTimerMode" to sleepTimerMode,
+        "resumeOnBluetooth" to resumeOnBluetooth,
+        "pauseOnHeadsetUnplug" to pauseOnHeadsetUnplug,
+        "notificationEnabled" to notificationEnabled,
+        "autoplayOnAppStartup" to autoplayOnAppStartup,
+        "fetchOnlineArtworkHighRes" to fetchOnlineArtworkHighRes,
+        "cacheLyricsEnabled" to cacheLyricsEnabled,
+        "cacheAlbumArtEnabled" to cacheAlbumArtEnabled,
+        "cacheSongArtWorkEnabled" to cacheSongArtWorkEnabled,
+        "transcribeTranslateEnabled" to transcribeTranslateEnabled,
+        "audioTranscribeMode" to audioTranscribeMode,
+        "audioTranscribeTargetLang" to audioTranscribeTargetLang,
+        "automaticBackupEnabled" to automaticBackupEnabled,
+        "backupFrequency" to backupFrequency,
         "updatedAt" to updatedAt,
         "clientVersion" to clientVersion
     )
@@ -169,10 +207,29 @@ data class CloudUserSettings(
             addToQueuePosition = map["addToQueuePosition"] as? String ?: "BOTTOM",
             playlistAddSongPosition = map["playlistAddSongPosition"] as? String ?: "BOTTOM",
             playlistViewMode = map["playlistViewMode"] as? String ?: "GRID",
-            homeSections = map["homeSections"] as? String ?: "speed_dial,continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
+            homeSections = map["homeSections"] as? String ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
             databaseStorageTier = map["databaseStorageTier"] as? String ?: "EXPANDED",
             customDisplayName = map["customDisplayName"] as? String,
             customAvatarUri = map["customAvatarUri"] as? String,
+            avatarBase64 = map["avatarBase64"] as? String,
+            photoUrl = map["photoUrl"] as? String,
+            ignoreAudioDuration = (map["ignoreAudioDuration"] as? Number)?.toInt() ?: 0,
+            librarySortOption = map["librarySortOption"] as? String ?: "RECENTLY_ADDED",
+            librarySortAscending = map["librarySortAscending"] as? Boolean ?: true,
+            sleepTimerMode = map["sleepTimerMode"] as? String ?: "TIME",
+            resumeOnBluetooth = map["resumeOnBluetooth"] as? Boolean ?: false,
+            pauseOnHeadsetUnplug = map["pauseOnHeadsetUnplug"] as? Boolean ?: true,
+            notificationEnabled = map["notificationEnabled"] as? Boolean ?: true,
+            autoplayOnAppStartup = map["autoplayOnAppStartup"] as? Boolean ?: false,
+            fetchOnlineArtworkHighRes = map["fetchOnlineArtworkHighRes"] as? Boolean ?: true,
+            cacheLyricsEnabled = map["cacheLyricsEnabled"] as? Boolean ?: true,
+            cacheAlbumArtEnabled = map["cacheAlbumArtEnabled"] as? Boolean ?: true,
+            cacheSongArtWorkEnabled = map["cacheSongArtWorkEnabled"] as? Boolean ?: true,
+            transcribeTranslateEnabled = map["transcribeTranslateEnabled"] as? Boolean ?: false,
+            audioTranscribeMode = map["audioTranscribeMode"] as? String ?: "OFF",
+            audioTranscribeTargetLang = map["audioTranscribeTargetLang"] as? String ?: "ta",
+            automaticBackupEnabled = map["automaticBackupEnabled"] as? Boolean ?: false,
+            backupFrequency = map["backupFrequency"] as? String ?: "WEEKLY",
             updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
             clientVersion = (map["clientVersion"] as? Number)?.toInt() ?: 1
         )
@@ -349,6 +406,78 @@ data class CloudLyricsOffset(
             songSignature = map["songSignature"] as? String ?: "",
             offsetMs = (map["offsetMs"] as? Number)?.toLong() ?: 0L,
             updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
+        )
+    }
+}
+
+data class CloudFolderConfig(
+    val path: String = "",
+    val name: String = "",
+    val uriString: String = "",
+    val isExcluded: Boolean = false,
+    val songCount: Int = 0
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "path" to path,
+        "name" to name,
+        "uriString" to uriString,
+        "isExcluded" to isExcluded,
+        "songCount" to songCount
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>): CloudFolderConfig = CloudFolderConfig(
+            path = map["path"] as? String ?: "",
+            name = map["name"] as? String ?: "",
+            uriString = map["uriString"] as? String ?: "",
+            isExcluded = map["isExcluded"] as? Boolean ?: false,
+            songCount = (map["songCount"] as? Number)?.toInt() ?: 0
+        )
+    }
+}
+
+data class CloudRecentSearch(
+    val query: String = "",
+    val timestamp: Long = System.currentTimeMillis()
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "query" to query,
+        "timestamp" to timestamp
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>): CloudRecentSearch = CloudRecentSearch(
+            query = map["query"] as? String ?: "",
+            timestamp = (map["timestamp"] as? Number)?.toLong() ?: 0L
+        )
+    }
+}
+
+data class CloudSmartPlaylist(
+    val name: String = "",
+    val filterType: String = "ALL",
+    val rulesJson: String = "{}",
+    val sortOrder: String = "DESC",
+    val limit: Int = 50,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "name" to name,
+        "filterType" to filterType,
+        "rulesJson" to rulesJson,
+        "sortOrder" to sortOrder,
+        "limit" to limit,
+        "createdAt" to createdAt
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>): CloudSmartPlaylist = CloudSmartPlaylist(
+            name = map["name"] as? String ?: "",
+            filterType = map["filterType"] as? String ?: "ALL",
+            rulesJson = map["rulesJson"] as? String ?: "{}",
+            sortOrder = map["sortOrder"] as? String ?: "DESC",
+            limit = (map["limit"] as? Number)?.toInt() ?: 50,
+            createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
         )
     }
 }

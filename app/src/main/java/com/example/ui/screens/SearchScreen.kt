@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -300,16 +301,26 @@ fun SearchScreen(
             enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(250)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(250)),
             exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(250)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(200))
         ) {
+            val isSearchDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
             Column {
                 TextField(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
-                    placeholder = { Text("Search songs, artists, albums, folders...", color = BentoTextSecondary) },
+                    placeholder = {
+                        Text(
+                            text = "Search songs, artists, albums, folders...",
+                            color = if (isSearchDark) BentoTextSecondary else Color(0xFF64748B)
+                        )
+                    },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
                             IconButton(onClick = { onSearchQueryChange("") }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear", tint = BentoTextSecondary)
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Clear",
+                                    tint = if (isSearchDark) BentoTextSecondary else Color(0xFF64748B)
+                                )
                             }
                         }
                     },
@@ -325,12 +336,18 @@ fun SearchScreen(
                         }
                     ),
                     colors = TextFieldDefaults.colors(
-                        focusedContainerColor = BentoCardSurface,
-                        unfocusedContainerColor = BentoCardSurface,
+                        focusedContainerColor = if (isSearchDark) BentoCardSurface else Color(0xFFF1F5F9),
+                        unfocusedContainerColor = if (isSearchDark) BentoCardSurface else Color(0xFFF1F5F9),
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = BentoTextPrimary,
-                        unfocusedTextColor = BentoTextPrimary
+                        focusedTextColor = if (isSearchDark) Color.White else Color(0xFF0F172A),
+                        unfocusedTextColor = if (isSearchDark) Color.White else Color(0xFF0F172A),
+                        cursorColor = BentoPrimary
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = if (isSearchDark) Color.White else Color(0xFF0F172A),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
                     ),
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier.fillMaxWidth()

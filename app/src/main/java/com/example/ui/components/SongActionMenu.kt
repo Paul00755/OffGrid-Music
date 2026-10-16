@@ -36,6 +36,7 @@ fun SongActionMenu(
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onOpenRemoveFromPlaylist: (() -> Unit)? = null,
     onFavoriteToggle: (() -> Unit)? = null,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     onRemoveFromQueue: (() -> Unit)? = null,
@@ -157,6 +158,18 @@ fun SongActionMenu(
                     onAddToPlaylist()
                 }
             )
+
+            if (onOpenRemoveFromPlaylist != null) {
+                MenuOptionRow(
+                    icon = Icons.Default.RemoveCircleOutline,
+                    title = "Remove from Playlist",
+                    iconTint = BentoAccentPinkText,
+                    onClick = {
+                        onDismissRequest()
+                        onOpenRemoveFromPlaylist()
+                    }
+                )
+            }
 
             if (onFavoriteToggle != null) {
                 MenuOptionRow(

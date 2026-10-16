@@ -179,7 +179,7 @@ fun HomeScreen(
     homeScreenLayout: String = "BENTO_DYNAMIC",
     speedDialSongs: List<Song> = emptyList(),
     onRefreshSpeedDial: () -> Unit = {},
-    homeSections: List<String> = listOf("speed_dial", "continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
+    homeSections: List<String> = listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
     playbackPositionFlow: kotlinx.coroutines.flow.StateFlow<Long>? = null,
     userAccount: com.example.auth.UserAccount? = null,
     effectiveDisplayName: String = "Music Lover",
@@ -928,14 +928,14 @@ fun HomeScreen(
                                 )
                             }
                             Text(
-                                text = "${scanProgress.displayTracksCount} tracks found",
+                                text = if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) "${scanProgress.validTracksFound} tracks indexed" else "${scanProgress.validTracksFound} tracks found",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = BentoTextSecondary
                             )
                         }
                         Text(
-                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning in progress (${scanProgress.currentFolder})..." else "Scanning in progress...",
+                            text = if (scanProgress.currentFolder.isNotBlank()) "Scanning (${scanProgress.currentFolder})..." else "Scanning...",
                             fontSize = 11.5.sp,
                             color = BentoTextSecondary
                         )

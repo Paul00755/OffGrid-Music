@@ -45,13 +45,13 @@ data class ScanProgress(
     val currentFolder: String = "",
     val errorMessage: String? = null,
     val isScanning: Boolean = (status == ScanStatus.SCANNING),
-    val totalDiscovered: Int = validTracksFound,
+    val totalDiscovered: Int = if (filesDiscovered > 0) filesDiscovered else validTracksFound,
     val processedCount: Int = filesProcessed,
     val isFinished: Boolean = (status == ScanStatus.COMPLETED),
     val error: String? = errorMessage
 ) {
     val displayTracksCount: Int
-        get() = if (validTracksFound > 0) validTracksFound else totalDiscovered
+        get() = validTracksFound
 
     val isEffectivelyScanning: Boolean
         get() = status == ScanStatus.SCANNING || isScanning
@@ -75,6 +75,106 @@ class LibraryScanner(
                 }
             }
         }
+    }
+
+    /**
+     * Authoritative single pipeline for creating or updating SongEntity instances.
+     * Guarantees:
+     * - User-manually-edited metadata (title, artist, album, artwork) is preserved 100%.
+     * - Unedited titles/metadata are cleaned using the authoritative TagCleaner.
+     * - Stable identity and playback stats (playCount, lastPlayed, isFavorite) are retained.
+     * - Existing artwork is never lost during re-indexing.
+     */
+    fun buildOrUpdateSongEntity(
+        existing: SongEntity?,
+        id: Long,
+        rawTitle: String?,
+        rawArtist: String?,
+        rawAlbum: String?,
+        durationMs: Long,
+        filePath: String,
+        contentUri: String,
+        albumId: Long = 0L,
+        artistId: Long = 0L,
+        trackNum: Int = 0,
+        year: Int = 0,
+        dateAdded: Long = System.currentTimeMillis(),
+        format: String = "MP3"
+    ): SongEntity {
+        val filename = File(filePath).name
+        val manualMeta = com.example.util.ManualTagStore.getManualMetadata(context, existing?.id ?: id, filePath)
+        val isManual = existing?.isManuallyEdited == true ||
+                (existing != null && com.example.util.ManualTagStore.isManuallyEdited(context, existing.id, existing.path)) ||
+                manualMeta != null
+
+        val manualArt = manualMeta?.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, existing?.id ?: id, filePath)
+        val finalArtwork = manualArt ?: existing?.artworkUri ?: try {
+            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, existing?.id ?: id, filePath)
+        } catch (_: Exception) { null }
+
+        if (isManual) {
+            // CRITICAL: Preserve manual user-edited tags and metadata 100%
+            val resolvedTitle = manualMeta?.title?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.title else rawTitle) ?: filename.substringBeforeLast(".")
+            val resolvedArtist = manualMeta?.artist?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.artist else rawArtist) ?: "Unknown Artist"
+            val resolvedAlbum = manualMeta?.album?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.album else rawAlbum) ?: "Unknown Album"
+            val resolvedGenre = manualMeta?.genre ?: existing?.genre ?: "Music"
+            val resolvedYear = manualMeta?.year ?: (if (year > 0) year else (existing?.year ?: 0))
+            val resolvedTrack = manualMeta?.trackNumber ?: (if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0))
+
+            return SongEntity(
+                id = existing?.id ?: id,
+                title = resolvedTitle,
+                artist = resolvedArtist,
+                album = resolvedAlbum,
+                genre = resolvedGenre,
+                durationMs = if (durationMs > 0) durationMs else (existing?.durationMs ?: 180000L),
+                path = filePath,
+                contentUriString = contentUri,
+                artworkUri = finalArtwork,
+                albumId = if (albumId > 0) albumId else (existing?.albumId ?: 0L),
+                artistId = if (artistId > 0) artistId else (existing?.artistId ?: 0L),
+                trackNumber = resolvedTrack,
+                year = resolvedYear,
+                dateAdded = existing?.dateAdded ?: dateAdded,
+                lastPlayed = existing?.lastPlayed ?: 0L,
+                playCount = existing?.playCount ?: 0,
+                isFavorite = existing?.isFavorite ?: false,
+                bitrate = existing?.bitrate ?: 0,
+                format = format,
+                isMissing = false,
+                isCorrupted = false,
+                isManuallyEdited = true
+            )
+        }
+
+        // Clean using authoritative TagCleaner
+        val cleanTitle = TagCleaner.cleanTitle(rawTitle, filename)
+        val cleanArtist = TagCleaner.cleanArtist(rawArtist)
+        val cleanAlbum = TagCleaner.cleanAlbum(rawAlbum)
+
+        return SongEntity(
+            id = existing?.id ?: id,
+            title = cleanTitle,
+            artist = cleanArtist,
+            album = cleanAlbum,
+            genre = existing?.genre ?: "Music",
+            durationMs = if (durationMs > 0) durationMs else (existing?.durationMs ?: 180000L),
+            path = filePath,
+            contentUriString = contentUri,
+            artworkUri = finalArtwork,
+            albumId = if (albumId > 0) albumId else (existing?.albumId ?: 0L),
+            artistId = if (artistId > 0) artistId else (existing?.artistId ?: 0L),
+            trackNumber = if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0),
+            year = if (year > 0) year else (existing?.year ?: 0),
+            dateAdded = existing?.dateAdded ?: dateAdded,
+            lastPlayed = existing?.lastPlayed ?: 0L,
+            playCount = existing?.playCount ?: 0,
+            isFavorite = existing?.isFavorite ?: false,
+            bitrate = existing?.bitrate ?: 0,
+            format = format,
+            isMissing = false,
+            isManuallyEdited = false
+        )
     }
 
     private val _scanProgress = MutableStateFlow(ScanProgress())
@@ -383,23 +483,21 @@ class LibraryScanner(
                             com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, id, filePath)
                         } catch (_: Exception) { null }
 
-                        val song = SongEntity(
+                        val song = buildOrUpdateSongEntity(
+                            existing = null,
                             id = id,
-                            title = cleanTitle,
-                            artist = cleanArtist,
-                            album = cleanAlbum,
-                            genre = "Music",
+                            rawTitle = rawTitle,
+                            rawArtist = rawArtist,
+                            rawAlbum = rawAlbum,
                             durationMs = if (dur > 0) dur else 180000L,
-                            path = filePath,
-                            contentUriString = contentUri,
-                            artworkUri = artworkUri,
+                            filePath = filePath,
+                            contentUri = contentUri,
                             albumId = albumId,
                             artistId = artistId,
-                            trackNumber = trackNum,
+                            trackNum = trackNum,
                             year = year,
                             dateAdded = dateAdded * 1000,
-                            format = ext.ifBlank { "MP3" }.uppercase(),
-                            isMissing = false
+                            format = ext.ifBlank { "MP3" }.uppercase()
                         )
                         newlyFoundSongs.add(song)
                     }
@@ -448,8 +546,8 @@ class LibraryScanner(
                 val totalCount = songDao.getSongCountOnce()
                 _scanProgress.value = ScanProgress(
                     status = ScanStatus.COMPLETED,
-                    filesDiscovered = filesDiscovered + newlyFoundSongs.size,
-                    filesProcessed = filesProcessed + newlyFoundSongs.size,
+                    filesDiscovered = filesDiscovered,
+                    filesProcessed = filesProcessed,
                     validTracksFound = totalCount,
                     duplicatesSkipped = duplicatesSkipped,
                     filteredRejected = filteredRejected,
@@ -707,14 +805,14 @@ class LibraryScanner(
                             ignoreAudioDurationMs = ignoreAudioDurationMs,
                             foundSongsMap = foundSongsMap,
                             retriever = retriever,
-                            onProgress = { currentDir, count ->
+                            onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > 80) {
                                     lastEmitTime = now
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
-                                        filesDiscovered = filesDiscovered + count,
-                                        filesProcessed = filesProcessed + count,
+                                        filesDiscovered = filesDiscovered.coerceAtLeast(foundSongsMap.size),
+                                        filesProcessed = filesProcessed.coerceAtLeast(foundSongsMap.size),
                                         validTracksFound = foundSongsMap.size,
                                         duplicatesSkipped = duplicatesSkipped,
                                         filteredRejected = filteredRejected,
@@ -740,22 +838,22 @@ class LibraryScanner(
                     val mergedSongsList = rawSongsList.map { song ->
                         val normP = normalizePath(song.path)
                         val existing = existingByPath[normP] ?: existingById[song.id]
-                        val manualArt = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, existing?.id ?: song.id, song.path)
-
-                        if (existing != null) {
-                            song.copy(
-                                id = existing.id,
-                                isFavorite = existing.isFavorite,
-                                playCount = existing.playCount,
-                                lastPlayed = existing.lastPlayed,
-                                title = if (existing.title.isNotBlank() && !existing.title.endsWith(".mp3", ignoreCase = true) && !existing.title.endsWith(".flac", ignoreCase = true)) existing.title else song.title,
-                                artist = if (existing.artist.isNotBlank() && existing.artist != "Unknown Artist") existing.artist else song.artist,
-                                album = if (existing.album.isNotBlank() && existing.album != "Unknown Album") existing.album else song.album,
-                                artworkUri = manualArt ?: existing.artworkUri ?: song.artworkUri
-                            )
-                        } else {
-                            if (manualArt != null) song.copy(artworkUri = manualArt) else song
-                        }
+                        buildOrUpdateSongEntity(
+                            existing = existing,
+                            id = song.id,
+                            rawTitle = song.title,
+                            rawArtist = song.artist,
+                            rawAlbum = song.album,
+                            durationMs = song.durationMs,
+                            filePath = song.path,
+                            contentUri = song.contentUriString,
+                            albumId = song.albumId,
+                            artistId = song.artistId,
+                            trackNum = song.trackNumber,
+                            year = song.year,
+                            dateAdded = song.dateAdded,
+                            format = song.format
+                        )
                     }
 
                     songDao.deleteUnusedSampleSongs()
@@ -840,12 +938,14 @@ class LibraryScanner(
             var lastEmitTime = 0L
 
             try {
-                // 1. Clean missing or excluded songs
+                // 1. Clean missing/excluded songs and normalize existing unedited library tracks
                 val existingSongs = songDao.getAllSongsOnce()
-                val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
-                val existingById = existingSongs.associateBy { it.id }
+                val songsToUpdate = mutableListOf<SongEntity>()
 
-                existingSongs.forEach { dbSong ->
+                for (dbSong in existingSongs) {
+                    filesDiscovered++
+                    filesProcessed++
+
                     if (!dbSong.path.startsWith("sample_") && !dbSong.contentUriString.startsWith("http")) {
                         val parentFolder = File(dbSong.path).parent?.trimEnd('/') ?: ""
                         val normParent = normalizePath(parentFolder)
@@ -857,10 +957,41 @@ class LibraryScanner(
 
                         if (isExcluded || isNotIncluded || !isAccessible || isTooShort) {
                             songDao.markMissing(dbSong.path)
+                            filteredRejected++
+                            continue
+                        }
+                    }
+
+                    // Check if existing unedited song needs normalization
+                    val isManual = dbSong.isManuallyEdited || com.example.util.ManualTagStore.isManuallyEdited(context, dbSong.id, dbSong.path)
+                    if (!isManual) {
+                        val filename = File(dbSong.path).name
+                        val normalizedTitle = TagCleaner.cleanTitle(dbSong.title, filename)
+                        val normalizedArtist = TagCleaner.cleanArtist(dbSong.artist)
+                        val normalizedAlbum = TagCleaner.cleanAlbum(dbSong.album)
+
+                        if (normalizedTitle != dbSong.title || normalizedArtist != dbSong.artist || normalizedAlbum != dbSong.album) {
+                            val updatedSong = dbSong.copy(
+                                title = normalizedTitle,
+                                artist = normalizedArtist,
+                                album = normalizedAlbum
+                            )
+                            songsToUpdate.add(updatedSong)
                         }
                     }
                 }
+
+                if (songsToUpdate.isNotEmpty()) {
+                    for (song in songsToUpdate) {
+                        songDao.updateSong(song)
+                    }
+                }
                 songDao.deleteMissingSongs()
+
+                // Refresh remaining existing songs map after cleaning
+                val refreshedExisting = songDao.getAllSongsOnce()
+                val existingByPath = refreshedExisting.associateBy { normalizePath(it.path) }
+                val existingById = refreshedExisting.associateBy { it.id }
 
                 // 2. Scan MediaStore for newly added tracks
                 val newSongsList = mutableListOf<SongEntity>()
@@ -995,26 +1126,23 @@ class LibraryScanner(
 
                         val format = ext.ifBlank { "MP3" }.uppercase()
 
-                        newSongsList.add(
-                            SongEntity(
-                                id = mediaStoreId,
-                                title = cleanTitle,
-                                artist = cleanArtist,
-                                album = cleanAlbum,
-                                genre = "Music",
-                                durationMs = if (dur > 0) dur else 180000L,
-                                path = filePath,
-                                contentUriString = uri.toString(),
-                                artworkUri = artworkUri,
-                                albumId = albumId,
-                                artistId = artistId,
-                                trackNumber = trackNum,
-                                year = year,
-                                dateAdded = dateAdded * 1000,
-                                format = format,
-                                isMissing = false
-                            )
+                        val newSong = buildOrUpdateSongEntity(
+                            existing = null,
+                            id = mediaStoreId,
+                            rawTitle = rawTitle,
+                            rawArtist = rawArtist,
+                            rawAlbum = rawAlbum,
+                            durationMs = if (dur > 0) dur else 180000L,
+                            filePath = filePath,
+                            contentUri = uri.toString(),
+                            albumId = albumId,
+                            artistId = artistId,
+                            trackNum = trackNum,
+                            year = year,
+                            dateAdded = dateAdded * 1000,
+                            format = format
                         )
+                        newSongsList.add(newSong)
 
                         val now = System.currentTimeMillis()
                         if (now - lastEmitTime > 80) {
@@ -1072,15 +1200,16 @@ class LibraryScanner(
                             normExcludedPaths = normExcludedPaths,
                             ignoreAudioDurationMs = ignoreAudioDurationMs,
                             newSongsList = newSongsList,
-                            onProgress = { currentDir, count ->
+                            onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > 80) {
                                     lastEmitTime = now
+                                    val currentValid = existingSongs.size + newSongsList.size
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
-                                        filesDiscovered = filesDiscovered + count,
-                                        filesProcessed = filesProcessed + count,
-                                        validTracksFound = existingSongs.size + newSongsList.size,
+                                        filesDiscovered = filesDiscovered.coerceAtLeast(currentValid),
+                                        filesProcessed = filesProcessed.coerceAtLeast(currentValid),
+                                        validTracksFound = currentValid,
                                         duplicatesSkipped = duplicatesSkipped,
                                         filteredRejected = filteredRejected,
                                         currentFolder = currentDir,
@@ -1299,23 +1428,17 @@ class LibraryScanner(
                         val cleanedAlbum = TagCleaner.cleanAlbum(rawAlbum)
                         val fileId = filePath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
 
-                        val song = SongEntity(
+                        val song = buildOrUpdateSongEntity(
+                            existing = null,
                             id = fileId,
-                            title = cleanedTitle,
-                            artist = cleanedArtist,
-                            album = cleanedAlbum,
-                            genre = "Music",
+                            rawTitle = rawTitle,
+                            rawArtist = rawArtist,
+                            rawAlbum = rawAlbum,
                             durationMs = if (duration > 0) duration else 180000L,
-                            path = filePath,
-                            contentUriString = Uri.fromFile(file).toString(),
-                            artworkUri = null,
-                            albumId = 0L,
-                            artistId = 0L,
-                            trackNumber = 0,
-                            year = 0,
+                            filePath = filePath,
+                            contentUri = Uri.fromFile(file).toString(),
                             dateAdded = file.lastModified(),
-                            format = ext.uppercase(),
-                            isMissing = false
+                            format = ext.uppercase()
                         )
                         newSongsList.add(song)
                         onProgress?.invoke(directory.name, newSongsList.size)

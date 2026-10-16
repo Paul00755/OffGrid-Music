@@ -548,6 +548,14 @@ class MusicRepository(
         notifyPlaylistUpdated(playlistId)
     }
 
+    suspend fun getPlaylistsContainingSong(songId: Long): List<Playlist> {
+        return playlistDao.getPlaylistsContainingSong(songId).map { entity ->
+            val count = playlistDao.getPlaylistSongCount(entity.id)
+            val duration = playlistDao.getPlaylistTotalDuration(entity.id) ?: 0L
+            entity.toDomainModel(count, duration)
+        }
+    }
+
     suspend fun removeDuplicateSongsFromPlaylist(playlistId: Long): Int {
         val songsList = playlistDao.getPlaylistSongs(playlistId).firstOrNull() ?: emptyList()
         if (songsList.size <= 1) return 0
@@ -620,7 +628,10 @@ class MusicRepository(
         newAlbum: String,
         newArtworkUri: String?,
         newLyrics: String?,
-        context: android.content.Context
+        context: android.content.Context,
+        newGenre: String? = null,
+        newYear: Int? = null,
+        newTrackNumber: Int? = null
     ): Song {
         var finalArtworkUri = newArtworkUri
         if (!newArtworkUri.isNullOrBlank()) {
@@ -644,7 +655,25 @@ class MusicRepository(
             title = newTitle.ifBlank { song.title },
             artist = newArtist.ifBlank { song.artist },
             album = newAlbum.ifBlank { song.album },
-            artworkUri = finalArtworkUri
+            genre = newGenre?.ifBlank { song.genre } ?: song.genre,
+            year = if (newYear != null && newYear > 0) newYear else song.year,
+            trackNumber = if (newTrackNumber != null && newTrackNumber > 0) newTrackNumber else song.trackNumber,
+            artworkUri = finalArtworkUri,
+            isManuallyEdited = true
+        )
+
+        com.example.util.ManualTagStore.markManuallyEdited(
+            context = context,
+            songId = song.id,
+            path = song.path,
+            title = updatedSong.title,
+            artist = updatedSong.artist,
+            album = updatedSong.album,
+            genre = updatedSong.genre,
+            year = updatedSong.year,
+            trackNumber = updatedSong.trackNumber,
+            artworkUri = finalArtworkUri,
+            lyrics = newLyrics
         )
 
         // Keep online artwork cache synchronized with the new metadata
@@ -708,7 +737,10 @@ class MusicRepository(
                 newArtist = updatedSong.artist,
                 newAlbum = updatedSong.album,
                 newArtworkUri = finalArtworkUri,
-                newLyrics = newLyrics
+                newLyrics = newLyrics,
+                newGenre = updatedSong.genre,
+                newYear = updatedSong.year,
+                newTrackNumber = updatedSong.trackNumber
             )
         } catch (_: Exception) {
             // Gracefully handle file tag writing if restricted

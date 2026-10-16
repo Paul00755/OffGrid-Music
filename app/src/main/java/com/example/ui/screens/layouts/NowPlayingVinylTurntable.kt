@@ -76,11 +76,12 @@ fun NowPlayingVinylTurntable(
     )
 
     val currentRotation = if (playbackState.isPlaying) rotationAngle else 0f
-    var isSeeking by remember { mutableStateOf(false) }
-    var seekPosition by remember { mutableFloatStateOf(0f) }
+    var isSeeking by remember(song.id) { mutableStateOf(false) }
+    var seekPosition by remember(song.id) { mutableFloatStateOf(0f) }
 
-    val currentPos = if (isSeeking) seekPosition.toLong() else positionMs
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
+    val safePos = positionMs.coerceIn(0L, duration)
+    val currentPos = if (isSeeking) seekPosition.toLong() else safePos
     val sliderValue = (currentPos.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
     fun formatTime(ms: Long): String {
@@ -266,6 +267,7 @@ fun NowPlayingVinylTurntable(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 com.example.ui.components.NowPlayingWaveformVisualizer(
+                    trackId = song.id,
                     progressMs = currentPos,
                     durationMs = duration,
                     isPlaying = playbackState.isPlaying,

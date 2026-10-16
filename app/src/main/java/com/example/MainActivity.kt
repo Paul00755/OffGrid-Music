@@ -59,6 +59,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Automatically clean up any polluted duplicate artwork cache files on startup
+        com.example.util.ArtworkManager.purgePollutedArtworkCache(this)
+
         checkPermissions()
         triggerQuickScan()
         registerMediaStoreObserver()
@@ -78,14 +81,31 @@ class MainActivity : ComponentActivity() {
                 else -> null
             }
 
-            MyApplicationTheme(
-                uiTheme = uiTheme,
-                themeMode = themeMode,
-                accentColorPreset = accentColorPreset,
-                accentColor = effectiveAccentColor
-            ) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val baseDensityFactor = remember(context) {
+                val dm = context.resources.displayMetrics
+                // System-wide Small Display Size:
+                // Reduces UI component footprint by ~18% uniformly across all screens (Settings, Playlists,
+                // PlaylistDetail, Library, HomeScreen, Search, UpNextQueue, RecentlyPlayed, MostPlayed, Stats, etc.)
+                // Guarantees all components, buttons, and text render comfortably, compactly, and crisply across all screen sizes.
+                val compactDensity = (dm.density * 0.82f).coerceAtLeast(1.2f)
+                androidx.compose.ui.unit.Density(
+                    density = compactDensity,
+                    fontScale = 0.82f
+                )
+            }
 
-                val selectedTab by viewModel.selectedTab.collectAsState()
+            CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides baseDensityFactor
+            ) {
+                MyApplicationTheme(
+                    uiTheme = uiTheme,
+                    themeMode = themeMode,
+                    accentColorPreset = accentColorPreset,
+                    accentColor = effectiveAccentColor
+                ) {
+
+                    val selectedTab by viewModel.selectedTab.collectAsState()
                 val showNowPlaying by viewModel.showNowPlaying.collectAsState()
                 val searchTabQuery by viewModel.searchTabQuery.collectAsState()
                 val librarySearchQuery by viewModel.librarySearchQuery.collectAsState()
@@ -451,6 +471,8 @@ class MainActivity : ComponentActivity() {
                                             onDeleteSong = { song -> executeDeleteSong(song) },
                                             onEditTags = { songForTagEditing = it },
                                             allPlaylists = allPlaylists,
+                                            onGetPlaylistsContainingSong = { viewModel.getPlaylistsContainingSong(it) },
+                                            onRemoveFromPlaylist = { playlistId, songId -> viewModel.removeSongFromPlaylist(playlistId, songId) },
                                             onShuffleAll = { queue -> viewModel.shuffleAndPlay(queue, sourceContext = "LIBRARY") },
                                             recentSearches = recentSearches,
                                             onAddRecentSearch = { viewModel.addRecentSearch(it) },
@@ -736,6 +758,8 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onPlayNext = { viewModel.playNext(it) },
                                 onAddToPlaylist = { songForAddToPlaylist = it },
+                                onGetPlaylistsContainingSong = { viewModel.getPlaylistsContainingSong(it) },
+                                onRemoveFromPlaylist = { playlistId, songId -> viewModel.removeSongFromPlaylist(playlistId, songId) },
                                 onDeleteSong = { song -> executeDeleteSong(song) },
                                 onEditTags = { songForTagEditing = it },
                                 onForceFetchLyrics = { viewModel.forceFetchLyrics(it) },
@@ -786,13 +810,16 @@ class MainActivity : ComponentActivity() {
                                     songForTagEditing = null
                                     tagEditingLyricsText = ""
                                 },
-                                onSaveTags = { title, artist, album, artworkUri, lyrics ->
+                                onSaveTags = { title, artist, album, genre, year, trackNumber, artworkUri, lyrics ->
                                     val performSave = {
                                         viewModel.updateSongTags(
                                             song = targetSong,
                                             newTitle = title,
                                             newArtist = artist,
                                             newAlbum = album,
+                                            newGenre = genre,
+                                            newYear = year,
+                                            newTrackNumber = trackNumber,
                                             newArtworkUri = artworkUri,
                                             newLyrics = lyrics
                                         ) {
@@ -876,6 +903,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
     }
 
     override fun onResume() {

@@ -97,6 +97,8 @@ fun NowPlayingScreen(
     onJumpToQueueItem: (Int) -> Unit = {},
     onPlayNext: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
+    onGetPlaylistsContainingSong: (suspend (Long) -> List<com.example.data.model.Playlist>)? = null,
+    onRemoveFromPlaylist: ((Long, Long) -> Unit)? = null,
     onDeleteSong: (Song) -> Unit = {},
     onEditTags: ((Song) -> Unit)? = null,
     onForceFetchLyrics: (Song) -> Unit = {},
@@ -128,8 +130,10 @@ fun NowPlayingScreen(
     onClearTranscribeError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val livePositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsState().value else playbackState.positionMs
+    val rawPositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsState().value else playbackState.positionMs
     val song = playbackState.currentSong
+    val songDuration = if (playbackState.durationMs > 0L) playbackState.durationMs else (song?.durationMs ?: 0L)
+    val livePositionMs: Long = if (songDuration > 0L) rawPositionMs.coerceIn(0L, songDuration) else rawPositionMs.coerceAtLeast(0L)
     val context = LocalContext.current
     val activity = context as? android.app.Activity
     if (song == null) {
@@ -184,6 +188,7 @@ fun NowPlayingScreen(
     var showTimerDialog by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
+    var showRemoveFromPlaylistDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showSearchLyricsDialog by remember { mutableStateOf(false) }
     var showAudioOutputSheet by remember { mutableStateOf(false) }
@@ -219,11 +224,18 @@ fun NowPlayingScreen(
             }
         }
 
+        val searchDialogDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
         AlertDialog(
             onDismissRequest = { showSearchLyricsDialog = false },
-            containerColor = BentoCardSurface,
+            containerColor = if (searchDialogDark) Color(0xFF1E1E2C) else Color.White,
             title = {
-                Text("Find Lyrics Online", color = BentoTextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "Find Lyrics Online",
+                    color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
                 Column(
@@ -234,7 +246,12 @@ fun NowPlayingScreen(
                     OutlinedTextField(
                         value = searchQueryInput,
                         onValueChange = { searchQueryInput = it },
-                        label = { Text("Song Title / Artist", color = BentoTextSecondary) },
+                        label = {
+                            Text(
+                                text = "Song Title / Artist",
+                                color = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
+                            )
+                        },
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                             imeAction = androidx.compose.ui.text.input.ImeAction.Search
                         ),
@@ -245,7 +262,11 @@ fun NowPlayingScreen(
                             Row {
                                 if (searchQueryInput.isNotEmpty()) {
                                     IconButton(onClick = { searchQueryInput = "" }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear text", tint = BentoTextSecondary)
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Clear text",
+                                            tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
+                                        )
                                     }
                                 }
                                 IconButton(onClick = { onSearchLyricsCandidates(searchQueryInput, true) }) {
@@ -254,13 +275,20 @@ fun NowPlayingScreen(
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = BentoTextPrimary,
-                            unfocusedTextColor = BentoTextPrimary,
+                            focusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
+                            unfocusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
                             focusedBorderColor = BentoPrimary,
-                            unfocusedBorderColor = BentoBorder,
-                            focusedContainerColor = BentoCardSurface,
-                            unfocusedContainerColor = BentoCardSurface,
-                            cursorColor = BentoPrimary
+                            unfocusedBorderColor = if (searchDialogDark) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1),
+                            focusedContainerColor = if (searchDialogDark) Color(0xFF161622) else Color(0xFFF8FAFC),
+                            unfocusedContainerColor = if (searchDialogDark) Color(0xFF161622) else Color(0xFFF8FAFC),
+                            cursorColor = BentoPrimary,
+                            focusedLabelColor = BentoPrimary,
+                            unfocusedLabelColor = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
+                        ),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
                         ),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
@@ -287,7 +315,7 @@ fun NowPlayingScreen(
                         ) {
                             Text(
                                 text = "No lyrics candidates found.\nTry editing the title or artist name.",
-                                color = Color.White.copy(alpha = 0.6f),
+                                color = if (searchDialogDark) BentoTextSecondary else Color(0xFF64748B),
                                 fontSize = 13.sp,
                                 textAlign = TextAlign.Center
                             )
@@ -300,6 +328,8 @@ fun NowPlayingScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(lyricsSearchResults) { candidate ->
+                                val candidateCardBg = if (searchDialogDark) Color(0xFF222232) else Color(0xFFF8FAFC)
+                                val candidateCardBorder = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0)
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -307,7 +337,8 @@ fun NowPlayingScreen(
                                             onApplyLyricsCandidate(candidate)
                                             showSearchLyricsDialog = false
                                         },
-                                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.08f)),
+                                    colors = CardDefaults.cardColors(containerColor = candidateCardBg),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, candidateCardBorder),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
@@ -319,7 +350,7 @@ fun NowPlayingScreen(
                                             Text(
                                                 text = candidate.trackName,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White,
+                                                color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
                                                 fontSize = 14.sp,
                                                 modifier = Modifier.weight(1f),
                                                 maxLines = 1,
@@ -328,7 +359,7 @@ fun NowPlayingScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             if (candidate.isSynced) {
                                                 Surface(
-                                                    color = BentoPrimary.copy(alpha = 0.2f),
+                                                    color = BentoPrimary.copy(alpha = 0.18f),
                                                     shape = RoundedCornerShape(6.dp)
                                                 ) {
                                                     Row(
@@ -352,7 +383,7 @@ fun NowPlayingScreen(
                                                 }
                                             } else {
                                                 Surface(
-                                                    color = Color.White.copy(alpha = 0.12f),
+                                                    color = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0),
                                                     shape = RoundedCornerShape(6.dp)
                                                 ) {
                                                     Row(
@@ -363,13 +394,13 @@ fun NowPlayingScreen(
                                                         Icon(
                                                             imageVector = Icons.Default.TextFields,
                                                             contentDescription = null,
-                                                            tint = Color.White.copy(alpha = 0.7f),
+                                                            tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
                                                             modifier = Modifier.size(12.dp)
                                                         )
                                                         Text(
                                                             text = "Plain Text",
                                                             fontSize = 11.sp,
-                                                            color = Color.White.copy(alpha = 0.85f),
+                                                            color = if (searchDialogDark) Color.White else Color(0xFF334155),
                                                             fontWeight = FontWeight.Medium
                                                         )
                                                     }
@@ -379,7 +410,7 @@ fun NowPlayingScreen(
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = "${candidate.artistName}${if (candidate.albumName.isNotBlank()) " • " + candidate.albumName else ""}",
-                                            color = Color.White.copy(alpha = 0.7f),
+                                            color = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
                                             fontSize = 12.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -400,8 +431,9 @@ fun NowPlayingScreen(
     }
 
     // Intercept back button when lyrics, queue, or dialogs are open
-    androidx.activity.compose.BackHandler(enabled = showLyricsView || showQueueSheet || showTimerDialog || showOptionsMenu || showSearchLyricsDialog) {
+    androidx.activity.compose.BackHandler(enabled = showLyricsView || showQueueSheet || showTimerDialog || showOptionsMenu || showSearchLyricsDialog || showRemoveFromPlaylistDialog) {
         when {
+            showRemoveFromPlaylistDialog -> showRemoveFromPlaylistDialog = false
             showSearchLyricsDialog -> showSearchLyricsDialog = false
             showLyricsView -> showLyricsView = false
             showQueueSheet -> showQueueSheet = false
@@ -608,78 +640,19 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            Box {
-                                IconButton(
-                                    onClick = { showOptionsMenu = true },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(BentoCardPurple)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "Options",
-                                        tint = BentoTextPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                DropdownMenu(
-                                    expanded = showOptionsMenu,
-                                    onDismissRequest = { showOptionsMenu = false },
-                                    modifier = Modifier.background(BentoCardSurface)
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Sleep Timer", color = BentoTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null, tint = BentoPrimary) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            showTimerDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Add to Playlist", color = BentoTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = BentoPrimary) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            onAddToPlaylist(song)
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Play Next", color = BentoTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.FormatListNumberedRtl, contentDescription = null, tint = BentoPrimary) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            onPlayNext(song)
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Remove from Queue", color = BentoTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.RemoveFromQueue, contentDescription = null, tint = BentoPrimary) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            onRemoveFromQueue(playbackState.queueIndex)
-                                        }
-                                    )
-                                    if (onEditTags != null) {
-                                        DropdownMenuItem(
-                                            text = { Text("Edit Audio Tags & Lyrics", color = BentoTextPrimary) },
-                                            leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null, tint = BentoPrimary) },
-                                            onClick = {
-                                                showOptionsMenu = false
-                                                onEditTags(song)
-                                            }
-                                        )
-                                    }
-                                    DropdownMenuItem(
-                                        text = { Text("Delete Song", color = BentoAccentPinkText) },
-                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = BentoAccentPinkText) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            showDeleteConfirmDialog = true
-                                        }
-                                    )
-                                }
+                            IconButton(
+                                onClick = { showOptionsMenu = true },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(BentoCardPurple)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "Options",
+                                    tint = BentoTextPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
@@ -713,6 +686,7 @@ fun NowPlayingScreen(
                     // Seekbar & Waveform Progress
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
                         com.example.ui.components.NowPlayingWaveformVisualizer(
+                            trackId = song.id,
                             progressMs = livePositionMs,
                             durationMs = playbackState.durationMs,
                             isPlaying = playbackState.isPlaying,
@@ -812,13 +786,14 @@ fun NowPlayingScreen(
                 }
 
                 // RIGHT HALF (50%): High-Visibility Lyrics Container
+                val isLandscapeDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF09090E))
-                        .border(1.dp, BentoBorder.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+                        .background(if (isLandscapeDark) Color(0xFF09090E) else Color.White)
+                        .border(1.dp, if (isLandscapeDark) BentoBorder.copy(alpha = 0.35f) else Color(0xFFE2E8F0), RoundedCornerShape(20.dp))
                         .padding(12.dp)
                 ) {
                     LyricsPanelContent(
@@ -1022,87 +997,20 @@ fun NowPlayingScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // Options Button
-                        Box {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(BentoCardPurple)
-                                    .clickable { showOptionsMenu = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.MoreVert,
-                                    contentDescription = "Options",
-                                    tint = BentoTextPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = showOptionsMenu,
-                                onDismissRequest = { showOptionsMenu = false },
-                                modifier = Modifier.background(BentoCardSurface)
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Choose .LRC File", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        lrcPickerLauncher.launch(Unit)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Up Next Queue", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = BentoPrimary) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        showQueueSheet = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Add to Playlist", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = BentoPrimary) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        onAddToPlaylist(song)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Play Next", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.FormatListNumberedRtl, contentDescription = null, tint = BentoPrimary) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        onPlayNext(song)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Remove from Queue", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.RemoveFromQueue, contentDescription = null, tint = BentoPrimary) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        onRemoveFromQueue(playbackState.queueIndex)
-                                    }
-                                )
-                                if (onEditTags != null) {
-                                    DropdownMenuItem(
-                                        text = { Text("Edit Audio Tags & Lyrics", color = BentoTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null, tint = BentoPrimary) },
-                                        onClick = {
-                                            showOptionsMenu = false
-                                            onEditTags(song)
-                                        }
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Delete Song", color = BentoAccentPinkText) },
-                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = BentoAccentPinkText) },
-                                    onClick = {
-                                        showOptionsMenu = false
-                                        showDeleteConfirmDialog = true
-                                    }
-                                )
-                            }
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(BentoCardPurple)
+                                .clickable { showOptionsMenu = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Options",
+                                tint = BentoTextPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
 
                         // Favorite Button
@@ -1129,6 +1037,7 @@ fun NowPlayingScreen(
                 // Waveform & Progress Visualization
                 Column(modifier = Modifier.fillMaxWidth()) {
                     com.example.ui.components.NowPlayingWaveformVisualizer(
+                        trackId = song.id,
                         progressMs = livePositionMs,
                         durationMs = playbackState.durationMs,
                         isPlaying = playbackState.isPlaying,
@@ -1355,94 +1264,59 @@ fun NowPlayingScreen(
     }
 }
 
-        if (currentLayout != com.example.ui.theme.NowPlayingLayout.MODERN_BENTO && !isLandscape) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(top = 10.dp, end = 50.dp)
-            ) {
-                DropdownMenu(
-                    expanded = showOptionsMenu,
-                    onDismissRequest = { showOptionsMenu = false },
-                    modifier = Modifier.background(BentoCardSurface)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Choose .LRC File", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            lrcPickerLauncher.launch(Unit)
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Search Online Lyrics", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.ManageSearch, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            showSearchLyricsDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Up Next Queue", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            showQueueSheet = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Sleep Timer", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.Bedtime, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            showTimerDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add to Playlist", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            onAddToPlaylist(song)
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Play Next", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.FormatListNumberedRtl, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            onPlayNext(song)
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Remove from Queue", color = BentoTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.RemoveFromQueue, contentDescription = null, tint = BentoPrimary) },
-                        onClick = {
-                            showOptionsMenu = false
-                            onRemoveFromQueue(playbackState.queueIndex)
-                        }
-                    )
-                    if (onEditTags != null) {
-                        DropdownMenuItem(
-                            text = { Text("Edit Audio Tags & Lyrics", color = BentoTextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null, tint = BentoPrimary) },
-                            onClick = {
-                                showOptionsMenu = false
-                                onEditTags(song)
-                            }
-                        )
+        if (showOptionsMenu && song != null) {
+            com.example.ui.components.NowPlayingActionMenu(
+                expanded = true,
+                song = song,
+                onDismissRequest = { showOptionsMenu = false },
+                onOpenSleepTimer = {
+                    showOptionsMenu = false
+                    showTimerDialog = true
+                },
+                onAddToPlaylist = {
+                    showOptionsMenu = false
+                    onAddToPlaylist(song)
+                },
+                onRemoveFromPlaylist = {
+                    showOptionsMenu = false
+                    showRemoveFromPlaylistDialog = true
+                },
+                onPlayNext = {
+                    showOptionsMenu = false
+                    onPlayNext(song)
+                },
+                onOpenQueueSheet = {
+                    showOptionsMenu = false
+                    showQueueSheet = true
+                },
+                onChooseLrc = {
+                    showOptionsMenu = false
+                    lrcPickerLauncher.launch(Unit)
+                },
+                onSearchOnlineLyrics = {
+                    showOptionsMenu = false
+                    showSearchLyricsDialog = true
+                },
+                onEditTags = if (onEditTags != null) {
+                    {
+                        showOptionsMenu = false
+                        onEditTags(song)
                     }
-                    DropdownMenuItem(
-                        text = { Text("Delete Song", color = BentoAccentPinkText) },
-                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = BentoAccentPinkText) },
-                        onClick = {
-                            showOptionsMenu = false
-                            showDeleteConfirmDialog = true
-                        }
-                    )
+                } else null,
+                onDeleteSong = {
+                    showOptionsMenu = false
+                    showDeleteConfirmDialog = true
                 }
-            }
+            )
+        }
+
+        if (showRemoveFromPlaylistDialog && song != null && onGetPlaylistsContainingSong != null && onRemoveFromPlaylist != null) {
+            com.example.ui.components.RemoveFromPlaylistDialog(
+                song = song,
+                onGetPlaylistsContainingSong = onGetPlaylistsContainingSong,
+                onRemoveFromPlaylist = onRemoveFromPlaylist,
+                onDismiss = { showRemoveFromPlaylistDialog = false }
+            )
         }
 
     // Spotify-style Swipe-up Full Overlay Lyrics Panel (Works across all UI Themes & Layouts)
@@ -1451,7 +1325,8 @@ fun NowPlayingScreen(
         enter = slideInVertically { it },
         exit = slideOutVertically { it }
     ) {
-        val lyricsBg = Color(0xFF09090E)
+        val isCurrentDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        val lyricsBg = if (isCurrentDark) Color(0xFF09090E) else Color.White
 
         Box(
             modifier = Modifier
@@ -1605,6 +1480,27 @@ fun NowPlayingScreen(
     }
 }
 
+fun cleanLyricDisplayText(text: String): String {
+    var cleaned = text
+    // Remove bracketed, parenthesized or angled timestamps like [01:23.45], (01:23.45), <01:23.45>, [01:23], (01:23)
+    cleaned = cleaned.replace(Regex("""\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]"""), "")
+    cleaned = cleaned.replace(Regex("""\(\d{1,3}:\d{2}(?:[.:]\d{1,3})?\)"""), "")
+    cleaned = cleaned.replace(Regex("""<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>"""), "")
+    // Remove standalone leading or trailing timestamp like "01:23" or "01:23.45"
+    cleaned = cleaned.replace(Regex("""^\s*\d{1,3}:\d{2}(?:[.:]\d{1,3})?\s*[-–—:]?\s*"""), "")
+    cleaned = cleaned.replace(Regex("""\s*[-–—:]?\s*\d{1,3}:\d{2}(?:[.:]\d{1,3})?\s*$"""), "")
+    // Remove any offset indicators like [offset: ...], (offset: ...), offset: +0.5s, +0.5s, +500ms
+    cleaned = cleaned.replace(Regex("""\[offset:\s*[-+]?\d+(?:\.\d+)?(?:s|ms)?\]""", RegexOption.IGNORE_CASE), "")
+    cleaned = cleaned.replace(Regex("""\(offset:\s*[-+]?\d+(?:\.\d+)?(?:s|ms)?\)""", RegexOption.IGNORE_CASE), "")
+    cleaned = cleaned.replace(Regex("""\boffset:\s*[-+]?\d+(?:\.\d+)?(?:s|ms)?\b""", RegexOption.IGNORE_CASE), "")
+    cleaned = cleaned.replace(Regex("""\[[-+]\d+(?:\.\d+)?(?:s|ms)\]""", RegexOption.IGNORE_CASE), "")
+    cleaned = cleaned.replace(Regex("""\([-+]\d+(?:\.\d+)?(?:s|ms)\)""", RegexOption.IGNORE_CASE), "")
+    // Remove any metadata tags like [by: ...], [ti: ...], etc.
+    cleaned = cleaned.replace(Regex("""\[(?:ti|ar|al|by|length|re|ve):[^\]]*\]""", RegexOption.IGNORE_CASE), "")
+    cleaned = cleaned.trim()
+    return if (cleaned.isEmpty()) "♪" else cleaned
+}
+
 @Composable
 private fun LyricsPanelContent(
     song: Song,
@@ -1659,7 +1555,7 @@ private fun LyricsPanelContent(
 
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-    Box(modifier = Modifier.fillMaxSize().background(if (isDarkTheme) Color(0xFF09090E) else MaterialTheme.colorScheme.background)) {
+    Box(modifier = Modifier.fillMaxSize().background(if (isDarkTheme) Color(0xFF09090E) else Color.White)) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -1675,12 +1571,12 @@ private fun LyricsPanelContent(
                             text = "Lyrics",
                             fontSize = if (isLandscape) 18.sp else 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground
+                            color = if (isDarkTheme) Color.White else Color(0xFF0F172A)
                         )
                         if (syncedLines.isNotEmpty()) {
                             Box(
                                 modifier = Modifier
-                                    .background(BentoPrimary.copy(alpha = 0.2f), CircleShape)
+                                    .background(if (isDarkTheme) BentoPrimary.copy(alpha = 0.2f) else BentoPrimary.copy(alpha = 0.12f), CircleShape)
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text("SYNCED", fontSize = 10.sp, color = BentoPrimary, fontWeight = FontWeight.Bold)
@@ -1688,10 +1584,10 @@ private fun LyricsPanelContent(
                         } else if (!currentLyrics?.plainLyrics.isNullOrBlank()) {
                             Box(
                                 modifier = Modifier
-                                    .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                                    .background(if (isDarkTheme) BentoCardPurple else Color(0xFFF1F5F9), CircleShape)
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text("PLAIN TEXT", fontSize = 10.sp, color = if (isDarkTheme) BentoTextSecondary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
+                                Text("PLAIN TEXT", fontSize = 10.sp, color = if (isDarkTheme) BentoTextSecondary else Color(0xFF475569), fontWeight = FontWeight.Medium)
                             }
                         }
                     }
@@ -1716,13 +1612,14 @@ private fun LyricsPanelContent(
                         modifier = Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant)
+                            .background(if (isDarkTheme) BentoCardPurple else Color(0xFFF1F5F9))
+                            .border(androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFE2E8F0)), CircleShape)
                             .testTag("lyrics_top_bar_search_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = "Search lyrics",
-                            tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -1736,7 +1633,7 @@ private fun LyricsPanelContent(
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground)
+                                contentColor = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White else Color(0xFF1E293B))
                             ),
                             modifier = Modifier.testTag("lyrics_offset_tab_button")
                         ) {
@@ -1784,12 +1681,13 @@ private fun LyricsPanelContent(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(if (isDarkTheme) BentoCardPurple else MaterialTheme.colorScheme.surfaceVariant)
+                                .background(if (isDarkTheme) BentoCardPurple else Color(0xFFF1F5F9))
+                                .border(androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFE2E8F0)), CircleShape)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Close Lyrics",
-                                tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -1992,10 +1890,11 @@ private fun LyricsPanelContent(
                                 label = "lyricScale"
                             )
 
-                            val activeLineBg = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.32f) else ambientThemeColor.copy(alpha = 0.20f)
-                            val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.65f) else ambientThemeColor.copy(alpha = 0.85f)
-                            val currentLineTextColor = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onBackground
-                            val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f)
+                            val activeLineBg = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.32f) else ambientThemeColor.copy(alpha = 0.15f)
+                            val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.65f) else ambientThemeColor.copy(alpha = 0.75f)
+                            val currentLineTextColor = if (isDarkTheme) Color.White else Color(0xFF0F172A)
+                            val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.65f) else Color(0xFF334155).copy(alpha = 0.60f)
+                            val cleanDisplayText = remember(lineText) { cleanLyricDisplayText(lineText) }
 
                             Box(
                                 modifier = Modifier
@@ -2018,27 +1917,12 @@ private fun LyricsPanelContent(
                                     .padding(vertical = if (isLandscape) 10.dp else 12.dp, horizontal = 16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(
+                                Box(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    if (isCurrentLine && syncOffsetMs != 0L) {
-                                        val effectiveLineTime = (timeMs - syncOffsetMs).coerceAtLeast(0L)
-                                        val min = (effectiveLineTime / 1000) / 60
-                                        val sec = (effectiveLineTime / 1000) % 60
-                                        val offsetSec = syncOffsetMs / 1000.0
-                                        val offsetLabel = if (syncOffsetMs > 0) "+${"%.1f".format(offsetSec)}s" else "${"%.1f".format(offsetSec)}s"
-                                        Text(
-                                            text = "%02d:%02d (%s offset)".format(min, sec, offsetLabel),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoPrimary,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(bottom = 2.dp)
-                                        )
-                                    }
                                     Text(
-                                        text = lineText,
+                                        text = cleanDisplayText,
                                         fontSize = if (isCurrentLine) (if (isLandscape) 19.sp else 22.sp) else (if (isLandscape) 14.sp else 16.sp),
                                         fontWeight = if (isCurrentLine) FontWeight.Bold else FontWeight.SemiBold,
                                         color = if (isCurrentLine) currentLineTextColor else inactiveLineTextColor,
@@ -2098,10 +1982,10 @@ private fun LyricsPanelContent(
                                     showOffsetDialog = true
                                 },
                                 shape = CircleShape,
-                                color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color(0xFF1E1E2C) else MaterialTheme.colorScheme.surfaceVariant),
+                                color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color(0xFF1E1E2C) else Color(0xFFF1F5F9)),
                                 border = androidx.compose.foundation.BorderStroke(
                                     width = 1.dp,
-                                    color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                    color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1))
                                 ),
                                 shadowElevation = 6.dp,
                                 modifier = Modifier
@@ -2112,7 +1996,7 @@ private fun LyricsPanelContent(
                                     Icon(
                                         imageVector = Icons.Default.Tune,
                                         contentDescription = "Adjust lyrics offset",
-                                        tint = if (syncOffsetMs != 0L) BentoOnPrimary else (if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant),
+                                        tint = if (syncOffsetMs != 0L) BentoOnPrimary else (if (isDarkTheme) Color.White else Color(0xFF1E293B)),
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -2125,12 +2009,12 @@ private fun LyricsPanelContent(
                                     onOpenSearchLyrics()
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isDarkTheme) Color(0xFF1E1E2C) else MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                    containerColor = if (isDarkTheme) Color(0xFF1E1E2C) else Color(0xFFF1F5F9),
+                                    contentColor = if (isDarkTheme) Color.White else Color(0xFF1E293B)
                                 ),
                                 border = androidx.compose.foundation.BorderStroke(
                                     width = 1.dp,
-                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1)
                                 ),
                                 shape = RoundedCornerShape(20.dp),
                                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
@@ -2140,13 +2024,13 @@ private fun LyricsPanelContent(
                                 Icon(
                                     imageVector = Icons.Default.Search,
                                     contentDescription = "Search lyrics",
-                                    tint = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (isDarkTheme) Color.White else Color(0xFF1E293B),
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "Search Lyrics",
-                                    color = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = if (isDarkTheme) Color.White else Color(0xFF1E293B),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -2166,6 +2050,7 @@ private fun LyricsPanelContent(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         itemsIndexed(plainLines) { _, lineText ->
+                            val cleanLine = remember(lineText) { cleanLyricDisplayText(lineText) }
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2173,10 +2058,10 @@ private fun LyricsPanelContent(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = lineText,
+                                    text = cleanLine,
                                     fontSize = if (isLandscape) 15.sp else 16.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.92f) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.92f),
+                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.92f) else Color(0xFF0F172A),
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -2237,7 +2122,7 @@ private fun LyricsPanelContent(
                                 text = "No lyrics available for this track.",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = BentoTextSecondary,
+                                color = if (isDarkTheme) BentoTextSecondary else Color(0xFF475569),
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
@@ -2246,32 +2131,35 @@ private fun LyricsPanelContent(
                                 Button(
                                     onClick = onForceFetchLyrics,
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
-                                    )
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else Color(0xFFF1F5F9)
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFCBD5E1))
                                 ) {
-                                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Auto Fetch", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Auto Fetch", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B))
                                 }
                                 Button(
                                     onClick = onPickLrcFile,
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
-                                    )
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else Color(0xFFF1F5F9)
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFCBD5E1))
                                 ) {
-                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Local .LRC", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Local .LRC", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B))
                                 }
                                 Button(
                                     onClick = onOpenSearchLyrics,
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else MaterialTheme.colorScheme.surfaceVariant
-                                    )
+                                        containerColor = if (isDarkTheme) BentoCardDarkPurple else Color(0xFFF1F5F9)
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFCBD5E1))
                                 ) {
-                                    Icon(Icons.Default.Search, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Search", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Search", fontSize = 12.sp, color = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B))
                                 }
                             }
                             if (isTranscribeTranslateEnabled) {

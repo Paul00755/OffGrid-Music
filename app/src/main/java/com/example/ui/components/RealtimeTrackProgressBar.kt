@@ -64,8 +64,8 @@ fun RealtimeTrackProgressBar(
 
         if (showTimestamps && isActive) {
             Spacer(modifier = Modifier.height(3.dp))
-            val posSec = (currentPos / 1000).coerceAtLeast(0)
             val durSec = (durationMs / 1000).coerceAtLeast(0)
+            val posSec = (currentPos / 1000).coerceIn(0L, durSec)
             val posStr = String.format(Locale.US, "%d:%02d", posSec / 60, posSec % 60)
             val durStr = String.format(Locale.US, "%d:%02d", durSec / 60, durSec % 60)
             Row(

@@ -116,7 +116,9 @@ class AutoBackupWorker(
                 playlistDao = db.playlistDao(),
                 historyDao = db.historyDao(),
                 smartPlaylistDao = db.smartPlaylistDao(),
-                userPreferences = userPrefs
+                userPreferences = userPrefs,
+                folderDao = db.folderDao(),
+                recentSearchDao = db.recentSearchDao()
             )
 
             val success = syncRepo.performBackupInternal(isAutoBackup = true)

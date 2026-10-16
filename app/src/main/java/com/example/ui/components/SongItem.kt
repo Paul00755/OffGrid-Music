@@ -40,27 +40,27 @@ fun SongItem(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(if (isPlaying) BentoCardDarkPurple else BentoCardSurface)
             .clickable { onClick() }
-            .padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Thumbnail Album Artwork
         Box(
             modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .size(42.dp)
+                .clip(RoundedCornerShape(9.dp))
         ) {
             AlbumArtView(
                 song = song,
                 modifier = Modifier.fillMaxSize(),
-                cornerRadius = 10
+                cornerRadius = 9
             )
         }
 
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(10.dp))
 
         // Info
         Column(
@@ -68,70 +68,47 @@ fun SongItem(
         ) {
             Text(
                 text = song.displayTitle,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = if (isPlaying) BentoPrimary else BentoTextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(1.dp))
             Text(
                 text = "${song.displayArtist} • ${song.displayAlbum}",
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 color = BentoTextSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(6.dp))
 
         // Favorite Button
-        var isFavoriteTapped by remember { mutableStateOf(false) }
-        val animatedScale by animateFloatAsState(
-            targetValue = if (isFavoriteTapped) 1.3f else 1f,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow
-            ),
-            finishedListener = { isFavoriteTapped = false },
-            label = "FavoriteScale"
-        )
-
         IconButton(
-            onClick = {
-                isFavoriteTapped = true
-                onFavoriteToggle()
-            },
-            modifier = Modifier
-                .size(36.dp)
-                .then(
-                    if (animatedScale != 1f) {
-                        Modifier.graphicsLayer {
-                            scaleX = animatedScale
-                            scaleY = animatedScale
-                        }
-                    } else Modifier
-                )
+            onClick = onFavoriteToggle,
+            modifier = Modifier.size(32.dp)
         ) {
             Icon(
                 imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = "Favorite",
                 tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
 
         // More Menu
         IconButton(
             onClick = onMoreClick,
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(32.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
                 contentDescription = "More",
                 tint = BentoTextSecondary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
     }

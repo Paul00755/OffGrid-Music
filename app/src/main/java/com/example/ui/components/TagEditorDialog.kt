@@ -36,11 +36,14 @@ fun TagEditorDialog(
     song: Song,
     initialLyrics: String = "",
     onDismiss: () -> Unit,
-    onSaveTags: (title: String, artist: String, album: String, artworkUri: String?, lyrics: String) -> Unit
+    onSaveTags: (title: String, artist: String, album: String, genre: String, year: Int, trackNumber: Int, artworkUri: String?, lyrics: String) -> Unit
 ) {
     var title by remember(song.id) { mutableStateOf(song.title.ifBlank { song.displayTitle }) }
     var artist by remember(song.id) { mutableStateOf(song.artist.ifBlank { song.displayArtist }) }
     var album by remember(song.id) { mutableStateOf(song.album.ifBlank { song.displayAlbum }) }
+    var genre by remember(song.id) { mutableStateOf(song.genre.ifBlank { "Music" }) }
+    var yearText by remember(song.id) { mutableStateOf(if (song.year > 0) song.year.toString() else "") }
+    var trackNumberText by remember(song.id) { mutableStateOf(if (song.trackNumber > 0) song.trackNumber.toString() else "") }
     var artworkUri by remember(song.id) { mutableStateOf<String?>(song.artworkUri) }
     var lyrics by remember(song.id) { mutableStateOf(initialLyrics) }
     val context = LocalContext.current
@@ -325,6 +328,67 @@ fun TagEditorDialog(
                         )
                     )
 
+                    // Genre Field
+                    OutlinedTextField(
+                        value = genre,
+                        onValueChange = { genre = it },
+                        label = { Text("Genre", color = BentoTextSecondary) },
+                        leadingIcon = { Icon(Icons.Default.Category, contentDescription = null, tint = BentoPrimary) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = BentoTextPrimary,
+                            unfocusedTextColor = BentoTextPrimary,
+                            focusedBorderColor = BentoPrimary,
+                            unfocusedBorderColor = BentoCardBorder,
+                            focusedContainerColor = BentoCardDarkPurple,
+                            unfocusedContainerColor = BentoCardDarkPurple
+                        )
+                    )
+
+                    // Year and Track Number Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = yearText,
+                            onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) yearText = it },
+                            label = { Text("Year", color = BentoTextSecondary) },
+                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = BentoPrimary) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BentoTextPrimary,
+                                unfocusedTextColor = BentoTextPrimary,
+                                focusedBorderColor = BentoPrimary,
+                                unfocusedBorderColor = BentoCardBorder,
+                                focusedContainerColor = BentoCardDarkPurple,
+                                unfocusedContainerColor = BentoCardDarkPurple
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = trackNumberText,
+                            onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) trackNumberText = it },
+                            label = { Text("Track #", color = BentoTextSecondary) },
+                            leadingIcon = { Icon(Icons.Default.FormatListNumbered, contentDescription = null, tint = BentoPrimary) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BentoTextPrimary,
+                                unfocusedTextColor = BentoTextPrimary,
+                                focusedBorderColor = BentoPrimary,
+                                unfocusedBorderColor = BentoCardBorder,
+                                focusedContainerColor = BentoCardDarkPurple,
+                                unfocusedContainerColor = BentoCardDarkPurple
+                            )
+                        )
+                    }
+
                     // Embedded Lyrics Field
                     OutlinedTextField(
                         value = lyrics,
@@ -403,7 +467,9 @@ fun TagEditorDialog(
                     Button(
                         onClick = {
                             showConfirmSave = false
-                            onSaveTags(title.trim(), artist.trim(), album.trim(), artworkUri, lyrics.trim())
+                            val y = yearText.trim().toIntOrNull() ?: 0
+                            val trk = trackNumberText.trim().toIntOrNull() ?: 0
+                            onSaveTags(title.trim(), artist.trim(), album.trim(), genre.trim(), y, trk, artworkUri, lyrics.trim())
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(

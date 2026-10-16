@@ -80,6 +80,7 @@ fun RecentlyPlayedScreen(
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
+    val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     // Unique list capped at 100 songs
     val uniqueLimitedSongs = remember(recentlyPlayedSongs) {
@@ -530,7 +531,7 @@ fun RecentlyPlayedScreen(
                             items = filteredSongs,
                             key = { index, song -> "recent_unique_${song.id}_$index" }
                         ) { index, song ->
-                            val isPlaying = playbackState.currentSong?.id == song.id
+                            val isPlaying = currentPlayingSongId == song.id
                             val relativeTime = remember(song.lastPlayed) {
                                 if (song.lastPlayed > 0L) {
                                     val now = System.currentTimeMillis()

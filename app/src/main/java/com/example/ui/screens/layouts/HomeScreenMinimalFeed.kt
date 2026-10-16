@@ -57,7 +57,7 @@ fun HomeScreenMinimalFeed(
     onEditTags: ((Song) -> Unit)?,
     speedDialSongs: List<Song> = emptyList(),
     onRefreshSpeedDial: () -> Unit = {},
-    homeSections: List<String> = listOf("speed_dial", "continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
+    homeSections: List<String> = listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
     playbackPositionFlow: kotlinx.coroutines.flow.StateFlow<Long>? = null,
     onOpenRecentlyPlayed: () -> Unit = {},
     onOpenStatsDetail: () -> Unit = {},

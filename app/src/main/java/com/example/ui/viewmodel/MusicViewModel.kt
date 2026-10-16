@@ -63,7 +63,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playlistDao = db.playlistDao(),
         historyDao = db.historyDao(),
         smartPlaylistDao = db.smartPlaylistDao(),
-        userPreferences = preferences
+        userPreferences = preferences,
+        folderDao = db.folderDao(),
+        recentSearchDao = db.recentSearchDao()
     )
 
     val syncStatus: StateFlow<com.example.data.sync.SyncStatus> = cloudSyncRepository.syncStatus
@@ -115,12 +117,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val customAvatarUri: StateFlow<String?> = preferences.customAvatarUri
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    // User-facing display name with fallback to Firebase displayName or email prefix or Guest
+    // User-facing display name with fallback to Firebase displayName or email prefix or Guest.
+    // If not authenticated, always returns generic guest name to prevent data leakage from prior users.
     val effectiveDisplayName: StateFlow<String> = combine(userAccount, customDisplayName) { account, customName ->
-        customName?.takeIf { it.isNotBlank() }
-            ?: account?.displayName?.takeIf { it.isNotBlank() }
-            ?: account?.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
-            ?: "Music Lover"
+        if (account == null) {
+            "Music Lover"
+        } else {
+            customName?.takeIf { it.isNotBlank() }
+                ?: account.displayName?.takeIf { it.isNotBlank() }
+                ?: account.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
+                ?: "Music Lover"
+        }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "Music Lover")
 
     val authUiState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
@@ -306,15 +313,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             cloudSyncRepository.onAuthStateChanged(null)
             authManager.signOut()
-            preferences.setCustomDisplayName(null)
-            preferences.setCustomAvatarUri(null)
+            preferences.resetAccountSpecificData()
             showAccountScreen.value = false
             onComplete()
         }
     }
 
-    val sleepTimerManager: SleepTimerManager = SleepTimerManager()
-    val playbackManager: PlaybackManager = PlaybackManager(application, viewModelScope, sleepTimerManager)
+    val playbackManager: PlaybackManager = PlaybackManager.getInstance(application)
+    val sleepTimerManager: SleepTimerManager = playbackManager.sleepTimerManager
     val lyricsFetcher: LyricsFetcher = LyricsFetcher(db.lyricsDao(), application)
     val audioRouteManager: com.example.util.AudioRouteManager = com.example.util.AudioRouteManager(application)
     val currentAudioRoute: StateFlow<com.example.util.AudioRouteInfo> = audioRouteManager.currentRoute
@@ -471,7 +477,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val homeSections: StateFlow<List<String>> = preferences.homeSections.stateIn(
         viewModelScope,
         SharingStarted.Lazily,
-        listOf("speed_dial", "continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums")
+        listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums")
     )
 
     private val _speedDialSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -984,8 +990,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Automatically fetch lyrics when track changes and persist state
+        val persistentSessionScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
         playbackManager.onUpdatePlaybackSession = { sessionId, trackId, startedAt, endedAt, listenedDurationMs, sourceContext, totalDurationMs ->
-            viewModelScope.launch {
+            persistentSessionScope.launch {
                 val currentType = scrobbleThresholdType.value
                 val currentValue = scrobbleThresholdValue.value
                 repository.recordPlaybackSession(
@@ -1041,6 +1048,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                     val resolvedUri = com.example.util.ArtworkManager.getOrExtractArtworkUri(getApplication(), song.id, song.path, song.albumId)
                                     if (!resolvedUri.isNullOrBlank()) {
                                         repository.updateSongArtwork(song.id, resolvedUri)
+                                        com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, resolvedUri)
                                         playbackManager.updateCurrentSongArtwork(song.id, resolvedUri)
                                     }
                                 }
@@ -1276,6 +1284,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun getPlaylistsContainingSong(songId: Long): List<com.example.data.model.Playlist> {
+        return repository.getPlaylistsContainingSong(songId)
+    }
+
     fun removeDuplicateSongsFromPlaylist(playlistId: Long, onResult: (Int) -> Unit = {}) {
         viewModelScope.launch {
             val count = repository.removeDuplicateSongsFromPlaylist(playlistId)
@@ -1456,6 +1468,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         newTitle: String,
         newArtist: String,
         newAlbum: String,
+        newGenre: String? = null,
+        newYear: Int? = null,
+        newTrackNumber: Int? = null,
         newArtworkUri: String?,
         newLyrics: String,
         onSuccess: () -> Unit = {}
@@ -1468,7 +1483,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 newAlbum = newAlbum,
                 newArtworkUri = newArtworkUri,
                 newLyrics = newLyrics,
-                context = getApplication()
+                context = getApplication(),
+                newGenre = newGenre,
+                newYear = newYear,
+                newTrackNumber = newTrackNumber
             )
             val finalArt = updatedSong.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(getApplication(), updatedSong.id, updatedSong.path)
             com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id)
@@ -2028,7 +2046,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         audioRouteManager.unregister()
-        playbackManager.release()
+        // Note: Do NOT call playbackManager.release() here! PlaybackManager is an application-level singleton
+        // that must continue continuous playback in the background even when MainActivity/ViewModel is destroyed.
         super.onCleared()
     }
 }

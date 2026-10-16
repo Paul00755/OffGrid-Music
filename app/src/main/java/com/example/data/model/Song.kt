@@ -23,7 +23,8 @@ data class Song(
     val bitrate: Int = 0,
     val format: String = "MP3",
     val isMissing: Boolean = false,
-    val isCorrupted: Boolean = false
+    val isCorrupted: Boolean = false,
+    val isManuallyEdited: Boolean = false
 ) {
     val contentUri: Uri
         get() = when {
@@ -35,8 +36,12 @@ data class Song(
         }
 
     val displayTitle: String by lazy(LazyThreadSafetyMode.NONE) {
-        val raw = title.ifBlank { path.substringAfterLast('/').substringBeforeLast('.') }
-        com.example.util.TagCleaner.cleanTitle(raw, path.substringAfterLast('/'))
+        if (isManuallyEdited) {
+            title
+        } else {
+            val raw = title.ifBlank { path.substringAfterLast('/').substringBeforeLast('.') }
+            com.example.util.TagCleaner.cleanTitle(raw, path.substringAfterLast('/'))
+        }
     }
 
     val displayArtist: String by lazy(LazyThreadSafetyMode.NONE) {

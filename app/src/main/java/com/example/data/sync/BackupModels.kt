@@ -43,7 +43,8 @@ data class BackupProfileData(
     val displayName: String? = null,
     val photoUrl: String? = null,
     val customDisplayName: String? = null,
-    val customAvatarUri: String? = null
+    val customAvatarUri: String? = null,
+    val avatarBase64: String? = null
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "uid" to uid,
@@ -51,7 +52,8 @@ data class BackupProfileData(
         "displayName" to displayName,
         "photoUrl" to photoUrl,
         "customDisplayName" to customDisplayName,
-        "customAvatarUri" to customAvatarUri
+        "customAvatarUri" to customAvatarUri,
+        "avatarBase64" to avatarBase64
     )
 
     companion object {
@@ -62,7 +64,8 @@ data class BackupProfileData(
             displayName = map["displayName"] as? String,
             photoUrl = map["photoUrl"] as? String,
             customDisplayName = map["customDisplayName"] as? String,
-            customAvatarUri = map["customAvatarUri"] as? String
+            customAvatarUri = map["customAvatarUri"] as? String,
+            avatarBase64 = map["avatarBase64"] as? String
         )
     }
 }
@@ -76,8 +79,11 @@ data class BackupStatisticsSummary(
     val uniqueTracksPlayed: Int = 0,
     val mostPlayedArtist: String? = null,
     val mostPlayedAlbum: String? = null,
+    val allTimeTopSong: String? = null,
     val timeOfDayDistribution: Map<String, Long> = emptyMap(),
-    val topArtistsSummary: List<String> = emptyList()
+    val topArtistsSummary: List<String> = emptyList(),
+    val topSongsSummary: List<String> = emptyList(),
+    val topAlbumsSummary: List<String> = emptyList()
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "totalPlayCount" to totalPlayCount,
@@ -85,8 +91,11 @@ data class BackupStatisticsSummary(
         "uniqueTracksPlayed" to uniqueTracksPlayed,
         "mostPlayedArtist" to mostPlayedArtist,
         "mostPlayedAlbum" to mostPlayedAlbum,
+        "allTimeTopSong" to allTimeTopSong,
         "timeOfDayDistribution" to timeOfDayDistribution,
-        "topArtistsSummary" to topArtistsSummary
+        "topArtistsSummary" to topArtistsSummary,
+        "topSongsSummary" to topSongsSummary,
+        "topAlbumsSummary" to topAlbumsSummary
     )
 
     companion object {
@@ -97,10 +106,13 @@ data class BackupStatisticsSummary(
             uniqueTracksPlayed = (map["uniqueTracksPlayed"] as? Number)?.toInt() ?: 0,
             mostPlayedArtist = map["mostPlayedArtist"] as? String,
             mostPlayedAlbum = map["mostPlayedAlbum"] as? String,
+            allTimeTopSong = map["allTimeTopSong"] as? String,
             timeOfDayDistribution = (map["timeOfDayDistribution"] as? Map<String, Any?>)?.mapValues {
                 (it.value as? Number)?.toLong() ?: 0L
             } ?: emptyMap(),
-            topArtistsSummary = (map["topArtistsSummary"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            topArtistsSummary = (map["topArtistsSummary"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            topSongsSummary = (map["topSongsSummary"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            topAlbumsSummary = (map["topAlbumsSummary"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
         )
     }
 }
@@ -149,6 +161,12 @@ data class UserBackupPayload(
     val favorites: List<CloudFavoriteSong> = emptyList(),
     val playlistsCount: Int = 0,
     val playlists: List<CloudPlaylist> = emptyList(),
+    val foldersCount: Int = 0,
+    val folders: List<CloudFolderConfig> = emptyList(),
+    val recentSearchesCount: Int = 0,
+    val recentSearches: List<CloudRecentSearch> = emptyList(),
+    val smartPlaylistsCount: Int = 0,
+    val smartPlaylists: List<CloudSmartPlaylist> = emptyList(),
     val historyCount: Int = 0,
     val historySample: List<CloudPlaybackEvent> = emptyList(),
     val statistics: BackupStatisticsSummary = BackupStatisticsSummary(),
@@ -165,6 +183,12 @@ data class UserBackupPayload(
         "favorites" to favorites.map { it.toMap() },
         "playlistsCount" to playlistsCount,
         "playlists" to playlists.map { it.toMap() },
+        "foldersCount" to foldersCount,
+        "folders" to folders.map { it.toMap() },
+        "recentSearchesCount" to recentSearchesCount,
+        "recentSearches" to recentSearches.map { it.toMap() },
+        "smartPlaylistsCount" to smartPlaylistsCount,
+        "smartPlaylists" to smartPlaylists.map { it.toMap() },
         "historyCount" to historyCount,
         "historySample" to historySample.map { it.toMap() },
         "statistics" to statistics.toMap(),
@@ -184,6 +208,12 @@ data class UserBackupPayload(
             favorites = (map["favorites"] as? List<Map<String, Any?>>)?.map { CloudFavoriteSong.fromMap(it) } ?: emptyList(),
             playlistsCount = (map["playlistsCount"] as? Number)?.toInt() ?: 0,
             playlists = (map["playlists"] as? List<Map<String, Any?>>)?.map { CloudPlaylist.fromMap(it) } ?: emptyList(),
+            foldersCount = (map["foldersCount"] as? Number)?.toInt() ?: 0,
+            folders = (map["folders"] as? List<Map<String, Any?>>)?.map { CloudFolderConfig.fromMap(it) } ?: emptyList(),
+            recentSearchesCount = (map["recentSearchesCount"] as? Number)?.toInt() ?: 0,
+            recentSearches = (map["recentSearches"] as? List<Map<String, Any?>>)?.map { CloudRecentSearch.fromMap(it) } ?: emptyList(),
+            smartPlaylistsCount = (map["smartPlaylistsCount"] as? Number)?.toInt() ?: 0,
+            smartPlaylists = (map["smartPlaylists"] as? List<Map<String, Any?>>)?.map { CloudSmartPlaylist.fromMap(it) } ?: emptyList(),
             historyCount = (map["historyCount"] as? Number)?.toInt() ?: 0,
             historySample = (map["historySample"] as? List<Map<String, Any?>>)?.map { CloudPlaybackEvent.fromMap(it) } ?: emptyList(),
             statistics = (map["statistics"] as? Map<String, Any?>)?.let { BackupStatisticsSummary.fromMap(it) } ?: BackupStatisticsSummary(),

@@ -1,7 +1,7 @@
 # 🎵 OffGrid Music
 
 <p align="center">
-  <img src="docs/assets/logo.png" width="140" height="140" alt="OffGrid Music Logo" />
+  <img src="assets/logo.png" width="140" height="140" alt="OffGrid Music Logo" />
 </p>
 
 <p align="center">
@@ -9,18 +9,40 @@
 </p>
 
 <p align="center">
-  <a href="../../releases/latest/download/app-debug.apk">
+  <a href="releases/latest/download/app-debug.apk">
     <img src="https://img.shields.io/badge/Download-Latest%20APK-00E676?style=for-the-badge&logo=android&logoColor=white" alt="Download Latest APK" />
   </a>
-  <a href="../../releases">
+  <a href="releases">
     <img src="https://img.shields.io/badge/GitHub-Releases-purple?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Releases" />
   </a>
-  <a href="../../actions/workflows/build-apk.yml">
+  <a href="actions/workflows/build-apk.yml">
     <img src="https://img.shields.io/badge/CI%2FCD-Automated%20Build-blue?style=for-the-badge&logo=githubactions&logoColor=white" alt="Automated Builds" />
   </a>
   <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin Jetpack Compose" />
 </p>
+
+---
+
+## 📥 Download & Installation
+
+You can get the latest APK in multiple ways:
+
+1. **Direct Download**: Click the **[Download Latest APK](releases/latest/download/app-debug.apk)** badge above.
+2. **Releases Page**: Browse all tagged versions on the **[Releases](releases)** page and download `app-debug.apk`.
+3. **CI/CD Build Artifacts (Immediate)**: If no formal release has been published yet, download the newly compiled APK directly from GitHub Actions:
+   - Navigate to the **[Actions tab](actions)**.
+   - Click the latest **Build and Release Android APK** run.
+   - Scroll to the **Artifacts** section at the bottom and download **`OffGrid-Music-Debug-APK`**.
+
+> [!TIP]
+> **Enabling Automated Releases on your GitHub repository:**
+> GitHub by default sets workflow permissions to read-only for new repositories. To allow GitHub Actions to automatically publish releases to your Releases page:
+> 1. In your GitHub repository, open **Settings** > **Actions** > **General**.
+> 2. Under **Workflow permissions**, choose **Read and write permissions**.
+> 3. Check **Allow GitHub Actions to create and approve pull requests**.
+> 4. Click **Save**.
+> 5. Go to **Actions** > **Build and Release Android APK** > **Run workflow** (or simply push a commit). The release will be published automatically!
 
 ---
 

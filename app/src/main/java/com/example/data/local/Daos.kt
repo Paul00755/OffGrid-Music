@@ -53,6 +53,9 @@ interface SongDao {
     @Update
     suspend fun updateSong(song: SongEntity)
 
+    @Query("UPDATE songs SET isManuallyEdited = :isManual WHERE id = :songId")
+    suspend fun updateManualEditStatus(songId: Long, isManual: Boolean = true)
+
     @Query("UPDATE songs SET isFavorite = :isFavorite WHERE id = :songId")
     suspend fun setFavorite(songId: Long, isFavorite: Boolean)
 
@@ -70,6 +73,12 @@ interface SongDao {
 
     @Query("UPDATE songs SET playCount = playCount + 1, lastPlayed = :timestamp WHERE id = :songId")
     suspend fun recordPlay(songId: Long, timestamp: Long)
+
+    @Query("UPDATE songs SET playCount = :playCount, lastPlayed = :lastPlayed WHERE id = :songId")
+    suspend fun updatePlayStats(songId: Long, playCount: Int, lastPlayed: Long)
+
+    @Query("SELECT * FROM songs WHERE isMissing = 0")
+    suspend fun getValidSongsOnce(): List<SongEntity>
 
     @Query("UPDATE songs SET isMissing = 1 WHERE path = :path")
     suspend fun markMissing(path: String)
@@ -101,6 +110,9 @@ interface FolderDao {
     @Query("SELECT * FROM folders ORDER BY isExcluded ASC, name ASC")
     fun getAllFolders(): Flow<List<FolderEntity>>
 
+    @Query("SELECT * FROM folders ORDER BY isExcluded ASC, name ASC")
+    suspend fun getAllFoldersOnce(): List<FolderEntity>
+
     @Query("SELECT * FROM folders WHERE isExcluded = 0")
     suspend fun getIncludedFoldersList(): List<FolderEntity>
 
@@ -113,8 +125,14 @@ interface FolderDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFolder(folder: FolderEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFoldersBatch(folders: List<FolderEntity>)
+
     @Query("DELETE FROM folders WHERE path = :path")
     suspend fun deleteFolder(path: String)
+
+    @Query("DELETE FROM folders")
+    suspend fun clearAllFolders()
 
     @Query("SELECT COUNT(*) FROM folders")
     suspend fun getFolderCountOnce(): Int
@@ -186,6 +204,14 @@ interface PlaylistDao {
     suspend fun isSongInPlaylist(playlistId: Long, songId: Long): Int
 
     @Query("""
+        SELECT p.* FROM playlists p 
+        INNER JOIN playlist_songs ps ON p.id = ps.playlistId 
+        WHERE ps.songId = :songId 
+        ORDER BY p.isPinned DESC, p.name ASC
+    """)
+    suspend fun getPlaylistsContainingSong(songId: Long): List<PlaylistEntity>
+
+    @Query("""
         SELECT s.* FROM songs s 
         INNER JOIN playlist_songs ps ON s.id = ps.songId 
         WHERE ps.playlistId = :playlistId 
@@ -248,6 +274,15 @@ interface PlaylistDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylists(playlists: List<PlaylistEntity>)
+
+    @Query("DELETE FROM playlists")
+    suspend fun clearAllPlaylists()
+
+    @Query("DELETE FROM playlist_songs")
+    suspend fun clearAllPlaylistSongs()
+
+    @Query("DELETE FROM playlist_play_events")
+    suspend fun clearAllPlaylistPlayEvents()
 }
 
 data class RecentlyPlayedHistoryItem(
@@ -287,7 +322,7 @@ interface HistoryDao {
     fun getUniqueTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int>
 
     @Query("""
-        SELECT s.id, s.title, s.artist, s.album, s.genre, s.durationMs, s.path, s.contentUriString, s.artworkUri, s.albumId, s.artistId, s.trackNumber, s.year, s.dateAdded, s.lastPlayed, h.pCount as playCount, s.isFavorite, s.bitrate, s.format, s.isMissing, s.isCorrupted
+        SELECT s.id, s.title, s.artist, s.album, s.genre, s.durationMs, s.path, s.contentUriString, s.artworkUri, s.albumId, s.artistId, s.trackNumber, s.year, s.dateAdded, s.lastPlayed, h.pCount as playCount, s.isFavorite, s.bitrate, s.format, s.isMissing, s.isCorrupted, s.isManuallyEdited
         FROM songs s 
         INNER JOIN (
             SELECT trackId, COUNT(*) as pCount, SUM(listenedDurationMs) as pDuration 
@@ -371,7 +406,33 @@ interface HistoryDao {
 
     @Query("SELECT * FROM playback_history WHERE startedAt >= :startTime AND startedAt < :endTime ORDER BY startedAt ASC")
     suspend fun getPlaybackHistoryBetweenOnce(startTime: Long, endTime: Long = 9223372036854775807L): List<PlaybackHistoryEntity>
+
+    @Query("UPDATE playback_history SET trackId = :trackId WHERE sessionId = :sessionId")
+    suspend fun updateTrackIdBySessionId(sessionId: String, trackId: Long)
+
+    @Query("UPDATE playback_history SET trackId = :trackId WHERE id = :historyId")
+    suspend fun updateTrackIdById(historyId: Long, trackId: Long)
+
+    @Query("SELECT * FROM playback_history WHERE trackId = 0")
+    suspend fun getUnmatchedHistory(): List<PlaybackHistoryEntity>
+
+    @Query("SELECT * FROM playback_history ORDER BY startedAt DESC")
+    suspend fun getAllHistoryOnce(): List<PlaybackHistoryEntity>
+
+    @Query("""
+        SELECT trackId, COUNT(*) as pCount, MAX(startedAt) as maxStartedAt 
+        FROM playback_history 
+        WHERE trackId > 0 AND isQualified = 1 
+        GROUP BY trackId
+    """)
+    suspend fun getAggregateSongPlayStats(): List<SongPlayStatAggregation>
 }
+
+data class SongPlayStatAggregation(
+    val trackId: Long,
+    val pCount: Int,
+    val maxStartedAt: Long
+)
 
 @Dao
 interface LyricsDao {
@@ -402,8 +463,14 @@ interface RecentSearchDao {
     @Query("SELECT query FROM recent_searches ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentSearches(limit: Int = 50): Flow<List<String>>
 
+    @Query("SELECT * FROM recent_searches ORDER BY timestamp DESC")
+    suspend fun getAllRecentSearchesOnce(): List<RecentSearchEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSearch(search: RecentSearchEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSearchesBatch(searches: List<RecentSearchEntity>)
 
     @Query("DELETE FROM recent_searches WHERE query = :query")
     suspend fun deleteSearch(query: String)
@@ -437,5 +504,8 @@ interface SmartPlaylistDao {
 
     @Query("DELETE FROM smart_playlists WHERE id = :id")
     suspend fun deleteSmartPlaylist(id: Long)
+
+    @Query("DELETE FROM smart_playlists")
+    suspend fun clearAllSmartPlaylists()
 }
 

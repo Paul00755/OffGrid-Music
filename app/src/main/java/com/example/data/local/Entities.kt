@@ -40,7 +40,8 @@ data class SongEntity(
     val bitrate: Int = 0,
     val format: String = "MP3",
     val isMissing: Boolean = false,
-    val isCorrupted: Boolean = false
+    val isCorrupted: Boolean = false,
+    val isManuallyEdited: Boolean = false
 ) {
     fun toDomainModel(): Song = Song(
         id = id,
@@ -63,7 +64,8 @@ data class SongEntity(
         bitrate = bitrate,
         format = format,
         isMissing = isMissing,
-        isCorrupted = isCorrupted
+        isCorrupted = isCorrupted,
+        isManuallyEdited = isManuallyEdited
     )
 
     companion object {
@@ -88,7 +90,8 @@ data class SongEntity(
             bitrate = song.bitrate,
             format = song.format,
             isMissing = song.isMissing,
-            isCorrupted = song.isCorrupted
+            isCorrupted = song.isCorrupted,
+            isManuallyEdited = song.isManuallyEdited
         )
     }
 }

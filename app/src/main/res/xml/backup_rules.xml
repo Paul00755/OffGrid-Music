@@ -6,7 +6,11 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!-- Exclude personal device-local API keys from Android Cloud Backup -->
+    <!-- Exclude personal device-local API keys and account data from Android Cloud Backup -->
     <exclude domain="file" path="gemini_user_key.dat" />
     <exclude domain="file" path="gemini_user_key.fallback" />
+    <exclude domain="sharedpref" path="user_settings.preferences_pb" />
+    <exclude domain="database" path="offgrid_music_db" />
+    <exclude domain="database" path="offgrid_music_db-wal" />
+    <exclude domain="database" path="offgrid_music_db-shm" />
 </full-backup-content>

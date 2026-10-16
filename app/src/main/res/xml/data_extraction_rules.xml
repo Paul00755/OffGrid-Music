@@ -5,13 +5,21 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- Exclude personal device-local API keys from Cloud Backup -->
+        <!-- Exclude personal device-local API keys and account data from Cloud Backup -->
         <exclude domain="file" path="gemini_user_key.dat" />
         <exclude domain="file" path="gemini_user_key.fallback" />
+        <exclude domain="sharedpref" path="user_settings.preferences_pb" />
+        <exclude domain="database" path="offgrid_music_db" />
+        <exclude domain="database" path="offgrid_music_db-wal" />
+        <exclude domain="database" path="offgrid_music_db-shm" />
     </cloud-backup>
     <device-transfer>
-        <!-- Exclude personal device-local API keys from Device Transfer -->
+        <!-- Exclude personal device-local API keys and account data from Device Transfer -->
         <exclude domain="file" path="gemini_user_key.dat" />
         <exclude domain="file" path="gemini_user_key.fallback" />
+        <exclude domain="sharedpref" path="user_settings.preferences_pb" />
+        <exclude domain="database" path="offgrid_music_db" />
+        <exclude domain="database" path="offgrid_music_db-wal" />
+        <exclude domain="database" path="offgrid_music_db-shm" />
     </device-transfer>
 </data-extraction-rules>

@@ -78,25 +78,9 @@ fun LazyListScope.renderHomeFeedSections(
     getTrackCountBetween: (Long, Long) -> Flow<Int>,
     getUniqueTrackCountBetween: (Long, Long) -> Flow<Int>
 ) {
+    val currentPlayingSongId = playbackState.currentSong?.id
     homeSections.map { normalizeHomeSectionKey(it) }.distinct().forEach { sectionKey ->
         when (sectionKey) {
-            "speed_dial" -> {
-                if (speedDialSongs.isNotEmpty()) {
-                    item(key = "section_speed_dial") {
-                        com.example.ui.components.HomeScreenSpeedDial(
-                            speedDialSongs = speedDialSongs,
-                            playbackState = playbackState,
-                            onSongClick = { song, queue -> onPlaySongQueue(song, queue) },
-                            onPlayAll = { queue ->
-                                if (queue.isNotEmpty()) {
-                                    onPlaySongQueue(queue.first(), queue)
-                                }
-                            },
-                            onRefresh = onRefreshSpeedDial
-                        )
-                    }
-                }
-            }
             "continue_listening" -> {
                 if (continueSong != null) {
                     val isCurrentActive = playbackState.currentSong?.id == continueSong.id
@@ -154,11 +138,11 @@ fun LazyListScope.renderHomeFeedSections(
                             ) {
                                 AlbumArtView(
                                     song = continueSong,
-                                    modifier = Modifier.size(60.dp),
-                                    cornerRadius = 12
+                                    modifier = Modifier.size(50.dp),
+                                    cornerRadius = 10
                                 )
 
-                                Spacer(modifier = Modifier.width(14.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -462,7 +446,7 @@ fun LazyListScope.renderHomeFeedSections(
                         Box {
                             SongItem(
                                 song = song,
-                                isPlaying = playbackState.currentSong?.id == song.id,
+                                isPlaying = currentPlayingSongId == song.id,
                                 onClick = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
                                 onFavoriteToggle = { onFavoriteToggle(song) },
                                 onMoreClick = { showMenu = true }

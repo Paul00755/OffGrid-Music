@@ -32,20 +32,43 @@ object AudioTagWriter {
         newArtist: String,
         newAlbum: String,
         newArtworkUri: String?,
-        newLyrics: String?
+        newLyrics: String?,
+        newGenre: String? = null,
+        newYear: Int? = null,
+        newTrackNumber: Int? = null
     ): Boolean {
         var success = false
+        val scanPaths = mutableListOf<String>()
+        if (songPath.isNotBlank()) scanPaths.add(songPath)
 
         try {
             val audioFile = File(songPath)
-            if (audioFile.exists() && audioFile.canWrite()) {
+            if (audioFile.exists()) {
                 val ext = audioFile.extension.lowercase()
                 if (ext == "mp3") {
-                    writeMp3Tags(audioFile, newTitle, newArtist, newAlbum, newArtworkUri, newLyrics, context)
+                    writeMp3Tags(
+                        file = audioFile,
+                        title = newTitle,
+                        artist = newArtist,
+                        album = newAlbum,
+                        genre = newGenre,
+                        year = newYear,
+                        trackNumber = newTrackNumber,
+                        artworkUri = newArtworkUri,
+                        lyrics = newLyrics,
+                        contentUriString = contentUriString,
+                        context = context
+                    )
                 }
 
                 // Write/update companion .lrc file if lyrics provided
-                updateCompanionLrcFile(audioFile, newLyrics)
+                val lrcPath = updateCompanionLrcFile(audioFile, newLyrics)
+                if (lrcPath != null) scanPaths.add(lrcPath)
+
+                // Save companion artwork image directly into local song folder (e.g. song.jpg)
+                val companionArtPath = updateCompanionArtworkFile(audioFile, newArtworkUri, context)
+                if (companionArtPath != null) scanPaths.add(companionArtPath)
+
                 success = true
             }
         } catch (e: Exception) {
@@ -54,7 +77,7 @@ object AudioTagWriter {
 
         // Update MediaStore columns
         try {
-            updateMediaStoreTags(context, songId, contentUriString, newTitle, newArtist, newAlbum)
+            updateMediaStoreTags(context, songId, contentUriString, newTitle, newArtist, newAlbum, newGenre, newYear, newTrackNumber)
             success = true
         } catch (e: Exception) {
             Log.e(TAG, "Error updating MediaStore tags: ${e.message}", e)
@@ -62,12 +85,14 @@ object AudioTagWriter {
 
         // Trigger MediaScanner to re-index the file across Android OS
         try {
-            MediaScannerConnection.scanFile(
-                context,
-                arrayOf(songPath),
-                null
-            ) { path, uri ->
-                Log.d(TAG, "MediaScanner re-indexed file: $path -> $uri")
+            if (scanPaths.isNotEmpty()) {
+                MediaScannerConnection.scanFile(
+                    context,
+                    scanPaths.distinct().toTypedArray(),
+                    null
+                ) { path, uri ->
+                    Log.d(TAG, "MediaScanner re-indexed file: $path -> $uri")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "MediaScanner notification failed: ${e.message}", e)
@@ -76,24 +101,71 @@ object AudioTagWriter {
         return success
     }
 
-    private fun updateCompanionLrcFile(audioFile: File, lyricsText: String?) {
+    private fun updateCompanionArtworkFile(audioFile: File, artworkUri: String?, context: Context): String? {
         try {
-            val parentDir = audioFile.parentFile ?: return
+            val parentDir = audioFile.parentFile ?: return null
+            if (!parentDir.exists() || !parentDir.canWrite()) return null
+
+            val baseName = audioFile.nameWithoutExtension
+            val companionArtFile = File(parentDir, "$baseName.jpg")
+
+            if (artworkUri.isNullOrBlank()) {
+                if (companionArtFile.exists() && companionArtFile.canWrite()) {
+                    companionArtFile.delete()
+                }
+                return null
+            }
+
+            val imageBytes: ByteArray? = when {
+                artworkUri.startsWith("http://") || artworkUri.startsWith("https://") -> {
+                    val conn = java.net.URL(artworkUri).openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    conn.inputStream.use { it.readBytes() }
+                }
+                artworkUri.startsWith("file://") -> {
+                    val p = Uri.parse(artworkUri).path ?: artworkUri.removePrefix("file://")
+                    val f = File(p)
+                    if (f.exists()) f.readBytes() else null
+                }
+                File(artworkUri).exists() -> File(artworkUri).readBytes()
+                else -> context.contentResolver.openInputStream(Uri.parse(artworkUri))?.use { it.readBytes() }
+            }
+
+            if (imageBytes != null && imageBytes.isNotEmpty()) {
+                FileOutputStream(companionArtFile).use { fos ->
+                    fos.write(imageBytes)
+                    fos.flush()
+                }
+                return companionArtFile.absolutePath
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not write companion artwork file: ${e.message}")
+        }
+        return null
+    }
+
+    private fun updateCompanionLrcFile(audioFile: File, lyricsText: String?): String? {
+        try {
+            val parentDir = audioFile.parentFile ?: return null
             val lrcFile = File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
 
             if (lyricsText.isNullOrBlank()) {
                 if (lrcFile.exists() && lrcFile.canWrite()) {
                     lrcFile.delete()
                 }
+                return null
             } else {
                 FileOutputStream(lrcFile).use { fos ->
                     fos.write(lyricsText.toByteArray(StandardCharsets.UTF_8))
                     fos.flush()
                 }
+                return lrcFile.absolutePath
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not write companion .lrc file: ${e.message}")
         }
+        return null
     }
 
     private fun updateMediaStoreTags(
@@ -102,12 +174,20 @@ object AudioTagWriter {
         contentUriString: String?,
         newTitle: String,
         newArtist: String,
-        newAlbum: String
+        newAlbum: String,
+        newGenre: String? = null,
+        newYear: Int? = null,
+        newTrackNumber: Int? = null
     ) {
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.TITLE, newTitle)
             put(MediaStore.Audio.Media.ARTIST, newArtist)
             put(MediaStore.Audio.Media.ALBUM, newAlbum)
+            if (newYear != null && newYear > 0) put(MediaStore.Audio.Media.YEAR, newYear)
+            if (newTrackNumber != null && newTrackNumber > 0) put(MediaStore.Audio.Media.TRACK, newTrackNumber)
+            if (!newGenre.isNullOrBlank() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                put(MediaStore.Audio.Media.GENRE, newGenre)
+            }
         }
 
         if (!contentUriString.isNullOrBlank() && contentUriString.startsWith("content://")) {
@@ -134,8 +214,12 @@ object AudioTagWriter {
         title: String,
         artist: String,
         album: String,
+        genre: String?,
+        year: Int?,
+        trackNumber: Int?,
         artworkUri: String?,
         lyrics: String?,
+        contentUriString: String?,
         context: Context
     ) {
         val fileLength = file.length()
@@ -175,10 +259,10 @@ object AudioTagWriter {
         }
 
         // 3. Build new ID3v2.3 tag
-        val id3v2Bytes = buildId3v23Tag(title, artist, album, artworkUri, lyrics, context, file.absolutePath)
+        val id3v2Bytes = buildId3v23Tag(title, artist, album, genre, year, trackNumber, artworkUri, lyrics, context, file.absolutePath)
 
         // 4. Build ID3v1 tag
-        val id3v1Bytes = buildId3v1Tag(title, artist, album)
+        val id3v1Bytes = buildId3v1Tag(title, artist, album, year, trackNumber)
 
         // 5. Write to temporary file
         val tempFile = File(file.parentFile, "${file.name}.tmp_${System.currentTimeMillis()}")
@@ -220,6 +304,19 @@ object AudioTagWriter {
                     tempFile.delete()
                 }
             }
+
+            // Fallback via Scoped Storage ContentResolver if file was not writable directly
+            if (!writeSuccess && !contentUriString.isNullOrBlank() && tempFile.exists()) {
+                try {
+                    val uri = Uri.parse(contentUriString)
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { dst ->
+                        FileInputStream(tempFile).use { src ->
+                            src.copyTo(dst)
+                            writeSuccess = true
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed replacing MP3 with updated tags: ${e.message}", e)
         } finally {
@@ -237,6 +334,9 @@ object AudioTagWriter {
         title: String,
         artist: String,
         album: String,
+        genre: String? = null,
+        year: Int? = null,
+        trackNumber: Int? = null,
         artworkUri: String?,
         lyrics: String?,
         context: Context,
@@ -257,6 +357,21 @@ object AudioTagWriter {
         // TALB (Album)
         if (album.isNotBlank()) {
             writeTextFrame(framesStream, "TALB", album)
+        }
+
+        // TCON (Genre)
+        if (!genre.isNullOrBlank()) {
+            writeTextFrame(framesStream, "TCON", genre)
+        }
+
+        // TYER (Year)
+        if (year != null && year > 0) {
+            writeTextFrame(framesStream, "TYER", year.toString())
+        }
+
+        // TRCK (Track Number)
+        if (trackNumber != null && trackNumber > 0) {
+            writeTextFrame(framesStream, "TRCK", trackNumber.toString())
         }
 
         // USLT (Lyrics)
@@ -390,7 +505,13 @@ object AudioTagWriter {
         out.write(frameData)
     }
 
-    private fun buildId3v1Tag(title: String, artist: String, album: String): ByteArray {
+    private fun buildId3v1Tag(
+        title: String,
+        artist: String,
+        album: String,
+        year: Int? = null,
+        trackNumber: Int? = null
+    ): ByteArray {
         val tag = ByteArray(128)
         // "TAG" (3 bytes)
         tag[0] = 'T'.code.toByte()
@@ -404,11 +525,11 @@ object AudioTagWriter {
         // Album (30 bytes)
         writeFixedString(tag, 63, 30, album)
         // Year (4 bytes)
-        writeFixedString(tag, 93, 4, "")
-        // Comment (28 bytes) + Track flag (1 byte = 0) + Track # (1 byte = 0) + Genre (1 byte = 255)
+        writeFixedString(tag, 93, 4, if (year != null && year > 0) year.toString() else "")
+        // Comment (28 bytes) + Track flag (1 byte = 0) + Track # (1 byte) + Genre (1 byte = 255)
         writeFixedString(tag, 97, 28, "OffGrid Music")
-        tag[125] = 0
-        tag[126] = 0
+        tag[125] = 0 // Track flag
+        tag[126] = (trackNumber ?: 0).coerceIn(0, 255).toByte()
         tag[127] = 255.toByte() // Unknown genre
 
         return tag

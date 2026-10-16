@@ -105,6 +105,7 @@ fun PlaylistDetailScreen(
     var selectedSortOrder by remember(playlist.id) { mutableStateOf(PlaylistSortOrder.CUSTOM) }
     var isAscending by remember(playlist.id) { mutableStateOf(true) }
     var lastSavedOrderIds by remember(playlist.id) { mutableStateOf<List<Long>?>(null) }
+    val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     // Maintain a mutable list of entries for live drag-and-drop reordering with stable composite keys
     val initialEntries = remember(playlist.id, playlistSongs) {
@@ -755,7 +756,7 @@ fun PlaylistDetailScreen(
                             Box(modifier = Modifier.weight(1f)) {
                                 SongItem(
                                     song = song,
-                                    isPlaying = playbackState.currentSong?.id == song.id,
+                                    isPlaying = currentPlayingSongId == song.id,
                                     onClick = {
                                         if (!reorderableState.isDragging && !reorderableState.isSettling) {
                                             onSongClick(song, displaySongs)

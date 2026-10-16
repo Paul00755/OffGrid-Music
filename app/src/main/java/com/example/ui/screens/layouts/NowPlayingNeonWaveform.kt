@@ -71,7 +71,8 @@ fun NowPlayingNeonWaveform(
     )
 
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
-    val progress = (positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    val safePos = positionMs.coerceIn(0L, duration)
+    val progress = (safePos.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
     fun formatTime(ms: Long): String {
         val totalSecs = (ms / 1000).coerceAtLeast(0)
@@ -187,7 +188,8 @@ fun NowPlayingNeonWaveform(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 com.example.ui.components.NowPlayingWaveformVisualizer(
-                    progressMs = positionMs,
+                    trackId = song.id,
+                    progressMs = safePos,
                     durationMs = duration,
                     isPlaying = playbackState.isPlaying,
                     style = waveformStyle,
@@ -204,7 +206,7 @@ fun NowPlayingNeonWaveform(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatTime(positionMs), fontSize = 11.sp, color = BentoTextSecondary)
+                    Text(formatTime(safePos), fontSize = 11.sp, color = BentoTextSecondary)
                     Text(formatTime(duration), fontSize = 11.sp, color = BentoTextSecondary)
                 }
             }

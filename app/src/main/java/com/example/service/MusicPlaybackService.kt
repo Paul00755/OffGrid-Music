@@ -18,10 +18,16 @@ import androidx.media3.session.MediaSessionService
 import com.google.common.collect.ImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MusicPlaybackService : MediaSessionService() {
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var asyncArtDecodeJob: Job? = null
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -53,10 +59,15 @@ class MusicPlaybackService : MediaSessionService() {
                     mediaNotification.notification.flags = mediaNotification.notification.flags or
                             Notification.FLAG_ONGOING_EVENT or
                             Notification.FLAG_NO_CLEAR
+                    mediaNotification.notification.visibility = Notification.VISIBILITY_PUBLIC
 
                     // Ensure large icon artwork and text are directly embedded into the notification using authoritative cache
                     try {
                         val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
+                            ?: mediaSession.player.currentMediaItem?.let { mi ->
+                                val id = mi.mediaId.toLongOrNull() ?: 0L
+                                PlaybackManager.activeInstance?.playbackState?.value?.queue?.firstOrNull { it.id == id }
+                            }
                         if (currentSong != null) {
                             try {
                                 mediaNotification.notification.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, currentSong.displayTitle)
@@ -82,7 +93,7 @@ class MusicPlaybackService : MediaSessionService() {
                                     ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(this@MusicPlaybackService, currentSong.id, currentSong.path)
                                 if (!localUriStr.isNullOrBlank()) {
                                     try {
-                                        bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 512)
+                                        bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 256)
                                         if (bmp != null) {
                                             com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
                                         }
@@ -93,20 +104,10 @@ class MusicPlaybackService : MediaSessionService() {
                             if (bmp != null && !bmp.isRecycled) {
                                 @Suppress("DEPRECATION")
                                 mediaNotification.notification.largeIcon = bmp
-                                val icon = android.graphics.drawable.Icon.createWithBitmap(bmp)
-                                mediaNotification.notification.extras.putParcelable(android.app.Notification.EXTRA_LARGE_ICON, icon)
-                                mediaNotification.notification.extras.putParcelable(android.app.Notification.EXTRA_LARGE_ICON_BIG, icon)
-                                mediaNotification.notification.extras.putParcelable("androidx.core.app.NotificationCompat.LARGE_ICON", bmp)
-                                mediaNotification.notification.extras.putParcelable(android.app.Notification.EXTRA_PICTURE, bmp)
-                                mediaNotification.notification.extras.putParcelable(android.app.Notification.EXTRA_PICTURE_ICON, icon)
-                                try {
-                                    val field = android.app.Notification::class.java.getDeclaredField("mLargeIcon")
-                                    field.isAccessible = true
-                                    field.set(mediaNotification.notification, icon)
-                                } catch (_: Throwable) {}
                             } else {
                                 // Asynchronously decode and dispatch notification update without blocking
-                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                asyncArtDecodeJob?.cancel()
+                                asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
                                     val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
                                         this@MusicPlaybackService,
                                         currentSong.id,
@@ -118,7 +119,7 @@ class MusicPlaybackService : MediaSessionService() {
                                         val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
                                         if (newBmp != null) {
                                             com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp)
-                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            withContext(Dispatchers.Main) {
                                                 if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
                                                     triggerNotificationUpdate()
                                                 }
@@ -156,7 +157,8 @@ class MusicPlaybackService : MediaSessionService() {
             e.printStackTrace()
         }
         val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
-        session?.let { safeAddSession(it) }
+            ?: PlaybackManager.getInstance(applicationContext).mediaSession
+        safeAddSession(session)
     }
 
     fun safeAddSession(session: MediaSession?) {
@@ -179,26 +181,36 @@ class MusicPlaybackService : MediaSessionService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            try {
+                notificationManager.deleteNotificationChannel("media_playback_channel")
+            } catch (_: Throwable) {}
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Music Playback Controls",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Media controls and current playing song"
-                setShowBadge(false)
+                setShowBadge(true)
+                setSound(null, null)
+                enableVibration(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
-        return activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
+        val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
+            ?: PlaybackManager.getInstance(applicationContext).mediaSession
+        safeAddSession(session)
+        return session
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        activeMediaSession?.let { safeAddSession(it) }
+        val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
+            ?: PlaybackManager.getInstance(applicationContext).mediaSession
+        safeAddSession(session)
         if (intent?.action == ACTION_HEADPHONE_CONNECTED) {
             val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(applicationContext)
             pm.handleHeadphoneConnectedFromBroadcast()
@@ -209,14 +221,13 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
-            val prefs = com.example.data.local.UserPreferencesRepository.getInstance(applicationContext)
-            val isAutoPlayEnabled = prefs.cachedAutoPlayOnHeadphoneConnection
             val player = activeMediaSession?.player ?: PlaybackManager.activeInstance?.player
             val isPlaying = player?.isPlaying == true
+            val hasActiveSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null || (player != null && player.mediaItemCount > 0)
 
-            // Only stop service and dismiss notification if auto-play is not enabled and player is not actively playing
-            if (!isAutoPlayEnabled && !isPlaying) {
-                player?.pause()
+            // Keep notification persistent in mobile status bar even if swiped from recents so user can resume anytime.
+            // Only stop service and dismiss notification if there is no active song loaded at all.
+            if (!isPlaying && !hasActiveSong) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                 } else {
@@ -237,12 +248,13 @@ class MusicPlaybackService : MediaSessionService() {
             val player = session.player
             val isPlaying = player.isPlaying || player.playWhenReady
             val hasActiveMedia = player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
-            val shouldStartInForeground = startInForegroundRequired || isPlaying || hasActiveMedia
-            if (isPlaying) {
+            val shouldHoldWakeLock = isPlaying || (player.playWhenReady && hasActiveMedia)
+            if (shouldHoldWakeLock) {
                 acquireWakeLock()
             } else {
                 releaseWakeLock()
             }
+            val shouldStartInForeground = startInForegroundRequired || isPlaying || (player.playWhenReady && hasActiveMedia)
             super.onUpdateNotification(session, shouldStartInForeground)
         } catch (e: Throwable) {
             try {
@@ -288,60 +300,41 @@ class MusicPlaybackService : MediaSessionService() {
                             ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(this@MusicPlaybackService, currentSong.id, currentSong.path)
                         if (!localUriStr.isNullOrBlank()) {
                             try {
-                                bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 512)
+                                bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 256)
                                 if (bmp != null) {
                                     com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
                                 }
                             } catch (_: Throwable) {}
                         }
                     }
-                    val meta = androidx.media3.common.MediaMetadata.Builder()
-                        .setTitle(currentSong.displayTitle)
-                        .setArtist(currentSong.displayArtist)
-                        .setAlbumTitle(currentSong.displayAlbum)
-                        .apply {
-                            if (bmp != null && !bmp.isRecycled) {
-                                val stream = java.io.ByteArrayOutputStream()
-                                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-                                setArtworkData(stream.toByteArray(), androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                            }
-                            if (!currentSong.artworkUri.isNullOrBlank()) {
-                                setArtworkUri(android.net.Uri.parse(currentSong.artworkUri))
-                            }
-                        }
-                        .build()
-                    session.player.playlistMetadata = meta
                 }
                 val hasActiveMedia = session.player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
                 onUpdateNotification(session, hasActiveMedia)
                 lastMediaNotification?.let { mn ->
+                    mn.notification.flags = mn.notification.flags or
+                            Notification.FLAG_ONGOING_EVENT or
+                            Notification.FLAG_NO_CLEAR
+                    mn.notification.visibility = Notification.VISIBILITY_PUBLIC
                     val bmp = currentSong?.let { com.example.util.ArtworkManager.getCachedNotificationBitmap(it.id) }
                     if (bmp != null && !bmp.isRecycled) {
                         @Suppress("DEPRECATION")
                         mn.notification.largeIcon = bmp
-                        val icon = android.graphics.drawable.Icon.createWithBitmap(bmp)
-                        mn.notification.extras.putParcelable(android.app.Notification.EXTRA_LARGE_ICON, icon)
-                        mn.notification.extras.putParcelable(android.app.Notification.EXTRA_LARGE_ICON_BIG, icon)
-                        mn.notification.extras.putParcelable("androidx.core.app.NotificationCompat.LARGE_ICON", bmp)
-                        mn.notification.extras.putParcelable(android.app.Notification.EXTRA_PICTURE, bmp)
-                        mn.notification.extras.putParcelable(android.app.Notification.EXTRA_PICTURE_ICON, icon)
-                        try {
-                            val field = android.app.Notification::class.java.getDeclaredField("mLargeIcon")
-                            field.isAccessible = true
-                            field.set(mn.notification, icon)
-                        } catch (_: Throwable) {}
                     }
                     try {
                         lastNotificationCallback?.onNotificationChanged(mn)
                     } catch (_: Throwable) {}
-                    val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                    notificationManager?.notify(mn.notificationId, mn.notification)
+                    try {
+                        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                        notificationManager?.notify(mn.notificationId, mn.notification)
+                    } catch (_: Throwable) {}
                 }
             } catch (_: Exception) {}
         }
     }
 
     override fun onDestroy() {
+        asyncArtDecodeJob?.cancel()
+        serviceScope.cancel()
         releaseWakeLock()
         activeMediaSession?.let { safeRemoveSession(it) }
         try {
@@ -354,7 +347,7 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     companion object {
-        const val CHANNEL_ID = "media_playback_channel"
+        const val CHANNEL_ID = "media_playback_channel_v2"
         const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
         var instance: MusicPlaybackService? = null
         var lastNotificationCallback: MediaNotification.Provider.Callback? = null
