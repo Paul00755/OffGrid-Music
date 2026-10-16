@@ -1,0 +1,6 @@
+{
+  "summary": "Resolved APK installation issue by restoring the persistent signing keystore in GitHub Actions, configuring stable Gradle execution parameters to resolve the KSP CI crash, bumping versionCode to 2, and setting targetSdk to 35.",
+  "updatedAt": "2026-10-16T11:00:48.348866549Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
