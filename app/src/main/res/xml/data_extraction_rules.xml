@@ -6,15 +6,19 @@
 <data-extraction-rules>
     <cloud-backup>
         <!-- Include database and settings; exclude only sensitive private API keys -->
-        <include domain="database" path="offgrid_music_db" />
-        <include domain="sharedpref" path="user_settings.preferences_pb" />
+        <include domain="database" path="." />
+        <include domain="file" path="datastore" />
+        <include domain="file" path="backups" />
+        <include domain="sharedpref" path="." />
         <exclude domain="file" path="gemini_user_key.dat" />
         <exclude domain="file" path="gemini_user_key.fallback" />
     </cloud-backup>
     <device-transfer>
         <!-- Include database and settings for seamless upgrades and device transfers -->
-        <include domain="database" path="offgrid_music_db" />
-        <include domain="sharedpref" path="user_settings.preferences_pb" />
+        <include domain="database" path="." />
+        <include domain="file" path="datastore" />
+        <include domain="file" path="backups" />
+        <include domain="sharedpref" path="." />
         <exclude domain="file" path="gemini_user_key.dat" />
         <exclude domain="file" path="gemini_user_key.fallback" />
     </device-transfer>

@@ -52,20 +52,20 @@ class MusicApplication : Application(), ImageLoaderFactory {
                 }
             }
 
-            // 2. Defer heavy Room database opening & maintenance until after cold startup
-            kotlinx.coroutines.delay(8000)
+            // 2. In-place upgrade safety: immediately auto-restore library & user settings from local backup
+            com.example.data.local.DatabaseStorageManager.autoRestoreLibraryIfEmpty(this)
+            com.example.data.local.DatabaseStorageManager.autoSaveLibrarySnapshot(this)
+
+            // 3. Defer heavy Room database compaction & maintenance until after cold startup
+            kotlinx.coroutines.delay(5000)
 
             val db = AppDatabase.getInstance(this)
             val dbName = db.openHelper.databaseName
             val isOpenable = db.openHelper.readableDatabase.isOpen
             Log.i(TAG, "Startup diagnostics completed successfully. Database: $dbName (Ready: $isOpenable)")
 
-            // 3. Perform background database compacting, metrics pruning and storage de-duplication
+            // 4. Perform background database compacting, metrics pruning and storage de-duplication
             AppDatabase.performMaintenance(this)
-
-            // 4. In-place upgrade safety: auto-restore library entities if empty and take persistent backup snapshot
-            com.example.data.local.DatabaseStorageManager.autoRestoreLibraryIfEmpty(this)
-            com.example.data.local.DatabaseStorageManager.autoSaveLibrarySnapshot(this)
         } catch (t: Throwable) {
             Log.e(TAG, "Startup diagnostics encountered an issue", t)
             CrashReporter.logNonFatal(this, TAG, t, mapOf("phase" to "startup_diagnostics"))

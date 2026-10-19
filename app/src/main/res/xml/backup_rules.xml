@@ -7,8 +7,10 @@
 -->
 <full-backup-content>
     <!-- Include database and settings; exclude sensitive private API keys -->
-    <include domain="database" path="offgrid_music_db" />
-    <include domain="sharedpref" path="user_settings.preferences_pb" />
+    <include domain="database" path="." />
+    <include domain="file" path="datastore" />
+    <include domain="file" path="backups" />
+    <include domain="sharedpref" path="." />
     <exclude domain="file" path="gemini_user_key.dat" />
     <exclude domain="file" path="gemini_user_key.fallback" />
 </full-backup-content>

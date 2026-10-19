@@ -220,13 +220,45 @@ object DatabaseStorageManager {
             }
             root.put("favorites", favsArray)
 
-            val backupDir = context.getExternalFilesDir("backups") ?: context.filesDir.resolve("backups")
-            if (!backupDir.exists()) backupDir.mkdirs()
+            // Export User Settings & Preferences
+            try {
+                val userSettings = UserPreferencesRepository.getInstance(context).exportUserSettings()
+                val settingsMap = userSettings.toMap()
+                val sObj = JSONObject()
+                for ((key, value) in settingsMap) {
+                    if (value != null) {
+                        sObj.put(key, value)
+                    }
+                }
+                root.put("userSettings", sObj)
+            } catch (_: Exception) {}
+
+            val backupDirs = mutableListOf<File>()
+            try {
+                val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (dlDir != null) backupDirs.add(File(dlDir, "OffGridMusic_Backup"))
+            } catch (_: Exception) {}
+            try {
+                val docDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                if (docDir != null) backupDirs.add(File(docDir, "OffGridMusic_Backup"))
+            } catch (_: Exception) {}
+            context.getExternalFilesDir("backups")?.let { backupDirs.add(it) }
+            backupDirs.add(context.filesDir.resolve("backups"))
 
             val timestampStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val backupFile = File(backupDir, "offgrid_library_backup_$timestampStr.json")
-            backupFile.writeText(root.toString(2), Charsets.UTF_8)
-            backupFile
+            val jsonContent = root.toString(2)
+            var primaryBackupFile: File? = null
+
+            for (dir in backupDirs) {
+                try {
+                    if (!dir.exists()) dir.mkdirs()
+                    val f = File(dir, "offgrid_library_backup_$timestampStr.json")
+                    f.writeText(jsonContent, Charsets.UTF_8)
+                    File(dir, "offgrid_auto_backup.json").writeText(jsonContent, Charsets.UTF_8)
+                    if (primaryBackupFile == null) primaryBackupFile = f
+                } catch (_: Exception) {}
+            }
+            primaryBackupFile
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -321,12 +353,30 @@ object DatabaseStorageManager {
                 }
             }
 
+            // 5. Restore User Settings & Preferences
+            var restoredSettings = false
+            if (root.has("userSettings")) {
+                try {
+                    val sObj = root.getJSONObject("userSettings")
+                    val map = mutableMapOf<String, Any?>()
+                    val keys = sObj.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        map[key] = sObj.get(key)
+                    }
+                    val cloudSettings = com.example.data.sync.CloudUserSettings.fromMap(map)
+                    UserPreferencesRepository.getInstance(context).importUserSettings(cloudSettings, checkTimestamp = false)
+                    restoredSettings = true
+                } catch (_: Exception) {}
+            }
+
+            val settingsSuffix = if (restoredSettings) " and user settings restored." else "."
             BackupImportResult(
                 success = true,
                 playlistsRestored = restoredPlaylists,
                 smartPlaylistsRestored = restoredSmart,
                 favoritesRestored = restoredFavs,
-                message = "Restored $restoredPlaylists playlist(s), $restoredSmart smart playlist(s), and marked $restoredFavs song(s) as favorite."
+                message = "Restored $restoredPlaylists playlist(s), $restoredSmart smart playlist(s), marked $restoredFavs song(s) as favorite$settingsSuffix"
             )
         } catch (e: Exception) {
             BackupImportResult(
@@ -341,29 +391,44 @@ object DatabaseStorageManager {
 
     suspend fun autoSaveLibrarySnapshot(context: Context) = withContext(Dispatchers.IO) {
         try {
-            val db = AppDatabase.getInstance(context)
-            val playlistCount = db.playlistDao().getAllPlaylistsOnce().size
-            val songCount = db.songDao().getSongCountOnce()
-            if (playlistCount > 0 || songCount > 0) {
-                exportDatabaseBackup(context)
-            }
+            exportDatabaseBackup(context)
         } catch (_: Exception) {}
     }
 
     suspend fun autoRestoreLibraryIfEmpty(context: Context) = withContext(Dispatchers.IO) {
         try {
-            val db = AppDatabase.getInstance(context)
-            val existingPlaylists = db.playlistDao().getAllPlaylistsOnce()
-            if (existingPlaylists.isEmpty()) {
-                val backupDir = context.getExternalFilesDir("backups") ?: context.filesDir.resolve("backups")
-                if (backupDir.exists()) {
-                    val latestBackup = backupDir.listFiles { f -> f.extension == "json" && f.name.startsWith("offgrid_library_backup_") }
-                        ?.maxByOrNull { it.lastModified() }
-                    if (latestBackup != null && latestBackup.exists()) {
-                        val json = latestBackup.readText(Charsets.UTF_8)
-                        importDatabaseBackup(context, json)
+            val candidateDirs = mutableListOf<File>()
+            try {
+                val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (dlDir != null) candidateDirs.add(File(dlDir, "OffGridMusic_Backup"))
+            } catch (_: Exception) {}
+            try {
+                val docDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                if (docDir != null) candidateDirs.add(File(docDir, "OffGridMusic_Backup"))
+            } catch (_: Exception) {}
+            context.getExternalFilesDir("backups")?.let { candidateDirs.add(it) }
+            candidateDirs.add(context.filesDir.resolve("backups"))
+
+            var latestBackup: File? = null
+            for (dir in candidateDirs) {
+                if (dir.exists()) {
+                    val autoFile = File(dir, "offgrid_auto_backup.json")
+                    if (autoFile.exists() && autoFile.length() > 0) {
+                        if (latestBackup == null || autoFile.lastModified() > latestBackup.lastModified()) {
+                            latestBackup = autoFile
+                        }
+                    }
+                    val files = dir.listFiles { f -> f.extension == "json" && f.name.startsWith("offgrid_library_backup_") }
+                    val dirLatest = files?.maxByOrNull { it.lastModified() }
+                    if (dirLatest != null && (latestBackup == null || dirLatest.lastModified() > latestBackup.lastModified())) {
+                        latestBackup = dirLatest
                     }
                 }
+            }
+
+            if (latestBackup != null && latestBackup.exists()) {
+                val json = latestBackup.readText(Charsets.UTF_8)
+                importDatabaseBackup(context, json)
             }
         } catch (_: Exception) {}
     }
