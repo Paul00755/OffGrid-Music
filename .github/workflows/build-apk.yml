@@ -63,11 +63,25 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m" -Djava.awt.headless=true -Dksp.daemon=false --stacktrace
 
+      - name: Prepare OffGrid Music.apk
+        run: |
+          COMPILED_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
+          if [ -z "$COMPILED_APK" ] || [ ! -f "$COMPILED_APK" ]; then
+            echo "Error: No APK found in app/build/outputs/apk/debug/"
+            exit 1
+          fi
+          echo "Found compiled APK: $COMPILED_APK"
+          APK_DIR=$(dirname "$COMPILED_APK")
+          TARGET_APK="$APK_DIR/OffGrid Music.apk"
+          if [ "$COMPILED_APK" != "$TARGET_APK" ]; then
+            cp "$COMPILED_APK" "$TARGET_APK"
+          fi
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OffGrid-Music-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: OffGrid-Music-APK
+          path: app/build/outputs/apk/debug/OffGrid Music.apk
           retention-days: 30
 
       - name: Publish GitHub Release (Latest & Versioned APK)
@@ -75,13 +89,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Locate the compiled APK
-          APK_PATH=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
-          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
-            echo "Error: No APK found in app/build/outputs/apk/debug/"
-            exit 1
+          # 1. Target the prepared APK
+          APK_PATH="app/build/outputs/apk/debug/OffGrid Music.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            APK_PATH=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
           fi
-          echo "Found compiled APK: $APK_PATH"
+          echo "Using release APK: $APK_PATH"
 
           # 2. Configure git bot for tagging
           git config user.name "github-actions[bot]"
@@ -97,14 +110,14 @@ jobs:
             gh release upload latest "$APK_PATH" --clobber
             gh release edit latest \
               --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **app-debug.apk** below to install." \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install." \
               --target "${{ github.sha }}" \
               --latest
           else
             echo "Creating initial 'latest' release..."
             gh release create latest "$APK_PATH" \
               --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **app-debug.apk** below to install." \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install." \
               --target "${{ github.sha }}" \
               --latest
           fi

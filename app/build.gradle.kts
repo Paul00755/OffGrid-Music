@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.io.File
 
 plugins {
   alias(libs.plugins.android.application)
@@ -14,7 +15,7 @@ android {
   compileSdk = 36
 
   defaultConfig {
-    applicationId = "com.aistudio.offgridmusic.player"
+    applicationId = "com.aistudio.offgridmusic.app"
     minSdk = 24
     targetSdk = 35
     versionCode = 3
@@ -67,6 +68,11 @@ android {
       useLegacyPackaging = true
     }
   }
+
+}
+
+base {
+  archivesName.set("OffGrid Music")
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
