@@ -338,4 +338,33 @@ object DatabaseStorageManager {
             )
         }
     }
+
+    suspend fun autoSaveLibrarySnapshot(context: Context) = withContext(Dispatchers.IO) {
+        try {
+            val db = AppDatabase.getInstance(context)
+            val playlistCount = db.playlistDao().getAllPlaylistsOnce().size
+            val songCount = db.songDao().getSongCountOnce()
+            if (playlistCount > 0 || songCount > 0) {
+                exportDatabaseBackup(context)
+            }
+        } catch (_: Exception) {}
+    }
+
+    suspend fun autoRestoreLibraryIfEmpty(context: Context) = withContext(Dispatchers.IO) {
+        try {
+            val db = AppDatabase.getInstance(context)
+            val existingPlaylists = db.playlistDao().getAllPlaylistsOnce()
+            if (existingPlaylists.isEmpty()) {
+                val backupDir = context.getExternalFilesDir("backups") ?: context.filesDir.resolve("backups")
+                if (backupDir.exists()) {
+                    val latestBackup = backupDir.listFiles { f -> f.extension == "json" && f.name.startsWith("offgrid_library_backup_") }
+                        ?.maxByOrNull { it.lastModified() }
+                    if (latestBackup != null && latestBackup.exists()) {
+                        val json = latestBackup.readText(Charsets.UTF_8)
+                        importDatabaseBackup(context, json)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
 }

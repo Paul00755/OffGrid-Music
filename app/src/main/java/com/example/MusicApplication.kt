@@ -62,6 +62,10 @@ class MusicApplication : Application(), ImageLoaderFactory {
 
             // 3. Perform background database compacting, metrics pruning and storage de-duplication
             AppDatabase.performMaintenance(this)
+
+            // 4. In-place upgrade safety: auto-restore library entities if empty and take persistent backup snapshot
+            com.example.data.local.DatabaseStorageManager.autoRestoreLibraryIfEmpty(this)
+            com.example.data.local.DatabaseStorageManager.autoSaveLibrarySnapshot(this)
         } catch (t: Throwable) {
             Log.e(TAG, "Startup diagnostics encountered an issue", t)
             CrashReporter.logNonFatal(this, TAG, t, mapOf("phase" to "startup_diagnostics"))
