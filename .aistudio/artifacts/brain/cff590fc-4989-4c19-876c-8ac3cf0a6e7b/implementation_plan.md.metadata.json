@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan to resolve package installation conflict by updating the Application ID for clean coexistence and renaming the APK output to 'OffGrid Music.apk'.",
-  "updatedAt": "2026-10-19T11:27:39.107090607Z",
+  "summary": "Revised implementation plan to restore the primary package ID 'com.aistudio.offgridmusic.player' with incremented versionCode so the app upgrades in-place instead of installing as a separate duplicate app, preserving all existing local user data (Room database, favorites, playlists, and settings), while eliminating the GitHub Actions KSP daemon error and maintaining the 'OffGrid Music.apk' output.",
+  "updatedAt": "2026-10-19T12:28:30.892950271Z",
   "requestFeedback": true,
   "userFacing": true
 }

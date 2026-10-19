@@ -61,7 +61,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m" -Djava.awt.headless=true -Dksp.daemon=false --stacktrace
+        run: ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m" -Djava.awt.headless=true --stacktrace
 
       - name: Prepare OffGrid Music.apk
         run: |
