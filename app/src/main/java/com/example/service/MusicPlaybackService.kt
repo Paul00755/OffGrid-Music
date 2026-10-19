@@ -87,17 +87,9 @@ class MusicPlaybackService : MediaSessionService() {
                                 }
                             }
                             if (bmp == null || bmp.isRecycled) {
-                                val localUriStr = currentSong.artworkUri
-                                    ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(this@MusicPlaybackService, currentSong.id, currentSong.path)
-                                    ?: com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id)
-                                    ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(this@MusicPlaybackService, currentSong.id, currentSong.path)
-                                if (!localUriStr.isNullOrBlank()) {
-                                    try {
-                                        bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 256)
-                                        if (bmp != null) {
-                                            com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
-                                        }
-                                    } catch (_: Throwable) {}
+                                val memCached = com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id)
+                                if (memCached != null) {
+                                    bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
                                 }
                             }
 
@@ -292,19 +284,28 @@ class MusicPlaybackService : MediaSessionService() {
             try {
                 val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
                 if (currentSong != null) {
-                    var bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
+                    val bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
                     if (bmp == null || bmp.isRecycled) {
-                        val localUriStr = currentSong.artworkUri
-                            ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(this@MusicPlaybackService, currentSong.id, currentSong.path)
-                            ?: com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id)
-                            ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(this@MusicPlaybackService, currentSong.id, currentSong.path)
-                        if (!localUriStr.isNullOrBlank()) {
-                            try {
-                                bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(this@MusicPlaybackService, localUriStr, 256)
-                                if (bmp != null) {
-                                    com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
+                        asyncArtDecodeJob?.cancel()
+                        asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
+                            val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                                this@MusicPlaybackService,
+                                currentSong.id,
+                                currentSong.path,
+                                currentSong.albumId,
+                                currentSong.artworkUri
+                            )
+                            if (loadedBytes != null && loadedBytes.isNotEmpty()) {
+                                val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
+                                if (newBmp != null) {
+                                    com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp)
+                                    withContext(Dispatchers.Main) {
+                                        if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
+                                            triggerNotificationUpdate()
+                                        }
+                                    }
                                 }
-                            } catch (_: Throwable) {}
+                            }
                         }
                     }
                 }

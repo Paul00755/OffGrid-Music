@@ -480,6 +480,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.Lazily,
         listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums")
     )
+    val displayScale: StateFlow<String> = preferences.displayScale.stateIn(viewModelScope, SharingStarted.Lazily, "DEFAULT")
 
     private val _speedDialSongs = MutableStateFlow<List<Song>>(emptyList())
     val speedDialSongs: StateFlow<List<Song>> = _speedDialSongs.asStateFlow()
@@ -724,6 +725,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun setFadeInOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeInOutMs(ms) }
+    fun setDisplayScale(scale: String) = viewModelScope.launch { preferences.setDisplayScale(scale) }
     fun setNormalizeAudio(enabled: Boolean) = viewModelScope.launch { preferences.setNormalizeAudio(enabled) }
     fun setFadeInMs(ms: Int) = viewModelScope.launch { preferences.setFadeInMs(ms) }
     fun setFadeOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeOutMs(ms) }

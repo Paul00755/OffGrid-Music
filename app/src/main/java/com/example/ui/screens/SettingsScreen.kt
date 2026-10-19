@@ -498,6 +498,8 @@ fun SettingsScreen(
     onSetThemeMode: (String) -> Unit = {},
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     onSetUiTheme: (String) -> Unit = {},
+    displayScale: String = "DEFAULT",
+    onSetDisplayScale: (String) -> Unit = {},
     homeScreenLayout: String = "BENTO_MOSAIC",
     onSetHomeScreenLayout: (String) -> Unit = {},
     nowPlayingLayout: String = "MODERN_BENTO",
@@ -2635,6 +2637,46 @@ fun SettingsScreen(
                                         onSetUiTheme(fallback.id)
                                     }
                                     onSetThemeMode(newMode)
+                                },
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                        }
+
+                        SettingsDivider()
+
+                        // Display Scale (UI Size)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Display Scale", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                Text(
+                                    text = when (displayScale.uppercase()) {
+                                        "COMPACT" -> "Compact (0.92x)"
+                                        "COMFORT" -> "Comfort (1.08x)"
+                                        else -> "Standard (1.0x)"
+                                    },
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary
+                                )
+                            }
+                            Text(
+                                "Controls overall UI component, font, and button sizing across all screens",
+                                fontSize = 11.5.sp,
+                                color = BentoTextSecondary
+                            )
+                            SettingsSegmentedSelector(
+                                options = listOf(
+                                    "COMPACT" to "Compact",
+                                    "DEFAULT" to "Standard",
+                                    "COMFORT" to "Comfort"
+                                ),
+                                selectedOption = displayScale.uppercase(),
+                                onSelectOption = { newScale ->
+                                    HapticUtils.performClickHaptic(context)
+                                    onSetDisplayScale(newScale)
                                 },
                                 accentColor = Color(0xFFBB86FC)
                             )

@@ -83,17 +83,19 @@ class MainActivity : ComponentActivity() {
                 else -> null
             }
 
-            val context = androidx.compose.ui.platform.LocalContext.current
-            val baseDensityFactor = remember(context) {
-                val dm = context.resources.displayMetrics
-                // System-wide Small Display Size:
-                // Reduces UI component footprint by ~18% uniformly across all screens (Settings, Playlists,
-                // PlaylistDetail, Library, HomeScreen, Search, UpNextQueue, RecentlyPlayed, MostPlayed, Stats, etc.)
-                // Guarantees all components, buttons, and text render comfortably, compactly, and crisply across all screen sizes.
-                val compactDensity = (dm.density * 0.82f).coerceAtLeast(1.2f)
+            val displayScale by viewModel.displayScale.collectAsState()
+            val currentDensity = androidx.compose.ui.platform.LocalDensity.current
+            val baseDensityFactor = remember(currentDensity, displayScale) {
+                val scaleMultiplier = when (displayScale.uppercase()) {
+                    "COMFORT" -> 1.08f
+                    "COMPACT" -> 0.92f
+                    else -> 1.0f
+                }
+                val safeDensity = (currentDensity.density * scaleMultiplier).coerceIn(0.5f, 5.0f)
+                val safeFontScale = (currentDensity.fontScale * scaleMultiplier).coerceIn(0.5f, 3.0f)
                 androidx.compose.ui.unit.Density(
-                    density = compactDensity,
-                    fontScale = 0.82f
+                    density = safeDensity,
+                    fontScale = safeFontScale
                 )
             }
 

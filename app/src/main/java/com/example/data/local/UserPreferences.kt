@@ -22,6 +22,7 @@ class UserPreferencesRepository(private val context: Context) {
         val PLAYLISTS_LAYOUT = stringPreferencesKey("playlists_layout") // "BENTO_GRID", "MAGAZINE_HERO", "COMPACT_LIST", "GLOW_CARDS"
         val ACCENT_COLOR = stringPreferencesKey("accent_color")
         val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
+        val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
         val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
         val LYRICS_FETCH_MODE = stringPreferencesKey("lyrics_fetch_mode") // "ALWAYS", "WIFI_ONLY", "OFF"
         val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "COUNT", "BOTH"
@@ -557,6 +558,10 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN"
     }
 
+    val displayScale: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.DISPLAY_SCALE] ?: "DEFAULT"
+    }
+
     val homeScreenLayout: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC"
     }
@@ -1013,6 +1018,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setUiTheme(themeId: String) {
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.UI_THEME] = themeId
+        }
+    }
+
+    suspend fun setDisplayScale(scale: String) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.DISPLAY_SCALE] = scale
         }
     }
 

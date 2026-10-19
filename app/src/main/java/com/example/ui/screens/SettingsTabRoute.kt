@@ -110,6 +110,8 @@ fun SettingsTabRoute(
         onSetThemeMode = { viewModel.setThemeMode(it) },
         uiTheme = uiTheme,
         onSetUiTheme = { viewModel.setUiTheme(it) },
+        displayScale = viewModel.displayScale.collectAsState().value,
+        onSetDisplayScale = { viewModel.setDisplayScale(it) },
         homeScreenLayout = homeScreenLayout,
         onSetHomeScreenLayout = { viewModel.setHomeScreenLayout(it) },
         nowPlayingLayout = nowPlayingLayout,

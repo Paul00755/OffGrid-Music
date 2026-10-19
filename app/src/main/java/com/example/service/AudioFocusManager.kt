@@ -47,18 +47,18 @@ class AudioFocusManager(
                 hasAudioFocus = false
                 wasPausedByTransientFocus = false
                 wasDuckedByTransientFocus = false
-                onRestoreVolumeRequested()
-                onPauseRequested()
+                try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+                try { onPauseRequested() } catch (_: Throwable) {}
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                val isPhoneCall = audioManager?.mode != AudioManager.MODE_NORMAL
+                val isPhoneCall = try { audioManager?.mode != AudioManager.MODE_NORMAL } catch (_: Throwable) { false }
                 val shouldPause = isPhoneCall || !ignoreTransientFocusLoss
                 if (shouldPause) {
-                    val currentlyPlaying = isPlayingProvider()
+                    val currentlyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
                     if (currentlyPlaying) {
                         Log.d(TAG, "Transient focus loss (camera, call, or external request), cleanly pausing playback")
                         wasPausedByTransientFocus = true
-                        onPauseRequested()
+                        try { onPauseRequested() } catch (_: Throwable) {}
                     } else {
                         Log.d(TAG, "Transient focus loss received while already paused, preserving paused state")
                         wasPausedByTransientFocus = false
@@ -71,7 +71,7 @@ class AudioFocusManager(
                 if (reduceVolumeOnNotification) {
                     Log.d(TAG, "Ducking volume for notification alert")
                     wasDuckedByTransientFocus = true
-                    onDuckRequested(0.25f)
+                    try { onDuckRequested(0.25f) } catch (_: Throwable) {}
                 }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
@@ -79,12 +79,12 @@ class AudioFocusManager(
                 hasAudioFocus = true
                 if (wasDuckedByTransientFocus) {
                     wasDuckedByTransientFocus = false
-                    onRestoreVolumeRequested()
+                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
                 }
                 if (wasPausedByTransientFocus) {
                     wasPausedByTransientFocus = false
                     Log.d(TAG, "Resuming playback automatically after camera / transient focus")
-                    onResumeRequested()
+                    try { onResumeRequested() } catch (_: Throwable) {}
                 }
             }
         }

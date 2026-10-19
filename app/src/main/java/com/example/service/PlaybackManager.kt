@@ -11,6 +11,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.model.Song
+import com.example.util.ArtworkColorExtractor
 import com.example.util.ArtworkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,18 +66,28 @@ class PlaybackManager(
     init {
         activeInstance = this
         sleepTimerManager.isPlaybackActive = {
-            player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying || _playbackState.value.currentSong != null
+            try {
+                player.isPlaying || player.playWhenReady
+            } catch (_: Throwable) {
+                false
+            }
         }
         sleepTimerManager.onTimerExpired = { handleSleepTimerExpired() }
     }
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
     val audioFocusManager = AudioFocusManager(
         context = context,
-        isPlayingProvider = { player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying },
+        isPlayingProvider = {
+            try {
+                player.isPlaying || player.playWhenReady
+            } catch (_: Throwable) {
+                false
+            }
+        },
         onPauseRequested = { pause() },
         onResumeRequested = { play() },
-        onDuckRequested = { duckVol -> player.volume = duckVol },
-        onRestoreVolumeRequested = { player.volume = 1.0f }
+        onDuckRequested = { duckVol -> try { player.volume = duckVol } catch (_: Throwable) {} },
+        onRestoreVolumeRequested = { try { player.volume = 1.0f } catch (_: Throwable) {} }
     )
     val stereoBalanceProcessor = StereoBalanceAudioProcessor()
     val audioNormalizerProcessor = AudioNormalizerProcessor()
@@ -103,7 +114,21 @@ class PlaybackManager(
         }
     }
 
+    private fun createLoadControl(): androidx.media3.exoplayer.LoadControl {
+        return androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 60_000,
+                /* bufferForPlaybackMs = */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 2_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(15_000, /* retainBackBufferFromKeyframe = */ false)
+            .build()
+    }
+
     val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
+        .setLoadControl(createLoadControl())
         .setUsePlatformDiagnostics(false)
         .build()
         .apply {
@@ -135,6 +160,7 @@ class PlaybackManager(
         get() {
             return _crossfadePlayer ?: synchronized(this) {
                 _crossfadePlayer ?: ExoPlayer.Builder(context, crossfadeRenderersFactory)
+                    .setLoadControl(createLoadControl())
                     .setUsePlatformDiagnostics(false)
                     .build()
                     .apply {
@@ -356,6 +382,8 @@ class PlaybackManager(
     private var notificationArtworkJob: Job? = null
     private var gaplessPauseJob: Job? = null
     @Volatile private var isSleepTimerFinalStopping: Boolean = false
+    private var lastPrewarmedSongId: Long? = null
+    private var prewarmJob: Job? = null
 
     var addToQueuePosition: String = "BOTTOM"
     private var isRestoringPlayback: Boolean = false
@@ -543,6 +571,7 @@ class PlaybackManager(
                 consecutiveErrorCount = 0
                 val wasCrossfading = isCrossfadeTransitioning
                 hasTriggeredCrossfadeTransition = false
+                lastPrewarmedSongId = targetMediaId ?: currentSongId
                 if (targetMediaId != null) {
                     audioNormalizerProcessor.setTrack(targetMediaId)
                     if (!wasCrossfading) {
@@ -653,24 +682,6 @@ class PlaybackManager(
                         fadeJob = null
                         player.volume = 1.0f
                     }
-
-                    // Gapless vs Non-Gapless Playback:
-                    // When gapless is disabled and a natural transition occurs, insert a clean 250ms inter-track pause
-                    if (!gaplessPlayback && isNaturalTransition) {
-                        try {
-                            val wasPlaying = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
-                            player.pause()
-                            player.seekTo(index, 0L)
-                            gaplessPauseJob?.cancel()
-                            gaplessPauseJob = scope.launch(Dispatchers.Main) {
-                                delay(250)
-                                if (wasPlaying && !isSleepTimerFinalStopping) {
-                                    player.playWhenReady = true
-                                    player.play()
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
                 }
 
                 // Repeat Mode Logic:
@@ -747,8 +758,8 @@ class PlaybackManager(
                         stopProgressTracker()
                     }
 
-                    // Ensure playback immediately continues on natural transition with gapless playback
-                    if (isNaturalTransition && gaplessPlayback && !isSleepTimerFinalStopping) {
+                    // Ensure playback immediately continues on natural transition without any pause or seek
+                    if (isNaturalTransition && !isSleepTimerFinalStopping) {
                         try {
                             player.playWhenReady = true
                             player.play()
@@ -2528,6 +2539,43 @@ class PlaybackManager(
                             hasTriggeredCrossfadeTransition = false
                             if (!isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
+                            }
+                        }
+
+                        // Proactive Pre-Warming of Upcoming Track (balanced memory strategy)
+                        val remainingMs = reliableDur - currentPos
+                        if (remainingMs in 500L..15000L && !isFinalSleepTrack && !isRepeatOne) {
+                            val nextCandidateIdx = if (player.hasNextMediaItem()) {
+                                val nextCand = player.nextMediaItemIndex
+                                if (nextCand != androidx.media3.common.C.INDEX_UNSET) nextCand else player.currentMediaItemIndex + 1
+                            } else if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ALL && _playbackState.value.queue.isNotEmpty()) {
+                                0
+                            } else -1
+
+                            val nextSong = _playbackState.value.queue.getOrNull(nextCandidateIdx)
+                            if (nextSong != null && nextSong.id != lastPrewarmedSongId && (prewarmJob == null || !prewarmJob!!.isActive)) {
+                                lastPrewarmedSongId = nextSong.id
+                                prewarmJob = scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val cached = ArtworkManager.getCachedNotificationBitmap(nextSong.id)
+                                        if (cached == null || cached.isRecycled) {
+                                            val artBytes = ArtworkManager.getNotificationArtworkBytes(
+                                                context = context,
+                                                songId = nextSong.id,
+                                                filePath = nextSong.path,
+                                                albumId = nextSong.albumId,
+                                                artworkUriStr = nextSong.artworkUri
+                                            )
+                                            if (artBytes != null && artBytes.isNotEmpty()) {
+                                                val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                                                if (bmp != null) {
+                                                    ArtworkManager.putCachedNotificationBitmap(nextSong.id, bmp)
+                                                }
+                                            }
+                                        }
+                                        ArtworkColorExtractor.extractPrimaryColorForSong(context, nextSong)
+                                    } catch (_: Throwable) {}
+                                }
                             }
                         }
 
