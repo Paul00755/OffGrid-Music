@@ -49,7 +49,9 @@ class MainActivity : ComponentActivity() {
         if (permissions.values.any { it }) {
             try {
                 val viewModel = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
-                viewModel.scanLibrary()
+                if (viewModel.isOnboardingCompleted.value) {
+                    viewModel.scanLibrary()
+                }
             } catch (_: Exception) {}
         }
     }
@@ -60,10 +62,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Asynchronously clean up any polluted duplicate artwork cache in background
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            com.example.util.ArtworkManager.purgePollutedArtworkCache(applicationContext)
-        }
+        // Preserve extracted and custom artwork cache across app restarts for instant loading
 
         registerMediaStoreObserver()
 
@@ -241,6 +240,7 @@ class MainActivity : ComponentActivity() {
                         maxDurationSec = maxSongDurationSetting,
                         fullDeviceScan = fullDeviceScanSetting,
                         onSetFullDeviceScan = { viewModel.setFullDeviceScan(it) },
+                        onSetIgnoreAudioDuration = { min -> viewModel.setIgnoreAudioDuration(min) },
                         onSetSongDurationRange = { min, max -> viewModel.setSongDurationRange(min, max) },
                         onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
                         onRemoveFolder = { viewModel.removeFolder(it) },

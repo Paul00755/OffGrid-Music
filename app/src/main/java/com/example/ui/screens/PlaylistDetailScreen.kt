@@ -50,11 +50,11 @@ data class PlaylistSongEntry(val stableKey: String, val song: Song)
 
 fun buildPlaylistEntries(songs: List<Song>, playlistId: Long): List<PlaylistSongEntry> {
     val occurrences = mutableMapOf<Long, Int>()
-    return songs.mapIndexed { index, song ->
+    return songs.map { song ->
         val count = occurrences.getOrDefault(song.id, 0) + 1
         occurrences[song.id] = count
         PlaylistSongEntry(
-            stableKey = "pl_${playlistId}_${song.id}_${count}_${index}_${song.path.hashCode()}",
+            stableKey = "pl_${playlistId}_${song.id}_${count}_${song.path.hashCode()}",
             song = song
         )
     }
@@ -107,7 +107,7 @@ fun PlaylistDetailScreen(
     var lastSavedOrderIds by remember(playlist.id) { mutableStateOf<List<Long>?>(null) }
     val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
-    // Maintain a mutable list of entries for live drag-and-drop reordering with stable composite keys
+    // Maintain a mutable list of entries for live drag-and-drop reordering with position-independent stable composite keys
     val initialEntries = remember(playlist.id, playlistSongs) {
         buildPlaylistEntries(playlistSongs, playlist.id)
     }
@@ -180,10 +180,15 @@ fun PlaylistDetailScreen(
                 val remainingEntries = localEntries.filter { entry -> newIds.contains(entry.song.id) }.toMutableList()
                 val addedSongs = playlistSongs.filter { song -> !existingMap.containsKey(song.id) }
                 if (addedSongs.isNotEmpty()) {
-                    val baseIndex = remainingEntries.size + 1
-                    val newEntries = addedSongs.mapIndexed { idx, song ->
+                    val occurrences = mutableMapOf<Long, Int>()
+                    remainingEntries.forEach { entry ->
+                        occurrences[entry.song.id] = occurrences.getOrDefault(entry.song.id, 0) + 1
+                    }
+                    val newEntries = addedSongs.map { song ->
+                        val count = occurrences.getOrDefault(song.id, 0) + 1
+                        occurrences[song.id] = count
                         PlaylistSongEntry(
-                            stableKey = "pl_${playlist.id}_${song.id}_added_${baseIndex + idx}_${song.path.hashCode()}",
+                            stableKey = "pl_${playlist.id}_${song.id}_${count}_${song.path.hashCode()}",
                             song = song
                         )
                     }
@@ -202,9 +207,7 @@ fun PlaylistDetailScreen(
                 if (lastSavedOrderIds != null && newIds == lastSavedOrderIds) {
                     lastSavedOrderIds = null
                 }
-                // Under NO circumstances do we reset or reorder localEntries when the set of songs is unchanged.
-                // In Custom Order mode, localEntries is the true source of order.
-                // CRITICAL FIX: Live update song metadata (title, artist, album, artwork, lyrics) for existing entries!
+                // Live update song metadata (title, artist, album, artwork, lyrics) for existing entries
                 val updatedSongMap = playlistSongs.associateBy { it.id }
                 for (i in localEntries.indices) {
                     val currentEntry = localEntries[i]
@@ -304,7 +307,7 @@ fun PlaylistDetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
         // Top Bar
-        item {
+        item(key = "playlist_top_bar") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -431,7 +434,7 @@ fun PlaylistDetailScreen(
         }
 
         // Header Card with Large Artwork Block
-        item {
+        item(key = "playlist_header_card") {
             BentoCard(
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = BentoCardSurface
@@ -535,7 +538,7 @@ fun PlaylistDetailScreen(
 
         // Sorting & Reordering Toolbar Card
         if (playlistSongs.isNotEmpty()) {
-            item {
+            item(key = "playlist_sort_toolbar") {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
@@ -653,7 +656,7 @@ fun PlaylistDetailScreen(
 
         // Song Items
         if (displaySongs.isEmpty()) {
-            item {
+            item(key = "playlist_empty_state") {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -675,15 +678,20 @@ fun PlaylistDetailScreen(
             ) { index, entry ->
                 val song = entry.song
                 val isCustomOrder = selectedSortOrder == PlaylistSortOrder.CUSTOM
-                val isDragging = isCustomOrder && reorderableState.draggedIndex == index
+                val isDragging = isCustomOrder && (
+                    reorderableState.draggedKey == entry.stableKey ||
+                        (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
+                )
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .animateItem(
+                            fadeInSpec = null,
+                            fadeOutSpec = null,
                             placementSpec = if (isDragging) null else spring(
                                 dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMedium
+                                stiffness = Spring.StiffnessMediumLow
                             )
                         )
                         .zIndex(if (isDragging) 100f else 0f)
@@ -710,7 +718,7 @@ fun PlaylistDetailScreen(
                                     translationY = reorderableState.dragOffsetY
                                     scaleX = 1.03f
                                     scaleY = 1.03f
-                                    rotationZ = (reorderableState.dragOffsetY * 0.02f).coerceIn(-3f, 3f)
+                                    rotationZ = (reorderableState.dragOffsetY * 0.015f).coerceIn(-2f, 2f)
                                     shadowElevation = 16.dp.toPx()
                                 }
                             },

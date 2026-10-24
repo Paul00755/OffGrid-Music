@@ -446,7 +446,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val playbackState: StateFlow<PlaybackState> = playbackManager.playbackState
     val playbackPositionMs: StateFlow<Long> = playbackManager.playbackPositionMs
     val sleepTimerState: StateFlow<SleepTimerState> = sleepTimerManager.state
-    val isOnboardingCompleted: StateFlow<Boolean> = preferences.isOnboardingCompleted.stateIn(viewModelScope, SharingStarted.Lazily, true)
+    val isOnboardingCompleted: StateFlow<Boolean> = preferences.isOnboardingCompleted.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val themeMode: StateFlow<String> = preferences.themeMode.stateIn(viewModelScope, SharingStarted.Lazily, "DARK")
     val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Lazily, "MIDNIGHT_OBSIDIAN")
     val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_DYNAMIC")
@@ -624,7 +624,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         scanner.startAutoDetection()
         viewModelScope.launch(Dispatchers.IO) {
-            scanner.detectAndImportNewSongs()
+            if (preferences.isOnboardingCompleted.first()) {
+                scanner.detectAndImportNewSongs()
+            }
         }
         audioRouteManager.onDeviceSelected = { dev ->
             playbackManager.setPreferredAudioDevice(dev)
@@ -826,9 +828,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
             preferences.setIgnoreAudioDuration(safeSec)
-            kotlinx.coroutines.delay(500)
-            val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
-            repository.quickScanAndCleanLibrary(safeSec * 1000L, maxMs)
+            if (preferences.isOnboardingCompleted.first()) {
+                kotlinx.coroutines.delay(500)
+                val isFull = preferences.fullDeviceScan.first()
+                val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
+                repository.quickScanAndCleanLibrary(safeSec * 1000L, maxMs, isFull)
+            }
         }
     }
 
@@ -837,9 +842,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
             preferences.setMaxSongDuration(safeSec)
-            kotlinx.coroutines.delay(500)
-            val maxMs = if (safeSec >= 300) Long.MAX_VALUE else safeSec * 1000L
-            repository.quickScanAndCleanLibrary(ignoreAudioDuration.value * 1000L, maxMs)
+            if (preferences.isOnboardingCompleted.first()) {
+                kotlinx.coroutines.delay(500)
+                val isFull = preferences.fullDeviceScan.first()
+                val maxMs = if (safeSec >= 300) Long.MAX_VALUE else safeSec * 1000L
+                repository.quickScanAndCleanLibrary(ignoreAudioDuration.value * 1000L, maxMs, isFull)
+            }
         }
     }
 
@@ -853,9 +861,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
             preferences.setSongDurationRange(safeMin, safeMax)
-            kotlinx.coroutines.delay(500)
-            val maxMs = if (safeMax >= 300) Long.MAX_VALUE else safeMax * 1000L
-            repository.quickScanAndCleanLibrary(safeMin * 1000L, maxMs)
+            if (preferences.isOnboardingCompleted.first()) {
+                kotlinx.coroutines.delay(500)
+                val isFull = preferences.fullDeviceScan.first()
+                val maxMs = if (safeMax >= 300) Long.MAX_VALUE else safeMax * 1000L
+                repository.quickScanAndCleanLibrary(safeMin * 1000L, maxMs, isFull)
+            }
         }
     }
     fun setFadeInOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeInOutMs(ms) }
@@ -1168,11 +1179,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun scanLibrary(forceFullScan: Boolean? = null) {
         if (scanJob?.isActive == true) return
-        val isFull = forceFullScan ?: fullDeviceScan.value
-        val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
         scanJob = viewModelScope.launch(Dispatchers.IO) {
+            val isFull = forceFullScan ?: preferences.fullDeviceScan.first()
+            val minSec = preferences.ignoreAudioDuration.first()
+            val maxSec = preferences.maxSongDuration.first()
+            val maxMs = if (maxSec >= 300) Long.MAX_VALUE else maxSec * 1000L
             repository.scanLibrary(
-                ignoreAudioDurationMs = ignoreAudioDuration.value * 1000L,
+                ignoreAudioDurationMs = minSec * 1000L,
                 maxAudioDurationMs = maxMs,
                 forceFullScan = isFull
             )
@@ -1181,11 +1194,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun quickScanAndCleanLibrary() {
         if (quickScanJob?.isActive == true || scanJob?.isActive == true) return
-        val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
         quickScanJob = viewModelScope.launch(Dispatchers.IO) {
+            val isFull = preferences.fullDeviceScan.first()
+            val minSec = preferences.ignoreAudioDuration.first()
+            val maxSec = preferences.maxSongDuration.first()
+            val maxMs = if (maxSec >= 300) Long.MAX_VALUE else maxSec * 1000L
             repository.quickScanAndCleanLibrary(
-                ignoreAudioDurationMs = ignoreAudioDuration.value * 1000L,
-                maxAudioDurationMs = maxMs
+                ignoreAudioDurationMs = minSec * 1000L,
+                maxAudioDurationMs = maxMs,
+                forceFullScan = isFull
             )
         }
     }
@@ -1445,15 +1462,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addFolder(path: String, name: String, isExcluded: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             repository.addFolder(path, name, isExcluded)
-            scanLibrary()
+            if (preferences.isOnboardingCompleted.first()) {
+                scanLibrary()
+            }
         }
     }
 
     fun removeFolder(path: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             repository.removeFolder(path)
+            if (preferences.isOnboardingCompleted.first()) {
+                scanLibrary()
+            }
         }
     }
 

@@ -64,6 +64,7 @@ class LibraryScanner(
 ) {
     companion object {
         private const val TAG = "LibraryScanner"
+        private const val SQLITE_BATCH_SIZE = 250
 
         @Volatile
         private var INSTANCE: LibraryScanner? = null
@@ -102,18 +103,19 @@ class LibraryScanner(
         format: String = "MP3"
     ): SongEntity {
         val filename = File(filePath).name
-        val manualMeta = com.example.util.ManualTagStore.getManualMetadata(context, existing?.id ?: id, filePath)
+        val resolvedId = existing?.id ?: id
+        val manualMeta = com.example.util.ManualTagStore.getManualMetadata(context, resolvedId, filePath)
         val isManual = existing?.isManuallyEdited == true ||
                 (existing != null && com.example.util.ManualTagStore.isManuallyEdited(context, existing.id, existing.path)) ||
                 manualMeta != null
 
-        val manualArt = manualMeta?.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, existing?.id ?: id, filePath)
-        val finalArtwork = manualArt ?: existing?.artworkUri ?: try {
-            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, existing?.id ?: id, filePath)
+        val manualArt = manualMeta?.artworkUri
+            ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, resolvedId, filePath)
+        val finalArtwork = manualArt ?: existing?.artworkUri?.takeIf { it.isNotBlank() } ?: try {
+            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, resolvedId, filePath)
         } catch (_: Exception) { null }
 
         if (isManual) {
-            // CRITICAL: Preserve manual user-edited tags and metadata 100%
             val resolvedTitle = manualMeta?.title?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.title else rawTitle) ?: filename.substringBeforeLast(".")
             val resolvedArtist = manualMeta?.artist?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.artist else rawArtist) ?: "Unknown Artist"
             val resolvedAlbum = manualMeta?.album?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.album else rawAlbum) ?: "Unknown Album"
@@ -122,7 +124,7 @@ class LibraryScanner(
             val resolvedTrack = manualMeta?.trackNumber ?: (if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0))
 
             return SongEntity(
-                id = existing?.id ?: id,
+                id = resolvedId,
                 title = resolvedTitle,
                 artist = resolvedArtist,
                 album = resolvedAlbum,
@@ -147,13 +149,12 @@ class LibraryScanner(
             )
         }
 
-        // Clean using authoritative TagCleaner
         val cleanTitle = TagCleaner.cleanTitle(rawTitle, filename)
         val cleanArtist = TagCleaner.cleanArtist(rawArtist)
         val cleanAlbum = TagCleaner.cleanAlbum(rawAlbum)
 
         return SongEntity(
-            id = existing?.id ?: id,
+            id = resolvedId,
             title = cleanTitle,
             artist = cleanArtist,
             album = cleanAlbum,
@@ -194,14 +195,32 @@ class LibraryScanner(
     var onScanCompletedListener: (() -> Unit)? = null
 
     init {
-        // Automatically start real-time observation for newly added songs
         startAutoDetection()
     }
 
-    /**
-     * Starts listening for newly added audio files across accessible storage partitions
-     * and custom included directories using MediaStore ContentObserver and FileObserver.
-     */
+    private suspend fun insertSongsSafelyInBatches(songs: List<SongEntity>) {
+        if (songs.isEmpty()) return
+        for (chunk in songs.chunked(SQLITE_BATCH_SIZE)) {
+            songDao.insertSongs(chunk)
+        }
+    }
+
+    private fun resolveGenuineAudioPath(rawPath: String?, relativePath: String?, displayName: String?): String? {
+        if (!rawPath.isNullOrBlank()) {
+            return rawPath.trim()
+        }
+        if (!relativePath.isNullOrBlank() && !displayName.isNullOrBlank()) {
+            val rel = relativePath.trim().trim('/')
+            val candidate = if (rel.isNotEmpty()) {
+                "/storage/emulated/0/$rel/$displayName"
+            } else {
+                "/storage/emulated/0/$displayName"
+            }
+            return candidate
+        }
+        return null
+    }
+
     fun startAutoDetection() {
         if (contentObserver != null) return
 
@@ -217,7 +236,6 @@ class LibraryScanner(
                 true,
                 contentObserver!!
             )
-            Log.d(TAG, "MediaStore ContentObserver registered successfully")
         } catch (e: Exception) {
             Log.w(TAG, "Unable to register MediaStore content observer", e)
         }
@@ -242,10 +260,6 @@ class LibraryScanner(
         debounceJob?.cancel()
     }
 
-    /**
-     * Refreshes the FileObserver watch list to monitor all configured included directories
-     * or standard music folders if no specific folders are chosen.
-     */
     fun refreshDirectoryObservers() {
         scope.launch {
             try {
@@ -290,7 +304,6 @@ class LibraryScanner(
                         } catch (_: Exception) {}
                     }
                 }
-                Log.d(TAG, "Directory observers active on ${targetDirs.size} locations")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed refreshing directory observers", e)
             }
@@ -326,29 +339,37 @@ class LibraryScanner(
     private fun scheduleDebouncedAutoDetection() {
         debounceJob?.cancel()
         debounceJob = scope.launch {
-            // Debounce filesystem and MediaStore events to coalesce rapid batch arrivals
             delay(1200L)
-            detectAndImportNewSongs()
+            val prefs = UserPreferencesRepository.getInstance(context)
+            val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
+            if (isOnboarded) {
+                detectAndImportNewSongs()
+            }
         }
     }
 
     /**
      * Incremental automatic detection of newly added songs.
-     * Checks MediaStore and monitored directories for newly available tracks,
-     * validates filter criteria, skips duplicates, and immediately updates Room.
+     * Only runs after onboarding is completed. Strictly respects included/excluded folders and duration bounds.
      */
     suspend fun detectAndImportNewSongs(): Int = withContext(Dispatchers.IO) {
+        val prefs = UserPreferencesRepository.getInstance(context)
+        val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
+        if (!isOnboarded) return@withContext 0
+
         if (!scanMutex.tryLock()) {
             pendingAutoDetect = true
             return@withContext 0
         }
 
         try {
-            val included = folderDao?.getIncludedFoldersList() ?: emptyList()
-            val excluded = folderDao?.getExcludedFoldersList() ?: emptyList()
-            val prefs = UserPreferencesRepository(context)
+            val isFullDeviceScan = prefs.fullDeviceScan.firstOrNull() ?: false
+            val included = if (isFullDeviceScan) emptyList() else (folderDao?.getIncludedFoldersList() ?: emptyList())
+            val excluded = if (isFullDeviceScan) emptyList() else (folderDao?.getExcludedFoldersList() ?: emptyList())
             val ignoreDurationSec = prefs.ignoreAudioDuration.firstOrNull() ?: 0
+            val maxDurationSec = prefs.maxSongDuration.firstOrNull() ?: 300
             val ignoreDurationMs = ignoreDurationSec * 1000L
+            val maxDurationMs = if (maxDurationSec >= 300) Long.MAX_VALUE else maxDurationSec * 1000L
 
             val normExcluded = excluded.map { normalizePath(it.path) }
             val normIncluded = included.map { normalizePath(it.path) }
@@ -362,25 +383,27 @@ class LibraryScanner(
             var duplicatesSkipped = 0
             var filteredRejected = 0
 
-            val newlyFoundSongs = mutableListOf<SongEntity>()
+            val newlyFoundMap = LinkedHashMap<String, SongEntity>()
 
-            // 1. Query MediaStore for audio entries
             try {
-                val projection = arrayOf(
-                    MediaStore.Audio.Media._ID,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.ALBUM_ID,
-                    MediaStore.Audio.Media.ARTIST_ID,
-                    MediaStore.Audio.Media.DURATION,
-                    MediaStore.Audio.Media.YEAR,
-                    MediaStore.Audio.Media.TRACK,
-                    MediaStore.Audio.Media.DATE_ADDED,
-                    MediaStore.Audio.Media.DISPLAY_NAME,
-                    MediaStore.Audio.Media.MIME_TYPE,
-                    MediaStore.Audio.Media.DATA
-                )
+                val projection = buildList {
+                    add(MediaStore.Audio.Media._ID)
+                    add(MediaStore.Audio.Media.TITLE)
+                    add(MediaStore.Audio.Media.ARTIST)
+                    add(MediaStore.Audio.Media.ALBUM)
+                    add(MediaStore.Audio.Media.ALBUM_ID)
+                    add(MediaStore.Audio.Media.ARTIST_ID)
+                    add(MediaStore.Audio.Media.DURATION)
+                    add(MediaStore.Audio.Media.YEAR)
+                    add(MediaStore.Audio.Media.TRACK)
+                    add(MediaStore.Audio.Media.DATE_ADDED)
+                    add(MediaStore.Audio.Media.DISPLAY_NAME)
+                    add(MediaStore.Audio.Media.MIME_TYPE)
+                    add(MediaStore.Audio.Media.DATA)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(MediaStore.Audio.Media.RELATIVE_PATH)
+                    }
+                }.toTypedArray()
 
                 context.contentResolver.query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -402,6 +425,9 @@ class LibraryScanner(
                     val nameCol = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                     val mimeCol = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
                     val dataCol = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
+                    val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                    } else -1
 
                     while (cursor.moveToNext()) {
                         filesDiscovered++
@@ -411,31 +437,42 @@ class LibraryScanner(
                         val rawPath = if (dataCol >= 0) {
                             try { cursor.getString(dataCol) } catch (_: Exception) { null }
                         } else null
-
+                        val relPath = if (relCol >= 0) {
+                            try { cursor.getString(relCol) } catch (_: Exception) { null }
+                        } else null
                         val displayName = if (nameCol >= 0) {
                             try { cursor.getString(nameCol) } catch (_: Exception) { null }
                         } else null
 
-                        val filePath = rawPath ?: "/storage/emulated/0/Music/${displayName ?: "audio_$id.mp3"}"
-                        val normP = normalizePath(filePath)
-
-                        if (existingById.containsKey(id) || existingByPath.containsKey(normP)) {
-                            duplicatesSkipped++
-                            continue
-                        }
-
-                        val parentFolder = if (filePath.startsWith("/")) File(filePath).parent?.trimEnd('/') ?: "" else ""
-                        if (parentFolder.isNotBlank() && isNormPathExcluded(normalizePath(parentFolder), normExcluded)) {
+                        val filePath = resolveGenuineAudioPath(rawPath, relPath, displayName)
+                        if (filePath.isNullOrBlank()) {
                             filteredRejected++
                             continue
                         }
 
-                        if (normIncluded.isNotEmpty()) {
-                            val normParent = normalizePath(parentFolder)
-                            if (!isSongInIncludedFolders(normParent, normIncluded)) {
-                                filteredRejected++
-                                continue
-                            }
+                        val normP = normalizePath(filePath)
+                        if (existingById.containsKey(id) || existingByPath.containsKey(normP) || newlyFoundMap.containsKey(normP)) {
+                            duplicatesSkipped++
+                            continue
+                        }
+
+                        // Verify actual file exists on storage if accessible
+                        val fileObj = File(filePath)
+                        if (filePath.startsWith("/") && (!fileObj.exists() || !fileObj.isFile || fileObj.length() <= 0L)) {
+                            filteredRejected++
+                            continue
+                        }
+
+                        val parentFolder = fileObj.parent?.trimEnd('/') ?: ""
+                        val normParent = normalizePath(parentFolder)
+                        if (normParent.isNotBlank() && isNormPathExcluded(normParent, normExcluded)) {
+                            filteredRejected++
+                            continue
+                        }
+
+                        if (normIncluded.isNotEmpty() && !isSongInIncludedFolders(normParent, normIncluded)) {
+                            filteredRejected++
+                            continue
                         }
 
                         val mimeType = if (mimeCol >= 0) {
@@ -452,13 +489,18 @@ class LibraryScanner(
                                 mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
-                        if (!isAudioMime && !isAudioExt && ext.isNotBlank() && !ext.equals("mp3", ignoreCase = true)) {
+                        if (!isAudioMime && !isAudioExt) {
                             filteredRejected++
                             continue
                         }
 
                         val dur = if (durationCol >= 0) cursor.getLong(durationCol) else 0L
-                        if (dur > 0 && dur < ignoreDurationMs) {
+                        if (dur <= 0L) {
+                            if (ignoreDurationMs > 0L) {
+                                filteredRejected++
+                                continue
+                            }
+                        } else if ((ignoreDurationMs > 0L && dur < ignoreDurationMs) || (maxDurationMs in 1 until Long.MAX_VALUE && dur > maxDurationMs)) {
                             filteredRejected++
                             continue
                         }
@@ -466,22 +508,12 @@ class LibraryScanner(
                         val rawTitle = if (titleCol >= 0) cursor.getString(titleCol) else ""
                         val rawArtist = if (artistCol >= 0) cursor.getString(artistCol) else ""
                         val rawAlbum = if (albumCol >= 0) cursor.getString(albumCol) else ""
-                        val filename = displayName ?: File(filePath).name
-
-                        val cleanTitle = TagCleaner.cleanTitle(rawTitle, filename)
-                        val cleanArtist = TagCleaner.cleanArtist(rawArtist)
-                        val cleanAlbum = TagCleaner.cleanAlbum(rawAlbum)
                         val albumId = if (albumIdCol >= 0) cursor.getLong(albumIdCol) else 0L
                         val artistId = if (artistIdCol >= 0) cursor.getLong(artistIdCol) else 0L
                         val year = if (yearCol >= 0) cursor.getInt(yearCol) else 0
                         val trackNum = if (trackCol >= 0) cursor.getInt(trackCol) else 0
                         val dateAdded = if (dateAddedCol >= 0) cursor.getLong(dateAddedCol) else System.currentTimeMillis() / 1000
-
                         val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
-                        val manualArt = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, id, filePath)
-                        val artworkUri: String? = manualArt ?: try {
-                            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, id, filePath)
-                        } catch (_: Exception) { null }
 
                         val song = buildOrUpdateSongEntity(
                             existing = null,
@@ -499,7 +531,7 @@ class LibraryScanner(
                             dateAdded = dateAdded * 1000,
                             format = ext.ifBlank { "MP3" }.uppercase()
                         )
-                        newlyFoundSongs.add(song)
+                        newlyFoundMap[normP] = song
                     }
                 }
             } catch (e: Exception) {
@@ -527,22 +559,31 @@ class LibraryScanner(
                 }
             }
 
-            val discoveredInRun = newlyFoundSongs.map { normalizePath(it.path) }.toMutableSet()
+            val discoveredInRun = newlyFoundMap.keys.toMutableSet()
+            val newFromDirect = mutableListOf<SongEntity>()
             for (dir in dirsToCheck) {
                 scanDirectDirectoryForNewSongs(
                     directory = dir,
-                    maxDepth = 3,
+                    maxDepth = 4,
                     existingByPath = existingByPath,
                     discoveredPaths = discoveredInRun,
                     normIncludedPaths = normIncluded,
                     normExcludedPaths = normExcluded,
                     ignoreAudioDurationMs = ignoreDurationMs,
-                    newSongsList = newlyFoundSongs
+                    maxAudioDurationMs = maxDurationMs,
+                    newSongsList = newFromDirect
                 )
             }
+            for (s in newFromDirect) {
+                val np = normalizePath(s.path)
+                if (!newlyFoundMap.containsKey(np) && !existingByPath.containsKey(np)) {
+                    newlyFoundMap[np] = s
+                }
+            }
 
+            val newlyFoundSongs = newlyFoundMap.values.toList()
             if (newlyFoundSongs.isNotEmpty()) {
-                songDao.insertSongs(newlyFoundSongs)
+                insertSongsSafelyInBatches(newlyFoundSongs)
                 val totalCount = songDao.getSongCountOnce()
                 _scanProgress.value = ScanProgress(
                     status = ScanStatus.COMPLETED,
@@ -554,7 +595,6 @@ class LibraryScanner(
                     currentFolder = "",
                     isFinished = true
                 )
-                Log.i(TAG, "Auto-detected and imported ${newlyFoundSongs.size} new songs. Total: $totalCount")
                 try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
                 return@withContext newlyFoundSongs.size
             }
@@ -573,8 +613,11 @@ class LibraryScanner(
     }
 
     /**
-     * Full rescan across all device audio sources and custom directories.
-     * Reports actual files discovered, processed, and valid tracks found without fabricating totals.
+     * Authoritative Full Rescan across MediaStore and target directories.
+     * - Deduplicates strictly by normalized physical file path (`normPath`) so no track is ever double-counted.
+     * - Enforces includedFolders, excludedFolders, and min/max duration bounds accurately.
+     * - Batches SQLite inserts in chunks of 250 to prevent SQLiteException / CursorWindow crashes.
+     * - Reports the exact count of genuine tracks found in this scan run.
      */
     suspend fun scanLibrary(
         includedFolders: List<FolderEntity> = emptyList(),
@@ -583,7 +626,6 @@ class LibraryScanner(
         maxAudioDurationMs: Long = Long.MAX_VALUE
     ) = withContext(Dispatchers.IO) {
         scanMutex.withLock {
-            val initialCount = songDao.getSongCountOnce()
             var filesDiscovered = 0
             var filesProcessed = 0
             var duplicatesSkipped = 0
@@ -593,7 +635,7 @@ class LibraryScanner(
                 status = ScanStatus.SCANNING,
                 filesDiscovered = 0,
                 filesProcessed = 0,
-                validTracksFound = initialCount,
+                validTracksFound = 0,
                 duplicatesSkipped = 0,
                 filteredRejected = 0,
                 currentFolder = "Searching media index...",
@@ -601,28 +643,34 @@ class LibraryScanner(
                 isFinished = false
             )
 
-            val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }
-            val normIncludedPaths = includedFolders.map { normalizePath(it.path) }
-            val foundSongsMap = mutableMapOf<String, SongEntity>()
+            val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
+            val normIncludedPaths = includedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
+
+            // Keyed strictly by normalized physical file path so MediaStore + File traversal NEVER double-count the same file!
+            val foundSongsByNormPath = LinkedHashMap<String, SongEntity>()
+            val seenMediaStoreIds = HashSet<Long>()
             var lastEmitTime = 0L
 
             try {
                 // 1. Resilient MediaStore Scan
-                val projectionList = arrayOf(
-                    MediaStore.Audio.Media._ID,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.ALBUM_ID,
-                    MediaStore.Audio.Media.ARTIST_ID,
-                    MediaStore.Audio.Media.DURATION,
-                    MediaStore.Audio.Media.YEAR,
-                    MediaStore.Audio.Media.TRACK,
-                    MediaStore.Audio.Media.DATE_ADDED,
-                    MediaStore.Audio.Media.DISPLAY_NAME,
-                    MediaStore.Audio.Media.MIME_TYPE,
-                    MediaStore.Audio.Media.DATA
-                )
+                val projectionList = buildList {
+                    add(MediaStore.Audio.Media._ID)
+                    add(MediaStore.Audio.Media.TITLE)
+                    add(MediaStore.Audio.Media.ARTIST)
+                    add(MediaStore.Audio.Media.ALBUM)
+                    add(MediaStore.Audio.Media.ALBUM_ID)
+                    add(MediaStore.Audio.Media.ARTIST_ID)
+                    add(MediaStore.Audio.Media.DURATION)
+                    add(MediaStore.Audio.Media.YEAR)
+                    add(MediaStore.Audio.Media.TRACK)
+                    add(MediaStore.Audio.Media.DATE_ADDED)
+                    add(MediaStore.Audio.Media.DISPLAY_NAME)
+                    add(MediaStore.Audio.Media.MIME_TYPE)
+                    add(MediaStore.Audio.Media.DATA)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(MediaStore.Audio.Media.RELATIVE_PATH)
+                    }
+                }.toTypedArray()
 
                 var cursor: android.database.Cursor? = null
                 try {
@@ -649,42 +697,54 @@ class LibraryScanner(
                     val nameCol = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                     val mimeCol = c.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
                     val dataCol = c.getColumnIndex(MediaStore.Audio.Media.DATA)
+                    val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                    } else -1
 
                     while (c.moveToNext()) {
                         filesDiscovered++
                         filesProcessed++
 
-                        val id = if (idCol >= 0) c.getLong(idCol) else System.currentTimeMillis()
+                        val id = if (idCol >= 0) c.getLong(idCol) else 0L
+                        if (id <= 0L) {
+                            filteredRejected++
+                            continue
+                        }
                         val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
                         val displayName = if (nameCol >= 0) {
                             try { c.getString(nameCol) } catch (_: Exception) { null }
                         } else null
-
-                        var rawPath = if (dataCol >= 0) {
+                        val rawPath = if (dataCol >= 0) {
                             try { c.getString(dataCol) } catch (_: Exception) { null }
                         } else null
+                        val relPath = if (relCol >= 0) {
+                            try { c.getString(relCol) } catch (_: Exception) { null }
+                        } else null
 
-                        if (rawPath.isNullOrBlank()) {
-                            rawPath = if (!displayName.isNullOrBlank()) {
-                                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), displayName).absolutePath
-                            } else {
-                                "/storage/emulated/0/Music/audio_$id.mp3"
-                            }
-                        }
-                        val filePath = rawPath
-
-                        val parentFolder = if (filePath.startsWith("/")) File(filePath).parent?.trimEnd('/') ?: "" else ""
-                        if (parentFolder.isNotBlank() && isNormPathExcluded(normalizePath(parentFolder), normExcludedPaths)) {
+                        val filePath = resolveGenuineAudioPath(rawPath, relPath, displayName)
+                        if (filePath.isNullOrBlank()) {
                             filteredRejected++
                             continue
                         }
 
-                        if (normIncludedPaths.isNotEmpty()) {
-                            val normParent = normalizePath(parentFolder)
-                            if (!isSongInIncludedFolders(normParent, normIncludedPaths)) {
-                                filteredRejected++
-                                continue
-                            }
+                        // Verify actual file exists on storage (eliminates stale/ghost MediaStore rows)
+                        val fileObj = File(filePath)
+                        if (filePath.startsWith("/") && (!fileObj.exists() || !fileObj.isFile || fileObj.length() <= 0L)) {
+                            filteredRejected++
+                            continue
+                        }
+
+                        val parentFolder = fileObj.parent?.trimEnd('/') ?: ""
+                        val normParent = normalizePath(parentFolder)
+
+                        if (normParent.isNotBlank() && isNormPathExcluded(normParent, normExcludedPaths)) {
+                            filteredRejected++
+                            continue
+                        }
+
+                        if (normIncludedPaths.isNotEmpty() && !isSongInIncludedFolders(normParent, normIncludedPaths)) {
+                            filteredRejected++
+                            continue
                         }
 
                         val mimeType = if (mimeCol >= 0) {
@@ -701,14 +761,27 @@ class LibraryScanner(
                                 mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
-                        if (!isAudioMime && !isAudioExt && ext.isNotBlank() && !ext.equals("mp3", ignoreCase = true)) {
+                        if (!isAudioMime && !isAudioExt) {
                             filteredRejected++
                             continue
                         }
 
                         val duration = if (durationCol >= 0) c.getLong(durationCol) else 0L
-                        if (duration > 0 && ((ignoreAudioDurationMs > 0 && duration < ignoreAudioDurationMs) || (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs))) {
+                        if (duration <= 0L) {
+                            if (ignoreAudioDurationMs > 0L) {
+                                filteredRejected++
+                                continue
+                            }
+                        } else if ((ignoreAudioDurationMs > 0L && duration < ignoreAudioDurationMs) ||
+                            (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs)
+                        ) {
                             filteredRejected++
+                            continue
+                        }
+
+                        val normPathKey = normalizePath(filePath)
+                        if (foundSongsByNormPath.containsKey(normPathKey) || !seenMediaStoreIds.add(id)) {
+                            duplicatesSkipped++
                             continue
                         }
 
@@ -721,35 +794,30 @@ class LibraryScanner(
                         val track = if (trackCol >= 0) c.getInt(trackCol) else 0
                         val dateAdded = if (dateAddedCol >= 0) c.getLong(dateAddedCol) else System.currentTimeMillis() / 1000
 
-                        val filenameForTag = displayName ?: File(filePath).name
+                        val filenameForTag = displayName ?: fileObj.name
                         val cleanedTitle = TagCleaner.cleanTitle(rawTitle, filenameForTag)
                         val cleanedArtist = TagCleaner.cleanArtist(rawArtist)
                         val cleanedAlbum = TagCleaner.cleanAlbum(rawAlbum)
                         val format = ext.ifBlank { "MP3" }.uppercase()
 
-                        val dedupeKey = if (id > 0) "id_$id" else "path_${normalizePath(filePath)}"
-                        if (foundSongsMap.containsKey(dedupeKey)) {
-                            duplicatesSkipped++
-                        } else {
-                            foundSongsMap[dedupeKey] = SongEntity(
-                                id = id,
-                                title = cleanedTitle,
-                                artist = cleanedArtist,
-                                album = cleanedAlbum,
-                                genre = "Music",
-                                durationMs = if (duration > 0) duration else 180000L,
-                                path = filePath,
-                                contentUriString = contentUri,
-                                artworkUri = null,
-                                albumId = albumId,
-                                artistId = artistId,
-                                trackNumber = track,
-                                year = year,
-                                dateAdded = dateAdded * 1000,
-                                format = format,
-                                isMissing = false
-                            )
-                        }
+                        foundSongsByNormPath[normPathKey] = SongEntity(
+                            id = id,
+                            title = cleanedTitle,
+                            artist = cleanedArtist,
+                            album = cleanedAlbum,
+                            genre = "Music",
+                            durationMs = if (duration > 0) duration else 180000L,
+                            path = filePath,
+                            contentUriString = contentUri,
+                            artworkUri = null,
+                            albumId = albumId,
+                            artistId = artistId,
+                            trackNumber = track,
+                            year = year,
+                            dateAdded = dateAdded * 1000,
+                            format = format,
+                            isMissing = false
+                        )
 
                         val now = System.currentTimeMillis()
                         if (now - lastEmitTime > 80) {
@@ -759,7 +827,7 @@ class LibraryScanner(
                                 status = ScanStatus.SCANNING,
                                 filesDiscovered = filesDiscovered,
                                 filesProcessed = filesProcessed,
-                                validTracksFound = foundSongsMap.size,
+                                validTracksFound = foundSongsByNormPath.size,
                                 duplicatesSkipped = duplicatesSkipped,
                                 filteredRejected = filteredRejected,
                                 currentFolder = folderName,
@@ -770,21 +838,24 @@ class LibraryScanner(
                     }
                 }
 
-                // 2. Direct Storage Traversal for unindexed tracks
+                // 2. Direct Storage Traversal ONLY for files not already indexed by MediaStore
                 val retriever = MediaMetadataRetriever()
                 try {
                     val rootsToScan = mutableListOf<File>()
+                    val seenCanonicalRoots = HashSet<String>()
+
                     if (normIncludedPaths.isNotEmpty()) {
                         includedFolders.forEach { folder ->
                             val dir = File(folder.path)
-                            if (dir.exists() && dir.isDirectory) rootsToScan.add(dir)
+                            if (dir.exists() && dir.isDirectory && seenCanonicalRoots.add(normalizePath(dir.absolutePath))) {
+                                rootsToScan.add(dir)
+                            }
                         }
                     } else {
                         val publicDirs = listOf(
                             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
                             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS),
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
                             File(Environment.getExternalStorageDirectory(), "Music"),
                             File(Environment.getExternalStorageDirectory(), "Download"),
                             File(Environment.getExternalStorageDirectory(), "Downloads"),
@@ -792,7 +863,7 @@ class LibraryScanner(
                             File(Environment.getExternalStorageDirectory(), "Audio")
                         )
                         publicDirs.forEach { dir ->
-                            if (dir != null && dir.exists() && dir.isDirectory && !rootsToScan.contains(dir)) {
+                            if (dir != null && dir.exists() && dir.isDirectory && seenCanonicalRoots.add(normalizePath(dir.absolutePath))) {
                                 rootsToScan.add(dir)
                             }
                         }
@@ -804,7 +875,8 @@ class LibraryScanner(
                             normIncludedPaths = normIncludedPaths,
                             normExcludedPaths = normExcludedPaths,
                             ignoreAudioDurationMs = ignoreAudioDurationMs,
-                            foundSongsMap = foundSongsMap,
+                            maxAudioDurationMs = maxAudioDurationMs,
+                            foundSongsByNormPath = foundSongsByNormPath,
                             retriever = retriever,
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
@@ -812,9 +884,9 @@ class LibraryScanner(
                                     lastEmitTime = now
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
-                                        filesDiscovered = filesDiscovered.coerceAtLeast(foundSongsMap.size),
-                                        filesProcessed = filesProcessed.coerceAtLeast(foundSongsMap.size),
-                                        validTracksFound = foundSongsMap.size,
+                                        filesDiscovered = filesDiscovered.coerceAtLeast(foundSongsByNormPath.size),
+                                        filesProcessed = filesProcessed.coerceAtLeast(foundSongsByNormPath.size),
+                                        validTracksFound = foundSongsByNormPath.size,
                                         duplicatesSkipped = duplicatesSkipped,
                                         filteredRejected = filteredRejected,
                                         currentFolder = currentDir,
@@ -829,59 +901,51 @@ class LibraryScanner(
                     try { retriever.release() } catch (_: Exception) {}
                 }
 
-                // 3. Save Discovered Songs to DB
-                val rawSongsList = foundSongsMap.values.toList()
-                if (rawSongsList.isNotEmpty()) {
-                    val existingSongs = songDao.getAllSongsOnce()
-                    val existingById = existingSongs.associateBy { it.id }
-                    val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
+                // 3. Synchronize Discovered Songs with Room Database (preserving play counts, favorites, and manual edits)
+                val existingSongs = songDao.getAllSongsOnce()
+                val existingById = existingSongs.associateBy { it.id }
+                val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
 
-                    val mergedSongsList = rawSongsList.map { song ->
-                        val normP = normalizePath(song.path)
-                        val existing = existingByPath[normP] ?: existingById[song.id]
-                        buildOrUpdateSongEntity(
-                            existing = existing,
-                            id = song.id,
-                            rawTitle = song.title,
-                            rawArtist = song.artist,
-                            rawAlbum = song.album,
-                            durationMs = song.durationMs,
-                            filePath = song.path,
-                            contentUri = song.contentUriString,
-                            albumId = song.albumId,
-                            artistId = song.artistId,
-                            trackNum = song.trackNumber,
-                            year = song.year,
-                            dateAdded = song.dateAdded,
-                            format = song.format
-                        )
-                    }
-
-                    songDao.deleteUnusedSampleSongs()
-                    songDao.insertSongs(mergedSongsList)
-
-                    // Mark missing songs
-                    val updatedSongs = songDao.getAllSongsOnce()
-                    updatedSongs.forEach { dbSong ->
-                        if (!dbSong.path.startsWith("sample_") && !dbSong.contentUriString.startsWith("http")) {
-                            val parentFolder = File(dbSong.path).parent?.trimEnd('/') ?: ""
-                            val normParent = normalizePath(parentFolder)
-                            val isExcluded = isNormPathExcluded(normParent, normExcludedPaths)
-                            val isNotIncluded = !isSongInIncludedFolders(normParent, normIncludedPaths)
-                            val isContentUri = dbSong.contentUriString.startsWith("content://")
-                            val isAccessible = if (isContentUri) true else try { File(dbSong.path).exists() } catch (_: Exception) { false }
-                            val isTooShort = ignoreAudioDurationMs > 0 && dbSong.durationMs > 0 && dbSong.durationMs < ignoreAudioDurationMs
-                            val isTooLong = maxAudioDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0 && dbSong.durationMs > maxAudioDurationMs
-
-                            if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
-                                songDao.markMissing(dbSong.path)
-                            }
-                        }
-                    }
-                    songDao.deleteMissingSongs()
+                val rawSongsList = foundSongsByNormPath.values.toList()
+                val mergedSongsList = rawSongsList.map { song ->
+                    val normP = normalizePath(song.path)
+                    val existing = existingByPath[normP] ?: existingById[song.id]
+                    buildOrUpdateSongEntity(
+                        existing = existing,
+                        id = existing?.id ?: song.id,
+                        rawTitle = song.title,
+                        rawArtist = song.artist,
+                        rawAlbum = song.album,
+                        durationMs = song.durationMs,
+                        filePath = song.path,
+                        contentUri = song.contentUriString,
+                        albumId = song.albumId,
+                        artistId = song.artistId,
+                        trackNum = song.trackNumber,
+                        year = song.year,
+                        dateAdded = song.dateAdded,
+                        format = song.format
+                    )
                 }
 
-                val finalCount = songDao.getSongCountOnce()
+                val validNormPathsInThisScan = mergedSongsList.map { normalizePath(it.path) }.toHashSet()
+                val validIdsInThisScan = mergedSongsList.map { it.id }.toHashSet()
+
+                songDao.deleteUnusedSampleSongs()
+
+                // Remove any existing DB song that is no longer in the allowed folders/duration scope or was duplicated under a synthetic ID
+                for (dbSong in existingSongs) {
+                    val normDbPath = normalizePath(dbSong.path)
+                    if (!validNormPathsInThisScan.contains(normDbPath) || !validIdsInThisScan.contains(dbSong.id)) {
+                        songDao.deleteSong(dbSong.id)
+                    }
+                }
+
+                if (mergedSongsList.isNotEmpty()) {
+                    insertSongsSafelyInBatches(mergedSongsList)
+                }
+
+                val finalCount = mergedSongsList.size
                 _scanProgress.value = ScanProgress(
                     status = ScanStatus.COMPLETED,
                     filesDiscovered = filesDiscovered,
@@ -908,7 +972,7 @@ class LibraryScanner(
     }
 
     /**
-     * Fast Quick Scan: Quickly prunes missing files and indexes new audio tracks
+     * Fast Quick Scan: Quickly prunes missing/excluded/filtered files and indexes new audio tracks
      * without touching user-edited tags, play counts, or favorites.
      */
     suspend fun quickScanAndCleanLibrary(
@@ -918,55 +982,53 @@ class LibraryScanner(
         maxAudioDurationMs: Long = Long.MAX_VALUE
     ) = withContext(Dispatchers.IO) {
         scanMutex.withLock {
-            val initialCount = songDao.getSongCountOnce()
             var filesDiscovered = 0
             var filesProcessed = 0
             var duplicatesSkipped = 0
             var filteredRejected = 0
 
-            _scanProgress.value = ScanProgress(
-                status = ScanStatus.SCANNING,
-                filesDiscovered = 0,
-                filesProcessed = 0,
-                validTracksFound = initialCount,
-                duplicatesSkipped = 0,
-                filteredRejected = 0,
-                currentFolder = "Quick indexing...",
-                isScanning = true,
-                isFinished = false
-            )
-
-            val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }
-            val normIncludedPaths = includedFolders.map { normalizePath(it.path) }
+            val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
+            val normIncludedPaths = includedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
             var lastEmitTime = 0L
 
             try {
-                // 1. Clean missing/excluded songs and normalize existing unedited library tracks
+                // 1. Clean missing/excluded/duplicate songs and normalize existing unedited library tracks
                 val existingSongs = songDao.getAllSongsOnce()
+                val seenNormPaths = HashSet<String>()
                 val songsToUpdate = mutableListOf<SongEntity>()
 
-                for (dbSong in existingSongs) {
+                // Sort so MediaStore IDs (< 1_000_000_000) win over synthetic hash IDs if duplicates exist
+                val sortedExisting = existingSongs.sortedBy { if (it.id in 1..999_999_999L) 0 else 1 }
+
+                for (dbSong in sortedExisting) {
                     filesDiscovered++
                     filesProcessed++
 
+                    val normDbPath = normalizePath(dbSong.path)
+                    if (!seenNormPaths.add(normDbPath)) {
+                        // Duplicate entry for the same physical file path
+                        songDao.deleteSong(dbSong.id)
+                        duplicatesSkipped++
+                        continue
+                    }
+
                     if (!dbSong.path.startsWith("sample_") && !dbSong.contentUriString.startsWith("http")) {
-                        val parentFolder = File(dbSong.path).parent?.trimEnd('/') ?: ""
+                        val fileObj = File(dbSong.path)
+                        val parentFolder = fileObj.parent?.trimEnd('/') ?: ""
                         val normParent = normalizePath(parentFolder)
                         val isExcluded = isNormPathExcluded(normParent, normExcludedPaths)
                         val isNotIncluded = !isSongInIncludedFolders(normParent, normIncludedPaths)
-                        val isContentUri = dbSong.contentUriString.startsWith("content://")
-                        val isAccessible = if (isContentUri) true else try { File(dbSong.path).exists() } catch (_: Exception) { false }
+                        val isAccessible = try { fileObj.exists() && fileObj.isFile && fileObj.length() > 0L } catch (_: Exception) { true }
                         val isTooShort = ignoreAudioDurationMs > 0 && dbSong.durationMs > 0 && dbSong.durationMs < ignoreAudioDurationMs
                         val isTooLong = maxAudioDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0 && dbSong.durationMs > maxAudioDurationMs
 
                         if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
-                            songDao.markMissing(dbSong.path)
+                            songDao.deleteSong(dbSong.id)
                             filteredRejected++
                             continue
                         }
                     }
 
-                    // Check if existing unedited song needs normalization
                     val isManual = dbSong.isManuallyEdited || com.example.util.ManualTagStore.isManuallyEdited(context, dbSong.id, dbSong.path)
                     if (!isManual) {
                         val filename = File(dbSong.path).name
@@ -975,45 +1037,58 @@ class LibraryScanner(
                         val normalizedAlbum = TagCleaner.cleanAlbum(dbSong.album)
 
                         if (normalizedTitle != dbSong.title || normalizedArtist != dbSong.artist || normalizedAlbum != dbSong.album) {
-                            val updatedSong = dbSong.copy(
-                                title = normalizedTitle,
-                                artist = normalizedArtist,
-                                album = normalizedAlbum
+                            songsToUpdate.add(
+                                dbSong.copy(
+                                    title = normalizedTitle,
+                                    artist = normalizedArtist,
+                                    album = normalizedAlbum
+                                )
                             )
-                            songsToUpdate.add(updatedSong)
                         }
                     }
                 }
 
-                if (songsToUpdate.isNotEmpty()) {
-                    for (song in songsToUpdate) {
-                        songDao.updateSong(song)
-                    }
+                for (song in songsToUpdate) {
+                    songDao.updateSong(song)
                 }
                 songDao.deleteMissingSongs()
 
-                // Refresh remaining existing songs map after cleaning
                 val refreshedExisting = songDao.getAllSongsOnce()
                 val existingByPath = refreshedExisting.associateBy { normalizePath(it.path) }
                 val existingById = refreshedExisting.associateBy { it.id }
 
-                // 2. Scan MediaStore for newly added tracks
-                val newSongsList = mutableListOf<SongEntity>()
-                val projectionList = arrayOf(
-                    MediaStore.Audio.Media._ID,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.ALBUM_ID,
-                    MediaStore.Audio.Media.ARTIST_ID,
-                    MediaStore.Audio.Media.DURATION,
-                    MediaStore.Audio.Media.YEAR,
-                    MediaStore.Audio.Media.TRACK,
-                    MediaStore.Audio.Media.DATE_ADDED,
-                    MediaStore.Audio.Media.DISPLAY_NAME,
-                    MediaStore.Audio.Media.MIME_TYPE,
-                    MediaStore.Audio.Media.DATA
+                _scanProgress.value = ScanProgress(
+                    status = ScanStatus.SCANNING,
+                    filesDiscovered = filesDiscovered,
+                    filesProcessed = filesProcessed,
+                    validTracksFound = refreshedExisting.size,
+                    duplicatesSkipped = duplicatesSkipped,
+                    filteredRejected = filteredRejected,
+                    currentFolder = "Quick indexing...",
+                    isScanning = true,
+                    isFinished = false
                 )
+
+                // 2. Scan MediaStore for newly added tracks
+                val newSongsByNormPath = LinkedHashMap<String, SongEntity>()
+                val projectionList = buildList {
+                    add(MediaStore.Audio.Media._ID)
+                    add(MediaStore.Audio.Media.TITLE)
+                    add(MediaStore.Audio.Media.ARTIST)
+                    add(MediaStore.Audio.Media.ALBUM)
+                    add(MediaStore.Audio.Media.ALBUM_ID)
+                    add(MediaStore.Audio.Media.ARTIST_ID)
+                    add(MediaStore.Audio.Media.DURATION)
+                    add(MediaStore.Audio.Media.YEAR)
+                    add(MediaStore.Audio.Media.TRACK)
+                    add(MediaStore.Audio.Media.DATE_ADDED)
+                    add(MediaStore.Audio.Media.DISPLAY_NAME)
+                    add(MediaStore.Audio.Media.MIME_TYPE)
+                    add(MediaStore.Audio.Media.DATA)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(MediaStore.Audio.Media.RELATIVE_PATH)
+                    }
+                }.toTypedArray()
 
                 var cursor: android.database.Cursor? = null
                 try {
@@ -1040,48 +1115,55 @@ class LibraryScanner(
                     val nameCol = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                     val mimeCol = c.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
                     val dataCol = c.getColumnIndex(MediaStore.Audio.Media.DATA)
+                    val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                    } else -1
 
                     while (c.moveToNext()) {
                         filesDiscovered++
                         filesProcessed++
 
-                        val mediaStoreId = if (idCol >= 0) c.getLong(idCol) else System.currentTimeMillis()
+                        val mediaStoreId = if (idCol >= 0) c.getLong(idCol) else 0L
+                        if (mediaStoreId <= 0L) continue
                         val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaStoreId)
                         val displayName = if (nameCol >= 0) {
                             try { c.getString(nameCol) } catch (_: Exception) { null }
                         } else null
-
-                        var rawPath = if (dataCol >= 0) {
+                        val rawPath = if (dataCol >= 0) {
                             try { c.getString(dataCol) } catch (_: Exception) { null }
                         } else null
+                        val relPath = if (relCol >= 0) {
+                            try { c.getString(relCol) } catch (_: Exception) { null }
+                        } else null
 
-                        if (rawPath.isNullOrBlank()) {
-                            rawPath = if (!displayName.isNullOrBlank()) {
-                                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), displayName).absolutePath
-                            } else {
-                                "/storage/emulated/0/Music/audio_$mediaStoreId.mp3"
-                            }
+                        val filePath = resolveGenuineAudioPath(rawPath, relPath, displayName)
+                        if (filePath.isNullOrBlank()) {
+                            filteredRejected++
+                            continue
                         }
-                        val filePath = rawPath
                         val normP = normalizePath(filePath)
 
-                        if (existingByPath.containsKey(normP) || existingById.containsKey(mediaStoreId)) {
+                        if (existingByPath.containsKey(normP) || existingById.containsKey(mediaStoreId) || newSongsByNormPath.containsKey(normP)) {
                             duplicatesSkipped++
                             continue
                         }
 
-                        val parentFolder = if (filePath.startsWith("/")) File(filePath).parent?.trimEnd('/') ?: "" else ""
-                        if (parentFolder.isNotBlank() && isNormPathExcluded(normalizePath(parentFolder), normExcludedPaths)) {
+                        val fileObj = File(filePath)
+                        if (filePath.startsWith("/") && (!fileObj.exists() || !fileObj.isFile || fileObj.length() <= 0L)) {
                             filteredRejected++
                             continue
                         }
 
-                        if (normIncludedPaths.isNotEmpty()) {
-                            val normParent = normalizePath(parentFolder)
-                            if (!isSongInIncludedFolders(normParent, normIncludedPaths)) {
-                                filteredRejected++
-                                continue
-                            }
+                        val parentFolder = fileObj.parent?.trimEnd('/') ?: ""
+                        val normParent = normalizePath(parentFolder)
+                        if (normParent.isNotBlank() && isNormPathExcluded(normParent, normExcludedPaths)) {
+                            filteredRejected++
+                            continue
+                        }
+
+                        if (normIncludedPaths.isNotEmpty() && !isSongInIncludedFolders(normParent, normIncludedPaths)) {
+                            filteredRejected++
+                            continue
                         }
 
                         val mimeType = if (mimeCol >= 0) {
@@ -1098,13 +1180,20 @@ class LibraryScanner(
                                 mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
-                        if (!isAudioMime && !isAudioExt && ext.isNotBlank() && !ext.equals("mp3", ignoreCase = true)) {
+                        if (!isAudioMime && !isAudioExt) {
                             filteredRejected++
                             continue
                         }
 
                         val dur = if (durationCol >= 0) c.getLong(durationCol) else 0L
-                        if (dur > 0L && ((ignoreAudioDurationMs > 0 && dur < ignoreAudioDurationMs) || (maxAudioDurationMs in 1 until Long.MAX_VALUE && dur > maxAudioDurationMs))) {
+                        if (dur <= 0L) {
+                            if (ignoreAudioDurationMs > 0L) {
+                                filteredRejected++
+                                continue
+                            }
+                        } else if ((ignoreAudioDurationMs > 0 && dur < ignoreAudioDurationMs) ||
+                            (maxAudioDurationMs in 1 until Long.MAX_VALUE && dur > maxAudioDurationMs)
+                        ) {
                             filteredRejected++
                             continue
                         }
@@ -1112,22 +1201,11 @@ class LibraryScanner(
                         val rawTitle = if (titleCol >= 0) c.getString(titleCol) else ""
                         val rawArtist = if (artistCol >= 0) c.getString(artistCol) else ""
                         val rawAlbum = if (albumCol >= 0) c.getString(albumCol) else ""
-                        val filename = displayName ?: File(filePath).name
-
-                        val cleanTitle = TagCleaner.cleanTitle(rawTitle, filename)
-                        val cleanArtist = TagCleaner.cleanArtist(rawArtist)
-                        val cleanAlbum = TagCleaner.cleanAlbum(rawAlbum)
                         val albumId = if (albumIdCol >= 0) c.getLong(albumIdCol) else 0L
                         val artistId = if (artistIdCol >= 0) c.getLong(artistIdCol) else 0L
                         val year = if (yearCol >= 0) c.getInt(yearCol) else 0
                         val trackNum = if (trackCol >= 0) c.getInt(trackCol) else 0
                         val dateAdded = if (dateAddedCol >= 0) c.getLong(dateAddedCol) else System.currentTimeMillis() / 1000
-
-                        val manualArt = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, mediaStoreId, filePath)
-                        val artworkUri: String? = manualArt ?: try {
-                            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, mediaStoreId, filePath)
-                        } catch (_: Exception) { null }
-
                         val format = ext.ifBlank { "MP3" }.uppercase()
 
                         val newSong = buildOrUpdateSongEntity(
@@ -1146,7 +1224,7 @@ class LibraryScanner(
                             dateAdded = dateAdded * 1000,
                             format = format
                         )
-                        newSongsList.add(newSong)
+                        newSongsByNormPath[normP] = newSong
 
                         val now = System.currentTimeMillis()
                         if (now - lastEmitTime > 80) {
@@ -1156,7 +1234,7 @@ class LibraryScanner(
                                 status = ScanStatus.SCANNING,
                                 filesDiscovered = filesDiscovered,
                                 filesProcessed = filesProcessed,
-                                validTracksFound = existingSongs.size + newSongsList.size,
+                                validTracksFound = refreshedExisting.size + newSongsByNormPath.size,
                                 duplicatesSkipped = duplicatesSkipped,
                                 filteredRejected = filteredRejected,
                                 currentFolder = folderName,
@@ -1167,13 +1245,16 @@ class LibraryScanner(
                     }
                 }
 
-                // 3. Fast direct check on common storage music directories
+                // 3. Fast direct check on target storage directories
                 try {
                     val fastScanDirs = mutableListOf<File>()
+                    val seenDirs = HashSet<String>()
                     if (normIncludedPaths.isNotEmpty()) {
                         includedFolders.forEach { f ->
                             val dir = File(f.path)
-                            if (dir.exists() && dir.isDirectory) fastScanDirs.add(dir)
+                            if (dir.exists() && dir.isDirectory && seenDirs.add(normalizePath(dir.absolutePath))) {
+                                fastScanDirs.add(dir)
+                            }
                         }
                     } else {
                         val publicDirs = listOf(
@@ -1187,13 +1268,14 @@ class LibraryScanner(
                             File(Environment.getExternalStorageDirectory(), "Audio")
                         )
                         publicDirs.forEach { dir ->
-                            if (dir != null && dir.exists() && dir.isDirectory && !fastScanDirs.contains(dir)) {
+                            if (dir != null && dir.exists() && dir.isDirectory && seenDirs.add(normalizePath(dir.absolutePath))) {
                                 fastScanDirs.add(dir)
                             }
                         }
                     }
 
-                    val discoveredPaths = newSongsList.map { normalizePath(it.path) }.toMutableSet()
+                    val discoveredPaths = newSongsByNormPath.keys.toMutableSet()
+                    val directNewList = mutableListOf<SongEntity>()
                     for (dir in fastScanDirs) {
                         scanDirectDirectoryForNewSongs(
                             directory = dir,
@@ -1203,12 +1285,13 @@ class LibraryScanner(
                             normIncludedPaths = normIncludedPaths,
                             normExcludedPaths = normExcludedPaths,
                             ignoreAudioDurationMs = ignoreAudioDurationMs,
-                            newSongsList = newSongsList,
+                            maxAudioDurationMs = maxAudioDurationMs,
+                            newSongsList = directNewList,
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > 80) {
                                     lastEmitTime = now
-                                    val currentValid = existingSongs.size + newSongsList.size
+                                    val currentValid = refreshedExisting.size + newSongsByNormPath.size + directNewList.size
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
                                         filesDiscovered = filesDiscovered.coerceAtLeast(currentValid),
@@ -1224,10 +1307,17 @@ class LibraryScanner(
                             }
                         )
                     }
+                    for (s in directNewList) {
+                        val np = normalizePath(s.path)
+                        if (!newSongsByNormPath.containsKey(np) && !existingByPath.containsKey(np)) {
+                            newSongsByNormPath[np] = s
+                        }
+                    }
                 } catch (_: Exception) {}
 
-                if (newSongsList.isNotEmpty()) {
-                    songDao.insertSongs(newSongsList)
+                val finalNewSongs = newSongsByNormPath.values.toList()
+                if (finalNewSongs.isNotEmpty()) {
+                    insertSongsSafelyInBatches(finalNewSongs)
                 }
 
                 val totalCount = songDao.getSongCountOnce()
@@ -1260,7 +1350,8 @@ class LibraryScanner(
         normIncludedPaths: List<String>,
         normExcludedPaths: List<String>,
         ignoreAudioDurationMs: Long,
-        foundSongsMap: MutableMap<String, SongEntity>,
+        maxAudioDurationMs: Long,
+        foundSongsByNormPath: MutableMap<String, SongEntity>,
         retriever: MediaMetadataRetriever,
         onProgress: ((String, Int) -> Unit)? = null
     ) {
@@ -1283,13 +1374,22 @@ class LibraryScanner(
                     continue
                 }
                 if (!isDirInIncludedFolders(normalizePath(file.absolutePath), normIncludedPaths)) continue
-                scanDirectoryRecursivelyFast(file, normIncludedPaths, normExcludedPaths, ignoreAudioDurationMs, foundSongsMap, retriever, onProgress)
-            } else if (file.isFile) {
+                scanDirectoryRecursivelyFast(
+                    directory = file,
+                    normIncludedPaths = normIncludedPaths,
+                    normExcludedPaths = normExcludedPaths,
+                    ignoreAudioDurationMs = ignoreAudioDurationMs,
+                    maxAudioDurationMs = maxAudioDurationMs,
+                    foundSongsByNormPath = foundSongsByNormPath,
+                    retriever = retriever,
+                    onProgress = onProgress
+                )
+            } else if (file.isFile && file.length() > 0L) {
                 val ext = file.extension.lowercase()
                 if (ext in AUDIO_EXTENSIONS) {
                     val filePath = file.absolutePath
-                    val normPath = filePath.lowercase()
-                    if (!foundSongsMap.containsKey(normPath)) {
+                    val normPath = normalizePath(filePath)
+                    if (!foundSongsByNormPath.containsKey(normPath)) {
                         val fileParent = file.parent?.trimEnd('/') ?: ""
                         val normFileParent = normalizePath(fileParent)
                         if (isNormPathExcluded(normFileParent, normExcludedPaths)) continue
@@ -1321,12 +1421,18 @@ class LibraryScanner(
                             } catch (_: Throwable) {}
                         }
 
-                        if (duration > 0 && duration < ignoreAudioDurationMs) continue
+                        if (duration <= 0L) {
+                            if (ignoreAudioDurationMs > 0L) continue
+                        } else if ((ignoreAudioDurationMs > 0L && duration < ignoreAudioDurationMs) ||
+                            (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs)
+                        ) {
+                            continue
+                        }
 
                         val cleanedTitle = TagCleaner.cleanTitle(rawTitle, file.name)
                         val cleanedArtist = TagCleaner.cleanArtist(rawArtist)
                         val cleanedAlbum = TagCleaner.cleanAlbum(rawAlbum)
-                        val fileId = filePath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+                        val fileId = normPath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
 
                         val song = SongEntity(
                             id = fileId,
@@ -1346,8 +1452,8 @@ class LibraryScanner(
                             format = ext.uppercase(),
                             isMissing = false
                         )
-                        foundSongsMap[normPath] = song
-                        onProgress?.invoke(directory.name, foundSongsMap.size)
+                        foundSongsByNormPath[normPath] = song
+                        onProgress?.invoke(directory.name, foundSongsByNormPath.size)
                         try {
                             MediaScannerConnection.scanFile(context, arrayOf(filePath), null, null)
                         } catch (_: Exception) {}
@@ -1365,6 +1471,7 @@ class LibraryScanner(
         normIncludedPaths: List<String>,
         normExcludedPaths: List<String>,
         ignoreAudioDurationMs: Long,
+        maxAudioDurationMs: Long = Long.MAX_VALUE,
         newSongsList: MutableList<SongEntity>,
         onProgress: ((String, Int) -> Unit)? = null
     ) {
@@ -1393,10 +1500,11 @@ class LibraryScanner(
                     normIncludedPaths = normIncludedPaths,
                     normExcludedPaths = normExcludedPaths,
                     ignoreAudioDurationMs = ignoreAudioDurationMs,
+                    maxAudioDurationMs = maxAudioDurationMs,
                     newSongsList = newSongsList,
                     onProgress = onProgress
                 )
-            } else if (file.isFile) {
+            } else if (file.isFile && file.length() > 0L) {
                 val ext = file.extension.lowercase()
                 if (ext in AUDIO_EXTENSIONS) {
                     val filePath = file.absolutePath
@@ -1425,13 +1533,15 @@ class LibraryScanner(
                             try { localRetriever.release() } catch (_: Throwable) {}
                         }
 
-                        if (duration > 0 && duration < ignoreAudioDurationMs) continue
+                        if (duration <= 0L) {
+                            if (ignoreAudioDurationMs > 0L) continue
+                        } else if ((ignoreAudioDurationMs > 0L && duration < ignoreAudioDurationMs) ||
+                            (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs)
+                        ) {
+                            continue
+                        }
 
-                        val cleanedTitle = TagCleaner.cleanTitle(rawTitle, file.name)
-                        val cleanedArtist = TagCleaner.cleanArtist(rawArtist)
-                        val cleanedAlbum = TagCleaner.cleanAlbum(rawAlbum)
-                        val fileId = filePath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
-
+                        val fileId = normPath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
                         val song = buildOrUpdateSongEntity(
                             existing = null,
                             id = fileId,
@@ -1462,9 +1572,13 @@ class LibraryScanner(
             p = p.replace("//", "/")
         }
         p = p.trimEnd('/')
-        p = p.replace("/sdcard", "/storage/emulated/0", ignoreCase = true)
-        p = p.replace("/storage/self/primary", "/storage/emulated/0", ignoreCase = true)
-        p = p.replace("/mnt/sdcard", "/storage/emulated/0", ignoreCase = true)
+        if (p.equals("/sdcard", ignoreCase = true) || p.startsWith("/sdcard/", ignoreCase = true)) {
+            p = "/storage/emulated/0" + p.substring(7)
+        } else if (p.equals("/storage/self/primary", ignoreCase = true) || p.startsWith("/storage/self/primary/", ignoreCase = true)) {
+            p = "/storage/emulated/0" + p.substring(21)
+        } else if (p.equals("/mnt/sdcard", ignoreCase = true) || p.startsWith("/mnt/sdcard/", ignoreCase = true)) {
+            p = "/storage/emulated/0" + p.substring(11)
+        }
         return p.lowercase()
     }
 

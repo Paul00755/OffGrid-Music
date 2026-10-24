@@ -50,9 +50,9 @@ jobs:
             base64 -d debug.keystore.base64 > debug.keystore
           else
             echo "Restoring embedded permanent debug.keystore..."
-            cat << 'EOF' | base64 -d > debug.keystore
+            cat << 'KEYEOF' | base64 -d > debug.keystore
           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
-          EOF
+          KEYEOF
           fi
 
       - name: Grant Execute Permission for Gradle Wrapper
@@ -68,7 +68,7 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" \
             --stacktrace
 
-      - name: Prepare OffGrid Music.apk
+      - name: Prepare APK Assets (Clean & Legacy Names + Build Info)
         run: |
           COMPILED_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
           if [ -z "$COMPILED_APK" ] || [ ! -f "$COMPILED_APK" ]; then
@@ -77,60 +77,146 @@ jobs:
           fi
           echo "Found compiled APK: $COMPILED_APK"
           APK_DIR=$(dirname "$COMPILED_APK")
-          TARGET_APK="$APK_DIR/OffGrid Music.apk"
-          if [ "$COMPILED_APK" != "$TARGET_APK" ]; then
-            cp "$COMPILED_APK" "$TARGET_APK"
+
+          # 1. Clean URL-safe APK name (no spaces -> GitHub never renames it, zero 404 errors!)
+          CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
+          cp "$COMPILED_APK" "$CLEAN_APK"
+
+          # 2. Versioned APK name for easy identification in historical releases
+          VERSIONED_APK="$APK_DIR/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk"
+          cp "$COMPILED_APK" "$VERSIONED_APK"
+
+          # 3. Also keep 'OffGrid Music.apk' for artifact upload compatibility
+          SPACE_APK="$APK_DIR/OffGrid Music.apk"
+          if [ "$COMPILED_APK" != "$SPACE_APK" ]; then
+            cp "$COMPILED_APK" "$SPACE_APK"
           fi
+
+          # 4. Compute SHA-256 and APK size for release notes
+          APK_SHA256=$(sha256sum "$CLEAN_APK" | awk '{print $1}')
+          APK_SIZE=$(du -h "$CLEAN_APK" | awk '{print $1}')
+          echo "APK_SHA256=$APK_SHA256" >> $GITHUB_ENV
+          echo "APK_SIZE=$APK_SIZE" >> $GITHUB_ENV
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OffGrid-Music-APK
-          path: app/build/outputs/apk/debug/OffGrid Music.apk
+          path: |
+            app/build/outputs/apk/debug/OffGrid-Music.apk
+            app/build/outputs/apk/debug/OffGrid Music.apk
           retention-days: 30
 
-      - name: Publish GitHub Release (Latest & Versioned APK)
+      - name: Publish GitHub Releases (Immutable Version History + Latest Release)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Target the prepared APK
-          APK_PATH="app/build/outputs/apk/debug/OffGrid Music.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            APK_PATH=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
-          fi
-          echo "Using release APK: $APK_PATH"
+          APK_DIR="app/build/outputs/apk/debug"
+          CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
+          VERSIONED_APK="$APK_DIR/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk"
+          SPACE_APK="$APK_DIR/OffGrid Music.apk"
 
-          # 2. Configure git bot for tagging
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 3. Force-update the 'latest' git tag to this exact commit
-          git tag -f latest "${{ github.sha }}"
-          git push -f origin latest || true
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          VERSION_TAG="v1.0.4-build.${{ github.run_number }}"
 
-          # 4. Create or update the 'latest' release using GitHub CLI
-          if gh release view latest >/dev/null 2>&1; then
-            echo "Release 'latest' exists. Updating APK asset with --clobber..."
-            gh release upload latest "$APK_PATH" --clobber
-            gh release edit latest \
-              --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n'"- **Build**: \`#${{ github.run_number }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install over your existing app (retains all data)." \
+          # ------------------------------------------------------------------------------
+          # 1. Create a permanent versioned release on the Releases page so ALL older
+          #    versions remain listed, browsable, and downloadable forever!
+          # ------------------------------------------------------------------------------
+          cat << EOF > release_notes_versioned.md
+          ## 🎵 OffGrid Music — v1.0.4 (Build #${{ github.run_number }})
+
+          ### 📥 Direct APK Downloads
+          - **[⬇️ Download OffGrid-Music.apk (Universal Direct Link)](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music.apk)**
+          - **[⬇️ Download OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk (Versioned APK)](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk)**
+
+          ---
+
+          ### 📋 Build & Package Details
+          | Property | Value |
+          | :--- | :--- |
+          | **Version** | \`1.0.4-build.${{ github.run_number }}\` (\`versionCode = 5\`) |
+          | **Package ID** | \`com.aistudio.offgridmusic.player\` |
+          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${COMMIT_MSG} |
+          | **Branch** | \`${{ github.ref_name }}\` |
+          | **Built On** | ${BUILD_DATE} |
+          | **APK Size** | ${APK_SIZE} |
+          | **SHA-256** | \`${APK_SHA256}\` |
+
+          ---
+
+          ### 🔄 Seamless Upgrade & Downgrade Support (Retains All Data)
+          - **In-Place Updates**: Signed with the repository's permanent certificate — installs directly over any existing OffGrid Music installation without conflicting package errors or creating duplicate apps.
+          - **Install Older or Newer Versions Anytime**: Because \`versionCode\` is locked across builds, you can install this build over a newer or older release at any time while keeping all your playlists, favorites, lyrics, and settings intact.
+          EOF
+
+          git tag -f "$VERSION_TAG" "${{ github.sha }}"
+          git push -f origin "$VERSION_TAG" || true
+
+          if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
+            gh release upload "$VERSION_TAG" "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" --clobber
+            gh release edit "$VERSION_TAG" \
+              --title "OffGrid Music v1.0.4 (Build #${{ github.run_number }})" \
+              --notes-file release_notes_versioned.md \
               --target "${{ github.sha }}" \
               --latest
           else
-            echo "Creating initial 'latest' release..."
-            gh release create latest "$APK_PATH" \
-              --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n'"- **Build**: \`#${{ github.run_number }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install over your existing app (retains all data)." \
+            gh release create "$VERSION_TAG" "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" \
+              --title "OffGrid Music v1.0.4 (Build #${{ github.run_number }})" \
+              --notes-file release_notes_versioned.md \
               --target "${{ github.sha }}" \
               --latest
           fi
 
-          # 5. Also create an immutable versioned release for this build run
-          RUN_TAG="build-${{ github.run_number }}"
-          echo "Publishing versioned release $RUN_TAG..."
-          gh release create "$RUN_TAG" "$APK_PATH" \
-            --title "OffGrid Music Build #${{ github.run_number }}" \
-            --notes "Automated build for commit \`${{ github.sha }}\` on branch \`${{ github.ref_name }}\`. Can be installed directly over newer or older builds while retaining all user data." \
-            --target "${{ github.sha }}" || true
+          # ------------------------------------------------------------------------------
+          # 2. Also maintain the rolling 'latest' tag release so both:
+          #    - /releases/latest/download/OffGrid-Music.apk
+          #    - /releases/download/latest/OffGrid-Music.apk
+          #    always work without ever returning 404 Not Found!
+          # ------------------------------------------------------------------------------
+          cat << EOF > release_notes_latest.md
+          ## 🚀 OffGrid Music — Latest Automated Release (Build #${{ github.run_number }})
+
+          ### 📥 One-Click Direct Download
+          - **[⬇️ Download Latest APK (OffGrid-Music.apk)](https://github.com/${{ github.repository }}/releases/latest/download/OffGrid-Music.apk)**
+
+          ---
+
+          ### 📋 Latest Build Summary
+          | Property | Value |
+          | :--- | :--- |
+          | **Version** | \`1.0.4-build.${{ github.run_number }}\` (\`versionCode = 5\`) |
+          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${COMMIT_MSG} |
+          | **Built On** | ${BUILD_DATE} |
+          | **APK Size** | ${APK_SIZE} |
+          | **SHA-256** | \`${APK_SHA256}\` |
+
+          > 💡 **Looking for an older version?** Visit the **[All Releases Page](https://github.com/${{ github.repository }}/releases)** to browse and download any previous build (\`v1.0.4-build.X\`). Every historical APK is signed with the same certificate and can be installed directly over your current app without losing data.
+          EOF
+
+          git tag -f latest "${{ github.sha }}"
+          git push -f origin latest || true
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" --clobber
+            gh release edit latest \
+              --title "OffGrid Music — Latest Channel (Build #${{ github.run_number }})" \
+              --notes-file release_notes_latest.md \
+              --target "${{ github.sha }}" \
+              --latest=false
+          else
+            gh release create latest "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" \
+              --title "OffGrid Music — Latest Channel (Build #${{ github.run_number }})" \
+              --notes-file release_notes_latest.md \
+              --target "${{ github.sha }}" \
+              --latest=false
+          fi
+
+          # Explicitly ensure the newest versioned release holds the official 'Latest' badge
+          gh release edit "$VERSION_TAG" --latest || true

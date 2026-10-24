@@ -32,11 +32,10 @@ import com.example.util.OnlineArtistImageFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 
-// Global high-speed in-memory & disk resolution cache for ultra-smooth scrolling
+// Global high-speed in-memory & disk resolution cache for instant zero-flash rendering
 object ArtworkResolutionCache {
-    private val lruCache = object : android.util.LruCache<Long, String>(4000) {}
+    private val lruCache = object : android.util.LruCache<Long, String>(5000) {}
     private val manualCoverCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
     private val manualPathCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val preloadedKeys = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
@@ -78,8 +77,8 @@ object ArtworkResolutionCache {
         context: Context,
         songs: List<Song>,
         firstVisibleIndex: Int,
-        windowAhead: Int = 35,
-        windowBehind: Int = 10
+        windowAhead: Int = 40,
+        windowBehind: Int = 15
     ) {
         if (songs.isEmpty()) return
         val startIndex = (firstVisibleIndex - windowBehind).coerceAtLeast(0)
@@ -100,9 +99,9 @@ object ArtworkResolutionCache {
 
                 var uri = cache[song.id]
                 if (uri == null) {
-                    uri = getAuthoritativeArtwork(context, song)
-                        ?: getManualCoverUri(context, song.id, song.path)
+                    uri = getOrCheckDisk(context, song.id, song.path)
                         ?: song.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
+                        ?: getAuthoritativeArtwork(context, song)
                         ?: ArtworkManager.getOrExtractArtworkUri(
                             context = context,
                             songId = song.id,
@@ -138,12 +137,11 @@ object ArtworkResolutionCache {
             }
         }
     }
-    
+
     fun getMemory(songId: Long): String? {
         if (songId == 0L) return null
         val mem = cache[songId]
         if (mem != null && mem.isEmpty()) {
-            // Negative cache hit: already verified that no artwork exists
             return null
         }
         return mem
@@ -160,9 +158,14 @@ object ArtworkResolutionCache {
             val coversDir = java.io.File(context.filesDir, "song_covers")
             if (coversDir.exists()) {
                 if (songId != 0L) {
-                    val manualCover = coversDir.listFiles { file ->
-                        file.name.startsWith("song_${songId}_") || file.name == "song_$songId.jpg"
-                    }?.maxByOrNull { it.lastModified() }
+                    val stableCover = java.io.File(coversDir, "song_$songId.jpg")
+                    val manualCover = if (stableCover.exists() && stableCover.length() > 0L) {
+                        stableCover
+                    } else {
+                        coversDir.listFiles { file ->
+                            file.name.startsWith("song_${songId}_") || file.name == "song_$songId.jpg"
+                        }?.maxByOrNull { it.lastModified() }
+                    }
                     if (manualCover != null && manualCover.exists() && manualCover.length() > 0) {
                         val uriStr = android.net.Uri.fromFile(manualCover).toString()
                         manualCoverCache[songId] = uriStr
@@ -199,25 +202,15 @@ object ArtworkResolutionCache {
             }
         }
         try {
-            // Check manual song_covers first (highest priority)
+            // 1. Check manual song_covers first (highest priority)
             val manual = getManualCoverUri(context, songId, path)
             if (!manual.isNullOrBlank()) {
                 if (songId != 0L) cache[songId] = manual
                 return manual
             }
 
-            // Check device-level .thumbnail file
-            if (!path.isNullOrBlank()) {
-                val thumbFile = com.example.util.ArtworkManager.findThumbnailArtwork(path)
-                if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-                    val uriStr = android.net.Uri.fromFile(thumbFile).toString()
-                    if (songId != 0L) cache[songId] = uriStr
-                    return uriStr
-                }
-            }
-
             if (songId != 0L) {
-                // Check persistent filesDir first
+                // 2. Check persistent filesDir/artworks/$songId.jpg (fast single-file stat)
                 val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "$songId.jpg")
                 if (persistentFile.exists() && persistentFile.length() > 0) {
                     val uriStr = android.net.Uri.fromFile(persistentFile).toString()
@@ -230,7 +223,7 @@ object ArtworkResolutionCache {
                     cache[songId] = uriStr
                     return uriStr
                 }
-                // Check cacheDir
+                // 3. Check cacheDir
                 val cacheFile = java.io.File(java.io.File(context.cacheDir, "artworks"), "$songId.jpg")
                 if (cacheFile.exists() && cacheFile.length() > 0) {
                     val uriStr = android.net.Uri.fromFile(cacheFile).toString()
@@ -248,6 +241,16 @@ object ArtworkResolutionCache {
                 if (!onlineUrl.isNullOrBlank()) {
                     cache[songId] = onlineUrl
                     return onlineUrl
+                }
+            }
+
+            // 4. Check device-level .thumbnail file
+            if (!path.isNullOrBlank()) {
+                val thumbFile = com.example.util.ArtworkManager.findThumbnailArtwork(path)
+                if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
+                    val uriStr = android.net.Uri.fromFile(thumbFile).toString()
+                    if (songId != 0L) cache[songId] = uriStr
+                    return uriStr
                 }
             }
         } catch (_: Exception) {}
@@ -290,7 +293,34 @@ object ArtworkResolutionCache {
             return song.artworkUri
         }
 
-        // 3. True embedded picture from song's actual audio file (Guarantees track-specific art)
+        // 3. Check persistent filesDir / cache first (already extracted embedded artwork)
+        if (song.id > 0L) {
+            val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "${song.id}.jpg")
+            if (persistentFile.exists() && persistentFile.length() > 0L) {
+                val uriStr = android.net.Uri.fromFile(persistentFile).toString()
+                cache[song.id] = uriStr
+                return uriStr
+            }
+        }
+
+        // 4. Existing validated song.artworkUri (if file:// or valid content://)
+        if (!song.artworkUri.isNullOrBlank()) {
+            if (song.artworkUri.startsWith("file://")) {
+                val p = try { android.net.Uri.parse(song.artworkUri).path } catch (_: Exception) { null }
+                if (p != null && java.io.File(p).exists() && java.io.File(p).length() > 0L) {
+                    if (song.id > 0L) cache[song.id] = song.artworkUri
+                    return song.artworkUri
+                }
+            } else if (song.artworkUri.startsWith("content://")) {
+                val isDeprecatedAlbumArt = song.artworkUri.contains("audio/albumart") && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                if (!isDeprecatedAlbumArt) {
+                    if (song.id > 0L) cache[song.id] = song.artworkUri
+                    return song.artworkUri
+                }
+            }
+        }
+
+        // 5. True embedded picture from song's actual audio file (Guarantees track-specific art)
         if (song.path.isNotBlank()) {
             val f = java.io.File(song.path)
             if (f.exists() && f.length() > 1024L) {
@@ -314,7 +344,7 @@ object ArtworkResolutionCache {
                             java.io.FileOutputStream(persistentFile).use { out ->
                                 bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
                             }
-                            bmp.recycle()
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
                             val uriStr = android.net.Uri.fromFile(persistentFile).toString()
                             if (song.id > 0L) cache[song.id] = uriStr
                             return uriStr
@@ -327,39 +357,12 @@ object ArtworkResolutionCache {
             }
         }
 
-        // 4. Check song-specific local companion file (.jpg named after the song)
+        // 6. Check song-specific local companion file (.jpg named after the song)
         if (song.path.isNotBlank()) {
             val thumbFile = com.example.util.ArtworkManager.findThumbnailArtwork(song.path)
             if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
                 val uriStr = android.net.Uri.fromFile(thumbFile).toString()
                 if (song.id > 0L) cache[song.id] = uriStr
-                return uriStr
-            }
-        }
-
-        // 5. Existing validated song.artworkUri
-        if (!song.artworkUri.isNullOrBlank()) {
-            if (song.artworkUri.startsWith("file://")) {
-                val p = try { android.net.Uri.parse(song.artworkUri).path } catch (_: Exception) { null }
-                if (p != null && java.io.File(p).exists() && java.io.File(p).length() > 0L) {
-                    if (song.id > 0L) cache[song.id] = song.artworkUri
-                    return song.artworkUri
-                }
-            } else if (song.artworkUri.startsWith("content://")) {
-                val isDeprecatedAlbumArt = song.artworkUri.contains("audio/albumart") && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
-                if (!isDeprecatedAlbumArt) {
-                    if (song.id > 0L) cache[song.id] = song.artworkUri
-                    return song.artworkUri
-                }
-            }
-        }
-
-        // 6. Check persistent filesDir / cache
-        if (song.id > 0L) {
-            val persistentFile = java.io.File(java.io.File(context.filesDir, "artworks"), "${song.id}.jpg")
-            if (persistentFile.exists() && persistentFile.length() > 0) {
-                val uriStr = android.net.Uri.fromFile(persistentFile).toString()
-                cache[song.id] = uriStr
                 return uriStr
             }
         }
@@ -381,11 +384,13 @@ object ArtworkResolutionCache {
             }
         } catch (_: Throwable) {}
     }
+
     fun clear() {
         cache.clear()
         manualCoverCache.clear()
         manualPathCache.clear()
     }
+
     fun clearMemory() {
         clear()
     }
@@ -426,29 +431,32 @@ fun AlbumArtView(
 
     val artworkVersion = ArtworkResolutionCache.artworkUpdateSignal.longValue
     val songArtwork = song?.artworkUri?.takeIf { it.isNotBlank() }
+
+    // Synchronously resolve from memory or fast local disk check so artwork appears on Frame 1 with zero flash
     val initialUri = remember(songId, songArtwork, artworkVersion) {
         if (song == null || songId == 0L) return@remember null
-        // 1. Instant pure in-memory cache hit first (zero disk I/O on UI thread)
+        // 1. Instant pure in-memory cache hit
         val mem = ArtworkResolutionCache.getMemory(songId)
         if (!mem.isNullOrBlank()) return@remember mem
-        if (mem != null && mem.isEmpty()) return@remember null
 
-        // 2. Direct song model artwork if present and not deprecated MediaStore albumart
+        // 2. Fast local persistent disk check (filesDir/song_covers or filesDir/artworks/$songId.jpg)
+        val diskHit = ArtworkResolutionCache.getOrCheckDisk(context, songId, song.path)
+        if (!diskHit.isNullOrBlank()) return@remember diskHit
+
+        // 3. Direct song model artwork if present and not deprecated MediaStore albumart
         if (!songArtwork.isNullOrBlank() && !songArtwork.contains("audio/albumart")) {
+            ArtworkResolutionCache.cache[songId] = songArtwork
             return@remember songArtwork
         }
         null
     }
 
-    var resolvedArtworkUri by remember(songId) {
+    var resolvedArtworkUri by remember(songId, artworkVersion) {
         mutableStateOf(initialUri)
     }
 
-    // Keep resolvedArtworkUri updated if initialUri resolves non-null
-    LaunchedEffect(initialUri) {
-        if (!initialUri.isNullOrBlank() && (resolvedArtworkUri.isNullOrBlank() || resolvedArtworkUri != initialUri)) {
-            resolvedArtworkUri = initialUri
-        }
+    if (!initialUri.isNullOrBlank() && resolvedArtworkUri != initialUri) {
+        resolvedArtworkUri = initialUri
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -459,17 +467,14 @@ fun AlbumArtView(
             return@LaunchedEffect
         }
 
-        // Fast-path: if already resolved and valid, and high-res online fetch is not forced, skip disk I/O entirely!
+        // Fast-path: if already resolved and valid, and high-res online fetch is not forced, skip I/O
         if (!resolvedArtworkUri.isNullOrBlank() && !forceHighResOnline) {
             return@LaunchedEffect
         }
 
-        // Debounce slightly during fast scrolling so that quickly scrolled-past items don't saturate I/O
-        kotlinx.coroutines.delay(20)
-
-        // All disk and network operations run exclusively on Dispatchers.IO
+        // All extraction and network operations run on Dispatchers.IO without artificial delay
         val resolved = withContext(Dispatchers.IO) {
-            // 1. Authoritative check across manual covers, disk, and persistent files
+            // 1. Authoritative check across manual covers, persistent files, and embedded picture
             val authoritative = ArtworkResolutionCache.getAuthoritativeArtwork(context, song)
             if (!authoritative.isNullOrBlank()) {
                 ArtworkResolutionCache.cache[songId] = authoritative
@@ -483,7 +488,7 @@ fun AlbumArtView(
                 return@withContext manualCover
             }
 
-            // 3. Extract local artwork (embedded ID3 APIC / folder art)
+            // 3. Extract local artwork (embedded ID3 APIC / companion file)
             val localUri = ArtworkManager.getOrExtractArtworkUri(
                 context = context,
                 songId = song.id,
@@ -492,9 +497,7 @@ fun AlbumArtView(
                 albumName = song.displayAlbum
             )
             if (!localUri.isNullOrBlank()) {
-                if (isCacheEnabled) {
-                    ArtworkResolutionCache.cache[songId] = localUri
-                }
+                ArtworkResolutionCache.cache[songId] = localUri
                 if (!song.isManuallyEdited) {
                     try {
                         com.example.data.local.AppDatabase.getInstance(context).songDao().updateSongArtwork(song.id, localUri)
@@ -503,7 +506,7 @@ fun AlbumArtView(
                 return@withContext localUri
             }
 
-            // 4. Try online search if genuinely NO artwork found!
+            // 4. Try online search if genuinely NO local artwork found
             val online = OnlineArtistImageFetcher.getSongArtworkUrl(
                 context = context,
                 title = song.displayTitle,
@@ -521,8 +524,8 @@ fun AlbumArtView(
                         context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
                             .edit().putString(song.id.toString(), finalUri).apply()
                     } catch (_: Exception) {}
-                    ArtworkResolutionCache.cache[songId] = finalUri
                 }
+                ArtworkResolutionCache.cache[songId] = finalUri
                 return@withContext finalUri
             } else {
                 ArtworkResolutionCache.cache[songId] = ""
@@ -549,16 +552,17 @@ fun AlbumArtView(
     ) {
         val uri = resolvedArtworkUri
         if (!uri.isNullOrBlank()) {
-            val cachePolicy = if (isCacheEnabled) coil.request.CachePolicy.ENABLED else coil.request.CachePolicy.DISABLED
+            val cachePolicy = if (isCacheEnabled) coil.request.CachePolicy.ENABLED else coil.request.CachePolicy.ENABLED
             val isThumbnail = cornerRadius <= 14
-            val cachedBmp = remember(songId) {
+            val cachedBmp = remember(songId, artworkVersion) {
                 ArtworkManager.getCachedNotificationBitmap(songId)
             }
             val imageReq = remember(uri, cachePolicy, cornerRadius, context) {
+                val cacheKey = "art_${songId}_${uri.hashCode()}"
                 ImageRequest.Builder(context)
                     .data(uri)
-                    .memoryCacheKey("art_${songId}_${uri.hashCode()}")
-                    .diskCacheKey("art_${songId}_${uri.hashCode()}")
+                    .memoryCacheKey(cacheKey)
+                    .diskCacheKey(cacheKey)
                     .crossfade(false)
                     .memoryCachePolicy(cachePolicy)
                     .diskCachePolicy(cachePolicy)
@@ -601,7 +605,6 @@ fun AlbumArtView(
                                     com.example.service.PlaybackManager.activeInstance?.updateCurrentSongArtwork(songId, reExtracted)
                                 }
                             }
-                            // Never set resolvedArtworkUri = null on error; preserve current artwork!
                         }
                     }
                 }

@@ -1,14 +1,10 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,12 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -39,9 +31,6 @@ import com.example.data.model.Song
 import com.example.service.PlaybackState
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /**
  * Stable wrapper for queue items to prevent duplicate key crashes in Compose LazyColumn
@@ -69,19 +58,17 @@ fun UpNextQueueSheet(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val queue = playbackState.queue
     val currentSong = playbackState.currentSong
     val currentIndex = playbackState.queueIndex
 
-    // Map list of songs to unique QueueEntryItem instances with deterministic stable keys (independent of position index)
     fun buildQueueEntries(songList: List<Song>): List<QueueEntryItem> {
         val occurrenceMap = mutableMapOf<Long, Int>()
         return songList.map { song ->
             val count = occurrenceMap.getOrDefault(song.id, 0)
             occurrenceMap[song.id] = count + 1
             QueueEntryItem(
-                stableKey = "q_${song.id}_occ${count}_${song.path.hashCode()}_${song.artworkUri ?: ""}_${song.title.hashCode()}",
+                stableKey = "q_${song.id}_occ${count}_${song.path.hashCode()}",
                 song = song
             )
         }
@@ -95,16 +82,28 @@ fun UpNextQueueSheet(
         mutableStateListOf<QueueEntryItem>().apply { addAll(initialEntries) }
     }
 
+    // Track the exact QueueEntryItem (by stableKey) that is currently playing so dragging tracks
+    // around in localQueue ALWAYS highlights the true Now Playing track occurrence (not a fixed index number!)
+    var playingEntryKey by remember {
+        val initIdx = if (currentIndex in initialEntries.indices) currentIndex
+        else initialEntries.indexOfFirst { it.song.id == currentSong?.id }.coerceAtLeast(0)
+        mutableStateOf(initialEntries.getOrNull(initIdx)?.stableKey)
+    }
+
     val density = LocalDensity.current
     val itemHeightPx = with(density) { 68.dp.toPx() }
 
-    val currentActualIndex = if (currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id)) {
-        currentIndex
-    } else if (currentIndex in localQueue.indices) {
-        currentIndex
-    } else {
-        val found = localQueue.indexOfFirst { it.song.id == currentSong?.id }
-        if (found >= 0) found else 0
+    val currentActualIndex = remember(localQueue.toList(), playingEntryKey, currentSong?.id, currentIndex) {
+        val byKey = if (playingEntryKey != null) {
+            localQueue.indexOfFirst { it.stableKey == playingEntryKey }
+        } else -1
+        when {
+            byKey >= 0 -> byKey
+            currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id) -> currentIndex
+            currentSong != null -> localQueue.indexOfFirst { it.song.id == currentSong.id }.let { if (it >= 0) it else 0 }
+            currentIndex in localQueue.indices -> currentIndex
+            else -> 0
+        }
     }
 
     val safeInitialIndex = remember(currentActualIndex, localQueue.size) {
@@ -117,14 +116,6 @@ fun UpNextQueueSheet(
         initialFirstVisibleItemIndex = safeInitialIndex
     )
 
-    LaunchedEffect(currentActualIndex) {
-        if (localQueue.isNotEmpty() && currentActualIndex in localQueue.indices) {
-            val targetScroll = (currentActualIndex - 1).coerceAtLeast(0)
-            listState.animateScrollToItem(targetScroll)
-        }
-    }
-
-    // Reorderable list state with background thread offloading
     val reorderableState = rememberReorderableLazyListState(
         listState = listState,
         itemHeightPx = itemHeightPx,
@@ -145,7 +136,7 @@ fun UpNextQueueSheet(
                 val updatedSongs = localQueue.map { it.song }
                 if (onUpdateQueue != null) {
                     onUpdateQueue.invoke(updatedSongs)
-                } else if (onReorder != null && from != null && to != null) {
+                } else if (from != to) {
                     onReorder.invoke(from, to)
                 }
             } catch (e: Exception) {
@@ -153,6 +144,39 @@ fun UpNextQueueSheet(
             }
         }
     )
+
+    // Scroll to active track only when playback switches to a different song while not dragging
+    LaunchedEffect(currentSong?.id) {
+        if (!reorderableState.isDragging && !reorderableState.isSettling && localQueue.isNotEmpty()) {
+            val targetIdx = if (currentIndex in localQueue.indices && localQueue[currentIndex].song.id == currentSong?.id) {
+                currentIndex
+            } else {
+                localQueue.indexOfFirst { it.song.id == currentSong?.id }
+            }
+            if (targetIdx in localQueue.indices) {
+                playingEntryKey = localQueue[targetIdx].stableKey
+            }
+        }
+    }
+
+    LaunchedEffect(queue, currentIndex, currentSong?.id, reorderableState.isDragging, reorderableState.isSettling) {
+        if (!reorderableState.isDragging && !reorderableState.isSettling) {
+            val currentSongs = localQueue.map { it.song }
+            if (currentSongs != queue && queue.isNotEmpty()) {
+                val newEntries = buildQueueEntries(queue)
+                localQueue.clear()
+                localQueue.addAll(newEntries)
+            }
+            val resolvedIdx = if (currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id)) {
+                currentIndex
+            } else {
+                localQueue.indexOfFirst { it.song.id == currentSong?.id }
+            }
+            if (resolvedIdx in localQueue.indices) {
+                playingEntryKey = localQueue[resolvedIdx].stableKey
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -163,17 +187,6 @@ fun UpNextQueueSheet(
                 }
             } catch (e: Exception) {
                 android.util.Log.e("UpNextQueueSheet", "Error in onDispose queue persistence", e)
-            }
-        }
-    }
-
-    LaunchedEffect(queue, reorderableState.isDragging, reorderableState.isSettling) {
-        if (!reorderableState.isDragging && !reorderableState.isSettling) {
-            val currentSongs = localQueue.map { it.song }
-            if (currentSongs != queue && queue.isNotEmpty()) {
-                val newEntries = buildQueueEntries(queue)
-                localQueue.clear()
-                localQueue.addAll(newEntries)
             }
         }
     }
@@ -227,7 +240,6 @@ fun UpNextQueueSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Shuffle Toggle
                     Surface(
                         shape = CircleShape,
                         color = if (playbackState.isShuffleEnabled) BentoPrimary.copy(alpha = 0.2f) else Color.Transparent,
@@ -246,7 +258,6 @@ fun UpNextQueueSheet(
                         }
                     }
 
-                    // Repeat Toggle
                     Surface(
                         shape = CircleShape,
                         color = if (playbackState.repeatMode != 0) BentoPrimary.copy(alpha = 0.2f) else Color.Transparent,
@@ -265,7 +276,6 @@ fun UpNextQueueSheet(
                         }
                     }
 
-                    // Remove Duplicates from Queue
                     if (onRemoveDuplicates != null) {
                         Surface(
                             shape = CircleShape,
@@ -305,7 +315,7 @@ fun UpNextQueueSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             if (localQueue.isEmpty()) {
                 Box(
@@ -317,125 +327,130 @@ fun UpNextQueueSheet(
                     Text("Queue is empty", color = BentoTextSecondary, fontSize = 15.sp)
                 }
             } else {
+                // Pinned Now Playing Track Banner (kept outside LazyColumn so LazyColumn indices 0..N-1
+                // map 1:1 to queue items for rock-solid drag-and-drop & auto-scroll)
+                val activePlayingSong = localQueue.getOrNull(currentActualIndex)?.song ?: currentSong
+                if (activePlayingSong != null) {
+                    Text(
+                        text = "NOW PLAYING",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoPrimary,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    BentoCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        backgroundColor = BentoCardDarkPurple
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GraphicEq,
+                                contentDescription = "Now Playing",
+                                tint = BentoPrimary,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .padding(end = 4.dp)
+                            )
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            AlbumArtView(
+                                song = activePlayingSong,
+                                modifier = Modifier.size(46.dp),
+                                cornerRadius = 8
+                            )
+
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = activePlayingSong.displayTitle,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = activePlayingSong.displayArtist,
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(BentoPrimary.copy(alpha = 0.2f))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (playbackState.isPlaying) "Now Playing" else "Paused",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoPrimary
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "QUEUE TRACKS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSecondary,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Text(
+                            text = "Hold & drag ≡ to reorder",
+                            fontSize = 11.sp,
+                            color = BentoTextSubtle
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
                 Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Currently Playing Section
-                        if (currentSong != null) {
-                            val displayNum = if (currentActualIndex in localQueue.indices) currentActualIndex + 1 else 1
-
-                            item(key = "header_now_playing") {
-                                Text(
-                                    text = "NOW PLAYING • #$displayNum",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoPrimary,
-                                    letterSpacing = 1.sp,
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                )
-
-                                BentoCard(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    backgroundColor = BentoCardDarkPurple
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = "$displayNum",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoPrimary,
-                                            modifier = Modifier.width(28.dp)
-                                        )
-
-                                        AlbumArtView(
-                                            song = currentSong,
-                                            modifier = Modifier.size(48.dp),
-                                            cornerRadius = 8
-                                        )
-
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = currentSong.displayTitle,
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = BentoTextPrimary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = currentSong.displayArtist,
-                                                fontSize = 12.sp,
-                                                color = BentoTextSecondary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .background(BentoPrimary.copy(alpha = 0.2f))
-                                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "Playing",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = BentoPrimary
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "UP NEXT",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BentoTextSecondary,
-                                        letterSpacing = 1.sp,
-                                        modifier = Modifier.padding(vertical = 4.dp)
-                                    )
-                                    Text(
-                                        text = "Hold & drag to reorder",
-                                        fontSize = 11.sp,
-                                        color = BentoTextSubtle
-                                    )
-                                }
-                            }
-                        }
-
-                        // Up Next Queue Items with Unique Composite Keys & Native Performance
                         itemsIndexed(
                             items = localQueue,
                             key = { _, entry -> entry.stableKey }
                         ) { index, entry ->
                             val song = entry.song
-                            val isCurrent = index == currentActualIndex
+                            val isCurrent = (playingEntryKey != null && entry.stableKey == playingEntryKey) ||
+                                    (playingEntryKey == null && index == currentActualIndex)
                             val isPlayed = !isCurrent && index < currentActualIndex
-                            val isDragging = reorderableState.draggedIndex == index
+                            val isDragging = (reorderableState.draggedKey != null && reorderableState.draggedKey == entry.stableKey) ||
+                                    (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
 
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .animateItem(
+                                        fadeInSpec = null,
+                                        fadeOutSpec = null,
                                         placementSpec = if (isDragging) null else spring(
                                             dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMedium
+                                            stiffness = Spring.StiffnessMediumLow
                                         )
                                     )
                                     .zIndex(if (isDragging) 100f else 0f)
@@ -447,7 +462,7 @@ fun UpNextQueueSheet(
                                             .height(58.dp),
                                         shape = RoundedCornerShape(12.dp),
                                         color = BentoCardDarkPurple.copy(alpha = 0.20f),
-                                        border = androidx.compose.foundation.BorderStroke(
+                                        border = BorderStroke(
                                             1.5.dp,
                                             BentoPrimary.copy(alpha = 0.45f)
                                         )
@@ -460,15 +475,15 @@ fun UpNextQueueSheet(
                                         .graphicsLayer {
                                             if (isDragging) {
                                                 translationY = reorderableState.dragOffsetY
-                                                scaleX = 1.03f
-                                                scaleY = 1.03f
-                                                rotationZ = (reorderableState.dragOffsetY * 0.02f).coerceIn(-3f, 3f)
+                                                scaleX = 1.02f
+                                                scaleY = 1.02f
                                                 shadowElevation = 16.dp.toPx()
                                             }
                                         }
                                         .clickable {
                                             if (!reorderableState.isDragging && !reorderableState.isSettling) {
                                                 if (index in localQueue.indices) {
+                                                    playingEntryKey = entry.stableKey
                                                     onSongClick(index)
                                                 }
                                             }
@@ -476,13 +491,15 @@ fun UpNextQueueSheet(
                                     colors = CardDefaults.cardColors(
                                         containerColor = when {
                                             isDragging -> BentoCardDarkPurple
-                                            isCurrent -> BentoCardDarkPurple.copy(alpha = 0.75f)
+                                            isCurrent -> BentoCardDarkPurple.copy(alpha = 0.85f)
                                             else -> BentoCardSurface
                                         }
                                     ),
-                                    border = if (isDragging) {
-                                        androidx.compose.foundation.BorderStroke(1.5.dp, BentoPrimary)
-                                    } else null,
+                                    border = when {
+                                        isDragging -> BorderStroke(1.5.dp, BentoPrimary)
+                                        isCurrent -> BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.5f))
+                                        else -> null
+                                    },
                                     elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 12.dp else 0.dp),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
@@ -492,10 +509,10 @@ fun UpNextQueueSheet(
                                             .padding(horizontal = 10.dp, vertical = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Fluid Reorderable Drag Handle (All tracks including currently playing)
+                                        // Drag Handle
                                         Box(
                                             modifier = Modifier
-                                                .size(44.dp)
+                                                .size(42.dp)
                                                 .reorderableDragHandle(
                                                     state = reorderableState,
                                                     getIndex = {
@@ -513,19 +530,32 @@ fun UpNextQueueSheet(
                                             Icon(
                                                 imageVector = Icons.Default.DragHandle,
                                                 contentDescription = "Drag to reorder track",
-                                                tint = if (isDragging) BentoPrimary else if (isCurrent) BentoPrimary else BentoTextSecondary,
-                                                modifier = Modifier.size(24.dp)
+                                                tint = if (isDragging || isCurrent) BentoPrimary else BentoTextSecondary,
+                                                modifier = Modifier.size(22.dp)
                                             )
                                         }
 
-                                        // Song Queue Position Number
-                                        Text(
-                                            text = "${index + 1}",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (isCurrent) BentoPrimary else if (isPlayed) BentoTextSubtle else BentoTextSecondary,
-                                            modifier = Modifier.width(26.dp)
-                                        )
+                                        // Track Status / Queue Position Indicator (Displays active GraphicEq icon for Now Playing track)
+                                        Box(
+                                            modifier = Modifier.width(28.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            if (isCurrent) {
+                                                Icon(
+                                                    imageVector = if (playbackState.isPlaying) Icons.Default.GraphicEq else Icons.Default.PauseCircleFilled,
+                                                    contentDescription = "Now Playing",
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "${index + 1}",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isPlayed) BentoTextSubtle else BentoTextSecondary
+                                                )
+                                            }
+                                        }
 
                                         AlbumArtView(
                                             song = song,
@@ -547,18 +577,18 @@ fun UpNextQueueSheet(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                if (isPlayed) {
+                                                if (isCurrent) {
+                                                    Text(
+                                                        text = "Now Playing • ",
+                                                        fontSize = 11.sp,
+                                                        color = BentoPrimary,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                } else if (isPlayed) {
                                                     Text(
                                                         text = "Played • ",
                                                         fontSize = 11.sp,
                                                         color = BentoTextSubtle,
-                                                        fontWeight = FontWeight.SemiBold
-                                                    )
-                                                } else if (isCurrent) {
-                                                    Text(
-                                                        text = "Playing • ",
-                                                        fontSize = 11.sp,
-                                                        color = BentoPrimary,
                                                         fontWeight = FontWeight.SemiBold
                                                     )
                                                 }
@@ -595,6 +625,7 @@ fun UpNextQueueSheet(
                                                     onDismissRequest = { showItemMenu = false },
                                                     onPlayNow = {
                                                         if (index in localQueue.indices) {
+                                                            playingEntryKey = entry.stableKey
                                                             onSongClick(index)
                                                         }
                                                     },
@@ -637,4 +668,3 @@ fun UpNextQueueSheet(
         }
     }
 }
-

@@ -4003,15 +4003,66 @@ fun SettingsScreen(
                             SettingsDivider()
                         }
 
+                        var showFullDeviceScanConfirmDialog by remember { mutableStateOf(false) }
+
                         // Full-Device Scan Toggle
                         SettingsToggleRow(
                             title = "Full-Device Scan",
                             subtitle = if (fullDeviceScan) "Search the entire device file system for audio tracks" else "Restricted strictly to configured music directories",
                             checked = fullDeviceScan,
-                            onCheckedChange = onSetFullDeviceScan,
+                            onCheckedChange = { checked ->
+                                if (checked && folders.isNotEmpty()) {
+                                    showFullDeviceScanConfirmDialog = true
+                                } else {
+                                    onSetFullDeviceScan(checked)
+                                    onScanLibrary()
+                                }
+                            },
                             icon = Icons.Default.Devices,
                             accentColor = Color(0xFF2979FF)
                         )
+
+                        if (showFullDeviceScanConfirmDialog) {
+                            val incCount = folders.count { !it.isExcluded }
+                            val excCount = folders.count { it.isExcluded }
+                            AlertDialog(
+                                onDismissRequest = { showFullDeviceScanConfirmDialog = false },
+                                title = {
+                                    Text(
+                                        text = "Confirm Full-Device Scan",
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        text = "You have $incCount included and $excCount excluded folder(s) configured.\n\nFull-Device Scan may also include folders that you added in the exclude list and perform a scan to fetch tracks from all folders on your device. Do you want to confirm?",
+                                        fontSize = 13.5.sp,
+                                        color = BentoTextSecondary,
+                                        lineHeight = 19.sp
+                                    )
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            showFullDeviceScanConfirmDialog = false
+                                            onSetFullDeviceScan(true)
+                                            onScanLibrary()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White)
+                                    ) {
+                                        Text("Confirm & Scan All", fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showFullDeviceScanConfirmDialog = false }) {
+                                        Text("Cancel", color = BentoTextSecondary)
+                                    }
+                                },
+                                containerColor = BentoCardSurface,
+                                shape = RoundedCornerShape(20.dp)
+                            )
+                        }
 
                         SettingsDivider()
 

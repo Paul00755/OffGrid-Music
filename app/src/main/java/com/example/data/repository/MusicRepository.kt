@@ -90,16 +90,17 @@ class MusicRepository(
         forceFullScan: Boolean = false
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
-        val excluded = folderDao.getExcludedFoldersList()
+        val excluded = if (forceFullScan) emptyList() else folderDao.getExcludedFoldersList()
         libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
     }
 
     suspend fun quickScanAndCleanLibrary(
         ignoreAudioDurationMs: Long = 0L,
-        maxAudioDurationMs: Long = Long.MAX_VALUE
+        maxAudioDurationMs: Long = Long.MAX_VALUE,
+        forceFullScan: Boolean = false
     ) {
-        val included = folderDao.getIncludedFoldersList()
-        val excluded = folderDao.getExcludedFoldersList()
+        val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
+        val excluded = if (forceFullScan) emptyList() else folderDao.getExcludedFoldersList()
         libraryScanner.quickScanAndCleanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
     }
 
@@ -503,7 +504,6 @@ class MusicRepository(
             )
         )
         libraryScanner.refreshDirectoryObservers()
-        libraryScanner.detectAndImportNewSongs()
     }
 
     suspend fun removeFolder(path: String) {
