@@ -8,6 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -82,16 +84,23 @@ class MusicRepository(
         }
     }
 
-    suspend fun scanLibrary(ignoreAudioDurationMs: Long = 0L) {
-        val included = folderDao.getIncludedFoldersList()
+    suspend fun scanLibrary(
+        ignoreAudioDurationMs: Long = 0L,
+        maxAudioDurationMs: Long = Long.MAX_VALUE,
+        forceFullScan: Boolean = false
+    ) {
+        val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
         val excluded = folderDao.getExcludedFoldersList()
-        libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs)
+        libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
     }
 
-    suspend fun quickScanAndCleanLibrary(ignoreAudioDurationMs: Long = 0L) {
+    suspend fun quickScanAndCleanLibrary(
+        ignoreAudioDurationMs: Long = 0L,
+        maxAudioDurationMs: Long = Long.MAX_VALUE
+    ) {
         val included = folderDao.getIncludedFoldersList()
         val excluded = folderDao.getExcludedFoldersList()
-        libraryScanner.quickScanAndCleanLibrary(included, excluded, ignoreAudioDurationMs)
+        libraryScanner.quickScanAndCleanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
     }
 
     suspend fun detectAndImportNewSongs(): Int {
@@ -278,7 +287,10 @@ class MusicRepository(
     }
 
     fun getTotalDurationPlayedBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Long> {
-        return historyDao.getTotalDurationPlayedBetween(startTime, endTime).map { it ?: 0L }
+        return historyDao.getTotalDurationPlayedBetween(startTime, endTime)
+            .map { it ?: 0L }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
     }
 
     fun getDailyListeningStats(days: Int = 7): Flow<List<com.example.data.model.DailyListeningStat>> {
@@ -364,10 +376,14 @@ class MusicRepository(
 
     fun getTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int> {
         return historyDao.getTrackCountBetween(startTime, endTime)
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
     }
 
     fun getUniqueTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int> {
         return historyDao.getUniqueTrackCountBetween(startTime, endTime)
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
     }
 
     fun getMostPlayedSongsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 20): Flow<List<Song>> {

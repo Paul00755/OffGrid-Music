@@ -52,12 +52,14 @@ class MusicApplication : Application(), ImageLoaderFactory {
                 }
             }
 
-            // 2. In-place upgrade safety: immediately auto-restore library & user settings from local backup
+            // 2. In-place upgrade safety: auto-restore library only if database is completely empty
             com.example.data.local.DatabaseStorageManager.autoRestoreLibraryIfEmpty(this)
-            com.example.data.local.DatabaseStorageManager.autoSaveLibrarySnapshot(this)
 
-            // 3. Defer heavy Room database compaction & maintenance until after cold startup
-            kotlinx.coroutines.delay(5000)
+            // 3. Defer heavy Room database compaction, snapshot backup & maintenance until after cold startup
+            kotlinx.coroutines.delay(6000)
+
+            // Auto-save snapshot and run maintenance after UI is responsive
+            com.example.data.local.DatabaseStorageManager.autoSaveLibrarySnapshot(this)
 
             val db = AppDatabase.getInstance(this)
             val dbName = db.openHelper.databaseName

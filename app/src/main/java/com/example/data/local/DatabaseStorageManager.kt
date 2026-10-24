@@ -391,12 +391,28 @@ object DatabaseStorageManager {
 
     suspend fun autoSaveLibrarySnapshot(context: Context) = withContext(Dispatchers.IO) {
         try {
-            exportDatabaseBackup(context)
+            val db = AppDatabase.getInstance(context)
+            val songCount = try { db.songDao().getSongCountOnce() } catch (_: Exception) { 0 }
+            val playlistCount = try { db.playlistDao().getPlaylistCountOnce() } catch (_: Exception) { 0 }
+            if (songCount > 0 || playlistCount > 0) {
+                exportDatabaseBackup(context)
+            }
         } catch (_: Exception) {}
     }
 
     suspend fun autoRestoreLibraryIfEmpty(context: Context) = withContext(Dispatchers.IO) {
         try {
+            val db = AppDatabase.getInstance(context)
+            val songCount = try { db.songDao().getSongCountOnce() } catch (_: Exception) { 0 }
+            val playlistCount = try { db.playlistDao().getPlaylistCountOnce() } catch (_: Exception) { 0 }
+            val smartCount = try { db.smartPlaylistDao().getSmartPlaylistCountOnce() } catch (_: Exception) { 0 }
+
+            // Guard: Never perform auto-restore on healthy, populated databases
+            // Only recover if the database has zero songs, playlists, and smart playlists
+            if (songCount > 0 || playlistCount > 0 || smartCount > 0) {
+                return@withContext
+            }
+
             val candidateDirs = mutableListOf<File>()
             try {
                 val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)

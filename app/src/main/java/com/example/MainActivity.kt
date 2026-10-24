@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
 
             val displayScale by viewModel.displayScale.collectAsState()
             val currentDensity = androidx.compose.ui.platform.LocalDensity.current
-            val baseDensityFactor = remember(currentDensity, displayScale) {
+            val baseDensityFactor = remember(currentDensity.density, currentDensity.fontScale, displayScale) {
                 val scaleMultiplier = when (displayScale.uppercase()) {
                     "COMFORT" -> 1.08f
                     "COMPACT" -> 0.92f
@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
                 val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
                 val recentlyAdded by viewModel.recentlyAddedSongs.collectAsState()
                 val allFolders by viewModel.allFolders.collectAsState()
+                val ignoreAudioDuration by viewModel.ignoreAudioDuration.collectAsState()
                 val allPlaylists by viewModel.allPlaylists.collectAsState()
                 val mostPlayedPlaylists by viewModel.mostPlayedPlaylists.collectAsState()
                 val scanProgress by viewModel.scanProgress.collectAsState()
@@ -226,11 +227,22 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (!isOnboardingCompleted) {
+                    val fullDeviceScanSetting by viewModel.fullDeviceScan.collectAsState()
+                    val maxSongDurationSetting by viewModel.maxSongDuration.collectAsState()
+
                     OnboardingScreen(
                         scanProgress = scanProgress,
                         hasAllFilesAccess = hasStorageAccess,
+                        folders = allFolders,
+                        ignoreDurationSec = ignoreAudioDuration,
+                        maxDurationSec = maxSongDurationSetting,
+                        fullDeviceScan = fullDeviceScanSetting,
+                        onSetFullDeviceScan = { viewModel.setFullDeviceScan(it) },
+                        onSetSongDurationRange = { min, max -> viewModel.setSongDurationRange(min, max) },
+                        onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
+                        onRemoveFolder = { viewModel.removeFolder(it) },
                         onRequestStoragePermission = { requestAllFilesPermission() },
-                        onStartScan = { viewModel.scanLibrary() },
+                        onStartScan = { isFull -> viewModel.scanLibrary(isFull) },
                         onComplete = { viewModel.completeOnboarding() }
                     )
                 } else {
@@ -898,12 +910,8 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // App Opening Splash Screen Overlay for OffGrid Music
-                        AnimatedVisibility(
-                            visible = showSplash,
-                            enter = fadeIn(),
-                            exit = fadeOut(tween(250))
-                        ) {
+                        // App Opening Splash Screen Overlay for OffGrid Music (cleanly detached on dismiss)
+                        if (showSplash) {
                             com.example.ui.components.SplashScreen(
                                 onDismiss = { viewModel.dismissSplash() }
                             )
@@ -1065,26 +1073,18 @@ class MainActivity : ComponentActivity() {
                 val modes = disp?.supportedModes
                 if (!modes.isNullOrEmpty()) {
                     val maxMode = modes.maxByOrNull { it.refreshRate }
+                    val standard60HzMode = modes.firstOrNull { it.refreshRate in 58f..62f }
+                        ?: modes.minByOrNull { it.refreshRate }
+                    val targetModeId = if (enabled && maxMode != null) maxMode.modeId else (standard60HzMode?.modeId ?: 0)
+                    val targetRefreshRate = if (enabled && maxMode != null) maxMode.refreshRate else 60f
+
                     val params = win.attributes
-                    if (enabled && maxMode != null) {
-                        params.preferredDisplayModeId = maxMode.modeId
+                    if (params.preferredDisplayModeId != targetModeId) {
+                        params.preferredDisplayModeId = targetModeId
                         @Suppress("DEPRECATION")
-                        params.preferredRefreshRate = maxMode.refreshRate
-                    } else {
-                        // Explicitly switch to standard 60Hz mode to prevent sticking to 90Hz/120Hz
-                        val standard60HzMode = modes.firstOrNull { it.refreshRate in 58f..62f }
-                            ?: modes.minByOrNull { it.refreshRate }
-                        if (standard60HzMode != null) {
-                            params.preferredDisplayModeId = standard60HzMode.modeId
-                            @Suppress("DEPRECATION")
-                            params.preferredRefreshRate = standard60HzMode.refreshRate
-                        } else {
-                            params.preferredDisplayModeId = 0
-                            @Suppress("DEPRECATION")
-                            params.preferredRefreshRate = 60f
-                        }
+                        params.preferredRefreshRate = targetRefreshRate
+                        win.attributes = params
                     }
-                    win.attributes = params
                 }
             } catch (_: Throwable) {
                 // Fallback gracefully if display mode setting fails on device

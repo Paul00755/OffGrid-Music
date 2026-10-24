@@ -574,6 +574,10 @@ fun SettingsScreen(
     onSetAutoResumeOnVolumeIncrease: (Boolean) -> Unit = {},
     ignoreAudioDuration: Int = 0,
     onSetIgnoreAudioDuration: (Int) -> Unit = {},
+    maxSongDuration: Int = 300,
+    fullDeviceScan: Boolean = false,
+    onSetFullDeviceScan: (Boolean) -> Unit = {},
+    onSetSongDurationRange: (minSec: Int, maxSec: Int) -> Unit = { _, _ -> },
     fadeInOutMs: Int = 1000,
     onSetFadeInOutMs: (Int) -> Unit = {},
     fadeInMs: Int = 1000,
@@ -1372,8 +1376,9 @@ fun SettingsScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // User Account Tile / Card in Settings
-            item(key = "settings_account_tile") {
+            if (isTopLevelHub || showAllInOneList || isSearching) {
+                // User Account Tile / Card in Settings
+                item(key = "settings_account_tile") {
                 val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
                 Surface(
                     onClick = {
@@ -1590,8 +1595,9 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
 
-            if (!isSearching) {
+        if (!isSearching && (isTopLevelHub || showAllInOneList)) {
                 // 2. Subtle & Elegant Category Navigation Chips (Quick Navigation Hub)
                 item(key = "settings_category_chips") {
                     LazyRow(
@@ -1816,45 +1822,121 @@ fun SettingsScreen(
                     }
                 }
             } else if (!isSearching && selectedSection != SettingsSection.ALL) {
-                item(key = "settings_category_breadcrumb_header") {
+                item(key = "settings_category_subscreen_header") {
+                    val catItem = SETTINGS_CATEGORY_CARD_ITEMS.find { it.section == selectedSection }
+                    val accent = catItem?.accentColor ?: BentoPrimary
                     Surface(
-                        onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            handleBack()
-                        },
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(20.dp),
                         color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f)),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back to categories",
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Settings",
-                                fontSize = 12.sp,
-                                color = BentoTextSecondary
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = BentoTextSubtle,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = selectedSection.title,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = BentoPrimary
-                            )
+                            // Top Row: Back Button & Breadcrumbs
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = BentoCardPurple,
+                                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        handleBack()
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                            contentDescription = "Back to categories",
+                                            tint = BentoTextPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            HapticUtils.performClickHaptic(context)
+                                            handleBack()
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Settings",
+                                        fontSize = 12.5.sp,
+                                        color = BentoTextSecondary
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = BentoTextSubtle,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = selectedSection.title,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = accent
+                                    )
+                                }
+                            }
+
+                            // Category Hero Row: Icon Badge, Category Title, Description
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(accent.copy(alpha = 0.16f))
+                                        .border(BorderStroke(1.dp, accent.copy(alpha = 0.4f)), RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = selectedSection.icon,
+                                        contentDescription = null,
+                                        tint = accent,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(14.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = selectedSection.title,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                    if (catItem != null && catItem.subtitle.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = catItem.subtitle,
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary,
+                                            lineHeight = 15.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3920,6 +4002,18 @@ fun SettingsScreen(
                             }
                             SettingsDivider()
                         }
+
+                        // Full-Device Scan Toggle
+                        SettingsToggleRow(
+                            title = "Full-Device Scan",
+                            subtitle = if (fullDeviceScan) "Search the entire device file system for audio tracks" else "Restricted strictly to configured music directories",
+                            checked = fullDeviceScan,
+                            onCheckedChange = onSetFullDeviceScan,
+                            icon = Icons.Default.Devices,
+                            accentColor = Color(0xFF2979FF)
+                        )
+
+                        SettingsDivider()
 
                         // Ignore Short Audio Tracks Filter with quick presets (15s, 30s, 45s, 1m, 2m) and slider
                         AudioDurationFilterSetting(

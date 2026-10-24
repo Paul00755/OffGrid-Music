@@ -146,6 +146,19 @@ fun LibraryScreen(
         }
     }
 
+    // Proactively pre-render artwork ahead of viewport so scrolling through massive libraries is butter smooth
+    LaunchedEffect(songsListState.firstVisibleItemIndex, processedSongs, selectedCategory) {
+        if (selectedCategory == LibraryCategory.SONGS && processedSongs.isNotEmpty()) {
+            com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                context = context,
+                songs = processedSongs,
+                firstVisibleIndex = songsListState.firstVisibleItemIndex,
+                windowAhead = 40,
+                windowBehind = 10
+            )
+        }
+    }
+
     val isAlphabeticalSort = selectedSort == SortOption.TITLE || selectedSort == SortOption.ALBUM || selectedSort == SortOption.ARTIST
 
     fun getAlphabetLabel(song: Song): String {
@@ -753,7 +766,7 @@ fun LibraryScreen(
                                     }
                                 }
 
-                                items(songsForLetter, key = { "${it.id}_${it.path.hashCode()}" }, contentType = { "song_item" }) { song ->
+                                items(songsForLetter, key = { it.id }, contentType = { "song_item" }) { song ->
                                     Box {
                                         SongItem(
                                             song = song,
@@ -810,7 +823,7 @@ fun LibraryScreen(
                                 }
                             }
                         } else {
-                            items(processedSongs, key = { "${it.id}_${it.path.hashCode()}" }, contentType = { "song_item" }) { song ->
+                            items(processedSongs, key = { it.id }, contentType = { "song_item" }) { song ->
                                 Box {
                                     SongItem(
                                         song = song,

@@ -45,8 +45,8 @@ data class ScanProgress(
     val currentFolder: String = "",
     val errorMessage: String? = null,
     val isScanning: Boolean = (status == ScanStatus.SCANNING),
-    val totalDiscovered: Int = if (filesDiscovered > 0) filesDiscovered else validTracksFound,
-    val processedCount: Int = filesProcessed,
+    val totalDiscovered: Int = validTracksFound,
+    val processedCount: Int = validTracksFound,
     val isFinished: Boolean = (status == ScanStatus.COMPLETED),
     val error: String? = errorMessage
 ) {
@@ -579,7 +579,8 @@ class LibraryScanner(
     suspend fun scanLibrary(
         includedFolders: List<FolderEntity> = emptyList(),
         excludedFolders: List<FolderEntity> = emptyList(),
-        ignoreAudioDurationMs: Long = 0L
+        ignoreAudioDurationMs: Long = 0L,
+        maxAudioDurationMs: Long = Long.MAX_VALUE
     ) = withContext(Dispatchers.IO) {
         scanMutex.withLock {
             val initialCount = songDao.getSongCountOnce()
@@ -706,7 +707,7 @@ class LibraryScanner(
                         }
 
                         val duration = if (durationCol >= 0) c.getLong(durationCol) else 0L
-                        if (duration > 0 && duration < ignoreAudioDurationMs) {
+                        if (duration > 0 && ((ignoreAudioDurationMs > 0 && duration < ignoreAudioDurationMs) || (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs))) {
                             filteredRejected++
                             continue
                         }
@@ -870,8 +871,9 @@ class LibraryScanner(
                             val isContentUri = dbSong.contentUriString.startsWith("content://")
                             val isAccessible = if (isContentUri) true else try { File(dbSong.path).exists() } catch (_: Exception) { false }
                             val isTooShort = ignoreAudioDurationMs > 0 && dbSong.durationMs > 0 && dbSong.durationMs < ignoreAudioDurationMs
+                            val isTooLong = maxAudioDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0 && dbSong.durationMs > maxAudioDurationMs
 
-                            if (isExcluded || isNotIncluded || !isAccessible || isTooShort) {
+                            if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
                                 songDao.markMissing(dbSong.path)
                             }
                         }
@@ -912,7 +914,8 @@ class LibraryScanner(
     suspend fun quickScanAndCleanLibrary(
         includedFolders: List<FolderEntity> = emptyList(),
         excludedFolders: List<FolderEntity> = emptyList(),
-        ignoreAudioDurationMs: Long = 0L
+        ignoreAudioDurationMs: Long = 0L,
+        maxAudioDurationMs: Long = Long.MAX_VALUE
     ) = withContext(Dispatchers.IO) {
         scanMutex.withLock {
             val initialCount = songDao.getSongCountOnce()
@@ -954,8 +957,9 @@ class LibraryScanner(
                         val isContentUri = dbSong.contentUriString.startsWith("content://")
                         val isAccessible = if (isContentUri) true else try { File(dbSong.path).exists() } catch (_: Exception) { false }
                         val isTooShort = ignoreAudioDurationMs > 0 && dbSong.durationMs > 0 && dbSong.durationMs < ignoreAudioDurationMs
+                        val isTooLong = maxAudioDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0 && dbSong.durationMs > maxAudioDurationMs
 
-                        if (isExcluded || isNotIncluded || !isAccessible || isTooShort) {
+                        if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
                             songDao.markMissing(dbSong.path)
                             filteredRejected++
                             continue
@@ -1100,7 +1104,7 @@ class LibraryScanner(
                         }
 
                         val dur = if (durationCol >= 0) c.getLong(durationCol) else 0L
-                        if (dur < ignoreAudioDurationMs && dur > 0L) {
+                        if (dur > 0L && ((ignoreAudioDurationMs > 0 && dur < ignoreAudioDurationMs) || (maxAudioDurationMs in 1 until Long.MAX_VALUE && dur > maxAudioDurationMs))) {
                             filteredRejected++
                             continue
                         }

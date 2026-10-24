@@ -10,12 +10,14 @@ on:
 permissions:
   contents: write
 
+env:
+  JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build Debug APK
-    runs-on: ubuntu-latest
-    env:
-      JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Code
@@ -24,13 +26,13 @@ jobs:
           fetch-depth: 1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Setup Environment and Keystore
+      - name: Setup Environment and Persistent Keystore
         run: |
           # 1. Ensure .env exists for Secrets Gradle Plugin
           if [ ! -f .env ]; then
@@ -41,27 +43,30 @@ jobs:
             fi
           fi
 
-          # 2. Restore persistent repository debug.keystore so every build produces identical signing certificates
+          # 2. Materialize the permanent deterministic debug.keystore so EVERY build
+          #    (past, present, and future) shares the exact same signing certificate.
           if [ -f debug.keystore.base64 ]; then
             echo "Restoring persistent debug.keystore from debug.keystore.base64..."
             base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f debug.keystore ]; then
-            echo "Generating fallback debug.keystore..."
-            keytool -genkey -v -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          else
+            echo "Restoring embedded permanent debug.keystore..."
+            cat << 'EOF' | base64 -d > debug.keystore
+          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
+          EOF
           fi
 
       - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug -Pkotlin.compiler.execution.strategy=daemon -Dksp.daemon=true -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Djava.awt.headless=true" --stacktrace
+        run: |
+          ./gradlew assembleDebug \
+            -PversionNameSuffix="-build.${{ github.run_number }}" \
+            -Pkotlin.compiler.execution.strategy=daemon \
+            -Pksp.useKSP2=true \
+            --no-configuration-cache \
+            -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" \
+            --stacktrace
 
       - name: Prepare OffGrid Music.apk
         run: |
@@ -110,14 +115,14 @@ jobs:
             gh release upload latest "$APK_PATH" --clobber
             gh release edit latest \
               --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install." \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n'"- **Build**: \`#${{ github.run_number }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install over your existing app (retains all data)." \
               --target "${{ github.sha }}" \
               --latest
           else
             echo "Creating initial 'latest' release..."
             gh release create latest "$APK_PATH" \
               --title "OffGrid Music - Latest Version" \
-              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install." \
+              --notes "### 🚀 Automated Latest APK Build"$'\n\n'"- **Commit**: \`${{ github.sha }}\`"$'\n'"- **Branch**: \`${{ github.ref_name }}\`"$'\n'"- **Build**: \`#${{ github.run_number }}\`"$'\n\n'"Download **OffGrid Music.apk** below to install over your existing app (retains all data)." \
               --target "${{ github.sha }}" \
               --latest
           fi
@@ -127,5 +132,5 @@ jobs:
           echo "Publishing versioned release $RUN_TAG..."
           gh release create "$RUN_TAG" "$APK_PATH" \
             --title "OffGrid Music Build #${{ github.run_number }}" \
-            --notes "Automated build for commit \`${{ github.sha }}\` on branch \`${{ github.ref_name }}\`." \
+            --notes "Automated build for commit \`${{ github.sha }}\` on branch \`${{ github.ref_name }}\`. Can be installed directly over newer or older builds while retaining all user data." \
             --target "${{ github.sha }}" || true

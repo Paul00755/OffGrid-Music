@@ -63,6 +63,8 @@ class UserPreferencesRepository(private val context: Context) {
         val PAUSE_ON_ZERO_VOLUME = booleanPreferencesKey("pause_on_zero_volume")
         val AUTO_RESUME_ON_VOLUME_INCREASE = booleanPreferencesKey("auto_resume_on_volume_increase")
         val IGNORE_AUDIO_DURATION = intPreferencesKey("ignore_audio_duration") // Minimum duration in seconds
+        val MAX_SONG_DURATION = intPreferencesKey("max_song_duration_sec") // Maximum duration in seconds (default 300)
+        val FULL_DEVICE_SCAN = booleanPreferencesKey("full_device_scan") // Whether to scan whole device or selected folders
         val FADE_IN_OUT_MS = intPreferencesKey("fade_in_out_ms") // 0..5000 ms (legacy)
         val FADE_IN_MS = intPreferencesKey("fade_in_ms") // 0..5000 ms
         val FADE_OUT_MS = intPreferencesKey("fade_out_ms") // 0..5000 ms
@@ -731,6 +733,14 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0
     }
 
+    val maxSongDuration: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.MAX_SONG_DURATION] ?: 300
+    }
+
+    val fullDeviceScan: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[PreferenceKeys.FULL_DEVICE_SCAN] ?: false
+    }
+
     val fadeInOutMs: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
     }
@@ -801,6 +811,21 @@ class UserPreferencesRepository(private val context: Context) {
     
     suspend fun setIgnoreAudioDuration(durationSec: Int) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = durationSec }
+    }
+
+    suspend fun setMaxSongDuration(durationSec: Int) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MAX_SONG_DURATION] = durationSec }
+    }
+
+    suspend fun setFullDeviceScan(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FULL_DEVICE_SCAN] = enabled }
+    }
+
+    suspend fun setSongDurationRange(minSec: Int, maxSec: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = minSec
+            prefs[PreferenceKeys.MAX_SONG_DURATION] = maxSec
+        }
     }
 
     suspend fun setFadeInOutMs(ms: Int) {

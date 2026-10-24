@@ -384,25 +384,57 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Lazily, 0)
 
-    val allSongs: StateFlow<List<Song>> = repository.allSongs.combine(ignoreAudioDuration) { list, minSec ->
-        if (minSec > 0) {
-            list.filter { it.durationMs >= minSec * 1000L }
-        } else {
-            list
+    val maxSongDuration: StateFlow<Int> = preferences.maxSongDuration
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Lazily, 300)
+
+    val fullDeviceScan: StateFlow<Boolean> = preferences.fullDeviceScan
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+
+    val allSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.allSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
+        list.filter {
+            val durSec = (it.durationMs / 1000L).toInt()
+            val minPass = minSec <= 0 || durSec >= minSec
+            val maxPass = maxSec >= 300 || durSec <= maxSec
+            minPass && maxPass
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    val favoriteSongs: StateFlow<List<Song>> = repository.favoriteSongs.combine(ignoreAudioDuration) { list, minSec ->
-        if (minSec > 0) list.filter { it.durationMs >= minSec * 1000L } else list
+    val favoriteSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.favoriteSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
+        list.filter {
+            val durSec = (it.durationMs / 1000L).toInt()
+            val minPass = minSec <= 0 || durSec >= minSec
+            val maxPass = maxSec >= 300 || durSec <= maxSec
+            minPass && maxPass
+        }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    val recentlyAddedSongs: StateFlow<List<Song>> = repository.recentlyAddedSongs.combine(ignoreAudioDuration) { list, minSec ->
-        if (minSec > 0) list.filter { it.durationMs >= minSec * 1000L } else list
+
+    val recentlyAddedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.recentlyAddedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
+        list.filter {
+            val durSec = (it.durationMs / 1000L).toInt()
+            val minPass = minSec <= 0 || durSec >= minSec
+            val maxPass = maxSec >= 300 || durSec <= maxSec
+            minPass && maxPass
+        }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    val recentlyPlayedSongs: StateFlow<List<Song>> = repository.recentlyPlayedSongs.combine(ignoreAudioDuration) { list, minSec ->
-        if (minSec > 0) list.filter { it.durationMs >= minSec * 1000L } else list
+
+    val recentlyPlayedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.recentlyPlayedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
+        list.filter {
+            val durSec = (it.durationMs / 1000L).toInt()
+            val minPass = minSec <= 0 || durSec >= minSec
+            val maxPass = maxSec >= 300 || durSec <= maxSec
+            minPass && maxPass
+        }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    val mostPlayedSongs: StateFlow<List<Song>> = repository.mostPlayedSongs.combine(ignoreAudioDuration) { list, minSec ->
-        if (minSec > 0) list.filter { it.durationMs >= minSec * 1000L } else list
+
+    val mostPlayedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.mostPlayedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
+        list.filter {
+            val durSec = (it.durationMs / 1000L).toInt()
+            val minPass = minSec <= 0 || durSec >= minSec
+            val maxPass = maxSec >= 300 || durSec <= maxSec
+            minPass && maxPass
+        }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val allFolders: StateFlow<List<FolderInfo>> = repository.allFolders.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val allPlaylists: StateFlow<List<Playlist>> = repository.allPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -721,7 +753,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
             preferences.setIgnoreAudioDuration(safeSec)
             kotlinx.coroutines.delay(500)
-            repository.quickScanAndCleanLibrary(safeSec * 1000L)
+            val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
+            repository.quickScanAndCleanLibrary(safeSec * 1000L, maxMs)
+        }
+    }
+
+    fun setMaxSongDuration(sec: Int) {
+        val safeSec = sec.coerceIn(0, 300)
+        ignoreDurationJob?.cancel()
+        ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
+            preferences.setMaxSongDuration(safeSec)
+            kotlinx.coroutines.delay(500)
+            val maxMs = if (safeSec >= 300) Long.MAX_VALUE else safeSec * 1000L
+            repository.quickScanAndCleanLibrary(ignoreAudioDuration.value * 1000L, maxMs)
+        }
+    }
+
+    fun setFullDeviceScan(enabled: Boolean) = viewModelScope.launch {
+        preferences.setFullDeviceScan(enabled)
+    }
+
+    fun setSongDurationRange(minSec: Int, maxSec: Int) {
+        val safeMin = minSec.coerceIn(0, 300)
+        val safeMax = maxSec.coerceIn(safeMin, 300)
+        ignoreDurationJob?.cancel()
+        ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
+            preferences.setSongDurationRange(safeMin, safeMax)
+            kotlinx.coroutines.delay(500)
+            val maxMs = if (safeMax >= 300) Long.MAX_VALUE else safeMax * 1000L
+            repository.quickScanAndCleanLibrary(safeMin * 1000L, maxMs)
         }
     }
     fun setFadeInOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeInOutMs(ms) }
@@ -1091,18 +1151,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var scanJob: kotlinx.coroutines.Job? = null
-    fun scanLibrary() {
+    fun scanLibrary(forceFullScan: Boolean? = null) {
         if (scanJob?.isActive == true) return
+        val isFull = forceFullScan ?: fullDeviceScan.value
+        val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
         scanJob = viewModelScope.launch(Dispatchers.IO) {
-            repository.scanLibrary(ignoreAudioDuration.value * 1000L)
+            repository.scanLibrary(
+                ignoreAudioDurationMs = ignoreAudioDuration.value * 1000L,
+                maxAudioDurationMs = maxMs,
+                forceFullScan = isFull
+            )
         }
     }
 
     private var quickScanJob: kotlinx.coroutines.Job? = null
     fun quickScanAndCleanLibrary() {
         if (quickScanJob?.isActive == true || scanJob?.isActive == true) return
+        val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
         quickScanJob = viewModelScope.launch(Dispatchers.IO) {
-            repository.quickScanAndCleanLibrary(ignoreAudioDuration.value * 1000L)
+            repository.quickScanAndCleanLibrary(
+                ignoreAudioDurationMs = ignoreAudioDuration.value * 1000L,
+                maxAudioDurationMs = maxMs
+            )
         }
     }
 

@@ -36,9 +36,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 // Global high-speed in-memory & disk resolution cache for ultra-smooth scrolling
 object ArtworkResolutionCache {
-    private val lruCache = object : android.util.LruCache<Long, String>(600) {}
+    private val lruCache = object : android.util.LruCache<Long, String>(4000) {}
     private val manualCoverCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
     private val manualPathCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val preloadedKeys = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    private val preloaderScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
     val artworkUpdateSignal = androidx.compose.runtime.mutableLongStateOf(0L)
 
@@ -51,6 +53,7 @@ object ArtworkResolutionCache {
             manualCoverCache.remove(songId)
         }
         manualPathCache.clear()
+        preloadedKeys.clear()
         try {
             com.example.util.ArtworkManager.invalidateNotificationArtwork(songId)
         } catch (_: Throwable) {}
@@ -65,6 +68,75 @@ object ArtworkResolutionCache {
         override fun remove(key: Long): String? = lruCache.remove(key)
         override fun clear() { lruCache.evictAll() }
         override val size: Int get() = lruCache.size()
+    }
+
+    /**
+     * Proactively resolves artwork and preloads decoded thumbnails into Coil's in-memory cache
+     * ahead of the user's viewport so artwork is already rendered when scrolling into view.
+     */
+    fun preloadWindow(
+        context: Context,
+        songs: List<Song>,
+        firstVisibleIndex: Int,
+        windowAhead: Int = 35,
+        windowBehind: Int = 10
+    ) {
+        if (songs.isEmpty()) return
+        val startIndex = (firstVisibleIndex - windowBehind).coerceAtLeast(0)
+        val endIndex = (firstVisibleIndex + windowAhead).coerceAtMost(songs.size)
+        if (startIndex >= endIndex) return
+
+        val targetSongs = try {
+            songs.subList(startIndex, endIndex).toList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        if (targetSongs.isEmpty()) return
+
+        preloaderScope.launch {
+            val imageLoader = coil.Coil.imageLoader(context)
+            for (song in targetSongs) {
+                if (song.id <= 0L) continue
+
+                var uri = cache[song.id]
+                if (uri == null) {
+                    uri = getAuthoritativeArtwork(context, song)
+                        ?: getManualCoverUri(context, song.id, song.path)
+                        ?: song.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
+                        ?: ArtworkManager.getOrExtractArtworkUri(
+                            context = context,
+                            songId = song.id,
+                            filePath = song.path,
+                            albumId = song.albumId,
+                            albumName = song.displayAlbum
+                        )
+                    if (!uri.isNullOrBlank()) {
+                        cache[song.id] = uri
+                    } else {
+                        cache[song.id] = "" // negative cache
+                    }
+                }
+
+                if (!uri.isNullOrBlank()) {
+                    val cacheKey = "art_${song.id}_${uri.hashCode()}"
+                    if (preloadedKeys.add(cacheKey)) {
+                        try {
+                            val request = coil.request.ImageRequest.Builder(context)
+                                .data(uri)
+                                .memoryCacheKey(cacheKey)
+                                .diskCacheKey(cacheKey)
+                                .size(180, 180)
+                                .precision(coil.size.Precision.INEXACT)
+                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                .allowHardware(true)
+                                .build()
+                            imageLoader.enqueue(request)
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+        }
     }
     
     fun getMemory(songId: Long): String? {

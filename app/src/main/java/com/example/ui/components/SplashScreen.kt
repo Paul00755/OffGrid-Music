@@ -37,11 +37,15 @@ fun SplashScreen(
     onDismiss: () -> Unit
 ) {
     var animationStarted by remember { mutableStateOf(false) }
+    var isDismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         animationStarted = true
-        delay(450)
-        onDismiss()
+        delay(400)
+        if (!isDismissed) {
+            isDismissed = true
+            onDismiss()
+        }
     }
 
     val scaleAnimate by animateFloatAsState(
@@ -114,31 +118,36 @@ fun SplashScreen(
                     )
                 )
             )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                onDismiss()
-            },
+            .then(
+                if (!isDismissed) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        isDismissed = true
+                        onDismiss()
+                    }
+                } else Modifier
+            ),
         contentAlignment = Alignment.Center
     ) {
         // Ambient Neon Glow Orbs in Background
         Box(
             modifier = Modifier
-                .size(260.dp)
+                .size(280.dp)
                 .scale(scaleAnimate)
                 .alpha(alphaAnimate * 0.35f * glowPulse)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF00D2FF),
-                            Color(0xFF9D4EDD),
+                            Color(0xFF00D2FF).copy(alpha = 0.55f),
+                            Color(0xFF9D4EDD).copy(alpha = 0.28f),
+                            Color(0xFF9D4EDD).copy(alpha = 0.08f),
                             Color.Transparent
                         )
                     ),
                     shape = CircleShape
                 )
-                .blur(40.dp)
         )
 
         Column(
