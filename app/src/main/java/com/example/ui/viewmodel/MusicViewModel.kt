@@ -55,7 +55,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         scanner
     )
 
-    val preferences: UserPreferencesRepository = UserPreferencesRepository(application)
+    val preferences: UserPreferencesRepository = UserPreferencesRepository.getInstance(application)
     val authManager: AuthManager = AuthManager.getInstance(application)
     val cloudSyncRepository: com.example.data.sync.CloudSyncRepository = com.example.data.sync.CloudSyncRepository.getInstance(
         context = application,
@@ -528,6 +528,81 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preferences.setHomeSections(sections)
     }
 
+    private val _lyricsCacheSize = MutableStateFlow("0.0 KB")
+    val lyricsCacheSize: StateFlow<String> = _lyricsCacheSize.asStateFlow()
+
+    private val _albumArtCacheSize = MutableStateFlow("0.0 KB")
+    val albumArtCacheSize: StateFlow<String> = _albumArtCacheSize.asStateFlow()
+
+    private val _songArtCacheSize = MutableStateFlow("0.0 KB")
+    val songArtCacheSize: StateFlow<String> = _songArtCacheSize.asStateFlow()
+
+    private val _totalCacheSize = MutableStateFlow("0.0 KB")
+    val totalCacheSize: StateFlow<String> = _totalCacheSize.asStateFlow()
+
+    val databaseStorageTier: StateFlow<String> = preferences.databaseStorageTier.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = "EXPANDED"
+    )
+
+    private val _databaseStorageStats = MutableStateFlow<com.example.data.local.DatabaseStorageStats?>(null)
+    val databaseStorageStats: StateFlow<com.example.data.local.DatabaseStorageStats?> = _databaseStorageStats.asStateFlow()
+
+    private val _isOptimizingDatabase = MutableStateFlow(false)
+    val isOptimizingDatabase: StateFlow<Boolean> = _isOptimizingDatabase.asStateFlow()
+
+    // Lyrics State (Initialized BEFORE init blocks to prevent NullPointerException on startup)
+    private val _currentLyrics = MutableStateFlow<Lyrics?>(null)
+    val currentLyrics: StateFlow<Lyrics?> = _currentLyrics.asStateFlow()
+
+    val lyricsSearchResults = MutableStateFlow<List<com.example.service.LyricsCandidate>>(emptyList())
+    val isSearchingLyrics = MutableStateFlow(false)
+    private var lastLyricsSearchSongId: Long? = null
+    private var lastLyricsSearchQuery: String = ""
+    private var cachedLyricsCandidates: List<com.example.service.LyricsCandidate> = emptyList()
+
+    // Audio & Lyrics Transcription / Translation State (KeyStore loaded off Main Thread in init)
+    val secureApiKeyStore = SecureApiKeyStore(getApplication())
+    val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
+    val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Lazily, "TRANSCRIBE")
+    val audioTranscribeTargetLang = preferences.audioTranscribeTargetLang.stateIn(viewModelScope, SharingStarted.Lazily, "ta")
+
+    private val _hasUserApiKey = MutableStateFlow(false)
+    val hasUserApiKey: StateFlow<Boolean> = _hasUserApiKey.asStateFlow()
+
+    private val _maskedApiKey = MutableStateFlow<String?>(null)
+    val maskedApiKey: StateFlow<String?> = _maskedApiKey.asStateFlow()
+
+    private val _isKeyValidating = MutableStateFlow(false)
+    val isKeyValidating: StateFlow<Boolean> = _isKeyValidating.asStateFlow()
+
+    private val _keyValidationErrorMessage = MutableStateFlow<String?>(null)
+    val keyValidationErrorMessage: StateFlow<String?> = _keyValidationErrorMessage.asStateFlow()
+
+    private val _isTranscribingLyrics = MutableStateFlow(false)
+    val isTranscribingLyrics: StateFlow<Boolean> = _isTranscribingLyrics.asStateFlow()
+
+    private val _transcribeStatusMessage = MutableStateFlow<String?>(null)
+    val transcribeStatusMessage: StateFlow<String?> = _transcribeStatusMessage.asStateFlow()
+
+    private val _transcribeErrorMessage = MutableStateFlow<String?>(null)
+    val transcribeErrorMessage: StateFlow<String?> = _transcribeErrorMessage.asStateFlow()
+
+    private val _transcribeLyricsPreview = MutableStateFlow<com.example.service.transcription.TranscribeLyricsPreview?>(null)
+    val transcribeLyricsPreview: StateFlow<com.example.service.transcription.TranscribeLyricsPreview?> = _transcribeLyricsPreview.asStateFlow()
+
+    private val previousLyricsHistory = ConcurrentHashMap<Long, Lyrics?>()
+    private val _canUndoLyricsForCurrentSong = MutableStateFlow(false)
+    val canUndoLyricsForCurrentSong: StateFlow<Boolean> = _canUndoLyricsForCurrentSong.asStateFlow()
+
+    val geminiLyricsService = GeminiLyricsService(application)
+    val audioRecordHelper = AudioRecordHelper(application)
+
+    private var ignoreDurationJob: kotlinx.coroutines.Job? = null
+    private var scanJob: kotlinx.coroutines.Job? = null
+    private var quickScanJob: kotlinx.coroutines.Job? = null
+
     val equalizerManager get() = playbackManager.equalizerManager
 
     init {
@@ -746,7 +821,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setPauseOnZeroVolume(enabled: Boolean) = viewModelScope.launch { preferences.setPauseOnZeroVolume(enabled) }
     fun setPlayDuringCamera(enabled: Boolean) = viewModelScope.launch { preferences.setPlayDuringCamera(enabled) }
     fun setAutoResumeOnVolumeIncrease(enabled: Boolean) = viewModelScope.launch { preferences.setAutoResumeOnVolumeIncrease(enabled) }
-    private var ignoreDurationJob: kotlinx.coroutines.Job? = null
     fun setIgnoreAudioDuration(sec: Int) {
         val safeSec = sec.coerceIn(0, 300)
         ignoreDurationJob?.cancel()
@@ -829,17 +903,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playbackManager.equalizerManager.setVirtualizerStrength(strength)
     }
 
-    private val _lyricsCacheSize = MutableStateFlow("0.0 KB")
-    val lyricsCacheSize: StateFlow<String> = _lyricsCacheSize.asStateFlow()
-
-    private val _albumArtCacheSize = MutableStateFlow("0.0 KB")
-    val albumArtCacheSize: StateFlow<String> = _albumArtCacheSize.asStateFlow()
-
-    private val _songArtCacheSize = MutableStateFlow("0.0 KB")
-    val songArtCacheSize: StateFlow<String> = _songArtCacheSize.asStateFlow()
-
-    private val _totalCacheSize = MutableStateFlow("0.0 KB")
-    val totalCacheSize: StateFlow<String> = _totalCacheSize.asStateFlow()
 
     fun refreshCacheSizes() = viewModelScope.launch(Dispatchers.IO) {
         val lSize = preferences.getLyricsCacheSizeBytes()
@@ -883,17 +946,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         withContext(Dispatchers.Main) { onComplete() }
     }
 
-    val databaseStorageTier: StateFlow<String> = preferences.databaseStorageTier.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "EXPANDED"
-    )
-
-    private val _databaseStorageStats = MutableStateFlow<com.example.data.local.DatabaseStorageStats?>(null)
-    val databaseStorageStats: StateFlow<com.example.data.local.DatabaseStorageStats?> = _databaseStorageStats.asStateFlow()
-
-    private val _isOptimizingDatabase = MutableStateFlow(false)
-    val isOptimizingDatabase: StateFlow<Boolean> = _isOptimizingDatabase.asStateFlow()
 
     fun setDatabaseStorageTier(tier: String) = viewModelScope.launch {
         preferences.setDatabaseStorageTier(tier)
@@ -945,53 +997,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Lyrics State
-    private val _currentLyrics = MutableStateFlow<Lyrics?>(null)
-    val currentLyrics: StateFlow<Lyrics?> = _currentLyrics.asStateFlow()
-
-    // Audio & Lyrics Transcription / Translation State
-    val secureApiKeyStore = SecureApiKeyStore(getApplication())
-    val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Eagerly, "TRANSCRIBE")
-    val audioTranscribeTargetLang = preferences.audioTranscribeTargetLang.stateIn(viewModelScope, SharingStarted.Eagerly, "ta")
-
-    private val _hasUserApiKey = MutableStateFlow(secureApiKeyStore.hasApiKey())
-    val hasUserApiKey: StateFlow<Boolean> = _hasUserApiKey.asStateFlow()
-
-    private val _maskedApiKey = MutableStateFlow(secureApiKeyStore.getMaskedApiKey())
-    val maskedApiKey: StateFlow<String?> = _maskedApiKey.asStateFlow()
-
-    private val _isKeyValidating = MutableStateFlow(false)
-    val isKeyValidating: StateFlow<Boolean> = _isKeyValidating.asStateFlow()
-
-    private val _keyValidationErrorMessage = MutableStateFlow<String?>(null)
-    val keyValidationErrorMessage: StateFlow<String?> = _keyValidationErrorMessage.asStateFlow()
-
-    private val _isTranscribingLyrics = MutableStateFlow(false)
-    val isTranscribingLyrics: StateFlow<Boolean> = _isTranscribingLyrics.asStateFlow()
-
-    private val _transcribeStatusMessage = MutableStateFlow<String?>(null)
-    val transcribeStatusMessage: StateFlow<String?> = _transcribeStatusMessage.asStateFlow()
-
-    private val _transcribeErrorMessage = MutableStateFlow<String?>(null)
-    val transcribeErrorMessage: StateFlow<String?> = _transcribeErrorMessage.asStateFlow()
-
-    private val _transcribeLyricsPreview = MutableStateFlow<com.example.service.transcription.TranscribeLyricsPreview?>(null)
-    val transcribeLyricsPreview: StateFlow<com.example.service.transcription.TranscribeLyricsPreview?> = _transcribeLyricsPreview.asStateFlow()
-
-    private val previousLyricsHistory = ConcurrentHashMap<Long, Lyrics?>()
-    private val _canUndoLyricsForCurrentSong = MutableStateFlow(false)
-    val canUndoLyricsForCurrentSong: StateFlow<Boolean> = _canUndoLyricsForCurrentSong.asStateFlow()
-
-    val geminiLyricsService = GeminiLyricsService(application)
-    val audioRecordHelper = AudioRecordHelper(application)
-
     init {
-        viewModelScope.launch {
-            // Automatically turn toggle OFF if no key is saved
-            if (preferences.isTranscribeTranslateEnabled.first() && !secureApiKeyStore.hasApiKey()) {
-                preferences.setTranscribeTranslateEnabled(false)
-            }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val hasKey = secureApiKeyStore.hasApiKey()
+                val masked = if (hasKey) secureApiKeyStore.getMaskedApiKey() else null
+                _hasUserApiKey.value = hasKey
+                _maskedApiKey.value = masked
+                if (preferences.isTranscribeTranslateEnabled.first() && !hasKey) {
+                    preferences.setTranscribeTranslateEnabled(false)
+                }
+            } catch (_: Throwable) {}
         }
 
         viewModelScope.launch {
@@ -1150,7 +1166,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private var scanJob: kotlinx.coroutines.Job? = null
     fun scanLibrary(forceFullScan: Boolean? = null) {
         if (scanJob?.isActive == true) return
         val isFull = forceFullScan ?: fullDeviceScan.value
@@ -1164,7 +1179,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private var quickScanJob: kotlinx.coroutines.Job? = null
     fun quickScanAndCleanLibrary() {
         if (quickScanJob?.isActive == true || scanJob?.isActive == true) return
         val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
@@ -1471,11 +1485,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val lyricsSearchResults = MutableStateFlow<List<com.example.service.LyricsCandidate>>(emptyList())
-    val isSearchingLyrics = MutableStateFlow(false)
-    private var lastLyricsSearchSongId: Long? = null
-    private var lastLyricsSearchQuery: String = ""
-    private var cachedLyricsCandidates: List<com.example.service.LyricsCandidate> = emptyList()
 
     fun searchLyricsCandidates(query: String, forceRefresh: Boolean = false) {
         val targetSongId = playbackState.value.currentSong?.id

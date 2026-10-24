@@ -51,18 +51,18 @@ class SecureApiKeyStore(private val context: Context) {
 
             storageFile.writeBytes(combined)
             true
-        } catch (_: Exception) {
-            // Fallback for JVM Robolectric test environments where AndroidKeyStore provider may not be present
+        } catch (_: Throwable) {
+            // Fallback for JVM Robolectric test environments or OEM KeyStore provider errors
             saveFallback(trimmed)
         }
     }
 
     @Synchronized
     fun getApiKey(): String? {
-        if (!storageFile.exists() || storageFile.length() == 0L) {
-            return getFallback()
-        }
         return try {
+            if (!storageFile.exists() || storageFile.length() == 0L) {
+                return getFallback()
+            }
             val combined = storageFile.readBytes()
             if (combined.size <= GCM_IV_LENGTH) return getFallback()
 
@@ -77,15 +77,19 @@ class SecureApiKeyStore(private val context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, key, spec)
             val plainBytes = cipher.doFinal(cipherText)
             String(plainBytes, Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             getFallback()
         }
     }
 
     @Synchronized
     fun hasApiKey(): Boolean {
-        val key = getApiKey()
-        return !key.isNullOrBlank()
+        return try {
+            val key = getApiKey()
+            !key.isNullOrBlank()
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     @Synchronized
@@ -98,19 +102,27 @@ class SecureApiKeyStore(private val context: Context) {
             if (fallbackFile.exists()) {
                 fallbackFile.delete()
             }
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
     }
 
     fun getMaskedApiKey(): String? {
-        val key = getApiKey() ?: return null
-        if (key.length <= 4) return "••••"
-        return "••••••••••••${key.takeLast(4)}"
+        return try {
+            val key = getApiKey() ?: return null
+            if (key.length <= 4) "••••" else "••••••••••••${key.takeLast(4)}"
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun getOrCreateSecretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         if (keyStore.containsAlias(KEY_ALIAS)) {
-            val entry = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
+            val entry = try {
+                keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
+            } catch (_: Throwable) {
+                try { keyStore.deleteEntry(KEY_ALIAS) } catch (_: Throwable) {}
+                null
+            }
             if (entry != null) {
                 return entry.secretKey
             }
@@ -138,7 +150,7 @@ class SecureApiKeyStore(private val context: Context) {
             val encoded = Base64.encodeToString(apiKey.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             fallbackFile.writeText(encoded, Charsets.UTF_8)
             true
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             false
         }
     }
@@ -150,7 +162,7 @@ class SecureApiKeyStore(private val context: Context) {
             val encoded = fallbackFile.readText(Charsets.UTF_8)
             val decoded = Base64.decode(encoded, Base64.NO_WRAP)
             String(decoded, Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         }
     }

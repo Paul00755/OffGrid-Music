@@ -65,11 +65,14 @@ class MainActivity : ComponentActivity() {
             com.example.util.ArtworkManager.purgePollutedArtworkCache(applicationContext)
         }
 
-        checkPermissions()
         registerMediaStoreObserver()
 
         setContent {
             val viewModel: MusicViewModel = viewModel()
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(350)
+                checkPermissions()
+            }
             val themeMode by viewModel.themeMode.collectAsState()
             val uiTheme by viewModel.uiTheme.collectAsState()
             val accentColorPreset by viewModel.accentColorPreset.collectAsState()

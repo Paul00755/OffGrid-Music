@@ -476,34 +476,6 @@ class UserPreferencesRepository(private val context: Context) {
     @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = false
     @Volatile var cachedAutoPlayOnAppStartup: Boolean = false
 
-    init {
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                fetchOnlineArtworkHighRes.collect { cachedFetchOnlineArtworkHighRes = it }
-            } catch (_: Exception) {}
-        }
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                cacheAlbumArtEnabled.collect { cachedCacheAlbumArtEnabled = it }
-            } catch (_: Exception) {}
-        }
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                cacheSongArtWorkEnabled.collect { cachedCacheSongArtWorkEnabled = it }
-            } catch (_: Exception) {}
-        }
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                autoPlayOnHeadphoneConnection.collect { cachedAutoPlayOnHeadphoneConnection = it }
-            } catch (_: Exception) {}
-        }
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                autoPlayOnAppStartup.collect { cachedAutoPlayOnAppStartup = it }
-            } catch (_: Exception) {}
-        }
-    }
-
     val customEqBands: Flow<List<Float>> = context.dataStore.data.map { prefs ->
         val raw = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0"
         try {
@@ -1237,6 +1209,34 @@ class UserPreferencesRepository(private val context: Context) {
             context.externalCacheDir?.let { if (it.exists()) size += it.walkTopDown().filter { f -> f.isFile }.sumOf { f -> f.length() } }
         } catch (_: Exception) {}
         return size
+    }
+
+    init {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                fetchOnlineArtworkHighRes.collect { cachedFetchOnlineArtworkHighRes = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                cacheAlbumArtEnabled.collect { cachedCacheAlbumArtEnabled = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                cacheSongArtWorkEnabled.collect { cachedCacheSongArtWorkEnabled = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                autoPlayOnHeadphoneConnection.collect { cachedAutoPlayOnHeadphoneConnection = it }
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                autoPlayOnAppStartup.collect { cachedAutoPlayOnAppStartup = it }
+            } catch (_: Exception) {}
+        }
     }
 
     companion object {

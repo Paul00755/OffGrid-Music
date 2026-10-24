@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -441,7 +442,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
 
                 if (mostPlayedFilteredSongs.isNotEmpty()) {
-                    items(mostPlayedFilteredSongs, key = { it.id }, contentType = { "song_item" }) { song ->
+                    itemsIndexed(mostPlayedFilteredSongs, key = { idx, item -> "most_played_${item.id}_$idx" }, contentType = { _, _ -> "song_item" }) { _, song ->
                         var showMenu by remember { mutableStateOf(false) }
                         Box {
                             SongItem(
@@ -494,7 +495,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(playlistsToShow, key = { "pl_${it.id}" }) { playlist ->
+                            itemsIndexed(playlistsToShow, key = { idx, item -> "pl_${item.id}_$idx" }) { _, playlist ->
                                 BentoCard(
                                     modifier = Modifier
                                         .width(130.dp)
@@ -579,11 +580,11 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(
+                            itemsIndexed(
                                 items = uniqueRecent,
-                                key = { it.id },
-                                contentType = { "recent_song" }
-                            ) { song ->
+                                key = { idx, item -> "recent_played_${item.id}_$idx" },
+                                contentType = { _, _ -> "recent_song" }
+                            ) { _, song ->
                                 Column(
                                     modifier = Modifier
                                         .width(110.dp)
@@ -665,7 +666,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(recentlyAdded.take(10), key = { it.id }, contentType = { "recent_added" }) { song ->
+                            itemsIndexed(recentlyAdded.take(10), key = { idx, item -> "recent_added_${item.id}_$idx" }, contentType = { _, _ -> "recent_added" }) { _, song ->
                                 Column(
                                     modifier = Modifier
                                         .width(110.dp)
@@ -712,7 +713,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(topArtists, key = { "art_${it.name}" }) { artist ->
+                            itemsIndexed(topArtists, key = { idx, item -> "art_${idx}_${item.name}" }) { _, artist ->
                                 BentoCard(
                                     modifier = Modifier.width(130.dp),
                                     backgroundColor = BentoCardSurface
@@ -760,7 +761,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(topAlbums, key = { "alb_${it.name}" }) { album ->
+                            itemsIndexed(topAlbums, key = { idx, item -> "alb_${idx}_${item.name}" }) { _, album ->
                                 BentoCard(
                                     modifier = Modifier.width(130.dp),
                                     backgroundColor = BentoCardSurface

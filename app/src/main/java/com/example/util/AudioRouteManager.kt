@@ -56,6 +56,8 @@ class AudioRouteManager(private val context: Context) {
 
     private var a2dpProfile: BluetoothA2dp? = null
     private var headsetProfile: BluetoothHeadset? = null
+    private var userSelectedRoute: AudioRouteDevice? = null
+    var onDeviceSelected: ((AudioDeviceInfo?) -> Unit)? = null
 
     private val _currentRoute = MutableStateFlow(detectCurrentRoute())
     val currentRoute: StateFlow<AudioRouteInfo> = _currentRoute.asStateFlow()
@@ -227,8 +229,6 @@ class AudioRouteManager(private val context: Context) {
         }
         return "Bluetooth Audio"
     }
-
-    private var userSelectedRoute: AudioRouteDevice? = null
 
     private fun detectCurrentRoute(): AudioRouteInfo {
         val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -523,8 +523,6 @@ class AudioRouteManager(private val context: Context) {
         return list.distinctBy { it.id }
     }
 
-    var onDeviceSelected: ((AudioDeviceInfo?) -> Unit)? = null
-
     private fun getDeviceMediaScore(type: Int): Int {
         return when {
             type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> 10
@@ -706,4 +704,3 @@ class AudioRouteManager(private val context: Context) {
         } catch (_: Exception) {}
     }
 }
-
