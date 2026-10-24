@@ -152,4 +152,19 @@ class FirebaseAuthTest {
             (viewModel.authUiState.value as AuthUiState.Error).message
         )
     }
+
+    @Test
+    fun `FirebaseInitializer ensures FirebaseApp is initialized with proper credentials`() {
+        val app = com.example.util.FirebaseInitializer.ensureInitialized(context)
+        assertNotNull("FirebaseApp should be initialized", app)
+        assertEquals("offgrid-music", com.example.util.FirebaseInitializer.FIREBASE_PROJECT_ID)
+        assertEquals("844076337559-mvpmas9lvh40glt9vqd0qn5oe846999b.apps.googleusercontent.com", com.example.util.FirebaseInitializer.DEFAULT_WEB_CLIENT_ID)
+    }
+
+    @Test
+    fun `AuthManager getFirebaseAuth is not permanently null`() {
+        val auth = authManager.getFirebaseAuth()
+        assertNotNull("FirebaseAuth should be retrievable after initialization", auth)
+    }
 }
+

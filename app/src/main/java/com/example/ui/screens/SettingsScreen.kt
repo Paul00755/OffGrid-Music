@@ -3845,7 +3845,8 @@ fun SettingsScreen(
                                     HapticUtils.performClickHaptic(context)
                                     onExportDatabaseBackup { file ->
                                         if (file != null) {
-                                            android.widget.Toast.makeText(context, "Backup saved to: ${file.name}", android.widget.Toast.LENGTH_LONG).show()
+                                            val dirName = file.parentFile?.name ?: "Offgrid"
+                                            android.widget.Toast.makeText(context, "Backup saved to: $dirName/${file.name}", android.widget.Toast.LENGTH_LONG).show()
                                         } else {
                                             android.widget.Toast.makeText(context, "Failed to create backup", android.widget.Toast.LENGTH_SHORT).show()
                                         }
@@ -3885,11 +3886,38 @@ fun SettingsScreen(
                                 title = { Text("Restore Library Backup", fontWeight = FontWeight.Bold) },
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(
-                                            "Paste the JSON content of your library backup to restore playlists, smart playlists, and favorites:",
-                                            fontSize = 12.sp,
-                                            color = BentoTextSecondary
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "Paste JSON or load from device:",
+                                                fontSize = 12.sp,
+                                                color = BentoTextSecondary,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    val latest = com.example.data.local.DatabaseStorageManager.getLatestBackupFile(context)
+                                                    if (latest != null && latest.exists()) {
+                                                        try {
+                                                            importJsonText = latest.readText(Charsets.UTF_8)
+                                                            android.widget.Toast.makeText(context, "Loaded ${latest.name}", android.widget.Toast.LENGTH_SHORT).show()
+                                                        } catch (e: Exception) {
+                                                            android.widget.Toast.makeText(context, "Failed to read backup: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } else {
+                                                        android.widget.Toast.makeText(context, "No backup found in /Offgrid folder", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF00E5FF))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Load from /Offgrid", fontSize = 11.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.SemiBold)
+                                            }
+                                        }
                                         OutlinedTextField(
                                             value = importJsonText,
                                             onValueChange = { importJsonText = it },

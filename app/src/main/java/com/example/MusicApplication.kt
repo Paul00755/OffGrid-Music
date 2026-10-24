@@ -23,6 +23,7 @@ class MusicApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         CrashReporter.init(this)
+        com.example.util.FirebaseInitializer.ensureInitialized(this)
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             performStartupDiagnostics()
         }

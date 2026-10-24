@@ -8,6 +8,7 @@ import com.example.data.local.DatabaseStorageStats
 import com.example.data.local.PlaylistEntity
 import com.example.data.local.SmartPlaylistEntity
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -76,10 +77,26 @@ class DatabaseStorageTest {
         )
         assertTrue(smartId > 0)
 
+        // Verify Offgrid directory creation
+        val offgridDir = DatabaseStorageManager.getOffgridDirectory(context)
+        assertEquals("Offgrid", offgridDir.name)
+        assertTrue(offgridDir.exists())
+
         // Export backup
         val backupFile = DatabaseStorageManager.exportDatabaseBackup(context)
         assertNotNull(backupFile)
         assertTrue(backupFile!!.exists())
+        assertTrue(backupFile.name.startsWith("offgrid_library_backup_") && backupFile.name.endsWith(".json"))
+
+        // Verify offgrid_auto_backup.json exists
+        val autoBackupFile = File(offgridDir, "offgrid_auto_backup.json")
+        assertTrue(autoBackupFile.exists())
+
+        // Verify getLatestBackupFile returns a valid backup file
+        val latestFile = DatabaseStorageManager.getLatestBackupFile(context)
+        assertNotNull(latestFile)
+        assertTrue(latestFile!!.exists())
+
         val jsonContent = backupFile.readText()
         val root = JSONObject(jsonContent)
 

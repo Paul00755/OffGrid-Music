@@ -45,15 +45,17 @@ class AuthManager(
         }
     }
 
-    private val firebaseAuth: FirebaseAuth? by lazy {
-        injectedFirebaseAuth ?: try {
-            if (com.google.firebase.FirebaseApp.getApps(context).isEmpty()) {
-                com.google.firebase.FirebaseApp.initializeApp(context)
-            }
-            FirebaseAuth.getInstance()
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseAuth not available: ${e.message}")
-            null
+    @Volatile
+    private var cachedFirebaseAuth: FirebaseAuth? = null
+
+    fun getFirebaseAuth(): FirebaseAuth? {
+        if (injectedFirebaseAuth != null) return injectedFirebaseAuth
+        cachedFirebaseAuth?.let { return it }
+        return synchronized(this) {
+            cachedFirebaseAuth?.let { return it }
+            val auth = com.example.util.FirebaseInitializer.getAuth(context)
+            cachedFirebaseAuth = auth
+            auth
         }
     }
 
@@ -62,10 +64,10 @@ class AuthManager(
     }
 
     val currentUser: FirebaseUser?
-        get() = firebaseAuth?.currentUser
+        get() = getFirebaseAuth()?.currentUser
 
     val userAccountFlow: Flow<UserAccount?> = callbackFlow {
-        val auth = firebaseAuth
+        val auth = getFirebaseAuth()
         if (auth == null) {
             trySend(null)
             close()
@@ -110,13 +112,15 @@ class AuthManager(
     }
 
     suspend fun signInWithGoogle(activity: Activity): Result<UserAccount> {
-        val auth = firebaseAuth ?: return Result.failure(Exception("Authentication service unavailable"))
+        val auth = getFirebaseAuth() ?: return Result.failure(
+            Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
+        )
         val serverClientId = getServerClientId()
         if (serverClientId.isBlank()) {
             return Result.failure(Exception("Google Sign-In configuration error: Missing Web Client ID"))
         }
 
-        // Stage 1: Attempt account discovery with previously authorized accounts
+        // Stage 1: Attempt account discovery with previously authorized accounts (fast auto-select)
         val stage1Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = true)
 
         val credential = if (stage1Result.isSuccess) {
@@ -130,34 +134,31 @@ class AuthManager(
                 return Result.failure(GoogleSignInCancelledException())
             }
 
-            if (isNoCredentialException(stage1Exception)) {
-                Log.d(TAG, "Stage 1 (authorized accounts) returned no credentials; retrying Stage 2 with filterByAuthorizedAccounts = false")
-                // Stage 2: Fallback to non-filtered account picker so user can pick any account on device
-                val stage2Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = false)
-                if (stage2Result.isSuccess) {
-                    stage2Result.getOrThrow()
-                } else {
-                    val stage2Exception = stage2Result.exceptionOrNull()
-                    if (stage2Exception is GetCredentialCancellationException ||
-                        stage2Exception is GoogleSignInCancelledException ||
-                        stage2Exception?.message?.contains("cancel", ignoreCase = true) == true) {
-                        Log.d(TAG, "Google Sign-In was cancelled by user during Stage 2")
-                        return Result.failure(GoogleSignInCancelledException())
-                    }
-
-                    // Secondary fallback using GetSignInWithGoogleOption for older Play Services implementations
-                    val fallbackResult = tryGetCredentialWithSignInWithGoogle(activity, serverClientId)
-                    if (fallbackResult.isSuccess) {
-                        fallbackResult.getOrThrow()
-                    } else {
-                        val finalException = stage2Exception ?: fallbackResult.exceptionOrNull() ?: Exception("Google Sign-In failed")
-                        Log.e(TAG, "Google Sign-In Stage 2 failed", finalException)
-                        return Result.failure(handleGoogleSignInException(finalException))
-                    }
-                }
+            // Stage 1 is an optimization for previously signed-in accounts. If it fails for ANY reason
+            // other than cancellation (such as first-time sign-in, NoCredential, or unhandled provider type),
+            // seamlessly proceed to Stage 2 with filterByAuthorizedAccounts = false to display the full account picker.
+            Log.d(TAG, "Stage 1 returned no credentials; retrying Stage 2 with filterByAuthorizedAccounts = false")
+            val stage2Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = false)
+            if (stage2Result.isSuccess) {
+                stage2Result.getOrThrow()
             } else {
-                Log.e(TAG, "Google Sign-In Stage 1 failed with non-credential error", stage1Exception)
-                return Result.failure(handleGoogleSignInException(stage1Exception ?: Exception("Google Sign-In failed")))
+                val stage2Exception = stage2Result.exceptionOrNull()
+                if (stage2Exception is GetCredentialCancellationException ||
+                    stage2Exception is GoogleSignInCancelledException ||
+                    stage2Exception?.message?.contains("cancel", ignoreCase = true) == true) {
+                    Log.d(TAG, "Google Sign-In was cancelled by user during Stage 2")
+                    return Result.failure(GoogleSignInCancelledException())
+                }
+
+                // Secondary fallback using GetSignInWithGoogleOption for older Play Services implementations
+                val fallbackResult = tryGetCredentialWithSignInWithGoogle(activity, serverClientId)
+                if (fallbackResult.isSuccess) {
+                    fallbackResult.getOrThrow()
+                } else {
+                    val finalException = fallbackResult.exceptionOrNull() ?: stage2Exception ?: stage1Exception ?: Exception("Google Sign-In failed")
+                    Log.e(TAG, "Google Sign-In stages failed", finalException)
+                    return Result.failure(handleGoogleSignInException(finalException))
+                }
             }
         }
 
@@ -260,6 +261,11 @@ class AuthManager(
             msg.contains("network", ignoreCase = true) || msg.contains("timeout", ignoreCase = true) ||
             msg.contains("offline", ignoreCase = true) || msg.contains("connection", ignoreCase = true) ->
                 Exception("Network error during Google Sign-In. Please check your internet connection.")
+            msg.contains("service unavailable", ignoreCase = true) || msg.contains("SERVICE_UNAVAILABLE", ignoreCase = true) ||
+            msg.contains("API_NOT_CONNECTED", ignoreCase = true) ->
+                Exception("Authentication service is temporarily unavailable. Please verify Google Play Services and internet connection.")
+            msg.contains("16", ignoreCase = true) && (msg.contains("DEVELOPER_ERROR", ignoreCase = true) || msg.contains("API: 16")) ->
+                Exception("Google Sign-In configuration mismatch (developer configuration). Please sign in with email or continue offline.")
             msg.contains("reauth", ignoreCase = true) || msg.contains("re-auth", ignoreCase = true) ->
                 Exception("Your Google account requires re-authentication. Please sign into Google in device Settings.")
             else ->
@@ -268,7 +274,9 @@ class AuthManager(
     }
 
     suspend fun signInWithEmail(email: String, pass: String): Result<UserAccount> {
-        val auth = firebaseAuth ?: return Result.failure(Exception("Authentication service unavailable"))
+        val auth = getFirebaseAuth() ?: return Result.failure(
+            Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
+        )
         return try {
             val result = auth.signInWithEmailAndPassword(email.trim(), pass).await()
             val user = result.user
@@ -284,7 +292,9 @@ class AuthManager(
     }
 
     suspend fun signUpWithEmail(email: String, pass: String, displayName: String?): Result<UserAccount> {
-        val auth = firebaseAuth ?: return Result.failure(Exception("Authentication service unavailable"))
+        val auth = getFirebaseAuth() ?: return Result.failure(
+            Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
+        )
         return try {
             val result = auth.createUserWithEmailAndPassword(email.trim(), pass).await()
             val user = result.user
@@ -306,7 +316,9 @@ class AuthManager(
     }
 
     suspend fun sendPasswordReset(email: String): Result<Unit> {
-        val auth = firebaseAuth ?: return Result.failure(Exception("Authentication service unavailable"))
+        val auth = getFirebaseAuth() ?: return Result.failure(
+            Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
+        )
         return try {
             auth.sendPasswordResetEmail(email.trim()).await()
             Result.success(Unit)
@@ -317,7 +329,7 @@ class AuthManager(
     }
 
     suspend fun updateDisplayName(newName: String): Result<Unit> {
-        val user = firebaseAuth?.currentUser ?: return Result.failure(Exception("No user signed in"))
+        val user = getFirebaseAuth()?.currentUser ?: return Result.failure(Exception("No user signed in"))
         return try {
             val req = UserProfileChangeRequest.Builder()
                 .setDisplayName(newName.trim())
@@ -331,7 +343,7 @@ class AuthManager(
     }
 
     suspend fun updatePhotoUrl(photoUri: Uri?): Result<Unit> {
-        val user = firebaseAuth?.currentUser ?: return Result.failure(Exception("No user signed in"))
+        val user = getFirebaseAuth()?.currentUser ?: return Result.failure(Exception("No user signed in"))
         return try {
             val req = UserProfileChangeRequest.Builder()
                 .setPhotoUri(photoUri)
@@ -346,7 +358,7 @@ class AuthManager(
 
     suspend fun signOut(): Result<Unit> {
         return try {
-            firebaseAuth?.signOut()
+            getFirebaseAuth()?.signOut()
             try {
                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {
@@ -360,10 +372,10 @@ class AuthManager(
     }
 
     suspend fun reloadUser(): Result<UserAccount?> {
-        val user = firebaseAuth?.currentUser ?: return Result.success(null)
+        val user = getFirebaseAuth()?.currentUser ?: return Result.success(null)
         return try {
             user.reload().await()
-            Result.success(firebaseAuth?.currentUser?.toUserAccount())
+            Result.success(getFirebaseAuth()?.currentUser?.toUserAccount())
         } catch (e: Exception) {
             Result.failure(e)
         }

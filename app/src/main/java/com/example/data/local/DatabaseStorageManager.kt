@@ -233,31 +233,38 @@ object DatabaseStorageManager {
                 root.put("userSettings", sObj)
             } catch (_: Exception) {}
 
-            val backupDirs = mutableListOf<File>()
-            try {
-                val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                if (dlDir != null) backupDirs.add(File(dlDir, "OffGridMusic_Backup"))
-            } catch (_: Exception) {}
-            try {
-                val docDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
-                if (docDir != null) backupDirs.add(File(docDir, "OffGridMusic_Backup"))
-            } catch (_: Exception) {}
-            context.getExternalFilesDir("backups")?.let { backupDirs.add(it) }
-            backupDirs.add(context.filesDir.resolve("backups"))
-
+            val offgridDir = getOffgridDirectory(context)
             val timestampStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val jsonContent = root.toString(2)
             var primaryBackupFile: File? = null
 
-            for (dir in backupDirs) {
-                try {
-                    if (!dir.exists()) dir.mkdirs()
-                    val f = File(dir, "offgrid_library_backup_$timestampStr.json")
+            // 1. Specifically create folder named Offgrid in root directory and store backup files there
+            try {
+                if (!offgridDir.exists()) {
+                    offgridDir.mkdirs()
+                }
+                if (offgridDir.exists()) {
+                    val f = File(offgridDir, "offgrid_library_backup_$timestampStr.json")
                     f.writeText(jsonContent, Charsets.UTF_8)
-                    File(dir, "offgrid_auto_backup.json").writeText(jsonContent, Charsets.UTF_8)
-                    if (primaryBackupFile == null) primaryBackupFile = f
-                } catch (_: Exception) {}
+                    File(offgridDir, "offgrid_auto_backup.json").writeText(jsonContent, Charsets.UTF_8)
+                    primaryBackupFile = f
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+
+            // 2. Also save to internal app backups directory as a failsafe
+            val internalBackupsDir = context.getExternalFilesDir("backups") ?: context.filesDir.resolve("backups")
+            try {
+                if (!internalBackupsDir.exists()) internalBackupsDir.mkdirs()
+                val fallbackFile = File(internalBackupsDir, "offgrid_library_backup_$timestampStr.json")
+                fallbackFile.writeText(jsonContent, Charsets.UTF_8)
+                File(internalBackupsDir, "offgrid_auto_backup.json").writeText(jsonContent, Charsets.UTF_8)
+                if (primaryBackupFile == null) {
+                    primaryBackupFile = fallbackFile
+                }
+            } catch (_: Exception) {}
+
             primaryBackupFile
         } catch (e: Exception) {
             e.printStackTrace()
@@ -400,6 +407,96 @@ object DatabaseStorageManager {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Specifically creates and returns the 'Offgrid' folder in the root directory of the device
+     * (/storage/emulated/0/Offgrid or Environment.getExternalStorageDirectory()/Offgrid).
+     */
+    fun getOffgridDirectory(context: Context? = null): File {
+        val root = try {
+            android.os.Environment.getExternalStorageDirectory()
+        } catch (_: Exception) {
+            null
+        } ?: File("/storage/emulated/0")
+
+        val offgridDir = File(root, "Offgrid")
+        try {
+            if (!offgridDir.exists()) {
+                offgridDir.mkdirs()
+            }
+        } catch (_: Exception) {}
+        return offgridDir
+    }
+
+    /**
+     * Returns candidate backup directories ordered by priority:
+     * 1. Primary: Specifically the 'Offgrid' folder in root directory of device
+     * 2. Internal app files backup directories
+     * 3. Legacy directories (Downloads/Documents) for backwards compatibility
+     */
+    fun getCandidateBackupDirs(context: Context): List<File> {
+        val candidateDirs = mutableListOf<File>()
+
+        // 1. Primary: Root directory Offgrid folder
+        try {
+            val rootOffgrid = getOffgridDirectory(context)
+            if (rootOffgrid.exists()) {
+                candidateDirs.add(rootOffgrid)
+            }
+        } catch (_: Exception) {}
+
+        // 2. Internal app storage directories (fail-safe fallback)
+        context.getExternalFilesDir("backups")?.let { if (it.exists()) candidateDirs.add(it) }
+        val internalDir = context.filesDir.resolve("backups")
+        if (internalDir.exists()) candidateDirs.add(internalDir)
+
+        // 3. Legacy locations (Downloads/Documents) for restoring existing backups
+        try {
+            val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            if (dlDir != null) {
+                val dlOffgrid = File(dlDir, "Offgrid")
+                if (dlOffgrid.exists()) candidateDirs.add(dlOffgrid)
+                val dlLegacy = File(dlDir, "OffGridMusic_Backup")
+                if (dlLegacy.exists()) candidateDirs.add(dlLegacy)
+            }
+        } catch (_: Exception) {}
+        try {
+            val docDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+            if (docDir != null) {
+                val docOffgrid = File(docDir, "Offgrid")
+                if (docOffgrid.exists()) candidateDirs.add(docOffgrid)
+                val docLegacy = File(docDir, "OffGridMusic_Backup")
+                if (docLegacy.exists()) candidateDirs.add(docLegacy)
+            }
+        } catch (_: Exception) {}
+
+        return candidateDirs
+    }
+
+    /**
+     * Finds the latest backup file (either offgrid_auto_backup.json or timestamped backup)
+     * preferring the root 'Offgrid' folder.
+     */
+    fun getLatestBackupFile(context: Context): File? {
+        val candidateDirs = getCandidateBackupDirs(context)
+        var latestBackup: File? = null
+        for (dir in candidateDirs) {
+            if (dir.exists()) {
+                val autoFile = File(dir, "offgrid_auto_backup.json")
+                if (autoFile.exists() && autoFile.length() > 0) {
+                    if (latestBackup == null || autoFile.lastModified() > latestBackup.lastModified()) {
+                        latestBackup = autoFile
+                    }
+                }
+                val files = dir.listFiles { f -> f.extension == "json" && f.name.startsWith("offgrid_library_backup_") }
+                val dirLatest = files?.maxByOrNull { it.lastModified() }
+                if (dirLatest != null && (latestBackup == null || dirLatest.lastModified() > latestBackup.lastModified())) {
+                    latestBackup = dirLatest
+                }
+            }
+        }
+        return latestBackup
+    }
+
     suspend fun autoRestoreLibraryIfEmpty(context: Context) = withContext(Dispatchers.IO) {
         try {
             val db = AppDatabase.getInstance(context)
@@ -413,35 +510,7 @@ object DatabaseStorageManager {
                 return@withContext
             }
 
-            val candidateDirs = mutableListOf<File>()
-            try {
-                val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                if (dlDir != null) candidateDirs.add(File(dlDir, "OffGridMusic_Backup"))
-            } catch (_: Exception) {}
-            try {
-                val docDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
-                if (docDir != null) candidateDirs.add(File(docDir, "OffGridMusic_Backup"))
-            } catch (_: Exception) {}
-            context.getExternalFilesDir("backups")?.let { candidateDirs.add(it) }
-            candidateDirs.add(context.filesDir.resolve("backups"))
-
-            var latestBackup: File? = null
-            for (dir in candidateDirs) {
-                if (dir.exists()) {
-                    val autoFile = File(dir, "offgrid_auto_backup.json")
-                    if (autoFile.exists() && autoFile.length() > 0) {
-                        if (latestBackup == null || autoFile.lastModified() > latestBackup.lastModified()) {
-                            latestBackup = autoFile
-                        }
-                    }
-                    val files = dir.listFiles { f -> f.extension == "json" && f.name.startsWith("offgrid_library_backup_") }
-                    val dirLatest = files?.maxByOrNull { it.lastModified() }
-                    if (dirLatest != null && (latestBackup == null || dirLatest.lastModified() > latestBackup.lastModified())) {
-                        latestBackup = dirLatest
-                    }
-                }
-            }
-
+            val latestBackup = getLatestBackupFile(context)
             if (latestBackup != null && latestBackup.exists()) {
                 val json = latestBackup.readText(Charsets.UTF_8)
                 importDatabaseBackup(context, json)

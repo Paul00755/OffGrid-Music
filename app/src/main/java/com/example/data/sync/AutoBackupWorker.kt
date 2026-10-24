@@ -90,12 +90,8 @@ class AutoBackupWorker(
         try {
             Log.d(TAG, "Starting periodic auto backup worker execution...")
 
-            if (FirebaseApp.getApps(applicationContext).isEmpty()) {
-                FirebaseApp.initializeApp(applicationContext)
-            }
-
-            val auth = FirebaseAuth.getInstance()
-            val uid = auth.currentUser?.uid
+            val auth = com.example.util.FirebaseInitializer.getAuth(applicationContext)
+            val uid = auth?.currentUser?.uid
             if (uid.isNullOrBlank()) {
                 Log.d(TAG, "No user signed in. Skipping automatic cloud backup.")
                 return@withContext Result.success()

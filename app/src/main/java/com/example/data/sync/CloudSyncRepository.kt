@@ -104,29 +104,11 @@ class CloudSyncRepository(
     @Volatile
     private var activeUid: String? = null
 
-    private val firestore: FirebaseFirestore? by lazy {
-        injectedFirestore ?: try {
-            if (FirebaseApp.getApps(context).isEmpty()) {
-                FirebaseApp.initializeApp(context)
-            }
-            FirebaseFirestore.getInstance()
-        } catch (e: Exception) {
-            Log.w(TAG, "Firestore initialization error: ${e.message}")
-            null
-        }
-    }
+    private val firestore: FirebaseFirestore?
+        get() = injectedFirestore ?: com.example.util.FirebaseInitializer.getFirestore(context)
 
-    private val auth: FirebaseAuth? by lazy {
-        injectedAuth ?: try {
-            if (FirebaseApp.getApps(context).isEmpty()) {
-                FirebaseApp.initializeApp(context)
-            }
-            FirebaseAuth.getInstance()
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseAuth initialization error: ${e.message}")
-            null
-        }
-    }
+    private val auth: FirebaseAuth?
+        get() = injectedAuth ?: com.example.util.FirebaseInitializer.getAuth(context)
 
     fun getCurrentUid(): String? {
         return try {
