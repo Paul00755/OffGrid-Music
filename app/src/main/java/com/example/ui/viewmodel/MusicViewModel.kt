@@ -446,7 +446,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val playbackState: StateFlow<PlaybackState> = playbackManager.playbackState
     val playbackPositionMs: StateFlow<Long> = playbackManager.playbackPositionMs
     val sleepTimerState: StateFlow<SleepTimerState> = sleepTimerManager.state
-    val isOnboardingCompleted: StateFlow<Boolean> = preferences.isOnboardingCompleted.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private val _isOnboardingCompleted = MutableStateFlow(preferences.isOnboardingCompletedSync())
+    val isOnboardingCompleted: StateFlow<Boolean> = _isOnboardingCompleted.asStateFlow()
     val themeMode: StateFlow<String> = preferences.themeMode.stateIn(viewModelScope, SharingStarted.Lazily, "DARK")
     val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Lazily, "MIDNIGHT_OBSIDIAN")
     val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_DYNAMIC")
@@ -622,9 +623,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, true)
             }
         }
-        scanner.startAutoDetection()
+        viewModelScope.launch(Dispatchers.IO) {
+            preferences.isOnboardingCompleted.collect { completed ->
+                _isOnboardingCompleted.value = completed
+                if (completed) {
+                    scanner.startAutoDetection()
+                }
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             if (preferences.isOnboardingCompleted.first()) {
+                scanner.startAutoDetection()
                 scanner.detectAndImportNewSongs()
             }
         }
@@ -1480,8 +1489,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun completeOnboarding() {
-        viewModelScope.launch {
+        _isOnboardingCompleted.value = true
+        showSplash.value = false
+        viewModelScope.launch(Dispatchers.IO) {
             preferences.setOnboardingCompleted(true)
+            scanner.startAutoDetection()
         }
     }
 

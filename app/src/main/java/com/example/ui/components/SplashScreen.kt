@@ -14,22 +14,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ui.theme.BentoPrimary
 import kotlinx.coroutines.delay
 
 @Composable
@@ -37,19 +31,35 @@ fun SplashScreen(
     onDismiss: () -> Unit
 ) {
     var animationStarted by remember { mutableStateOf(false) }
+    var isExiting by remember { mutableStateOf(false) }
     var isDismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         animationStarted = true
-        delay(400)
+        // Let the startup animation play cleanly first before transitioning to Onboarding or Home
+        delay(950L)
         if (!isDismissed) {
-            isDismissed = true
-            onDismiss()
+            isExiting = true
+            delay(220L)
+            if (!isDismissed) {
+                isDismissed = true
+                onDismiss()
+            }
         }
     }
 
+    val exitAlpha by animateFloatAsState(
+        targetValue = if (isExiting) 0f else 1f,
+        animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing),
+        label = "splashExitAlpha"
+    )
+
     val scaleAnimate by animateFloatAsState(
-        targetValue = if (animationStarted) 1f else 0.85f,
+        targetValue = when {
+            isExiting -> 1.04f
+            animationStarted -> 1f
+            else -> 0.85f
+        },
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium
@@ -59,19 +69,19 @@ fun SplashScreen(
 
     val alphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 200, easing = LinearOutSlowInEasing),
+        animationSpec = tween(durationMillis = 260, easing = LinearOutSlowInEasing),
         label = "splashAlpha"
     )
 
     val textAlphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 200, delayMillis = 50, easing = LinearOutSlowInEasing),
+        animationSpec = tween(durationMillis = 260, delayMillis = 80, easing = LinearOutSlowInEasing),
         label = "splashTextAlpha"
     )
 
     val sloganAlphaAnimate by animateFloatAsState(
         targetValue = if (animationStarted) 1f else 0f,
-        animationSpec = tween(durationMillis = 200, delayMillis = 100, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 260, delayMillis = 150, easing = FastOutSlowInEasing),
         label = "splashSloganAlpha"
     )
 
@@ -90,21 +100,13 @@ fun SplashScreen(
         initialValue = 0.6f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glowPulse"
     )
 
-    val rotationDegrees by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(12000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
+    val combinedAlpha = (alphaAnimate * exitAlpha).coerceIn(0f, 1f)
 
     Box(
         modifier = Modifier
@@ -118,14 +120,17 @@ fun SplashScreen(
                     )
                 )
             )
+            .alpha(exitAlpha.coerceIn(0f, 1f))
             .then(
                 if (!isDismissed) {
                     Modifier.clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        isDismissed = true
-                        onDismiss()
+                        if (!isDismissed) {
+                            isDismissed = true
+                            onDismiss()
+                        }
                     }
                 } else Modifier
             ),
@@ -136,7 +141,7 @@ fun SplashScreen(
             modifier = Modifier
                 .size(280.dp)
                 .scale(scaleAnimate)
-                .alpha(alphaAnimate * 0.35f * glowPulse)
+                .alpha((combinedAlpha * 0.35f * glowPulse).coerceIn(0f, 1f))
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
@@ -156,7 +161,7 @@ fun SplashScreen(
             modifier = Modifier
                 .padding(24.dp)
                 .scale(scaleAnimate)
-                .alpha(alphaAnimate)
+                .alpha(combinedAlpha)
         ) {
             // OffGrid Canvas Custom Logo Symbol with Neon Rings & Soundwave
             Box(
@@ -178,7 +183,7 @@ fun SplashScreen(
                         radius = radius + 6.dp.toPx(),
                         center = center,
                         style = Stroke(width = 2.dp.toPx() * glowPulse),
-                        alpha = 0.4f * glowPulse
+                        alpha = (0.4f * glowPulse).coerceIn(0f, 1f)
                     )
                 }
 
@@ -197,7 +202,7 @@ fun SplashScreen(
             // Main Brand Title "OffGrid"
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.alpha(textAlphaAnimate)
+                modifier = Modifier.alpha((textAlphaAnimate * exitAlpha).coerceIn(0f, 1f))
             ) {
                 Text(
                     text = "OffGrid",
@@ -252,7 +257,7 @@ fun SplashScreen(
             Box(
                 modifier = Modifier
                     .offset(y = sloganTranslationY.dp)
-                    .alpha(sloganSloganAlphaAnimateFix(sloganAlphaAnimate))
+                    .alpha((sloganAlphaAnimate * exitAlpha).coerceIn(0f, 1f))
                     .clip(RoundedCornerShape(20.dp))
                     .background(Color.White.copy(alpha = 0.07f))
                     .padding(horizontal = 20.dp, vertical = 8.dp)
@@ -267,8 +272,4 @@ fun SplashScreen(
             }
         }
     }
-}
-
-private fun sloganSloganAlphaAnimateFix(value: Float): Float {
-    return value.coerceIn(0f, 1f)
 }

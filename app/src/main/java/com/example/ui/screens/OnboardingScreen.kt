@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -71,6 +73,11 @@ fun OnboardingScreen(
     val includedFolders = remember(folders) { folders.filter { !it.isExcluded } }
     val excludedFolders = remember(folders) { folders.filter { it.isExcluded } }
 
+    // Handle system Back button inside Onboarding steps (Step 3 -> Step 2 -> Step 1)
+    BackHandler(enabled = currentStep > 1) {
+        currentStep--
+    }
+
     // Native Android System File Manager Folder Picker (OpenDocumentTree) — matches Settings UI
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -133,6 +140,7 @@ fun OnboardingScreen(
                     colors = listOf(BentoCardPurple, BentoBackground)
                 )
             )
+            .systemBarsPadding()
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         Column(
@@ -142,7 +150,7 @@ fun OnboardingScreen(
         ) {
             // Header Progress Dots
             Row(
-                modifier = Modifier.padding(top = 24.dp, bottom = 12.dp),
+                modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 for (i in 1..3) {
@@ -511,7 +519,6 @@ fun OnboardingScreen(
                                                             isDraggingSlider = false
                                                             currentSliderValue = sec.toFloat()
                                                             onSetIgnoreAudioDuration(sec)
-                                                            onSetSongDurationRange(sec, maxDurationSec)
                                                         }
                                                     ) {
                                                         Text(
@@ -536,7 +543,6 @@ fun OnboardingScreen(
                                                     isDraggingSlider = false
                                                     val finalSec = currentSliderValue.roundToInt().coerceIn(0, 180)
                                                     onSetIgnoreAudioDuration(finalSec)
-                                                    onSetSongDurationRange(finalSec, maxDurationSec)
                                                 },
                                                 valueRange = 0f..180f,
                                                 colors = SliderDefaults.colors(
@@ -582,7 +588,11 @@ fun OnboardingScreen(
                                                     IconButton(
                                                         onClick = {
                                                             isPickingForExclusion = false
-                                                            folderPickerLauncher.launch(null)
+                                                            try {
+                                                                folderPickerLauncher.launch(null)
+                                                            } catch (_: Exception) {
+                                                                Toast.makeText(context, "Unable to open system folder picker", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         },
                                                         modifier = Modifier
                                                             .clip(CircleShape)
@@ -597,7 +607,11 @@ fun OnboardingScreen(
                                                     IconButton(
                                                         onClick = {
                                                             isPickingForExclusion = true
-                                                            folderPickerLauncher.launch(null)
+                                                            try {
+                                                                folderPickerLauncher.launch(null)
+                                                            } catch (_: Exception) {
+                                                                Toast.makeText(context, "Unable to open system folder picker", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         },
                                                         modifier = Modifier
                                                             .clip(CircleShape)

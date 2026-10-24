@@ -195,7 +195,7 @@ class LibraryScanner(
     var onScanCompletedListener: (() -> Unit)? = null
 
     init {
-        startAutoDetection()
+        // Auto-detection is started after onboarding & storage permissions are ready
     }
 
     private suspend fun insertSongsSafelyInBatches(songs: List<SongEntity>) {
@@ -223,6 +223,11 @@ class LibraryScanner(
 
     fun startAutoDetection() {
         if (contentObserver != null) return
+        if (!com.example.util.StoragePermissionHelper.hasAudioReadPermission(context) &&
+            !com.example.util.StoragePermissionHelper.hasStoragePermission(context)
+        ) {
+            return
+        }
 
         try {
             contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {

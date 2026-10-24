@@ -520,8 +520,24 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true
     }
 
+    private val bootCachePrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+
+    fun isOnboardingCompletedSync(): Boolean {
+        return try {
+            bootCachePrefs.getBoolean("onboarding_completed", false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     val isOnboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: false
+        val completed = prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: bootCachePrefs.getBoolean("onboarding_completed", false)
+        try {
+            if (bootCachePrefs.getBoolean("onboarding_completed", false) != completed) {
+                bootCachePrefs.edit().putBoolean("onboarding_completed", completed).apply()
+            }
+        } catch (_: Exception) {}
+        completed
     }
 
     val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -1001,6 +1017,9 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
+        try {
+            bootCachePrefs.edit().putBoolean("onboarding_completed", completed).apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.ONBOARDING_COMPLETED] = completed
         }
