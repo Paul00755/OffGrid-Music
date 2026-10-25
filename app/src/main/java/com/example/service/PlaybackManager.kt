@@ -285,23 +285,28 @@ class PlaybackManager(
         })
         .build()
 
+    private var lastCustomLayoutFav: Boolean? = null
+
     fun updateNotificationLayout() {
         try {
             val currentSong = _playbackState.value.currentSong
             val isFav = currentSong?.isFavorite == true
-            val favoriteButton = androidx.media3.session.CommandButton.Builder()
-                .setDisplayName(if (isFav) "Unfavorite" else "Favorite")
-                .setIconResId(if (isFav) com.example.R.drawable.ic_favorite else com.example.R.drawable.ic_favorite_border)
-                .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_FAVORITE", android.os.Bundle.EMPTY))
-                .build()
+            if (lastCustomLayoutFav != isFav) {
+                lastCustomLayoutFav = isFav
+                val favoriteButton = androidx.media3.session.CommandButton.Builder()
+                    .setDisplayName(if (isFav) "Unfavorite" else "Favorite")
+                    .setIconResId(if (isFav) com.example.R.drawable.ic_favorite else com.example.R.drawable.ic_favorite_border)
+                    .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_FAVORITE", android.os.Bundle.EMPTY))
+                    .build()
 
-            val shuffleButton = androidx.media3.session.CommandButton.Builder()
-                .setDisplayName("Shuffle")
-                .setIconResId(com.example.R.drawable.ic_shuffle)
-                .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_SHUFFLE", android.os.Bundle.EMPTY))
-                .build()
+                val shuffleButton = androidx.media3.session.CommandButton.Builder()
+                    .setDisplayName("Shuffle")
+                    .setIconResId(com.example.R.drawable.ic_shuffle)
+                    .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_SHUFFLE", android.os.Bundle.EMPTY))
+                    .build()
 
-            mediaSession.setCustomLayout(listOf(favoriteButton, shuffleButton))
+                mediaSession.setCustomLayout(listOf(favoriteButton, shuffleButton))
+            }
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -440,10 +445,9 @@ class PlaybackManager(
             .setArtist(song.displayArtist)
             .setAlbumTitle(song.displayAlbum)
             .apply {
-                val art = song.artworkUri ?: song.contentUriString.takeIf { it.startsWith("http") }
+                val art = song.artworkUri?.takeIf { it.isNotBlank() }
                     ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id)
-                    ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
-                    ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
+                    ?: song.contentUriString.takeIf { it.startsWith("http") }
                 if (!art.isNullOrBlank()) {
                     try {
                         setArtworkUri(android.net.Uri.parse(art))
@@ -476,7 +480,7 @@ class PlaybackManager(
                 context.startService(intent)
             } catch (_: Throwable) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
-                    (player.isPlaying || player.playWhenReady || player.mediaItemCount > 0 || _playbackState.value.currentSong != null)
+                    (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying)
                 ) {
                     try {
                         context.startForegroundService(intent)
@@ -490,8 +494,8 @@ class PlaybackManager(
 
     fun ensureBackgroundNotification() {
         try {
-            val hasActiveMedia = _playbackState.value.currentSong != null || player.mediaItemCount > 0
-            if (!hasActiveMedia) return
+            val isActivelyPlaying = _playbackState.value.isPlaying || player.isPlaying || player.playWhenReady
+            if (!isActivelyPlaying) return
             startMusicPlaybackService(MusicPlaybackService.ACTION_ENSURE_BACKGROUND_NOTIFICATION)
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()
@@ -939,8 +943,8 @@ class PlaybackManager(
         player.prepare()
         player.pause()
         player.playWhenReady = false
+        player.volume = 1.0f
         isRestoringPlayback = false
-        ensureBackgroundNotification()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
@@ -2063,13 +2067,14 @@ class PlaybackManager(
             try {
                 val initial = startVolume.coerceIn(0f, 1f)
                 player.volume = initial
-                val steps = (durationMs / 25).coerceIn(10, 200)
-                val stepDelay = (durationMs.toLong() / steps).coerceAtLeast(16L)
-                for (i in 1..steps) {
-                    val fraction = i.toFloat() / steps.toFloat()
+                val startTime = android.os.SystemClock.elapsedRealtime()
+                while (true) {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+                    if (elapsed >= durationMs) break
+                    val fraction = (elapsed.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                     val current = initial + fraction * (targetVolume - initial)
                     player.volume = current.coerceIn(0f, 1f)
-                    delay(stepDelay)
+                    delay(16L)
                 }
                 player.volume = targetVolume
             } catch (_: Exception) {
@@ -2140,18 +2145,17 @@ class PlaybackManager(
                 }
 
                 // 3. Smooth Equal-Power Crossfade curves (sine / cosine energy conservation)
-                val steps = (fadeDuration / 20L).coerceIn(25, 400).toInt()
-                val stepDelay = (fadeDuration / steps).coerceAtLeast(16L)
-
-                for (step in 1..steps) {
-                    if (coroutineContext[Job]?.isActive != true) break
-                    delay(stepDelay)
-                    val progress = (step.toDouble() / steps.toDouble()).coerceIn(0.0, 1.0)
+                val startTime = android.os.SystemClock.elapsedRealtime()
+                while (coroutineContext[Job]?.isActive == true) {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+                    if (elapsed >= fadeDuration) break
+                    val progress = (elapsed.toDouble() / fadeDuration.toDouble()).coerceIn(0.0, 1.0)
                     val outVol = (kotlin.math.cos(progress * (Math.PI / 2.0)) * initialPlayerVol).toFloat().coerceIn(0f, 1f)
                     val inVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0f, 1f)
 
                     crossfadePlayer.volume = outVol
                     player.volume = inVol
+                    delay(16L)
                 }
             } catch (_: kotlinx.coroutines.CancellationException) {
                 // Deliberately cancelled
@@ -2179,13 +2183,14 @@ class PlaybackManager(
         fadeJob = scope.launch(Dispatchers.Main) {
             try {
                 val initial = player.volume.coerceIn(0f, 1f)
-                val steps = (durationMs / 25).coerceIn(10, 200)
-                val stepDelay = (durationMs.toLong() / steps).coerceAtLeast(16L)
-                for (i in 1..steps) {
-                    val fraction = i.toFloat() / steps.toFloat()
+                val startTime = android.os.SystemClock.elapsedRealtime()
+                while (true) {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+                    if (elapsed >= durationMs) break
+                    val fraction = (elapsed.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                     val current = initial * (1f - fraction)
                     player.volume = current.coerceIn(0f, 1f)
-                    delay(stepDelay)
+                    delay(16L)
                 }
                 player.volume = 0f
                 onComplete()
@@ -2210,18 +2215,15 @@ class PlaybackManager(
         _playbackPositionMs.value = curPos
         _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = curPos)
         updateNotificationLayout()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
         wasPausedByZeroVolume = fromZeroVolume
-        val duration = customFadeOutMs ?: fadeOutMs
+        val duration = (customFadeOutMs ?: fadeOutMs).coerceAtMost(180)
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
         currentPositionMs = curPos
         _playbackPositionMs.value = curPos
         _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = curPos)
-        updateNotificationLayout()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
 
         if (duration > 0 && (player.isPlaying || player.playWhenReady)) {
             performVolumeRampDown(duration) {
@@ -2230,7 +2232,6 @@ class PlaybackManager(
                 player.volume = 1.0f
                 _playbackState.value = _playbackState.value.copy(isPlaying = false)
                 updateNotificationLayout()
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
         } else {
             pause()
@@ -2243,7 +2244,6 @@ class PlaybackManager(
         fadeJob?.cancel()
         fadeJob = null
         player.volume = 1.0f
-        startMusicPlaybackService()
 
         val queue = _playbackState.value.queue
         if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
@@ -2262,22 +2262,17 @@ class PlaybackManager(
 
         player.playWhenReady = true
         player.play()
-        startProgressTracker()
-
         _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+        startProgressTracker()
+        startMusicPlaybackService()
         updateNotificationLayout()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun playWithFade(customFadeInMs: Int? = null) {
         audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
-        val duration = customFadeInMs ?: fadeInMs
-        startMusicPlaybackService()
-        _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
-        updateNotificationLayout()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        val duration = (customFadeInMs ?: fadeInMs).coerceAtMost(220)
 
         val queue = _playbackState.value.queue
         if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
@@ -2295,31 +2290,27 @@ class PlaybackManager(
         }
 
         if (duration > 0) {
-            player.volume = 0f
+            player.volume = 0.6f
             player.playWhenReady = true
             player.play()
-            startProgressTracker()
             _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
-            performVolumeRampUp(duration, startVolume = 0f, targetVolume = 1.0f)
+            startProgressTracker()
+            performVolumeRampUp(duration, startVolume = 0.6f, targetVolume = 1.0f)
         } else {
             player.volume = 1.0f
             player.playWhenReady = true
             player.play()
-            startProgressTracker()
             _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+            startProgressTracker()
         }
+        startMusicPlaybackService()
         updateNotificationLayout()
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun togglePlayPause() {
-        val currentlyPlaying = _playbackState.value.isPlaying
+        val currentlyPlaying = _playbackState.value.isPlaying || player.isPlaying
         if (currentlyPlaying) {
-            if (fadeOutMs > 0) {
-                pauseWithFade()
-            } else {
-                pause()
-            }
+            pause()
         } else {
             if (fadeInMs > 0) {
                 playWithFade()

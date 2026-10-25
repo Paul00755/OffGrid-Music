@@ -543,14 +543,16 @@ class UserPreferencesRepository(private val context: Context) {
 
     /**
      * Checks whether this installation is an existing user upgrading from a previous build:
-     * - Checks `bootCachePrefs["onboarding_completed"]`
-     * - Checks if runtime audio permission was already granted in a previous version, or if
-     *   `offgrid_music_db` already contains user records (songs/playlists).
-     * Never mistakes an empty newly-created Room database on a fresh install for an existing user.
+     * - Evaluates ONLY ONCE on initial cold boot (tracked via `initial_install_checked`) so that
+     *   granting runtime permissions in Onboarding Step 2 or scanning/filtering folders in Step 3
+     *   never prematurely flips `onboarding_completed` to `true` before the user taps Get Started.
      */
     private fun detectExistingInstallation(): Boolean {
         return try {
             if (bootCachePrefs.getBoolean("onboarding_completed", false)) return true
+            if (bootCachePrefs.getBoolean("initial_install_checked", false)) {
+                return bootCachePrefs.getBoolean("onboarding_completed", false)
+            }
 
             val requiredPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 android.Manifest.permission.READ_MEDIA_AUDIO
@@ -563,7 +565,10 @@ class UserPreferencesRepository(private val context: Context) {
             ) == PackageManager.PERMISSION_GRANTED
 
             if (hasAudioPermission) {
-                bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
+                bootCachePrefs.edit()
+                    .putBoolean("initial_install_checked", true)
+                    .putBoolean("onboarding_completed", true)
+                    .apply()
                 return true
             }
 
@@ -576,7 +581,12 @@ class UserPreferencesRepository(private val context: Context) {
                 }
             }
 
-            bootCachePrefs.getBoolean("onboarding_completed", false)
+            val upgraded = bootCachePrefs.getBoolean("onboarding_completed", false)
+            bootCachePrefs.edit()
+                .putBoolean("initial_install_checked", true)
+                .putBoolean("onboarding_completed", upgraded)
+                .apply()
+            upgraded
         } catch (_: Exception) {
             false
         }
@@ -590,7 +600,10 @@ class UserPreferencesRepository(private val context: Context) {
         val completed = (prefs[PreferenceKeys.ONBOARDING_COMPLETED] == true) || detectExistingInstallation()
         try {
             if (completed && !bootCachePrefs.getBoolean("onboarding_completed", false)) {
-                bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
+                bootCachePrefs.edit()
+                    .putBoolean("initial_install_checked", true)
+                    .putBoolean("onboarding_completed", true)
+                    .apply()
             }
         } catch (_: Exception) {}
         completed
@@ -1115,7 +1128,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
         try {
-            bootCachePrefs.edit().putBoolean("onboarding_completed", completed).apply()
+            bootCachePrefs.edit()
+                .putBoolean("initial_install_checked", true)
+                .putBoolean("onboarding_completed", completed)
+                .apply()
         } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.ONBOARDING_COMPLETED] = completed

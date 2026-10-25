@@ -97,4 +97,27 @@ class TagCleanerAndIndexingUnitTest {
         assertEquals("A.R. Rahman", editedSong.displayArtist)
         assertEquals("I", editedSong.displayAlbum)
     }
+
+    @Test
+    fun testSeparatorNormalizationAndPreservedIdentifiers() {
+        // Required examples from Issue 7
+        assertEquals("Song Name", TagCleaner.cleanTitle("Song_Name - MassTamilan.mp3", "Song_Name - MassTamilan.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle(null, "Song_Name - MassTamilan.mp3"))
+        assertEquals("Song Name Here", TagCleaner.cleanTitle("Song_Name_Here.mp3", "Song_Name_Here.mp3"))
+        assertEquals("Song Name Here", TagCleaner.cleanTitle(null, "Song_Name_Here.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle("Song-Name - pagalworld.mp3", "Song-Name - pagalworld.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle(null, "Song-Name - pagalworld.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle("Song Name_masstamilan.mp3", "Song Name_masstamilan.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle(null, "Song Name_masstamilan.mp3"))
+
+        // Meaningful hyphens and version identifiers preserved
+        assertEquals("Lo-Fi Beats", TagCleaner.cleanTitle("Lo-Fi_Beats - MassTamilan.mp3", "Lo-Fi_Beats - MassTamilan.mp3"))
+        assertEquals("Song Name Part 1", TagCleaner.cleanTitle("Song_Name_Part_1 - MassTamilan.mp3", "Song_Name_Part_1 - MassTamilan.mp3"))
+        assertEquals("Song Name Part 2", TagCleaner.cleanTitle("Song-Name - Part 2", "Song-Name - Part 2.mp3"))
+        assertEquals("Song Name Version 2", TagCleaner.cleanTitle("Song_Name - Version 2", "Song_Name - Version 2.mp3"))
+        assertEquals("Song Name (Remix)", TagCleaner.cleanTitle("Song_Name (Remix) - pagalworld", "Song_Name (Remix).mp3"))
+        assertEquals("Song Name (Live)", TagCleaner.cleanTitle("Song_Name (Live)", "Song_Name (Live).mp3"))
+        assertEquals("Song Name (Acoustic)", TagCleaner.cleanTitle("Song_Name (Acoustic)", "Song_Name (Acoustic).mp3"))
+        assertEquals("Song Name (Instrumental)", TagCleaner.cleanTitle("Song_Name (Instrumental)", "Song_Name (Instrumental).mp3"))
+    }
 }

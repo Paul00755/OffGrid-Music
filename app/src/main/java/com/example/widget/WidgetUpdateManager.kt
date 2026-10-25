@@ -56,7 +56,7 @@ object WidgetUpdateManager {
                     return@launch
                 }
 
-                val prefsRepo = com.example.data.local.UserPreferencesRepository(context)
+                val prefsRepo = com.example.data.local.UserPreferencesRepository.getInstance(context)
                 val isDynamic = try { prefsRepo.isDynamicArtworkTheme.first() } catch (_: Exception) { true }
                 val customAccent = try { prefsRepo.customAccentColor.first() } catch (_: Exception) { 0 }
                 val preset = try { prefsRepo.accentColorPreset.first() } catch (_: Exception) { "ORANGE" }

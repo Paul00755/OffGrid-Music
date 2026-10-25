@@ -225,8 +225,6 @@ object ArtworkResolutionCache {
                         val uriStr = android.net.Uri.fromFile(manualCover).toString()
                         manualCoverCache[songId] = uriStr
                         return uriStr
-                    } else {
-                        manualCoverCache[songId] = ""
                     }
                 }
                 if (!path.isNullOrBlank()) {
@@ -235,14 +233,11 @@ object ArtworkResolutionCache {
                         val uriStr = android.net.Uri.fromFile(pathCover).toString()
                         manualPathCache[path] = uriStr
                         return uriStr
-                    } else {
-                        manualPathCache[path] = ""
                     }
                 }
-            } else {
-                if (songId != 0L) manualCoverCache[songId] = ""
-                if (!path.isNullOrBlank()) manualPathCache[path] = ""
             }
+            if (songId != 0L) manualCoverCache[songId] = ""
+            if (!path.isNullOrBlank()) manualPathCache[path] = ""
         } catch (_: Exception) {}
         return null
     }
@@ -448,29 +443,17 @@ fun AlbumArtView(
     }
     val songArtwork = song?.artworkUri?.takeIf { it.isNotBlank() }
 
-    // Synchronously resolve from memory or validated local disk file so artwork appears on Frame 1
+    // Synchronously resolve ONLY from pure in-memory cache or Song.artworkUri so zero disk I/O runs on the Main Thread
     val initialUri = remember(songId, songArtwork, artworkVersion) {
         if (song == null || songId == 0L) return@remember null
         // 1. Instant pure in-memory cache hit
         val mem = ArtworkResolutionCache.getMemory(songId)
         if (!mem.isNullOrBlank()) return@remember mem
 
-        // 2. Fast local persistent disk check (validates complete JPEG file)
-        val diskHit = ArtworkResolutionCache.getOrCheckDisk(context, songId, song.path)
-        if (!diskHit.isNullOrBlank()) return@remember diskHit
-
-        // 3. Direct song model artwork if present and valid
+        // 2. Direct song model artwork if present in memory (validated/extracted asynchronously if missing)
         if (!songArtwork.isNullOrBlank() && !songArtwork.contains("audio/albumart")) {
-            if (songArtwork.startsWith("file://")) {
-                val p = try { android.net.Uri.parse(songArtwork).path } catch (_: Exception) { null }
-                if (ArtworkManager.isValidCompleteImageFile(p?.let { File(it) })) {
-                    ArtworkResolutionCache.cache[songId] = songArtwork
-                    return@remember songArtwork
-                }
-            } else {
-                ArtworkResolutionCache.cache[songId] = songArtwork
-                return@remember songArtwork
-            }
+            ArtworkResolutionCache.cache[songId] = songArtwork
+            return@remember songArtwork
         }
         null
     }

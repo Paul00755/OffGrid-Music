@@ -649,12 +649,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            if (preferences.isOnboardingCompleted.first()) {
-                scanner.startAutoDetection()
-                scanner.detectAndImportNewSongs()
-            }
-        }
         audioRouteManager.onDeviceSelected = { dev ->
             playbackManager.setPreferredAudioDevice(dev)
         }
@@ -754,7 +748,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             equalizerPreset.collect { preset ->
-                playbackManager.equalizerManager.applyPreset(preset)
+                if (preset.equals("CUSTOM", ignoreCase = true)) {
+                    val bands = preferences.customEqBands.first()
+                    val bass = preferences.customBassBoost.first()
+                    val virt = preferences.customVirtualizer.first()
+                    playbackManager.equalizerManager.setCustomBands(bands, bass, virt)
+                } else {
+                    playbackManager.equalizerManager.applyPreset(preset)
+                }
             }
         }
         viewModelScope.launch {
@@ -1072,13 +1073,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Restore playback state once songs are loaded
-        viewModelScope.launch {
+        // Restore playback state once songs are loaded (prepare queue on IO to avoid blocking Main Thread)
+        viewModelScope.launch(Dispatchers.IO) {
             val loadedSongs = allSongs.filter { it.isNotEmpty() }.first()
             val savedRepeat = preferences.repeatMode.first()
-            if (savedRepeat != 0) {
-                playbackManager.setRepeatMode(savedRepeat)
-            }
 
             if (loadedSongs.isNotEmpty()) {
                 val lastQueueIds = preferences.lastQueueIds.first()
@@ -1086,6 +1084,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val lastPos = preferences.lastPosition.first()
                 val lastDuration = preferences.lastDuration.first()
                 val lastIdx = preferences.lastQueueIndex.first()
+                val shouldAutoPlay = preferences.autoPlayOnAppStartup.first()
 
                 val songsMap = loadedSongs.associateBy { it.id }
                 val restoredQueue = if (lastQueueIds.isNotEmpty()) {
@@ -1110,10 +1109,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else finalQueue
 
-                playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
-                val shouldAutoPlay = preferences.autoPlayOnAppStartup.first()
-                if (shouldAutoPlay && queueWithCorrectDuration.isNotEmpty() && !playbackManager.isVolumeZero()) {
-                    playbackManager.play()
+                withContext(Dispatchers.Main) {
+                    if (savedRepeat != 0) {
+                        playbackManager.setRepeatMode(savedRepeat)
+                    }
+                    playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
+                    if (shouldAutoPlay && queueWithCorrectDuration.isNotEmpty() && !playbackManager.isVolumeZero()) {
+                        playbackManager.play()
+                    }
+                }
+            } else if (savedRepeat != 0) {
+                withContext(Dispatchers.Main) {
+                    playbackManager.setRepeatMode(savedRepeat)
                 }
             }
         }
@@ -1143,6 +1150,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         var lastSavedSongId: Long = -1L
         var lastSavedPos: Long = -1L
         var lastSaveTime: Long = 0L
+        var lastSavedIsPlaying: Boolean? = null
 
         viewModelScope.launch {
             playbackState.collect { state ->
@@ -1186,19 +1194,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     // Throttle DataStore writes to prevent thread starvation and ANRs
                     val now = System.currentTimeMillis()
                     val isTrackChange = song.id != lastSavedSongId
-                    val isStatePaused = !state.isPlaying
+                    val isPauseTransition = !state.isPlaying && lastSavedIsPlaying == true
                     val isThrottledTime = (now - lastSaveTime > 10000L) && kotlin.math.abs(state.positionMs - lastSavedPos) > 3000L
+                    lastSavedIsPlaying = state.isPlaying
 
-                    if (isTrackChange || isStatePaused || isThrottledTime) {
+                    if (isTrackChange || isPauseTransition || isThrottledTime) {
                         lastSavedSongId = song.id
                         lastSavedPos = state.positionMs
                         lastSaveTime = now
+                        val queueIdsSnapshot = state.queue.map { it.id }
+                        val posSnapshot = state.positionMs
+                        val idxSnapshot = state.queueIndex
                         viewModelScope.launch(Dispatchers.IO) {
                             preferences.saveLastPlaybackState(
                                 songId = song.id,
-                                position = state.positionMs,
-                                queueIds = state.queue.map { it.id },
-                                queueIndex = state.queueIndex
+                                position = posSnapshot,
+                                queueIds = queueIdsSnapshot,
+                                queueIndex = idxSnapshot
                             )
                         }
                     }
@@ -1206,6 +1218,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     lyricsFetchJob?.cancel()
                     _currentLyrics.value = null
                     lastFetchedSongId = null
+                    lastSavedIsPlaying = null
                 }
             }
         }

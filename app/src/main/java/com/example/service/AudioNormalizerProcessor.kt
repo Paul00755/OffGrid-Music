@@ -76,8 +76,8 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
     var currentTrackKey: String = ""
         private set
 
-    // Target RMS level: standard broadcast / streaming master (-14.0 dBFS, approx 6520 for 16-bit PCM)
-    private val targetLoudness = 6520f
+    // Target RMS level: modern streaming master (~ -9.0 dBFS, approx 11500 for 16-bit PCM)
+    private val targetLoudness = 11500f
     private val minSilenceLoudness = 220f // Do not boost silence or background hiss
 
     // Running integrated perceptual loudness and smoothed gain
@@ -89,9 +89,9 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
     var currentGain = 1.0f
         private set
 
-    // Allowable gain range (-3.1 dB to +3.2 dB) - musical and transparent, prevents extreme attenuation
-    private val minGain = 0.70f
-    private val maxGain = 1.45f
+    // Allowable gain range: never crush normal songs below 0.96x (-0.35 dB), gently lift quiet tracks up to +2.9 dB
+    private val minGain = 0.96f
+    private val maxGain = 1.40f
 
     // Biquad filter state for K-weighting detection sidechain (left & right channels)
     // Using Float arithmetic for optimized vectorization on Android ARM (NEON)

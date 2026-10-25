@@ -416,8 +416,11 @@ abstract class AppDatabase : RoomDatabase() {
                     } catch (_: Exception) {}
 
                     val bootPrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
-                    val editor = bootPrefs.edit().putBoolean("db_checked_once", true)
-                    if (existingSongs > 0 || existingPlaylists > 0 || (priorVersion in 1..9)) {
+                    val alreadyCheckedInstall = bootPrefs.getBoolean("initial_install_checked", false)
+                    val editor = bootPrefs.edit()
+                        .putBoolean("db_checked_once", true)
+                        .putBoolean("db_healed_v10", true)
+                    if (!alreadyCheckedInstall && (existingSongs > 0 || existingPlaylists > 0 || (priorVersion in 1..9))) {
                         editor.putBoolean("onboarding_completed", true)
                     }
                     editor.apply()
@@ -485,42 +488,18 @@ abstract class AppDatabase : RoomDatabase() {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
                     val appContext = context.applicationContext
-                    val dbFile = appContext.getDatabasePath("offgrid_music_db")
-                    val hadExistingDatabase = dbFile != null && dbFile.exists() && dbFile.length() > 0L
-                    if (hadExistingDatabase) {
-                        healExistingDatabaseBeforeRoomOpen(appContext)
-                    }
-                    var instance = buildRoomDatabase(appContext)
-                    if (hadExistingDatabase) {
-                        try {
-                            // Verify an upgraded database opens cleanly so a schema/corruption exception
-                            // can never crash DAO callers later during startup.
-                            instance.openHelper.writableDatabase
-                        } catch (e: Throwable) {
-                            com.example.util.CrashReporter.logNonFatal(
-                                appContext,
-                                "AppDatabase",
-                                e,
-                                mapOf("phase" to "initial_open_recovery")
-                            )
-                            try {
-                                instance.close()
-                            } catch (_: Throwable) {}
+                    val bootPrefs = appContext.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+                    val alreadyHealedV10 = bootPrefs.getBoolean("db_healed_v10", false)
+                    if (!alreadyHealedV10) {
+                        val dbFile = appContext.getDatabasePath("offgrid_music_db")
+                        val hadExistingDatabase = dbFile != null && dbFile.exists() && dbFile.length() > 0L
+                        if (hadExistingDatabase) {
                             healExistingDatabaseBeforeRoomOpen(appContext)
-                            instance = buildRoomDatabase(appContext)
-                            try {
-                                instance.openHelper.writableDatabase
-                            } catch (fatalDbError: Throwable) {
-                                try {
-                                    instance.close()
-                                } catch (_: Throwable) {}
-                                try {
-                                    appContext.deleteDatabase("offgrid_music_db")
-                                } catch (_: Throwable) {}
-                                instance = buildRoomDatabase(appContext)
-                            }
+                        } else {
+                            bootPrefs.edit().putBoolean("db_healed_v10", true).apply()
                         }
                     }
+                    val instance = buildRoomDatabase(appContext)
                     INSTANCE = instance
                     instance
                 }

@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -217,8 +218,29 @@ fun HomeScreen(
     val continueSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
     val context = LocalContext.current
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerState = remember { DrawerState(initialValue = DrawerValue.Closed) }
+    var isSidebarOpen by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+
+    val openSidebar: () -> Unit = {
+        isSidebarOpen = true
+        coroutineScope.launch { drawerState.open() }
+    }
+    val closeSidebarAndRun: (() -> Unit) -> Unit = { action ->
+        isSidebarOpen = false
+        coroutineScope.launch { drawerState.snapTo(DrawerValue.Closed) }
+        action()
+    }
+
+    LaunchedEffect(drawerState.currentValue, drawerState.targetValue, drawerState.isAnimationRunning) {
+        if (drawerState.isClosed && !drawerState.isAnimationRunning && drawerState.targetValue == DrawerValue.Closed) {
+            isSidebarOpen = false
+        } else if (drawerState.isOpen) {
+            isSidebarOpen = true
+        }
+    }
+
+    val isDrawerVisible = isSidebarOpen || drawerState.isOpen || drawerState.isAnimationRunning || drawerState.targetValue == DrawerValue.Open
 
     val greeting = remember {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
@@ -232,17 +254,19 @@ fun HomeScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = true,
+        gesturesEnabled = isDrawerVisible,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = BentoCardSurface,
                 drawerContentColor = BentoTextPrimary,
                 modifier = Modifier
+                    .graphicsLayer { alpha = if (isDrawerVisible) 1f else 0f }
                     .widthIn(min = 280.dp, max = 340.dp)
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {
+                if (isDrawerVisible) {
                 // Sidebar Header with Account Section
                 Column(
                     modifier = Modifier
@@ -293,8 +317,9 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                coroutineScope.launch { drawerState.close() }
-                                if (isLoggedIn) onOpenAccount() else onOpenAuth()
+                                closeSidebarAndRun {
+                                    if (isLoggedIn) onOpenAccount() else onOpenAuth()
+                                }
                             }
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -377,8 +402,7 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clickable {
-                                                coroutineScope.launch { drawerState.close() }
-                                                onOpenAccount()
+                                                closeSidebarAndRun { onOpenAccount() }
                                             }
                                     ) {
                                         Text(
@@ -396,8 +420,7 @@ fun HomeScreen(
                                         color = Color(0xFFFF5252).copy(alpha = 0.12f),
                                         modifier = Modifier
                                             .clickable {
-                                                coroutineScope.launch { drawerState.close() }
-                                                onSignOut()
+                                                closeSidebarAndRun { onSignOut() }
                                             }
                                     ) {
                                         Text(
@@ -416,8 +439,7 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                coroutineScope.launch { drawerState.close() }
-                                                onOpenAuth()
+                                                closeSidebarAndRun { onOpenAuth() }
                                             }
                                     ) {
                                         Text(
@@ -450,8 +472,7 @@ fun HomeScreen(
                     label = "Listening Stats & Insights",
                     badge = "Stats",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenStatsDetail()
+                        closeSidebarAndRun { onOpenStatsDetail() }
                     }
                 )
                 DottedDivider()
@@ -461,8 +482,7 @@ fun HomeScreen(
                     label = "Search Songs & Artists",
                     badge = null,
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSearch()
+                        closeSidebarAndRun { onOpenSearch() }
                     }
                 )
                 DottedDivider()
@@ -472,8 +492,7 @@ fun HomeScreen(
                     label = "Equalizer & Sound Effects",
                     badge = "Graph EQ",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSettings("AUDIO")
+                        closeSidebarAndRun { onOpenSettings("AUDIO") }
                     }
                 )
                 DottedDivider()
@@ -483,8 +502,7 @@ fun HomeScreen(
                     label = "Offline Cache & Storage",
                     badge = null,
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSettings("CACHE")
+                        closeSidebarAndRun { onOpenSettings("CACHE") }
                     }
                 )
                 DottedDivider()
@@ -494,8 +512,7 @@ fun HomeScreen(
                     label = "UI & Visual Appearance",
                     badge = null,
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSettings("UI")
+                        closeSidebarAndRun { onOpenSettings("UI") }
                     }
                 )
                 DottedDivider()
@@ -505,8 +522,7 @@ fun HomeScreen(
                     label = "All Settings & Audio Preferences",
                     badge = null,
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSettings("ALL")
+                        closeSidebarAndRun { onOpenSettings("ALL") }
                     }
                 )
                 DottedDivider()
@@ -522,8 +538,7 @@ fun HomeScreen(
                         } else "${sleepTimerState.remainingSeconds / 60}m"
                     } else "Off",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenSettings("SLEEP_TIMER")
+                        closeSidebarAndRun { onOpenSettings("SLEEP_TIMER") }
                     }
                 )
                 DottedDivider()
@@ -533,8 +548,7 @@ fun HomeScreen(
                     label = "Playlists",
                     badge = "${allPlaylists.size}",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenPlaylists()
+                        closeSidebarAndRun { onOpenPlaylists() }
                     }
                 )
                 DottedDivider()
@@ -544,8 +558,7 @@ fun HomeScreen(
                     label = "Music Library",
                     badge = "${allSongs.size}",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenLibrary()
+                        closeSidebarAndRun { onOpenLibrary() }
                     }
                 )
                 DottedDivider()
@@ -555,8 +568,7 @@ fun HomeScreen(
                     label = "Favorite Songs",
                     badge = "${favoriteSongs.size}",
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenFavorites()
+                        closeSidebarAndRun { onOpenFavorites() }
                     }
                 )
                 DottedDivider()
@@ -566,11 +578,11 @@ fun HomeScreen(
                     label = "Recently Played",
                     badge = if (recentlyPlayed.isNotEmpty()) "${recentlyPlayed.size}" else null,
                     onClick = {
-                        coroutineScope.launch { drawerState.close() }
-                        onOpenRecentlyPlayed()
+                        closeSidebarAndRun { onOpenRecentlyPlayed() }
                     }
                 )
                 DottedDivider()
+                }
             }
         }
     ) {
@@ -595,7 +607,7 @@ fun HomeScreen(
                     onQuickShuffle = onQuickShuffle,
                     onFavoriteToggle = onFavoriteToggle,
                     onOpenNowPlaying = onOpenNowPlaying,
-                    onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
+                    onOpenDrawer = openSidebar,
                     onOpenSearch = onOpenSearch,
                     onScanClick = onScanClick,
                     onOpenSettings = onOpenSettings,
@@ -645,7 +657,7 @@ fun HomeScreen(
                     onTogglePlayPause = onTogglePlayPause,
                     onQuickShuffle = onQuickShuffle,
                     onOpenNowPlaying = onOpenNowPlaying,
-                    onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
+                    onOpenDrawer = openSidebar,
                     onOpenSearch = onOpenSearch,
                     onOpenSettings = onOpenSettings,
                     onOpenLibrary = onOpenLibrary,
@@ -695,7 +707,7 @@ fun HomeScreen(
                     onTogglePlayPause = onTogglePlayPause,
                     onQuickShuffle = onQuickShuffle,
                     onOpenNowPlaying = onOpenNowPlaying,
-                    onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
+                    onOpenDrawer = openSidebar,
                     onOpenSearch = onOpenSearch,
                     onScanClick = onScanClick,
                     onOpenSettings = onOpenSettings,
@@ -756,7 +768,7 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
-                                onClick = { coroutineScope.launch { drawerState.open() } },
+                                onClick = openSidebar,
                                 shape = CircleShape,
                                 color = BentoCardSurface,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),

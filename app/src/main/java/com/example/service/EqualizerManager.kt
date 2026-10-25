@@ -37,63 +37,46 @@ class EqualizerManager(private val context: Context) {
 
     fun initAudioSession(audioSessionId: Int, preset: String = currentPreset) {
         if (audioSessionId <= 0 || audioSessionId == androidx.media3.common.C.AUDIO_SESSION_ID_UNSET) return
-        currentPreset = preset
-        if (currentSessionId == audioSessionId && equalizer != null) {
-            if (preset.equals("CUSTOM", ignoreCase = true)) {
-                setCustomBands(lastCustomBands, lastBassBoostStrength, lastVirtualizerStrength)
-            } else {
-                applyPreset(preset)
-            }
+        if (currentSessionId == audioSessionId && equalizer != null && currentPreset.equals(preset, ignoreCase = true)) {
             return
         }
+        currentPreset = preset
 
         release()
         currentSessionId = audioSessionId
 
         try {
             equalizer = Equalizer(1000, audioSessionId).apply {
-                enabled = isEnabled
+                enabled = false
             }
         } catch (e: Exception) {
             try {
                 equalizer = Equalizer(0, audioSessionId).apply {
-                    enabled = isEnabled
+                    enabled = false
                 }
             } catch (_: Exception) {}
         }
 
         try {
             bassBoost = BassBoost(1000, audioSessionId).apply {
-                enabled = isEnabled && lastBassBoostStrength > 0
-                if (strengthSupported && lastBassBoostStrength > 0) {
-                    setStrength(lastBassBoostStrength.coerceIn(0, 1000).toShort())
-                }
+                enabled = false
             }
         } catch (e: Exception) {
             try {
                 bassBoost = BassBoost(0, audioSessionId).apply {
-                    enabled = isEnabled && lastBassBoostStrength > 0
-                    if (strengthSupported && lastBassBoostStrength > 0) {
-                        setStrength(lastBassBoostStrength.coerceIn(0, 1000).toShort())
-                    }
+                    enabled = false
                 }
             } catch (_: Exception) {}
         }
 
         try {
             virtualizer = Virtualizer(1000, audioSessionId).apply {
-                enabled = isEnabled && lastVirtualizerStrength > 0
-                if (strengthSupported && lastVirtualizerStrength > 0) {
-                    setStrength(lastVirtualizerStrength.coerceIn(0, 1000).toShort())
-                }
+                enabled = false
             }
         } catch (e: Exception) {
             try {
                 virtualizer = Virtualizer(0, audioSessionId).apply {
-                    enabled = isEnabled && lastVirtualizerStrength > 0
-                    if (strengthSupported && lastVirtualizerStrength > 0) {
-                        setStrength(lastVirtualizerStrength.coerceIn(0, 1000).toShort())
-                    }
+                    enabled = false
                 }
             } catch (_: Exception) {}
         }
@@ -155,66 +138,92 @@ class EqualizerManager(private val context: Context) {
 
     fun setBassBoostStrength(strength: Int) {
         lastBassBoostStrength = strength
-        try {
-            bassBoost?.apply {
-                enabled = isEnabled && strength > 0
-                if (strengthSupported) {
-                    setStrength(strength.coerceIn(0, 1000).toShort())
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("EqualizerManager", "Error setting bass boost", e)
-        }
         applyCurrentState()
     }
 
     fun setVirtualizerStrength(strength: Int) {
         lastVirtualizerStrength = strength
-        try {
-            virtualizer?.apply {
-                enabled = isEnabled && strength > 0
-                if (strengthSupported) {
-                    setStrength(strength.coerceIn(0, 1000).toShort())
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("EqualizerManager", "Error setting virtualizer", e)
-        }
         applyCurrentState()
     }
 
     private fun applyCurrentState() {
         val eq = equalizer ?: return
         try {
-            if (!eq.enabled && isEnabled) eq.enabled = true
+            val isNormalOrFlat = !isEnabled ||
+                currentPreset.equals("NORMAL", ignoreCase = true) ||
+                currentPreset.equals("FLAT", ignoreCase = true) ||
+                (lastCustomBands.all { abs(it) < 0.01f } && lastBassBoostStrength == 0 && lastVirtualizerStrength == 0)
+
+            // When in Normal/Flat mode, disable hardware AudioFX completely so the Android audio HAL
+            // does not engage its headroom limiter (-3 to -6 dB attenuation) or biquad filter coloration.
+            if (isNormalOrFlat) {
+                try {
+                    val numBands = eq.numberOfBands.toInt()
+                    for (i in 0 until numBands) {
+                        eq.setBandLevel(i.toShort(), 0)
+                    }
+                    if (eq.enabled) eq.enabled = false
+                } catch (_: Exception) {}
+                try {
+                    bassBoost?.apply {
+                        if (strengthSupported) setStrength(0)
+                        if (enabled) enabled = false
+                    }
+                } catch (_: Exception) {}
+                try {
+                    virtualizer?.apply {
+                        if (strengthSupported) setStrength(0)
+                        if (enabled) enabled = false
+                    }
+                } catch (_: Exception) {}
+                return
+            }
+
+            if (!eq.enabled) eq.enabled = true
             val numBands = eq.numberOfBands.toInt()
             val minLevel = eq.bandLevelRange?.getOrNull(0)?.toInt() ?: -1500
-            val maxLevel = eq.bandLevelRange?.getOrNull(1)?.toInt() ?: 1500
+            val rawMaxLevel = eq.bandLevelRange?.getOrNull(1)?.toInt() ?: 1500
+            // Cap positive band boosts to +9.0 dB (900 mB) to prevent digital clipping in the mixer
+            val safeMaxLevel = minOf(rawMaxLevel, 900)
             val absMin = abs(minLevel)
-
-            val bassOffset = (lastBassBoostStrength / 1000f) * 0.40f
-            val virtOffset = (lastVirtualizerStrength / 1000f) * 0.30f
 
             lastCustomBands.forEachIndexed { idx, basePercent ->
                 if (idx < numBands) {
-                    var effectivePercent = basePercent
-                    // Blend bass boost into 60Hz and 230Hz bands for punchy acoustic feel
-                    if (idx == 0) effectivePercent = (effectivePercent + bassOffset).coerceIn(-1.0f, 1.0f)
-                    if (idx == 1) effectivePercent = (effectivePercent + (bassOffset * 0.6f)).coerceIn(-1.0f, 1.0f)
-                    // Blend virtualizer into 3.6kHz and 14kHz bands for 3D presence
-                    if (idx == 3) effectivePercent = (effectivePercent + (virtOffset * 0.5f)).coerceIn(-1.0f, 1.0f)
-                    if (idx == 4) effectivePercent = (effectivePercent + virtOffset).coerceIn(-1.0f, 1.0f)
-
+                    val effectivePercent = basePercent.coerceIn(-1.0f, 1.0f)
                     val level = if (effectivePercent >= 0f) {
-                        (maxLevel * effectivePercent.coerceIn(0f, 1f)).toInt().toShort()
+                        (safeMaxLevel * effectivePercent).toInt().toShort()
                     } else {
-                        (-absMin * abs(effectivePercent.coerceIn(-1f, 0f))).toInt().toShort()
+                        (-absMin * abs(effectivePercent)).toInt().toShort()
                     }
                     eq.setBandLevel(idx.toShort(), level)
                 }
             }
         } catch (e: Exception) {
             Log.e("EqualizerManager", "Error applying current state", e)
+        }
+
+        try {
+            bassBoost?.apply {
+                val enableBass = isEnabled && lastBassBoostStrength > 0
+                if (enabled != enableBass) enabled = enableBass
+                if (enableBass && strengthSupported) {
+                    setStrength(lastBassBoostStrength.coerceIn(0, 1000).toShort())
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("EqualizerManager", "Error setting bass boost", e)
+        }
+
+        try {
+            virtualizer?.apply {
+                val enableVirt = isEnabled && lastVirtualizerStrength > 0
+                if (enabled != enableVirt) enabled = enableVirt
+                if (enableVirt && strengthSupported) {
+                    setStrength(lastVirtualizerStrength.coerceIn(0, 1000).toShort())
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("EqualizerManager", "Error setting virtualizer", e)
         }
     }
 
@@ -233,24 +242,6 @@ class EqualizerManager(private val context: Context) {
         lastCustomBands = bands
         lastBassBoostStrength = bassVal
         lastVirtualizerStrength = virtVal
-
-        try {
-            bassBoost?.apply {
-                enabled = isEnabled && bassVal > 0
-                if (strengthSupported) {
-                    setStrength(bassVal.coerceIn(0, 1000).toShort())
-                }
-            }
-
-            virtualizer?.apply {
-                enabled = isEnabled && virtVal > 0
-                if (strengthSupported) {
-                    setStrength(virtVal.coerceIn(0, 1000).toShort())
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("EqualizerManager", "Error applying hardware effects for preset $presetName", e)
-        }
 
         applyCurrentState()
     }

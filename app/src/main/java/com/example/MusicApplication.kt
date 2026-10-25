@@ -53,16 +53,16 @@ class MusicApplication : Application(), ImageLoaderFactory {
                 }
             }
 
-            // 2. Defer heavy Room database compaction & maintenance until after cold startup
-            kotlinx.coroutines.delay(6000)
+            // 2. Defer heavy Room database compaction & maintenance until startup is completely idle (at most once per 24h)
+            kotlinx.coroutines.delay(45000)
 
-            val db = AppDatabase.getInstance(this)
-            val dbName = db.openHelper.databaseName
-            val isOpenable = db.openHelper.readableDatabase.isOpen
-            Log.i(TAG, "Startup diagnostics completed successfully. Database: $dbName (Ready: $isOpenable)")
-
-            // 3. Perform background database compacting, metrics pruning and storage de-duplication
-            AppDatabase.performMaintenance(this)
+            val bootPrefs = getSharedPreferences("offgrid_boot_cache", android.content.Context.MODE_PRIVATE)
+            val now = System.currentTimeMillis()
+            val lastMaint = bootPrefs.getLong("last_db_maintenance_ms", 0L)
+            if (now - lastMaint > 24L * 60L * 60L * 1000L) {
+                bootPrefs.edit().putLong("last_db_maintenance_ms", now).apply()
+                AppDatabase.performMaintenance(this)
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "Startup diagnostics encountered an issue", t)
             CrashReporter.logNonFatal(this, TAG, t, mapOf("phase" to "startup_diagnostics"))

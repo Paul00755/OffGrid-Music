@@ -31,26 +31,41 @@ object TagCleaner {
         "320|128|256|64|kbps|mp3|download|video\\s*song|full\\s*video|official\\s*video|lyric\\s*video|audio\\s*song|" +
         "official\\s*audio|movie\\s*song|movie\\s*name|video|movie|soundtrack|singer|singers|artist|composed by|sung by|music by|" +
         "masstamilan|pagal\\s*world|pagalworld|pagalsong|tamil|malayalam|telugu|hindi|kannada|" +
-        "remix|mix|edit|remaster|remastered|deluxe|edition|bonus|live|extended|version|track|album|song" +
+        "remaster|remastered|deluxe|edition|bonus|extended|track|album|song" +
         ")[^\\]\\)]*?[\\]\\)]"
     )
-    private val STANDALONE_VIDEO_AUDIO_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b(?:video\\s*song|full\\s*video(?:\\s*song)?|official\\s*video(?:\\s*song)?|lyric(?:s)?\\s*video|audio\\s*song|full\\s*audio(?:\\s*song)?|official\\s*audio)\\b[\\s-_~|/\\\\]*")
-    private val WEBSITE_KEYWORDS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?\\b[\\s-_~|/\\\\]*")
-    private val STANDALONE_DOMAINS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*\\b[a-zA-Z0-9-]+\\.(?:" + domainExtPattern + ")\\b[\\s-_~|/\\\\]*")
+    private val STANDALONE_VIDEO_AUDIO_REGEX = Regex("(?i)[\\s-_~|/\\\\]*(?:^|(?<=[^a-zA-Z0-9]))(?:video\\s*song|full\\s*video(?:\\s*song)?|official\\s*video(?:\\s*song)?|lyric(?:s)?\\s*video|audio\\s*song|full\\s*audio(?:\\s*song)?|official\\s*audio)(?:$|(?=[^a-zA-Z0-9]))[\\s-_~|/\\\\]*")
+    private val WEBSITE_KEYWORDS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*(?:^|(?<=[^a-zA-Z0-9]))(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?(?:$|(?=[^a-zA-Z0-9]))[\\s-_~|/\\\\]*")
+    private val STANDALONE_DOMAINS_REGEX = Regex("(?i)[\\s-_~|/\\\\]*(?:^|(?<=[^a-zA-Z0-9]))[a-zA-Z0-9-]+\\.(?:" + domainExtPattern + ")(?:$|(?=[^a-zA-Z0-9]))[\\s-_~|/\\\\]*")
     private val LEADING_TRACK_NUM_REGEX = Regex("^\\d{1,3}\\s*[-._]\\s*")
-    private val TRAILING_DOMAIN_REGEX = Regex("(?i)\\.(?:" + domainExtPattern + ")\\b")
-    private val MASSTAMILAN_EXT_REGEX = Regex("(?i)\\.masstamilan[a-z0-9._-]*\\b")
-    private val KBPS_REGEX = Regex("(?i)\\b(?:320|128|256|64)\\s*kbps\\b")
+    private val TRAILING_DOMAIN_REGEX = Regex("(?i)\\.(?:" + domainExtPattern + ")(?:$|(?=[^a-zA-Z0-9]))")
+    private val MASSTAMILAN_EXT_REGEX = Regex("(?i)\\.masstamilan[a-z0-9._-]*(?:$|(?=[^a-zA-Z0-9]))")
+    private val KBPS_REGEX = Regex("(?i)(?:^|(?<=[^a-zA-Z0-9]))(?:320|128|256|64)\\s*kbps(?:$|(?=[^a-zA-Z0-9]))")
     private val EMPTY_BRACKETS_REGEX = Regex("[\\[\\(]\\s*[\\]\\)]")
     private val MULTI_SPACE_REGEX = Regex("\\s+")
     private val EDGE_PUNCT_REGEX = Regex("^[\\s-_~|/\\\\]+|[\\s-_~|/\\\\]+$")
-    private val FALLBACK_CLEAN_REGEX = Regex("(?i)[\\s-_~|]*\\b(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?\\b[\\s-_~|]*")
+    private val FALLBACK_CLEAN_REGEX = Regex("(?i)[\\s-_~|]*(?:^|(?<=[^a-zA-Z0-9]))(?:$sourceKwPattern)(?:\\.(?:$domainExtPattern))?(?:$|(?=[^a-zA-Z0-9]))[\\s-_~|]*")
 
-    // Controlled release/source/version suffix normalization regex
+    // Meaningful hyphenated terms to preserve when normalizing separator hyphens
+    private val PRESERVED_HYPHENATED_WORDS = setOf(
+        "lo-fi", "hi-fi", "wi-fi", "sci-fi",
+        "k-pop", "j-pop", "c-pop", "hip-hop", "chill-hop", "trip-hop",
+        "synth-pop", "electro-pop", "indie-pop", "dream-pop", "dance-pop", "art-pop",
+        "alt-rock", "post-rock", "pop-rock", "hard-rock", "punk-rock", "soft-rock", "prog-rock",
+        "g-funk", "p-funk", "nu-metal", "post-punk", "synth-wave", "chill-out",
+        "8-bit", "16-bit", "32-bit", "sub-bass", "multi-track",
+        "a-ha", "jay-z", "ne-yo", "t-pain", "q-tip", "b-52", "blink-182", "sum-41", "alt-j", "wu-tang", "g-eazy",
+        "x-ray", "spider-man", "ant-man", "pac-man", "he-man", "obi-wan",
+        "co-op", "re-entry", "re-issue", "non-stop", "self-titled",
+        "all-star", "all-time", "one-stop", "two-step", "half-time", "full-time"
+    )
+    private val HYPHENATED_TOKEN_REGEX = Regex("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+")
+    private val LOOSE_DASH_SEPARATOR_REGEX = Regex("\\s*[-–—]+\\s*")
+
+    // Controlled release/source suffix normalization regex (preserves Part 1/2, Version 2, Remix, Live, Acoustic, Instrumental)
     private val SOURCE_WEBSITE_SUFFIX_REGEX = Regex(
-        "(?i)(?:\\s*[-–—_~|/:.]\\s*|\\s+)" +
+        "(?i)(?:\\s*[-–—_~|/:.]+\\s*|\\s+)" +
         "(?:" +
-            "v\\d{1,2}|ver\\s*\\d{1,2}|version\\s*\\d{1,2}|" +
             "masstamilan[a-z0-9._-]*|" +
             "pagal\\s*world[a-z0-9._-]*|pagalworld[a-z0-9._-]*|pagalsong[a-z0-9._-]*|pagalfree[a-z0-9._-]*|pagalnew[a-z0-9._-]*|" +
             "isaimini[a-z0-9._-]*|starmusiq[a-z0-9._-]*|5starmusiq[a-z0-9._-]*|" +
@@ -112,6 +127,38 @@ object TagCleaner {
         return text.ifBlank { title }
     }
 
+    /**
+     * Normalizes unwanted `_` and `-` filename/title separators into spaces while preserving
+     * meaningful hyphenated compound words (e.g. `Lo-Fi`, `Hi-Fi`, `K-Pop`, `Hip-Hop`, `Spider-Man`).
+     */
+    private fun normalizeTitleSeparators(input: String): String {
+        // 1. Replace all underscores with spaces
+        var s = if (input.indexOf('_') >= 0) input.replace('_', ' ') else input
+
+        // 2. Normalize hyphens/dashes into spaces except for preserved hyphenated words
+        if (s.indexOf('-') >= 0 || s.indexOf('–') >= 0 || s.indexOf('—') >= 0) {
+            // Protect preserved hyphenated tokens first using null-char sentinel
+            val protectedTokens = mutableListOf<String>()
+            s = HYPHENATED_TOKEN_REGEX.replace(s) { matchResult ->
+                val token = matchResult.value
+                if (token.lowercase() in PRESERVED_HYPHENATED_WORDS) {
+                    val idx = protectedTokens.size
+                    protectedTokens.add(token)
+                    "\u0000$idx\u0000"
+                } else {
+                    token.replace('-', ' ')
+                }
+            }
+            // Replace any remaining standalone or spaced dashes/hyphens with a single space
+            s = s.replace(LOOSE_DASH_SEPARATOR_REGEX, " ")
+            // Restore protected hyphenated compounds
+            for (i in protectedTokens.indices) {
+                s = s.replace("\u0000$i\u0000", protectedTokens[i])
+            }
+        }
+        return s
+    }
+
     // Ultra-fast LRU cache for already cleaned strings
     private class FastLruCache<K, V>(private val maxSize: Int) : java.util.LinkedHashMap<K, V>(maxSize, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > maxSize
@@ -144,8 +191,9 @@ object TagCleaner {
         // 1. Remove bracketed / parenthesized tags containing website sources, domains, or release labels
         text = text.replace(BRACKETED_SOURCES_REGEX, "")
         text = text.replace(BRACKETED_LABELS_REGEX, "")
+        text = text.replace(STANDALONE_VIDEO_AUDIO_REGEX, " ")
 
-        // 2. Strip unwanted release/source/version suffixes (e.g., "- masstamilan", "- pagal world - video song", "- Tamil")
+        // 2. Strip unwanted release/source suffixes (e.g., "- masstamilan", "_masstamilan", "- pagal world - video song", "- Tamil")
         text = stripUnwantedReleaseSuffixes(text)
 
         // 3. Remove standalone explicit website/source strings anywhere in the title
@@ -154,33 +202,47 @@ object TagCleaner {
         // 4. Remove standalone domain tags
         text = text.replace(STANDALONE_DOMAINS_REGEX, " ")
 
-        // 5. Remove leading track numbers or prefixes (e.g. "01 - " or "01. ")
+        // 5. Remove leading track numbers or prefixes (e.g. "01 - " or "01. " or "01_")
         text = text.replace(LEADING_TRACK_NUM_REGEX, "")
 
         // 6. Remove leftover trailing domain extensions like ".so", ".com", or audio quality tags
         text = text.replace(TRAILING_DOMAIN_REGEX, "")
-        text = text.replace(MASSTAMILAN_EXT_REGEX, "")
+        text.let {
+            text = it.replace(MASSTAMILAN_EXT_REGEX, "")
+        }
         text = text.replace(KBPS_REGEX, "")
 
-        // 7. Strip unwanted release/source/version suffixes again after removing in-between noise
+        // 7. Strip unwanted release/source suffixes again after removing in-between noise
         text = stripUnwantedReleaseSuffixes(text)
 
-        // 7. Clean up duplicate spaces, empty brackets, leading/trailing hyphens/underscores/dots
+        // 8. Normalize unwanted `_` and `-` filename/title separators into clean spaces
+        // while preserving meaningful hyphenated terms (e.g. Lo-Fi)
+        text = normalizeTitleSeparators(text)
+
+        // 9. Clean up duplicate spaces, empty brackets, leading/trailing hyphens/underscores/dots
         text = text.replace(EMPTY_BRACKETS_REGEX, "")
         text = text.replace(MULTI_SPACE_REGEX, " ")
-        text = text.trim('-', '_', ' ', '[', ']', '(', ')', '|', '~', '.', ':', '–', '—', '/', '\\')
+        text = text.trim('-', '_', ' ', '|', '~', '.', ':', '–', '—', '/', '\\')
+        if (text.contains('(') != text.contains(')')) {
+            text = text.trim('(', ')')
+        }
+        if (text.contains('[') != text.contains(']')) {
+            text = text.trim('[', ']')
+        }
 
         // If title ends or starts with a trailing dash or bracketed tag
         text = text.replace(EDGE_PUNCT_REGEX, "")
 
         // Final check on release suffixes after edge punctuation cleanup
         text = stripUnwantedReleaseSuffixes(text)
+        text = text.replace(MULTI_SPACE_REGEX, " ").trim()
 
         // Fallback if cleaning erased everything
         if (text.isBlank()) {
             val fallbackName = rawFilename.substringBeforeLast('.')
-            text = fallbackName
-                .replace(FALLBACK_CLEAN_REGEX, " ")
+            text = normalizeTitleSeparators(
+                fallbackName.replace(FALLBACK_CLEAN_REGEX, " ")
+            ).replace(MULTI_SPACE_REGEX, " ")
                 .trim('-', '_', ' ', '[', ']', '(', ')', '.')
             if (text.isBlank()) text = fallbackName
         }
