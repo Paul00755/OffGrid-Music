@@ -162,22 +162,54 @@ class AuthManager(
         val stage3Ex = stage3Result.exceptionOrNull()
         val stage2Ex = stage2Result.exceptionOrNull()
 
-        // Stage 4: Universal Firebase OAuthProvider("google.com") fallback.
-        // Whenever Play Services Credential Manager fails (including false-positive RESULT_CANCELED
-        // when selecting an account on a CI-signed APK), fall back to Firebase's direct Google OAuth flow.
-        Log.d(TAG, "Credential Manager did not return an ID token (${stage3Ex?.message ?: stage2Ex?.message}); falling back to Firebase OAuthProvider(google.com)")
-        val oauthFallbackResult = signInWithFirebaseGoogleOAuthProvider(activity, auth)
-        if (oauthFallbackResult.isSuccess) {
-            return oauthFallbackResult
+        // Only attempt Stage 4 (GenericIdpActivity web OAuth) if package certificate hash can be read
+        // by Android PackageManager; otherwise GenericIdpActivity fails with "error while trying to get your package certificate hash".
+        if (canReadPackageCertificateHash(activity)) {
+            Log.d(TAG, "Credential Manager did not return an ID token (${stage3Ex?.message ?: stage2Ex?.message}); falling back to Firebase OAuthProvider(google.com)")
+            val oauthFallbackResult = signInWithFirebaseGoogleOAuthProvider(activity, auth)
+            if (oauthFallbackResult.isSuccess) {
+                return oauthFallbackResult
+            }
+            val fallbackEx = oauthFallbackResult.exceptionOrNull()
+            if (fallbackEx != null &&
+                !(fallbackEx.message ?: "").contains("package certificate hash", ignoreCase = true) &&
+                !(fallbackEx.message ?: "").contains("certificate hash", ignoreCase = true)
+            ) {
+                Log.e(TAG, "All Google Sign-In stages failed", fallbackEx)
+                return Result.failure(handleGoogleSignInException(fallbackEx))
+            }
         }
 
-        val finalException = oauthFallbackResult.exceptionOrNull()
-            ?: stage3Ex
+        val finalException = stage3Ex
             ?: stage2Ex
             ?: stage1Result.exceptionOrNull()
             ?: Exception("Google Sign-In failed")
-        Log.e(TAG, "All Google Sign-In stages failed", finalException)
+        Log.e(TAG, "Google Sign-In stages failed", finalException)
         return Result.failure(handleGoogleSignInException(finalException))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun canReadPackageCertificateHash(context: Context): Boolean {
+        return try {
+            val pm = context.packageManager
+            val pkgName = context.packageName
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                val info = pm.getPackageInfo(
+                    pkgName,
+                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES or android.content.pm.PackageManager.GET_SIGNATURES
+                )
+                val signers = info.signingInfo?.apkContentsSigners
+                    ?: info.signingInfo?.signingCertificateHistory
+                    ?: info.signatures
+                !signers.isNullOrEmpty()
+            } else {
+                val info = pm.getPackageInfo(pkgName, android.content.pm.PackageManager.GET_SIGNATURES)
+                !info.signatures.isNullOrEmpty()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to read package certificate hash", e)
+            false
+        }
     }
 
     private fun extractGoogleIdToken(credential: Credential): String? {
@@ -252,7 +284,7 @@ class AuthManager(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Firebase OAuthProvider(google.com) sign-in failed", e)
-            Result.failure(e)
+            Result.failure(handleGoogleSignInException(e))
         }
     }
 
@@ -336,6 +368,9 @@ class AuthManager(
             msg.contains("service unavailable", ignoreCase = true) || msg.contains("SERVICE_UNAVAILABLE", ignoreCase = true) ||
             msg.contains("API_NOT_CONNECTED", ignoreCase = true) ->
                 Exception("Authentication service is temporarily unavailable. Please verify Google Play Services and internet connection.")
+            msg.contains("package certificate hash", ignoreCase = true) ||
+            msg.contains("certificate hash", ignoreCase = true) ->
+                Exception("Google Sign-In could not verify the app signature on this device. Please ensure Google Play Services is updated or sign in with your email address.")
             msg.contains("16", ignoreCase = true) && (msg.contains("DEVELOPER_ERROR", ignoreCase = true) || msg.contains("API: 16")) ->
                 Exception("Google Sign-In configuration mismatch (developer configuration). Please sign in with email or continue offline.")
             msg.contains("reauth", ignoreCase = true) || msg.contains("re-auth", ignoreCase = true) ->

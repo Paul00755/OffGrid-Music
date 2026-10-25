@@ -544,18 +544,13 @@ class UserPreferencesRepository(private val context: Context) {
     /**
      * Checks whether this installation is an existing user upgrading from a previous build:
      * - Checks `bootCachePrefs["onboarding_completed"]`
-     * - Checks if `offgrid_music_db` already exists on disk with user data or if storage permission
-     *   was already granted in a previous version.
-     * If so, caches `onboarding_completed = true` so the app opens straight to the Home screen.
+     * - Checks if runtime audio permission was already granted in a previous version, or if
+     *   `offgrid_music_db` already contains user records (songs/playlists).
+     * Never mistakes an empty newly-created Room database on a fresh install for an existing user.
      */
     private fun detectExistingInstallation(): Boolean {
         return try {
             if (bootCachePrefs.getBoolean("onboarding_completed", false)) return true
-
-            val dbFile = context.getDatabasePath("offgrid_music_db")
-            val walFile = context.getDatabasePath("offgrid_music_db-wal")
-            val hasExistingDb = (dbFile != null && dbFile.exists() && dbFile.length() > 16384L) ||
-                (walFile != null && walFile.exists() && walFile.length() > 4096L)
 
             val requiredPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 android.Manifest.permission.READ_MEDIA_AUDIO
@@ -567,15 +562,21 @@ class UserPreferencesRepository(private val context: Context) {
                 requiredPerm
             ) == PackageManager.PERMISSION_GRANTED
 
-            // On Android 6.0+, runtime audio permissions are never pre-granted on a fresh install.
-            // If audio permission is already granted or an existing database/WAL file with data is present,
-            // this is an in-place app update over an existing installation.
-            if (hasAudioPermission || hasExistingDb) {
+            if (hasAudioPermission) {
                 bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
-                true
-            } else {
-                false
+                return true
             }
+
+            if (!bootCachePrefs.getBoolean("db_checked_once", false)) {
+                val dbFile = context.getDatabasePath("offgrid_music_db")
+                if (dbFile != null && dbFile.exists() && dbFile.length() > 0L) {
+                    AppDatabase.healExistingDatabaseBeforeRoomOpen(context)
+                } else {
+                    bootCachePrefs.edit().putBoolean("db_checked_once", true).apply()
+                }
+            }
+
+            bootCachePrefs.getBoolean("onboarding_completed", false)
         } catch (_: Exception) {
             false
         }

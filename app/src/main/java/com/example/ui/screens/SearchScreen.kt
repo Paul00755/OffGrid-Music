@@ -127,35 +127,67 @@ fun SearchScreen(
 
     val query = searchQuery.trim()
 
-    val matchingSongs = remember(allSongs, query) {
-        if (query.isBlank()) emptyList()
-        else allSongs.filter {
-            it.title.contains(query, ignoreCase = true) ||
-            it.artist.contains(query, ignoreCase = true) ||
-            it.album.contains(query, ignoreCase = true) ||
-            it.path.contains(query, ignoreCase = true)
+    data class SearchComputedResults(
+        val songs: List<Song> = emptyList(),
+        val artists: List<String> = emptyList(),
+        val albums: List<String> = emptyList(),
+        val folders: List<String> = emptyList(),
+        val playlists: List<Playlist> = emptyList()
+    )
+
+    fun computeSearchResults(
+        songsSource: List<Song>,
+        playlistsSource: List<Playlist>,
+        q: String
+    ): SearchComputedResults {
+        if (q.isBlank()) return SearchComputedResults()
+        val matchedSongs = songsSource.filter {
+            it.title.contains(q, ignoreCase = true) ||
+                it.displayTitle.contains(q, ignoreCase = true) ||
+                it.artist.contains(q, ignoreCase = true) ||
+                it.displayArtist.contains(q, ignoreCase = true) ||
+                it.album.contains(q, ignoreCase = true) ||
+                it.displayAlbum.contains(q, ignoreCase = true) ||
+                it.path.contains(q, ignoreCase = true)
+        }
+        val matchedArtists = songsSource.asSequence().map { it.displayArtist }.distinct()
+            .filter { it.contains(q, ignoreCase = true) }.toList()
+        val matchedAlbums = songsSource.asSequence().map { it.displayAlbum }.distinct()
+            .filter { it.contains(q, ignoreCase = true) }.toList()
+        val matchedFolders = songsSource.asSequence().map { java.io.File(it.path).parent ?: "" }.distinct()
+            .filter { it.isNotBlank() && it.contains(q, ignoreCase = true) }.toList()
+        val matchedPlaylists = playlistsSource.filter { it.name.contains(q, ignoreCase = true) }
+        return SearchComputedResults(
+            songs = matchedSongs,
+            artists = matchedArtists,
+            albums = matchedAlbums,
+            folders = matchedFolders,
+            playlists = matchedPlaylists
+        )
+    }
+
+    val searchComputed by produceState(
+        initialValue = remember { computeSearchResults(allSongs, playlists, query) },
+        key1 = allSongs,
+        key2 = playlists,
+        key3 = query
+    ) {
+        if (query.isBlank()) {
+            value = SearchComputedResults()
+        } else {
+            kotlinx.coroutines.delay(90L)
+            val computed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                computeSearchResults(allSongs, playlists, query)
+            }
+            value = computed
         }
     }
 
-    val matchingArtists = remember(allSongs, query) {
-        if (query.isBlank()) emptyList()
-        else allSongs.map { it.displayArtist }.distinct().filter { it.contains(query, ignoreCase = true) }
-    }
-
-    val matchingAlbums = remember(allSongs, query) {
-        if (query.isBlank()) emptyList()
-        else allSongs.map { it.displayAlbum }.distinct().filter { it.contains(query, ignoreCase = true) }
-    }
-
-    val matchingFolders = remember(allSongs, query) {
-        if (query.isBlank()) emptyList()
-        else allSongs.map { java.io.File(it.path).parent ?: "" }.distinct().filter { it.isNotBlank() && it.contains(query, ignoreCase = true) }
-    }
-
-    val matchingPlaylists = remember(playlists, query) {
-        if (query.isBlank()) emptyList()
-        else playlists.filter { it.name.contains(query, ignoreCase = true) }
-    }
+    val matchingSongs = searchComputed.songs
+    val matchingArtists = searchComputed.artists
+    val matchingAlbums = searchComputed.albums
+    val matchingFolders = searchComputed.folders
+    val matchingPlaylists = searchComputed.playlists
 
     Box(
         modifier = modifier

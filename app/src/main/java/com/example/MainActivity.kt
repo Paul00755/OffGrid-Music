@@ -147,13 +147,7 @@ class MainActivity : ComponentActivity() {
                     val authUiState by viewModel.authUiState.collectAsState()
                     val syncStatus by viewModel.syncStatus.collectAsState()
 
-                    // Issue #1 Safeguard: If an existing user updates the app and already has songs/playlists,
-                    // automatically mark onboarding as completed so they go straight to HomeScreen.
-                    LaunchedEffect(isOnboardingCompleted, allSongs.size, allPlaylists.size) {
-                        if (!isOnboardingCompleted && (allSongs.isNotEmpty() || allPlaylists.isNotEmpty())) {
-                            viewModel.completeOnboarding()
-                        }
-                    }
+                    // Onboarding state is resolved at startup via UserPreferences & AppDatabase upgrade detection.
 
                     var backPressedTime by remember { mutableLongStateOf(0L) }
                     var songForAddToPlaylist by remember { mutableStateOf<com.example.data.model.Song?>(null) }
@@ -246,8 +240,8 @@ class MainActivity : ComponentActivity() {
                         com.example.ui.components.SplashScreen(
                             onDismiss = { viewModel.dismissSplash() }
                         )
-                    } else if (!isOnboardingCompleted && allSongs.isEmpty() && allPlaylists.isEmpty()) {
-                        // 2. Once Startup Animation finishes, display Onboarding Screen options (only for truly new installs)
+                    } else if (!isOnboardingCompleted) {
+                        // 2. Once Startup Animation finishes, display Onboarding Screen options for fresh installations
                         val fullDeviceScanSetting by viewModel.fullDeviceScan.collectAsState()
                         val maxSongDurationSetting by viewModel.maxSongDuration.collectAsState()
 

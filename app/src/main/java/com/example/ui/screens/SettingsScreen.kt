@@ -532,8 +532,6 @@ fun SettingsScreen(
     databaseStorageStats: com.example.data.local.DatabaseStorageStats? = null,
     isOptimizingDatabase: Boolean = false,
     onOptimizeDatabase: ((reclaimedBytes: Long, message: String) -> Unit) -> Unit = { it(0L, "") },
-    onExportDatabaseBackup: (((java.io.File?) -> Unit)) -> Unit = { it(null) },
-    onImportDatabaseBackup: (String, (Boolean, String) -> Unit) -> Unit = { _, cb -> cb(false, "") },
     onRefreshDatabaseStats: () -> Unit = {},
     customEqBands: List<Float> = emptyList(),
     onSetCustomEqBands: (List<Float>) -> Unit = {},
@@ -3955,9 +3953,6 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_database_storage_card") {
-                    var showImportDialog by remember { mutableStateOf(false) }
-                    var importJsonText by remember { mutableStateOf("") }
-
                     SettingsCardContainer(accentGlow = Color(0xFF00E5FF)) {
                         // Header with icon and badge
                         Row(
@@ -4112,7 +4107,7 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
-                        // Actions: Optimize, Backup, Restore
+                        // Action: Optimize Database
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -4127,7 +4122,7 @@ fun SettingsScreen(
                                 enabled = !isOptimizingDatabase,
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF), contentColor = Color.Black),
                                 shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 if (isOptimizingDatabase) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
@@ -4139,117 +4134,6 @@ fun SettingsScreen(
                                     Text("Optimize DB", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-
-                            OutlinedButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onExportDatabaseBackup { file ->
-                                        if (file != null) {
-                                            val dirName = file.parentFile?.name ?: "Offgrid"
-                                            android.widget.Toast.makeText(context, "Backup saved to: $dirName/${file.name}", android.widget.Toast.LENGTH_LONG).show()
-                                        } else {
-                                            android.widget.Toast.makeText(context, "Failed to create backup", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
-                                border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Export Backup", fontSize = 11.5.sp)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    importJsonText = ""
-                                    showImportDialog = true
-                                }
-                            ) {
-                                Icon(Icons.Default.Restore, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Restore from Backup JSON", fontSize = 12.sp, color = Color(0xFF00E5FF))
-                            }
-                        }
-
-                        if (showImportDialog) {
-                            AlertDialog(
-                                onDismissRequest = { showImportDialog = false },
-                                title = { Text("Restore Library Backup", fontWeight = FontWeight.Bold) },
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                "Paste JSON or load from device:",
-                                                fontSize = 12.sp,
-                                                color = BentoTextSecondary,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            TextButton(
-                                                onClick = {
-                                                    HapticUtils.performClickHaptic(context)
-                                                    val latest = com.example.data.local.DatabaseStorageManager.getLatestBackupFile(context)
-                                                    if (latest != null && latest.exists()) {
-                                                        try {
-                                                            importJsonText = latest.readText(Charsets.UTF_8)
-                                                            android.widget.Toast.makeText(context, "Loaded ${latest.name}", android.widget.Toast.LENGTH_SHORT).show()
-                                                        } catch (e: Exception) {
-                                                            android.widget.Toast.makeText(context, "Failed to read backup: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    } else {
-                                                        android.widget.Toast.makeText(context, "No backup found in /Offgrid folder", android.widget.Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                            ) {
-                                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF00E5FF))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Load from /Offgrid", fontSize = 11.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.SemiBold)
-                                            }
-                                        }
-                                        OutlinedTextField(
-                                            value = importJsonText,
-                                            onValueChange = { importJsonText = it },
-                                            label = { Text("Backup JSON") },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(min = 120.dp, max = 220.dp),
-                                            maxLines = 10
-                                        )
-                                    }
-                                },
-                                confirmButton = {
-                                    Button(
-                                        onClick = {
-                                            showImportDialog = false
-                                            if (importJsonText.isNotBlank()) {
-                                                onImportDatabaseBackup(importJsonText) { _, msg ->
-                                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
-                                                }
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF), contentColor = Color.Black)
-                                    ) {
-                                        Text("Restore")
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { showImportDialog = false }) {
-                                        Text("Cancel")
-                                    }
-                                }
-                            )
                         }
                     }
                 }

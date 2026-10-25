@@ -2771,9 +2771,8 @@ class PlaybackManager(
             currentSong = newCurrentSong
         )
         try {
-            val activePlayingIndex = player.currentMediaItemIndex
             for (i in currentQueue.indices) {
-                if (currentQueue[i].id == updatedSong.id && i < player.mediaItemCount && i != activePlayingIndex) {
+                if (currentQueue[i].id == updatedSong.id && i < player.mediaItemCount) {
                     val newMediaItem = buildMediaItem(updatedSong, loadArtworkBytes = false)
                     player.replaceMediaItem(i, newMediaItem)
                 }
@@ -2823,9 +2822,8 @@ class PlaybackManager(
             currentSong = newCurrentSong,
             queue = newQueue
         )
-        val activePlayingIndex = player.currentMediaItemIndex
         val targetIdx = newQueue.indexOfFirst { it.id == songId }
-        if (targetIdx >= 0 && targetIdx != activePlayingIndex && targetIdx < player.mediaItemCount) {
+        if (targetIdx >= 0 && targetIdx < player.mediaItemCount) {
             try {
                 player.replaceMediaItem(targetIdx, buildMediaItem(newQueue[targetIdx], loadArtworkBytes = false))
             } catch (_: Exception) {}

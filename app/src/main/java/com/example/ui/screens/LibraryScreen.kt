@@ -111,31 +111,50 @@ fun LibraryScreen(
     var showDuplicateFinderSheet by remember { mutableStateOf(false) }
     val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
-    // Deduplicate by id (.distinctBy { it.id }) to guarantee LazyColumn never throws duplicate key crash
-    val processedSongs = remember(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) {
-        if (allSongs.isEmpty()) {
-            emptyList()
-        } else {
-            var list = if (searchQuery.isBlank()) allSongs
-            else allSongs.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                    it.artist.contains(searchQuery, ignoreCase = true) ||
-                    it.album.contains(searchQuery, ignoreCase = true)
-            }
+    fun filterAndSortLibrarySongs(
+        source: List<Song>,
+        q: String,
+        sort: SortOption,
+        ascending: Boolean,
+        favOnly: Boolean
+    ): List<Song> {
+        if (source.isEmpty()) return emptyList()
+        val trimmedQ = q.trim()
+        var list = if (trimmedQ.isBlank()) source
+        else source.filter {
+            it.title.contains(trimmedQ, ignoreCase = true) ||
+                it.displayTitle.contains(trimmedQ, ignoreCase = true) ||
+                it.artist.contains(trimmedQ, ignoreCase = true) ||
+                it.displayArtist.contains(trimmedQ, ignoreCase = true) ||
+                it.album.contains(trimmedQ, ignoreCase = true) ||
+                it.displayAlbum.contains(trimmedQ, ignoreCase = true)
+        }
 
-            if (filterFavoritesOnly) {
-                list = list.filter { it.isFavorite }
-            }
+        if (favOnly) {
+            list = list.filter { it.isFavorite }
+        }
 
-            val sorted = when (selectedSort) {
-                SortOption.TITLE -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayTitle })
-                SortOption.ARTIST -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayArtist }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayArtist })
-                SortOption.ALBUM -> if (sortAscending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum })
-                SortOption.RECENTLY_ADDED -> if (sortAscending) list.sortedByDescending { it.dateAdded } else list.sortedBy { it.dateAdded }
-                SortOption.RECENTLY_PLAYED -> if (sortAscending) list.sortedByDescending { it.lastPlayed } else list.sortedBy { it.lastPlayed }
-                SortOption.DURATION -> if (sortAscending) list.sortedBy { it.durationMs } else list.sortedByDescending { it.durationMs }
-            }
-            sorted.distinctBy { it.id }
+        val sorted = when (sort) {
+            SortOption.TITLE -> if (ascending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayTitle })
+            SortOption.ARTIST -> if (ascending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayArtist }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayArtist })
+            SortOption.ALBUM -> if (ascending) list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum }) else list.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayAlbum })
+            SortOption.RECENTLY_ADDED -> if (ascending) list.sortedByDescending { it.dateAdded } else list.sortedBy { it.dateAdded }
+            SortOption.RECENTLY_PLAYED -> if (ascending) list.sortedByDescending { it.lastPlayed } else list.sortedBy { it.lastPlayed }
+            SortOption.DURATION -> if (ascending) list.sortedBy { it.durationMs } else list.sortedByDescending { it.durationMs }
+        }
+        return sorted.distinctBy { it.id }
+    }
+
+    // Deduplicate by id (.distinctBy { it.id }) and run filtering/sorting off the main thread with debouncing
+    val processedSongs by produceState(
+        initialValue = remember { filterAndSortLibrarySongs(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) },
+        keys = arrayOf(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly)
+    ) {
+        if (searchQuery.isNotBlank()) {
+            kotlinx.coroutines.delay(80L)
+        }
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            filterAndSortLibrarySongs(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly)
         }
     }
 

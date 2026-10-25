@@ -42,6 +42,7 @@ import kotlinx.coroutines.withContext
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
+    val preferences: UserPreferencesRepository = UserPreferencesRepository.getInstance(application)
     private val db = AppDatabase.getInstance(application)
     private val scanner = LibraryScanner.getInstance(application, db.songDao(), db.folderDao())
     val repository = MusicRepository(
@@ -54,8 +55,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         db.smartPlaylistDao(),
         scanner
     )
-
-    val preferences: UserPreferencesRepository = UserPreferencesRepository.getInstance(application)
     val authManager: AuthManager = AuthManager.getInstance(application)
     val cloudSyncRepository: com.example.data.sync.CloudSyncRepository = com.example.data.sync.CloudSyncRepository.getInstance(
         context = application,
@@ -661,8 +660,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             allSongs.collect { songs ->
-                if (_speedDialSongs.value.isEmpty() && songs.isNotEmpty()) {
-                    _speedDialSongs.value = songs.shuffled().take(9)
+                if (songs.isNotEmpty()) {
+                    if (_speedDialSongs.value.isEmpty()) {
+                        _speedDialSongs.value = songs.shuffled().take(9)
+                    } else {
+                        val byId = songs.associateBy { it.id }
+                        _speedDialSongs.value = _speedDialSongs.value.mapNotNull { byId[it.id] }
+                    }
                 }
             }
         }
@@ -1026,21 +1030,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         refreshCacheSizes()
         _isOptimizingDatabase.value = false
         onComplete(result.bytesReclaimed, result.message)
-    }
-
-    fun exportDatabaseBackup(onComplete: (java.io.File?) -> Unit) = viewModelScope.launch {
-        val file = withContext(Dispatchers.IO) {
-            com.example.data.local.DatabaseStorageManager.exportDatabaseBackup(getApplication())
-        }
-        onComplete(file)
-    }
-
-    fun importDatabaseBackup(jsonString: String, onComplete: (Boolean, String) -> Unit) = viewModelScope.launch {
-        val result = withContext(Dispatchers.IO) {
-            com.example.data.local.DatabaseStorageManager.importDatabaseBackup(getApplication(), jsonString)
-        }
-        refreshDatabaseStats()
-        onComplete(result.success, result.message)
     }
 
     fun updatePlaylistViewMode(mode: String) {

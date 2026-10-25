@@ -53,6 +53,7 @@ android {
       keyPassword = "android"
       enableV1Signing = true
       enableV2Signing = true
+      enableV3Signing = true
     }
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
@@ -71,6 +72,7 @@ android {
       }
       enableV1Signing = true
       enableV2Signing = true
+      enableV3Signing = true
     }
   }
 

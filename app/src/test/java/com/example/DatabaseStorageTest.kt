@@ -50,7 +50,7 @@ class DatabaseStorageTest {
     }
 
     @Test
-    fun testDatabaseBackupExportAndImport() = runBlocking {
+    fun testRoomPersistenceWithoutLocalBackupFiles() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = AppDatabase.getInstance(context)
 
@@ -77,38 +77,12 @@ class DatabaseStorageTest {
         )
         assertTrue(smartId > 0)
 
-        // Verify Offgrid directory creation
-        val offgridDir = DatabaseStorageManager.getOffgridDirectory(context)
-        assertEquals("Offgrid", offgridDir.name)
-        assertTrue(offgridDir.exists())
-
-        // Export backup
-        val backupFile = DatabaseStorageManager.exportDatabaseBackup(context)
-        assertNotNull(backupFile)
-        assertTrue(backupFile!!.exists())
-        assertTrue(backupFile.name.startsWith("offgrid_library_backup_") && backupFile.name.endsWith(".json"))
-
-        // Verify offgrid_auto_backup.json exists
+        // Verify no local backup files (backup.json, offgrid_auto_backup.json, offgrid_library_backup_*) exist
+        val offgridDir = File(context.filesDir, "Offgrid")
         val autoBackupFile = File(offgridDir, "offgrid_auto_backup.json")
-        assertTrue(autoBackupFile.exists())
-
-        // Verify getLatestBackupFile returns a valid backup file
-        val latestFile = DatabaseStorageManager.getLatestBackupFile(context)
-        assertNotNull(latestFile)
-        assertTrue(latestFile!!.exists())
-
-        val jsonContent = backupFile.readText()
-        val root = JSONObject(jsonContent)
-
-        assertTrue(root.has("playlists"))
-        assertTrue(root.has("smartPlaylists"))
-        assertEquals("OffGrid Music", root.getString("app"))
-
-        // Test import
-        val importResult = DatabaseStorageManager.importDatabaseBackup(context, jsonContent)
-        assertTrue(importResult.success)
-        assertTrue(importResult.playlistsRestored >= 1)
-        assertTrue(importResult.smartPlaylistsRestored >= 1)
+        val legacyBackupFile = File(context.filesDir, "backup.json")
+        assertTrue(!autoBackupFile.exists())
+        assertTrue(!legacyBackupFile.exists())
 
         // Test stats calculation
         val stats = DatabaseStorageManager.getStorageStats(context)
@@ -205,5 +179,47 @@ class DatabaseStorageTest {
         assertEquals(todayStart, customStart)
         assertEquals(todayEnd, customEnd)
         assertEquals("Jun 10, 2024", customRangeSameDay.displayLabel)
+    }
+
+    @Test
+    fun testPerTrackThumbnailArtworkIsolation() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sharedFolder = File(context.cacheDir, "shared_downloads").apply { mkdirs() }
+        val songAPath = File(sharedFolder, "Mother Song - Valimai.mp3").apply { writeText("dummyA") }.absolutePath
+        val songBPath = File(sharedFolder, "Another Edited Song.mp3").apply { writeText("dummyB") }.absolutePath
+        val songCPath = File(sharedFolder, "Unedited Song.mp3").apply { writeText("dummyC") }.absolutePath
+
+        val redBitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.RED)
+        }
+        val blueBitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.BLUE)
+        }
+
+        val srcRedFile = File(context.cacheDir, "src_red.jpg")
+        srcRedFile.outputStream().use { redBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) }
+        val srcBlueFile = File(context.cacheDir, "src_blue.jpg")
+        srcBlueFile.outputStream().use { blueBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) }
+
+        // Save custom artwork for Song A (101L) and Song B (102L)
+        val uriB = com.example.util.ArtworkManager.persistSongCover(context, 102L, android.net.Uri.fromFile(srcBlueFile).toString(), songBPath)
+        val uriA = com.example.util.ArtworkManager.persistSongCover(context, 101L, android.net.Uri.fromFile(srcRedFile).toString(), songAPath)
+
+        assertNotNull(uriA)
+        assertNotNull(uriB)
+        assertTrue(uriA != uriB)
+        assertTrue(uriA!!.contains(".thumbnail"))
+        assertTrue(uriB!!.contains(".thumbnail"))
+
+        // Verify Song B still resolves to its own artwork and did NOT inherit Song A's artwork
+        val resolvedA = com.example.util.ArtworkManager.findThumbnailArtwork(songAPath, 101L, context)
+        val resolvedB = com.example.util.ArtworkManager.findThumbnailArtwork(songBPath, 102L, context)
+        val resolvedC = com.example.util.ArtworkManager.findThumbnailArtwork(songCPath, 103L, context)
+
+        assertNotNull(resolvedA)
+        assertNotNull(resolvedB)
+        assertTrue(resolvedA!!.absolutePath != resolvedB!!.absolutePath)
+        // Song C in the same folder has no custom artwork and must not inherit Song A or Song B's cover
+        assertEquals(null, resolvedC)
     }
 }

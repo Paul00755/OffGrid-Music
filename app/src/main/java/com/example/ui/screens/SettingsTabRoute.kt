@@ -145,8 +145,6 @@ fun SettingsTabRoute(
         databaseStorageStats = viewModel.databaseStorageStats.collectAsState().value,
         isOptimizingDatabase = viewModel.isOptimizingDatabase.collectAsState().value,
         onOptimizeDatabase = { onComplete -> viewModel.optimizeDatabase(onComplete) },
-        onExportDatabaseBackup = { onComplete -> viewModel.exportDatabaseBackup(onComplete) },
-        onImportDatabaseBackup = { json, onComplete -> viewModel.importDatabaseBackup(json, onComplete) },
         onRefreshDatabaseStats = { viewModel.refreshDatabaseStats() },
         customEqBands = viewModel.customEqBands.collectAsState().value,
         onSetCustomEqBands = { viewModel.setCustomEqBands(it) },

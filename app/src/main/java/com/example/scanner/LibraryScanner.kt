@@ -591,7 +591,13 @@ class LibraryScanner(
                     normExcludedPaths = normExcluded,
                     ignoreAudioDurationMs = ignoreDurationMs,
                     maxAudioDurationMs = maxDurationMs,
-                    newSongsList = newFromDirect
+                    newSongsList = newFromDirect,
+                    onFileEvent = { d, p, dup, rej ->
+                        filesDiscovered += d
+                        filesProcessed += p
+                        duplicatesSkipped += dup
+                        filteredRejected += rej
+                    }
                 )
             }
             for (s in newFromDirect) {
@@ -893,6 +899,12 @@ class LibraryScanner(
                             maxAudioDurationMs = maxAudioDurationMs,
                             foundSongsByNormPath = foundSongsByNormPath,
                             retriever = retriever,
+                            onFileEvent = { d, p, dup, rej ->
+                                filesDiscovered += d
+                                filesProcessed += p
+                                duplicatesSkipped += dup
+                                filteredRejected += rej
+                            },
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
@@ -1300,6 +1312,12 @@ class LibraryScanner(
                             ignoreAudioDurationMs = ignoreAudioDurationMs,
                             maxAudioDurationMs = maxAudioDurationMs,
                             newSongsList = directNewList,
+                            onFileEvent = { d, p, dup, rej ->
+                                filesDiscovered += d
+                                filesProcessed += p
+                                duplicatesSkipped += dup
+                                filteredRejected += rej
+                            },
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
@@ -1367,6 +1385,7 @@ class LibraryScanner(
         maxAudioDurationMs: Long,
         foundSongsByNormPath: MutableMap<String, SongEntity>,
         retriever: MediaMetadataRetriever,
+        onFileEvent: ((discovered: Int, processed: Int, duplicate: Int, rejected: Int) -> Unit)? = null,
         onProgress: ((String, Int) -> Unit)? = null
     ) {
         val parentFolder = directory.absolutePath.trimEnd('/')
@@ -1396,18 +1415,24 @@ class LibraryScanner(
                     maxAudioDurationMs = maxAudioDurationMs,
                     foundSongsByNormPath = foundSongsByNormPath,
                     retriever = retriever,
+                    onFileEvent = onFileEvent,
                     onProgress = onProgress
                 )
             } else if (file.isFile && file.length() > 0L) {
                 val ext = file.extension.lowercase()
                 if (ext in AUDIO_EXTENSIONS) {
+                    onFileEvent?.invoke(1, 1, 0, 0)
                     val filePath = file.absolutePath
                     val normPath = normalizePath(filePath)
-                    if (!foundSongsByNormPath.containsKey(normPath)) {
+                    if (foundSongsByNormPath.containsKey(normPath)) {
+                        onFileEvent?.invoke(0, 0, 1, 0)
+                    } else {
                         val fileParent = file.parent?.trimEnd('/') ?: ""
                         val normFileParent = normalizePath(fileParent)
-                        if (isNormPathExcluded(normFileParent, normExcludedPaths)) continue
-                        if (!isSongInIncludedFolders(normFileParent, normIncludedPaths)) continue
+                        if (isNormPathExcluded(normFileParent, normExcludedPaths) || !isSongInIncludedFolders(normFileParent, normIncludedPaths)) {
+                            onFileEvent?.invoke(0, 0, 0, 1)
+                            continue
+                        }
 
                         var duration = 0L
                         var rawTitle: String? = null
@@ -1436,10 +1461,14 @@ class LibraryScanner(
                         }
 
                         if (duration <= 0L) {
-                            if (ignoreAudioDurationMs > 0L) continue
+                            if (ignoreAudioDurationMs > 0L) {
+                                onFileEvent?.invoke(0, 0, 0, 1)
+                                continue
+                            }
                         } else if ((ignoreAudioDurationMs > 0L && duration < ignoreAudioDurationMs) ||
                             (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs)
                         ) {
+                            onFileEvent?.invoke(0, 0, 0, 1)
                             continue
                         }
 
@@ -1487,6 +1516,7 @@ class LibraryScanner(
         ignoreAudioDurationMs: Long,
         maxAudioDurationMs: Long = Long.MAX_VALUE,
         newSongsList: MutableList<SongEntity>,
+        onFileEvent: ((discovered: Int, processed: Int, duplicate: Int, rejected: Int) -> Unit)? = null,
         onProgress: ((String, Int) -> Unit)? = null
     ) {
         if (maxDepth <= 0 || !directory.exists() || !directory.isDirectory) return
@@ -1516,18 +1546,24 @@ class LibraryScanner(
                     ignoreAudioDurationMs = ignoreAudioDurationMs,
                     maxAudioDurationMs = maxAudioDurationMs,
                     newSongsList = newSongsList,
+                    onFileEvent = onFileEvent,
                     onProgress = onProgress
                 )
             } else if (file.isFile && file.length() > 0L) {
                 val ext = file.extension.lowercase()
                 if (ext in AUDIO_EXTENSIONS) {
+                    onFileEvent?.invoke(1, 1, 0, 0)
                     val filePath = file.absolutePath
                     val normPath = normalizePath(filePath)
-                    if (!existingByPath.containsKey(normPath) && !discoveredPaths.contains(normPath)) {
+                    if (existingByPath.containsKey(normPath) || discoveredPaths.contains(normPath)) {
+                        onFileEvent?.invoke(0, 0, 1, 0)
+                    } else {
                         val fileParent = file.parent?.trimEnd('/') ?: ""
                         val normFileParent = normalizePath(fileParent)
-                        if (isNormPathExcluded(normFileParent, normExcludedPaths)) continue
-                        if (!isSongInIncludedFolders(normFileParent, normIncludedPaths)) continue
+                        if (isNormPathExcluded(normFileParent, normExcludedPaths) || !isSongInIncludedFolders(normFileParent, normIncludedPaths)) {
+                            onFileEvent?.invoke(0, 0, 0, 1)
+                            continue
+                        }
 
                         discoveredPaths.add(normPath)
                         var duration = 0L
@@ -1548,10 +1584,14 @@ class LibraryScanner(
                         }
 
                         if (duration <= 0L) {
-                            if (ignoreAudioDurationMs > 0L) continue
+                            if (ignoreAudioDurationMs > 0L) {
+                                onFileEvent?.invoke(0, 0, 0, 1)
+                                continue
+                            }
                         } else if ((ignoreAudioDurationMs > 0L && duration < ignoreAudioDurationMs) ||
                             (maxAudioDurationMs in 1 until Long.MAX_VALUE && duration > maxAudioDurationMs)
                         ) {
+                            onFileEvent?.invoke(0, 0, 0, 1)
                             continue
                         }
 

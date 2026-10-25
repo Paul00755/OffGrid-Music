@@ -65,9 +65,8 @@ object AudioTagWriter {
                 val lrcPath = updateCompanionLrcFile(audioFile, newLyrics)
                 if (lrcPath != null) scanPaths.add(lrcPath)
 
-                // Save companion artwork image directly into local song folder (e.g. song.jpg)
-                val companionArtPath = updateCompanionArtworkFile(audioFile, newArtworkUri, context)
-                if (companionArtPath != null) scanPaths.add(companionArtPath)
+                // Save companion artwork image into dedicated .thumbnail directory with unique per-track filename
+                updateCompanionArtworkFile(audioFile, songId, newArtworkUri, context)
 
                 success = true
             }
@@ -83,7 +82,7 @@ object AudioTagWriter {
             Log.e(TAG, "Error updating MediaStore tags: ${e.message}", e)
         }
 
-        // Trigger MediaScanner to re-index the file across Android OS
+        // Trigger MediaScanner to re-index the audio file across Android OS
         try {
             if (scanPaths.isNotEmpty()) {
                 MediaScannerConnection.scanFile(
@@ -101,13 +100,26 @@ object AudioTagWriter {
         return success
     }
 
-    private fun updateCompanionArtworkFile(audioFile: File, artworkUri: String?, context: Context): String? {
+    private fun updateCompanionArtworkFile(audioFile: File, songId: Long, artworkUri: String?, context: Context): String? {
         try {
-            val parentDir = audioFile.parentFile ?: return null
-            if (!parentDir.exists() || !parentDir.canWrite()) return null
+            val pathHash = audioFile.absolutePath.trim().lowercase().hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+            val uniqueTrackName = if (songId > 0L) "track_${songId}_${pathHash}.jpg" else "track_path_${pathHash}.jpg"
 
-            val baseName = audioFile.nameWithoutExtension
-            val companionArtFile = File(parentDir, "$baseName.jpg")
+            val parentDir = audioFile.parentFile
+            val localThumbDir = if (parentDir != null && parentDir.exists() && parentDir.canWrite()) {
+                File(parentDir, ".thumbnail").also { dir ->
+                    if (!dir.exists()) dir.mkdirs()
+                    try { File(dir, ".nomedia").createNewFile() } catch (_: Exception) {}
+                }.takeIf { it.exists() && it.canWrite() }
+            } else null
+
+            val appThumbDir = File(context.filesDir, ".thumbnail").also { dir ->
+                if (!dir.exists()) dir.mkdirs()
+                try { File(dir, ".nomedia").createNewFile() } catch (_: Exception) {}
+            }
+
+            val targetDir = localThumbDir ?: appThumbDir
+            val companionArtFile = File(targetDir, uniqueTrackName)
 
             if (artworkUri.isNullOrBlank()) {
                 if (companionArtFile.exists() && companionArtFile.canWrite()) {
@@ -136,6 +148,14 @@ object AudioTagWriter {
                 FileOutputStream(companionArtFile).use { fos ->
                     fos.write(imageBytes)
                     fos.flush()
+                }
+                if (targetDir != appThumbDir) {
+                    try {
+                        FileOutputStream(File(appThumbDir, uniqueTrackName)).use { fos ->
+                            fos.write(imageBytes)
+                            fos.flush()
+                        }
+                    } catch (_: Exception) {}
                 }
                 return companionArtFile.absolutePath
             }

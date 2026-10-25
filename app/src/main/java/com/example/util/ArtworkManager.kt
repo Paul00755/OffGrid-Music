@@ -202,12 +202,13 @@ object ArtworkManager {
 
     /**
      * Finds image artwork from local device .thumbnail / .thumbnails files and companion cover files
-     * associated with the song or its audio folder.
+     * strictly associated with this specific track (never generic folder-wide cover.jpg / folder.jpg).
      */
-    fun findThumbnailArtwork(filePath: String): File? {
-        if (filePath.isBlank()) return null
+    fun findThumbnailArtwork(filePath: String, songId: Long = 0L, context: Context? = null): File? {
+        if (filePath.isBlank() && songId <= 0L) return null
+        val cacheLookupKey = "${songId}_$filePath"
         synchronized(thumbnailFileCache) {
-            val cachedPath = thumbnailFileCache.get(filePath)
+            val cachedPath = thumbnailFileCache.get(cacheLookupKey)
             if (cachedPath != null) {
                 return if (cachedPath.isNotEmpty()) {
                     val f = File(cachedPath)
@@ -217,77 +218,108 @@ object ArtworkManager {
         }
 
         return try {
+            val pathHash = if (filePath.isNotBlank()) {
+                filePath.trim().lowercase().hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+            } else {
+                songId and 0x7FFFFFFF_FFFFFFFFL
+            }
+            val uniqueTrackPrefix = if (songId > 0L) "track_${songId}_${pathHash}" else "track_path_${pathHash}"
+
+            // 0. Check app-scoped .thumbnail directories first (safe under Android scoped storage)
+            if (context != null) {
+                val appThumbDirs = listOfNotNull(
+                    File(context.filesDir, ".thumbnail"),
+                    context.getExternalFilesDir(".thumbnail")
+                )
+                for (dir in appThumbDirs) {
+                    if (dir.exists() && dir.isDirectory) {
+                        val exact = File(dir, "$uniqueTrackPrefix.jpg")
+                        if (isValidCompleteImageFile(exact)) {
+                            synchronized(thumbnailFileCache) {
+                                thumbnailFileCache.put(cacheLookupKey, exact.absolutePath)
+                            }
+                            return exact
+                        }
+                        val timestamped = dir.listFiles { file ->
+                            (file.name.startsWith("${uniqueTrackPrefix}_") ||
+                                (songId > 0L && file.name.startsWith("track_${songId}_"))) &&
+                                isValidCompleteImageFile(file)
+                        }?.maxByOrNull { it.lastModified() }
+                        if (timestamped != null) {
+                            synchronized(thumbnailFileCache) {
+                                thumbnailFileCache.put(cacheLookupKey, timestamped.absolutePath)
+                            }
+                            return timestamped
+                        }
+                    }
+                }
+            }
+
+            if (filePath.isBlank()) return null
             val audioFile = File(filePath)
             val parentDir = audioFile.parentFile ?: return null
             if (!parentDir.exists() || !parentDir.isDirectory) return null
 
             val baseName = audioFile.nameWithoutExtension
 
-            // 1. Direct song-specific .thumbnail / companion image files in the same directory
-            val candidateFileNames = listOf(
-                "$baseName.jpg",
-                "$baseName.png",
-                "$baseName.jpeg",
-                "$baseName.webp",
-                "$baseName.cover.jpg",
-                "$baseName.thumbnail",
-                "$baseName.thumb",
-                "$baseName.thumbnail.jpg",
-                "$baseName.thumbnail.png",
-                ".$baseName.thumbnail",
-                ".$baseName.thumb",
-                "cover.jpg",
-                "cover.png",
-                "folder.jpg",
-                "album.jpg",
-                "front.jpg"
+            // 1. Check within hidden .thumbnail / .thumbnails folder in parent directory for per-track files
+            var resolvedFile: File? = null
+            val thumbDirs = listOf(
+                File(parentDir, ".thumbnail"),
+                File(parentDir, ".thumbnails")
             )
 
-            var resolvedFile: File? = null
-            for (cand in candidateFileNames) {
-                val f = File(parentDir, cand)
-                if (isValidCompleteImageFile(f)) {
-                    resolvedFile = f
-                    break
+            for (td in thumbDirs) {
+                if (td.exists() && td.isDirectory) {
+                    val exactTrack = File(td, "$uniqueTrackPrefix.jpg")
+                    if (isValidCompleteImageFile(exactTrack)) {
+                        resolvedFile = exactTrack
+                        break
+                    }
+                    val matchingFile = td.listFiles { file ->
+                        isValidCompleteImageFile(file) && (
+                            file.name.startsWith("${uniqueTrackPrefix}_", ignoreCase = true) ||
+                                (songId > 0L && file.name.startsWith("track_${songId}_", ignoreCase = true)) ||
+                                file.nameWithoutExtension.equals(baseName, ignoreCase = true)
+                            )
+                    }?.maxByOrNull { it.lastModified() }
+                    if (matchingFile != null) {
+                        resolvedFile = matchingFile
+                        break
+                    }
                 }
             }
 
-            // 2. Check within hidden .thumbnails / .thumbnail folder in parent directory
-            if (resolvedFile == null) {
-                val thumbDirs = listOf(
-                    File(parentDir, ".thumbnails"),
-                    File(parentDir, ".thumbnail"),
-                    File(parentDir, "thumbnails"),
-                    File(parentDir, "thumbnail")
+            // 2. Direct song-specific companion image files with exact baseName in the same directory
+            //    (Never match shared cover.jpg / folder.jpg / album.jpg / front.jpg so tracks in shared folders never collide)
+            if (resolvedFile == null && baseName.isNotBlank()) {
+                val candidateFileNames = listOf(
+                    "$baseName.jpg",
+                    "$baseName.png",
+                    "$baseName.jpeg",
+                    "$baseName.webp",
+                    "$baseName.cover.jpg",
+                    "$baseName.thumbnail.jpg",
+                    "$baseName.thumbnail.png",
+                    ".$baseName.thumbnail"
                 )
-
-                for (td in thumbDirs) {
-                    if (td.exists() && td.isDirectory) {
-                        val matchingFile = td.listFiles { file ->
-                            isValidCompleteImageFile(file) && (
-                                file.nameWithoutExtension.equals(baseName, ignoreCase = true) ||
-                                    file.nameWithoutExtension.startsWith("${baseName}_", ignoreCase = true) ||
-                                    file.nameWithoutExtension.startsWith("${baseName}.", ignoreCase = true) ||
-                                    file.name.equals("$baseName.jpg", ignoreCase = true) ||
-                                    file.name.equals("$baseName.png", ignoreCase = true)
-                                )
-                        }?.firstOrNull()
-                        if (matchingFile != null) {
-                            resolvedFile = matchingFile
-                            break
-                        }
+                for (cand in candidateFileNames) {
+                    val f = File(parentDir, cand)
+                    if (isValidCompleteImageFile(f)) {
+                        resolvedFile = f
+                        break
                     }
                 }
             }
 
             synchronized(thumbnailFileCache) {
-                thumbnailFileCache.put(filePath, resolvedFile?.absolutePath ?: "")
+                thumbnailFileCache.put(cacheLookupKey, resolvedFile?.absolutePath ?: "")
             }
 
             resolvedFile
         } catch (_: Exception) {
             synchronized(thumbnailFileCache) {
-                thumbnailFileCache.put(filePath, "")
+                thumbnailFileCache.put(cacheLookupKey, "")
             }
             null
         }
@@ -447,42 +479,15 @@ object ArtworkManager {
     }
 
     /**
-     * Fast MediaStore / ContentResolver thumbnail extraction fallback when embedded MMR fails or is missing.
+     * Fast MediaStore / ContentResolver per-track thumbnail extraction fallback when embedded MMR fails or is missing.
+     * Strictly uses the track's own songId URI (never shared albumId URI, which collides across songs in the same folder).
      */
     private fun extractFastMediaStoreBitmap(context: Context, songId: Long, albumId: Long): Bitmap? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (songId > 0L) {
-                try {
-                    val songUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
-                    val bmp = context.contentResolver.loadThumbnail(songUri, Size(512, 512), null)
-                    if (bmp != null && bmp.width > 8 && bmp.height > 8) return bmp
-                } catch (_: Throwable) {}
-            }
-            if (albumId > 0L) {
-                try {
-                    val albumUri = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
-                    val bmp = context.contentResolver.loadThumbnail(albumUri, Size(512, 512), null)
-                    if (bmp != null && bmp.width > 8 && bmp.height > 8) return bmp
-                } catch (_: Throwable) {}
-            }
-        }
-        if (albumId > 0L) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && songId > 0L) {
             try {
-                val legacyAlbumArtUri = ContentUris.withAppendedId(
-                    Uri.parse("content://media/external/audio/albumart"),
-                    albumId
-                )
-                context.contentResolver.openInputStream(legacyAlbumArtUri)?.use { input ->
-                    val bytes = input.readBytes()
-                    if (bytes.isNotEmpty()) {
-                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                        opts.inSampleSize = calculateInSampleSize(opts, 512, 512)
-                        opts.inJustDecodeBounds = false
-                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                        if (bmp != null) return bmp
-                    }
-                }
+                val songUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
+                val bmp = context.contentResolver.loadThumbnail(songUri, Size(512, 512), null)
+                if (bmp != null && bmp.width > 8 && bmp.height > 8) return bmp
             } catch (_: Throwable) {}
         }
         return null
@@ -546,8 +551,8 @@ object ArtworkManager {
         }
 
         // 3. Check local device .thumbnail / companion file from user's storage
-        if (filePath.isNotBlank()) {
-            val thumbFile = findThumbnailArtwork(filePath)
+        if (filePath.isNotBlank() || songId > 0L) {
+            val thumbFile = findThumbnailArtwork(filePath, songId, context)
             if (thumbFile != null && isValidCompleteImageFile(thumbFile)) {
                 try {
                     val bytes = thumbFile.readBytes()
@@ -769,9 +774,9 @@ object ArtworkManager {
                 }
             }
 
-            // 3C. Song-specific local companion file (e.g. "SongTitle.jpg", "cover.jpg")
-            if (filePath.isNotBlank()) {
-                val thumbFile = findThumbnailArtwork(filePath)
+            // 3C. Song-specific local .thumbnail / companion file
+            if (filePath.isNotBlank() || songId > 0L) {
+                val thumbFile = findThumbnailArtwork(filePath, songId, context)
                 if (thumbFile != null && isValidCompleteImageFile(thumbFile)) {
                     val thumbUri = Uri.fromFile(thumbFile).toString()
                     if (songId > 0L) ArtworkResolutionCache.cache[songId] = thumbUri
@@ -790,8 +795,26 @@ object ArtworkManager {
             val coversDir = File(context.filesDir, "song_covers")
             if (!coversDir.exists()) coversDir.mkdirs()
 
+            val appThumbnailDir = File(context.filesDir, ".thumbnail")
+            if (!appThumbnailDir.exists()) appThumbnailDir.mkdirs()
+            try { File(appThumbnailDir, ".nomedia").createNewFile() } catch (_: Exception) {}
+
+            val extThumbnailDir = context.getExternalFilesDir(".thumbnail")?.also { dir ->
+                if (!dir.exists()) dir.mkdirs()
+                try { File(dir, ".nomedia").createNewFile() } catch (_: Exception) {}
+            }
+
+            val pathHash = if (!songPath.isNullOrBlank()) {
+                songPath.trim().lowercase().hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+            } else {
+                songId and 0x7FFFFFFF_FFFFFFFFL
+            }
+            val uniqueThumbBase = "track_${songId}_${pathHash}"
+
             val timestamp = System.currentTimeMillis()
-            val destFile = File(coversDir, "song_${songId}_$timestamp.jpg")
+            val destFile = File(appThumbnailDir, "${uniqueThumbBase}_$timestamp.jpg")
+            val stableThumbFile = File(appThumbnailDir, "$uniqueThumbBase.jpg")
+            val legacyDestFile = File(coversDir, "song_${songId}_$timestamp.jpg")
             val stableFile = File(coversDir, "song_$songId.jpg")
 
             val rawBytes: ByteArray? = try {
@@ -827,19 +850,50 @@ object ArtworkManager {
 
                 // Delete older timestamped cover files for this song only after decoding the new cover
                 coversDir.listFiles { file ->
-                    file.name.startsWith("song_${songId}_") && file.name != destFile.name
+                    file.name.startsWith("song_${songId}_") && file.name != legacyDestFile.name
+                }?.forEach {
+                    try { it.delete() } catch (_: Exception) {}
+                }
+                appThumbnailDir.listFiles { file ->
+                    (file.name.startsWith("${uniqueThumbBase}_") || file.name.startsWith("track_${songId}_")) &&
+                        file.name != destFile.name && file.name != stableThumbFile.name
                 }?.forEach {
                     try { it.delete() } catch (_: Exception) {}
                 }
 
+                // Clear thumbnail lookup cache for this track
+                synchronized(thumbnailFileCache) {
+                    thumbnailFileCache.evictAll()
+                }
+
                 if (bitmap != null) {
                     val compressedBytes = writeBitmapAtomically(destFile, bitmap, 92, songId)
+                    writeBitmapAtomically(stableThumbFile, bitmap, 92, songId)
+                    writeBitmapAtomically(legacyDestFile, bitmap, 92, songId)
                     writeBitmapAtomically(stableFile, bitmap, 92, songId)
 
+                    if (extThumbnailDir != null) {
+                        try {
+                            writeBitmapAtomically(File(extThumbnailDir, "$uniqueThumbBase.jpg"), bitmap, 92, songId)
+                        } catch (_: Exception) {}
+                    }
+
                     if (!songPath.isNullOrBlank()) {
-                        val pathHash = songPath.trim().lowercase().hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
                         val pathFile = File(coversDir, "song_path_${pathHash}.jpg")
                         writeBitmapAtomically(pathFile, bitmap, 92, songId)
+
+                        // Also attempt saving in local song folder's .thumbnail directory if permitted by scoped storage
+                        try {
+                            val parentDir = File(songPath).parentFile
+                            if (parentDir != null && parentDir.exists() && parentDir.canWrite()) {
+                                val localThumbDir = File(parentDir, ".thumbnail")
+                                if (!localThumbDir.exists()) localThumbDir.mkdirs()
+                                if (localThumbDir.exists() && localThumbDir.canWrite()) {
+                                    try { File(localThumbDir, ".nomedia").createNewFile() } catch (_: Exception) {}
+                                    writeBitmapAtomically(File(localThumbDir, "$uniqueThumbBase.jpg"), bitmap, 92, songId)
+                                }
+                            }
+                        } catch (_: Exception) {}
                     }
 
                     val pArtworksDir = File(context.filesDir, CACHE_DIR_NAME)
@@ -895,6 +949,8 @@ object ArtworkManager {
                     return@withContext newUri
                 } else {
                     if (writeBytesAtomically(destFile, rawBytes, songId)) {
+                        writeBytesAtomically(stableThumbFile, rawBytes, songId)
+                        writeBytesAtomically(legacyDestFile, rawBytes, songId)
                         writeBytesAtomically(stableFile, rawBytes, songId)
                         val newUri = Uri.fromFile(destFile).toString()
                         ArtworkResolutionCache.notifyArtworkChanged(songId, newUri)

@@ -63,6 +63,9 @@ class TagCleanerAndIndexingUnitTest {
         assertEquals("Song Name", TagCleaner.cleanTitle("Song Name_masstamilan", "Song Name_masstamilan.mp3"))
         assertEquals("Song Name", TagCleaner.cleanTitle("Song Name - Masstamilan.dev", "Song Name - Masstamilan.dev.mp3"))
         assertEquals("Song Name", TagCleaner.cleanTitle("Song Name - 320kbps", "Song Name - 320kbps.mp3"))
+        assertEquals("Mother Song", TagCleaner.cleanTitle("Mother Song-Masstamilan.In", "Mother Song-Masstamilan.In.mp3"))
+        assertEquals("Mother Song", TagCleaner.cleanTitle("Mother Song - Isaimini.com", "Mother Song - Isaimini.com.mp3"))
+        assertEquals("Naa Ready", TagCleaner.cleanTitle("Naa Ready.masstamilan.so", "Naa Ready.masstamilan.so.mp3"))
     }
 
     @Test
@@ -71,6 +74,7 @@ class TagCleanerAndIndexingUnitTest {
         assertEquals("Video Killed the Radio Star", TagCleaner.cleanTitle("Video Killed the Radio Star", "Video Killed the Radio Star.mp3"))
         assertEquals("The River Song", TagCleaner.cleanTitle("The River Song", "The River Song.mp3"))
         assertEquals("Love Song", TagCleaner.cleanTitle("Love Song", "Love Song.mp3"))
+        assertEquals("Mother Song", TagCleaner.cleanTitle("Mother Song", "Mother Song.mp3"))
         assertEquals("Tamil Anthem", TagCleaner.cleanTitle("Tamil Anthem", "Tamil Anthem.mp3"))
         assertEquals("Video Song", TagCleaner.cleanTitle("Video Song", "Video Song.mp3"))
     }

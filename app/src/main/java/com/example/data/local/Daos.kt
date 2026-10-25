@@ -41,7 +41,7 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE isMissing = 0 AND path LIKE :folderPath || '%' ORDER BY title ASC")
     fun getSongsInFolder(folderPath: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE title LIKE '%' || :query || '%' OR artist LIKE '%' || :query || '%' OR album LIKE '%' || :query || '%' ORDER BY title ASC")
+    @Query("SELECT * FROM songs WHERE isMissing = 0 AND (title LIKE '%' || :query || '%' OR artist LIKE '%' || :query || '%' OR album LIKE '%' || :query || '%' OR path LIKE '%' || :query || '%') ORDER BY title ASC")
     fun searchSongs(query: String): Flow<List<SongEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

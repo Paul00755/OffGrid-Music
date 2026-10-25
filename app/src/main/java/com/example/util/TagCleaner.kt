@@ -48,7 +48,7 @@ object TagCleaner {
 
     // Controlled release/source/version suffix normalization regex
     private val SOURCE_WEBSITE_SUFFIX_REGEX = Regex(
-        "(?i)(?:\\s*[-–—_~|/:]\\s*|\\s+)" +
+        "(?i)(?:\\s*[-–—_~|/:.]\\s*|\\s+)" +
         "(?:" +
             "v\\d{1,2}|ver\\s*\\d{1,2}|version\\s*\\d{1,2}|" +
             "masstamilan[a-z0-9._-]*|" +
@@ -63,6 +63,10 @@ object TagCleaner {
             "mobcup[a-z0-9._-]*|zedge[a-z0-9._-]*|songslover[a-z0-9._-]*|freshmaza[a-z0-9._-]*|" +
             "(?:320|128|256|64)\\s*kbps|kbps|hq|hd|cdrip|dvdrip|webrip" +
         ")\\s*$"
+    )
+
+    private val TRAILING_DOMAIN_SUFFIX_REGEX = Regex(
+        "(?i)(?:\\s*[-–—_~|/:]?\\s*\\.(?:$domainExtPattern))\\s*$"
     )
 
     // Controlled generic noise suffix regex — strictly requires explicit separator preceding it
@@ -81,16 +85,23 @@ object TagCleaner {
     fun stripUnwantedReleaseSuffixes(title: String): String {
         var text = title.trim()
         var iterations = 0
-        while (iterations < 6) {
+        while (iterations < 8) {
             var next = text.replace(SOURCE_WEBSITE_SUFFIX_REGEX, "")
-                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\')
+                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\', '.')
+            if (next.isNotBlank() && next != text) {
+                text = next
+                iterations++
+                continue
+            }
+            next = text.replace(TRAILING_DOMAIN_SUFFIX_REGEX, "")
+                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\', '.')
             if (next.isNotBlank() && next != text) {
                 text = next
                 iterations++
                 continue
             }
             next = text.replace(GENERIC_NOISE_SUFFIX_REGEX, "")
-                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\')
+                .trim('-', '_', ' ', '|', '~', ':', '–', '—', '/', '\\', '.')
             if (next.isNotBlank() && next != text) {
                 text = next
                 iterations++

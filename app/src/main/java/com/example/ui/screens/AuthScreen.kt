@@ -70,6 +70,8 @@ fun AuthScreen(
 
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
     var forgotPasswordEmail by remember { mutableStateOf("") }
+    var pendingSignInAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingSignInLabel by remember { mutableStateOf("") }
 
     val isLoading = authUiState is AuthUiState.Loading
 
@@ -208,7 +210,8 @@ fun AuthScreen(
                 onClick = {
                     if (!isLoading && activity != null) {
                         focusManager.clearFocus()
-                        onSignInWithGoogle(activity)
+                        pendingSignInLabel = "Google Account"
+                        pendingSignInAction = { onSignInWithGoogle(activity) }
                     }
                 },
                 shape = RoundedCornerShape(16.dp),
@@ -494,13 +497,15 @@ fun AuthScreen(
                 onClick = {
                     focusManager.clearFocus()
                     if (selectedTab == AuthTab.SIGN_IN) {
-                        onSignInWithEmail(email, password)
+                        pendingSignInLabel = email.trim()
+                        pendingSignInAction = { onSignInWithEmail(email, password) }
                     } else {
                         if (password != confirmPassword) {
                             // password mismatch handled locally or via UI error
                             return@Button
                         }
-                        onSignUpWithEmail(email, password, displayName)
+                        pendingSignInLabel = email.trim()
+                        pendingSignInAction = { onSignUpWithEmail(email, password, displayName) }
                     }
                 },
                 enabled = !isLoading && email.isNotBlank() && password.isNotBlank() &&
@@ -585,6 +590,48 @@ fun AuthScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    // Sign-In Confirmation Dialog
+    if (pendingSignInAction != null) {
+        AlertDialog(
+            onDismissRequest = { pendingSignInAction = null },
+            title = {
+                Text(
+                    text = "Confirm Sign In?",
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Proceed with signing in (${pendingSignInLabel.ifBlank { "Account" }})?\n\nYour local music library, playlists, favorites, and settings will remain safe on your device.",
+                    fontSize = 13.5.sp,
+                    color = BentoTextSecondary,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val action = pendingSignInAction
+                        pendingSignInAction = null
+                        action?.invoke()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Sign In", color = BentoOnPrimary, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSignInAction = null }) {
+                    Text("Cancel", color = BentoTextSecondary)
+                }
+            },
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(20.dp)
+        )
     }
 
     // Password Reset Dialog

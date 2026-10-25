@@ -69,6 +69,7 @@ fun AccountScreen(
     var showEditNameDialog by remember { mutableStateOf(false) }
     var editedName by remember { mutableStateOf(effectiveDisplayName) }
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
+    var showSignInConfirmDialog by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -427,7 +428,7 @@ fun AccountScreen(
             } else {
                 // Guest State: Sign In / Register Button
                 Button(
-                    onClick = onOpenAuth,
+                    onClick = { showSignInConfirmDialog = true },
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = BentoPrimary,
@@ -498,6 +499,44 @@ fun AccountScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEditNameDialog = false }) {
+                    Text("Cancel", color = BentoTextSecondary)
+                }
+            }
+        )
+    }
+
+    // Sign In Confirmation Dialog
+    if (showSignInConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignInConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Sign In or Connect Account?",
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Would you like to sign in to your account?\n\nYour existing local music library, offline playlists, favorites, and settings will remain intact on your device.",
+                    fontSize = 13.5.sp,
+                    color = BentoTextSecondary,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSignInConfirmDialog = false
+                        onOpenAuth()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
+                ) {
+                    Text("Continue", color = BentoOnPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignInConfirmDialog = false }) {
                     Text("Cancel", color = BentoTextSecondary)
                 }
             }

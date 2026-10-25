@@ -143,9 +143,10 @@ abstract class AppDatabase : RoomDatabase() {
          */
         private const val ROOM_MASTER_IDENTITY_HASH = "bbe7c72c916555313ebf50d3515990b4"
 
-        private fun healExistingDatabaseBeforeRoomOpen(context: Context) {
+        @Synchronized
+        internal fun healExistingDatabaseBeforeRoomOpen(context: Context) {
             val dbFile = context.getDatabasePath("offgrid_music_db")
-            if (dbFile == null || !dbFile.exists()) return
+            if (dbFile == null || !dbFile.exists() || dbFile.length() == 0L) return
 
             var rawDb: SQLiteDatabase? = null
             try {
@@ -414,12 +415,12 @@ abstract class AppDatabase : RoomDatabase() {
                         }
                     } catch (_: Exception) {}
 
-                    if (existingSongs > 0 || existingPlaylists > 0 || priorVersion > 0) {
-                        context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
-                            .edit()
-                            .putBoolean("onboarding_completed", true)
-                            .apply()
+                    val bootPrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+                    val editor = bootPrefs.edit().putBoolean("db_checked_once", true)
+                    if (existingSongs > 0 || existingPlaylists > 0 || (priorVersion in 1..9)) {
+                        editor.putBoolean("onboarding_completed", true)
                     }
+                    editor.apply()
 
                     // 12. Stamp room_master_table with the current version 10 identity_hash so Room's
                     //     RoomOpenDelegate.checkIdentity succeeds without throwing IllegalStateException
@@ -484,35 +485,40 @@ abstract class AppDatabase : RoomDatabase() {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
                     val appContext = context.applicationContext
-                    healExistingDatabaseBeforeRoomOpen(appContext)
-                    var instance = buildRoomDatabase(appContext)
-                    try {
-                        // Verify the database opens cleanly right now so a schema/corruption exception
-                        // can never crash DAO callers later during startup.
-                        instance.openHelper.writableDatabase
-                    } catch (e: Throwable) {
-                        com.example.util.CrashReporter.logNonFatal(
-                            appContext,
-                            "AppDatabase",
-                            e,
-                            mapOf("phase" to "initial_open_recovery")
-                        )
-                        try {
-                            instance.close()
-                        } catch (_: Throwable) {}
-                        // Attempt one more non-destructive heal pass before falling back
+                    val dbFile = appContext.getDatabasePath("offgrid_music_db")
+                    val hadExistingDatabase = dbFile != null && dbFile.exists() && dbFile.length() > 0L
+                    if (hadExistingDatabase) {
                         healExistingDatabaseBeforeRoomOpen(appContext)
-                        instance = buildRoomDatabase(appContext)
+                    }
+                    var instance = buildRoomDatabase(appContext)
+                    if (hadExistingDatabase) {
                         try {
+                            // Verify an upgraded database opens cleanly so a schema/corruption exception
+                            // can never crash DAO callers later during startup.
                             instance.openHelper.writableDatabase
-                        } catch (fatalDbError: Throwable) {
+                        } catch (e: Throwable) {
+                            com.example.util.CrashReporter.logNonFatal(
+                                appContext,
+                                "AppDatabase",
+                                e,
+                                mapOf("phase" to "initial_open_recovery")
+                            )
                             try {
                                 instance.close()
                             } catch (_: Throwable) {}
-                            try {
-                                appContext.deleteDatabase("offgrid_music_db")
-                            } catch (_: Throwable) {}
+                            healExistingDatabaseBeforeRoomOpen(appContext)
                             instance = buildRoomDatabase(appContext)
+                            try {
+                                instance.openHelper.writableDatabase
+                            } catch (fatalDbError: Throwable) {
+                                try {
+                                    instance.close()
+                                } catch (_: Throwable) {}
+                                try {
+                                    appContext.deleteDatabase("offgrid_music_db")
+                                } catch (_: Throwable) {}
+                                instance = buildRoomDatabase(appContext)
+                            }
                         }
                     }
                     INSTANCE = instance
