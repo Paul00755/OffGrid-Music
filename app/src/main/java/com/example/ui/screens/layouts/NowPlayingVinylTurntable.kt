@@ -19,6 +19,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -64,7 +65,7 @@ fun NowPlayingVinylTurntable(
     val infiniteTransition = rememberInfiniteTransition(label = "vinyl_spin")
     val rotationAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 360f,
+        targetValue = if (playbackState.isPlaying) 360f else 0f,
         animationSpec = infiniteRepeatable(
             animation = tween(
                 durationMillis = 4000,
@@ -75,7 +76,6 @@ fun NowPlayingVinylTurntable(
         label = "vinyl_angle"
     )
 
-    val currentRotation = if (playbackState.isPlaying) rotationAngle else 0f
     var isSeeking by remember(song.id) { mutableStateOf(false) }
     var seekPosition by remember(song.id) { mutableFloatStateOf(0f) }
 
@@ -172,7 +172,9 @@ fun NowPlayingVinylTurntable(
                             Canvas(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .rotate(currentRotation)
+                                    .graphicsLayer {
+                                        rotationZ = if (playbackState.isPlaying) rotationAngle else 0f
+                                    }
                             ) {
                                 val center = Offset(size.width / 2f, size.height / 2f)
                                 val maxRadius = size.width / 2f
@@ -211,7 +213,9 @@ fun NowPlayingVinylTurntable(
                             Box(
                                 modifier = Modifier
                                     .size(labelSize)
-                                    .rotate(currentRotation)
+                                    .graphicsLayer {
+                                        rotationZ = if (playbackState.isPlaying) rotationAngle else 0f
+                                    }
                                     .clip(CircleShape)
                                     .background(BentoPrimary),
                                 contentAlignment = Alignment.Center

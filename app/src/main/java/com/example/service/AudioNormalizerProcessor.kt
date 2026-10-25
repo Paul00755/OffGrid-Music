@@ -131,9 +131,7 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
         currentTrackKey = key
         val cachedGain = if (key.isNotBlank()) NormalizationCache.getGain(key) else null
         val target = if (cachedGain != null && cachedGain in minGain..maxGain) cachedGain else 1.0f
-        if (currentGain !in minGain..maxGain) {
-            currentGain = target
-        }
+        currentGain = target
         integratedLoudness = (targetLoudness / target).coerceIn(minSilenceLoudness, 20000f)
         resetFilterState()
         processedBlocksCount = 0
@@ -143,9 +141,7 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
         val key = currentTrackKey
         val cachedGain = if (key.isNotBlank()) NormalizationCache.getGain(key) else null
         val target = if (cachedGain != null && cachedGain in minGain..maxGain) cachedGain else 1.0f
-        if (currentGain !in minGain..maxGain) {
-            currentGain = target
-        }
+        currentGain = target
         integratedLoudness = (targetLoudness / target).coerceIn(minSilenceLoudness, 20000f)
         resetFilterState()
         processedBlocksCount = 0

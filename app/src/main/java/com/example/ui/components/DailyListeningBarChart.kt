@@ -7,16 +7,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -24,20 +19,29 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DailyListeningStat
 import com.example.ui.theme.*
+import kotlin.math.ceil
+
+private data class ChartBucketStat(
+    val primaryLabel: String,
+    val secondaryLabel: String,
+    val rangeTitle: String,
+    val durationMs: Long,
+    val trackCount: Int,
+    val isCurrent: Boolean,
+    val representativeStat: DailyListeningStat
+)
 
 @Composable
 fun DailyListeningBarChart(
@@ -48,39 +52,83 @@ fun DailyListeningBarChart(
     accentColor: Color = BentoPrimary,
     onDaySelected: ((DailyListeningStat) -> Unit)? = null
 ) {
-    var selectedIndex by remember { mutableStateOf<Int?>(null) }
-
-    // Auto-select today by default or the day with most plays
-    LaunchedEffect(dailyStats) {
-        if (dailyStats.isNotEmpty()) {
-            val todayIdx = dailyStats.indexOfFirst { it.isToday }
-            selectedIndex = if (todayIdx != -1) todayIdx else dailyStats.lastIndex
+    // Group large ranges (30d, 90d, 365d) into at most 10 readable buckets so labels never stack vertically
+    val buckets = remember(dailyStats) {
+        if (dailyStats.size <= 10) {
+            dailyStats.map { stat ->
+                ChartBucketStat(
+                    primaryLabel = stat.dayLabel,
+                    secondaryLabel = stat.fullDate.substringAfter(' '),
+                    rangeTitle = if (stat.isToday) "Today (${stat.fullDate})" else "${stat.dayLabel} (${stat.fullDate})",
+                    durationMs = stat.durationMs,
+                    trackCount = stat.trackCount,
+                    isCurrent = stat.isToday,
+                    representativeStat = stat
+                )
+            }
+        } else {
+            val targetBuckets = if (dailyStats.size <= 35) 10 else 10
+            val chunkSize = ceil(dailyStats.size / targetBuckets.toDouble()).toInt().coerceAtLeast(1)
+            dailyStats.chunked(chunkSize).map { chunk ->
+                val first = chunk.first()
+                val last = chunk.last()
+                val totalDuration = chunk.sumOf { it.durationMs }
+                val totalTracks = chunk.sumOf { it.trackCount }
+                val containsToday = chunk.any { it.isToday }
+                val firstMonth = first.fullDate.substringBefore(' ')
+                val firstDayNum = first.fullDate.substringAfter(' ')
+                val lastDayNum = last.fullDate.substringAfter(' ')
+                val primary = if (dailyStats.size > 120) {
+                    last.fullDate.substringBefore(' ')
+                } else {
+                    firstMonth
+                }
+                val secondary = if (first.dayStartMs == last.dayStartMs) {
+                    firstDayNum
+                } else if (dailyStats.size > 120) {
+                    "$firstDayNum–$lastDayNum"
+                } else {
+                    "$firstDayNum-$lastDayNum"
+                }
+                val title = if (first.dayStartMs == last.dayStartMs) {
+                    "${first.dayLabel} (${first.fullDate})"
+                } else {
+                    "${first.fullDate} – ${last.fullDate}"
+                }
+                ChartBucketStat(
+                    primaryLabel = primary,
+                    secondaryLabel = secondary,
+                    rangeTitle = title,
+                    durationMs = totalDuration,
+                    trackCount = totalTracks,
+                    isCurrent = containsToday,
+                    representativeStat = last.copy(
+                        durationMs = totalDuration,
+                        trackCount = totalTracks
+                    )
+                )
+            }
         }
     }
 
-    val selectedStat = selectedIndex?.let { dailyStats.getOrNull(it) }
+    var selectedIndex by remember { mutableStateOf<Int?>(null) }
 
-    val total7DayDurationMs = remember(dailyStats) {
-        dailyStats.sumOf { it.durationMs }
+    LaunchedEffect(buckets) {
+        if (buckets.isNotEmpty()) {
+            val todayIdx = buckets.indexOfFirst { it.isCurrent }
+            selectedIndex = if (todayIdx != -1) todayIdx else buckets.lastIndex
+        }
     }
 
-    val maxDurationMs = remember(dailyStats) {
-        val max = dailyStats.maxOfOrNull { it.durationMs } ?: 0L
-        // At least 15 mins for nice scale
+    val selectedBucket = selectedIndex?.let { buckets.getOrNull(it) }
+
+    val maxDurationMs = remember(buckets) {
+        val max = buckets.maxOfOrNull { it.durationMs } ?: 0L
         maxOf(max, 15 * 60 * 1000L)
-    }
-
-    val peakDay = remember(dailyStats) {
-        dailyStats.maxByOrNull { it.durationMs }
-    }
-
-    val averageDailyMs = remember(dailyStats, total7DayDurationMs) {
-        if (dailyStats.isNotEmpty()) total7DayDurationMs / dailyStats.size else 0L
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (showSummaryHeader) {
-            // Selected or Active Day Summary Banner
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = BentoCardDarkPurple,
@@ -95,29 +143,26 @@ fun DailyListeningBarChart(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (selectedStat != null) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (selectedStat.isToday) "Today" else selectedStat.dayLabel,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "(${selectedStat.fullDate})",
-                                    fontSize = 12.sp,
-                                    color = BentoTextSecondary
-                                )
-                            }
+                    if (selectedBucket != null) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = selectedBucket.rangeTitle,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoTextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${selectedStat.trackCount} track${if (selectedStat.trackCount != 1) "s" else ""} played",
+                                text = "${selectedBucket.trackCount} track${if (selectedBucket.trackCount != 1) "s" else ""} played",
                                 fontSize = 12.sp,
-                                color = BentoTextSecondary
+                                color = BentoTextSecondary,
+                                maxLines = 1
                             )
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         Surface(
                             shape = RoundedCornerShape(8.dp),
@@ -135,16 +180,18 @@ fun DailyListeningBarChart(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = formatListeningDuration(selectedStat.durationMs),
+                                    text = formatListeningDuration(selectedBucket.durationMs),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = accentColor
+                                    color = accentColor,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
                     } else {
                         Text(
-                            text = "Tap any bar to inspect daily listening",
+                            text = "Tap any bar to inspect listening activity",
                             fontSize = 12.sp,
                             color = BentoTextSecondary
                         )
@@ -153,39 +200,35 @@ fun DailyListeningBarChart(
             }
         }
 
-        // Bar Chart Visual Canvas & Columns
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(chartHeight)
         ) {
-            // Y-Axis Grid Guidelines
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val gridColor = Color(0xFF38384A).copy(alpha = 0.35f)
                 val pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f), 0f)
 
-                // Top (Max), Middle (50%), Baseline
                 val yTop = 10f
                 val yMid = size.height * 0.5f
-                val yBottom = size.height - 30f
+                val yBottom = size.height - 34f
 
                 drawLine(color = gridColor, start = Offset(0f, yTop), end = Offset(size.width, yTop), pathEffect = pathEffect, strokeWidth = 1.5f)
                 drawLine(color = gridColor, start = Offset(0f, yMid), end = Offset(size.width, yMid), pathEffect = pathEffect, strokeWidth = 1.5f)
                 drawLine(color = gridColor.copy(alpha = 0.6f), start = Offset(0f, yBottom), end = Offset(size.width, yBottom), strokeWidth = 2f)
             }
 
-            // 7 Days Columns Row
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = 4.dp),
+                    .padding(bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom
             ) {
-                dailyStats.forEachIndexed { index, stat ->
+                buckets.forEachIndexed { index, bucket ->
                     val isSelected = selectedIndex == index
                     val heightRatio = if (maxDurationMs > 0) {
-                        (stat.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
+                        (bucket.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
 
                     val animatedHeightRatio by animateFloatAsState(
@@ -208,11 +251,10 @@ fun DailyListeningBarChart(
                                 indication = null
                             ) {
                                 selectedIndex = index
-                                onDaySelected?.invoke(stat)
+                                onDaySelected?.invoke(bucket.representativeStat)
                             }
-                            .padding(horizontal = 3.dp)
+                            .padding(horizontal = if (buckets.size > 7) 2.dp else 3.dp)
                     ) {
-                        // Duration Tag on top of bar if active or non-zero
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -224,30 +266,31 @@ fun DailyListeningBarChart(
                                 verticalArrangement = Arrangement.Bottom,
                                 modifier = Modifier.fillMaxHeight()
                             ) {
-                                if (isSelected && stat.durationMs > 0) {
+                                if (isSelected && bucket.durationMs > 0) {
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
                                         color = accentColor,
                                         modifier = Modifier.padding(bottom = 4.dp)
                                     ) {
                                         Text(
-                                            text = formatCompactDuration(stat.durationMs),
-                                            fontSize = 9.sp,
+                                            text = formatCompactDuration(bucket.durationMs),
+                                            fontSize = 8.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = BentoOnPrimary,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
                                         )
                                     }
                                 }
 
-                                // Bar Shape
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
+                                        .fillMaxWidth(if (buckets.size > 7) 0.78f else 0.88f)
                                         .fillMaxHeight(fraction = (animatedHeightRatio * 0.82f).coerceAtLeast(0.06f))
                                         .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 2.dp, bottomEnd = 2.dp))
                                         .background(
-                                            if (stat.durationMs > 0) {
+                                            if (bucket.durationMs > 0) {
                                                 if (isSelected) {
                                                     Brush.verticalGradient(
                                                         colors = listOf(
@@ -283,22 +326,25 @@ fun DailyListeningBarChart(
 
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        // Day Label (Mon, Tue, ..., Today)
                         Text(
-                            text = stat.dayLabel,
-                            fontSize = if (stat.isToday) 11.sp else 10.sp,
-                            fontWeight = if (stat.isToday || isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) Color.White else if (stat.isToday) accentColor else BentoTextSecondary,
+                            text = bucket.primaryLabel,
+                            fontSize = if (buckets.size > 7) 9.sp else 10.sp,
+                            fontWeight = if (bucket.isCurrent || isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) Color.White else if (bucket.isCurrent) accentColor else BentoTextSecondary,
                             textAlign = TextAlign.Center,
-                            maxLines = 1
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip
                         )
 
-                        // Date (e.g. 29)
                         Text(
-                            text = stat.fullDate.substringAfter(' '),
-                            fontSize = 9.sp,
+                            text = bucket.secondaryLabel,
+                            fontSize = 8.sp,
                             color = if (isSelected) BentoTextPrimary else BentoTextSubtle,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip
                         )
                     }
                 }

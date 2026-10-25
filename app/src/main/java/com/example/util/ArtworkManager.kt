@@ -413,6 +413,12 @@ object ArtworkManager {
 
     fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String): String? {
         if (songId <= 0L || url.isBlank()) return null
+        // Never overwrite an explicit user-selected manual cover
+        val existingManual = ManualTagStore.getManualMetadata(context, songId, "")?.artworkUri
+            ?: ArtworkResolutionCache.getManualCoverUri(context, songId, "")
+        if (!existingManual.isNullOrBlank()) {
+            return existingManual
+        }
         return try {
             val destDir = File(context.filesDir, CACHE_DIR_NAME)
             if (!destDir.exists()) destDir.mkdirs()
@@ -479,17 +485,13 @@ object ArtworkManager {
     }
 
     /**
-     * Fast MediaStore / ContentResolver per-track thumbnail extraction fallback when embedded MMR fails or is missing.
-     * Strictly uses the track's own songId URI (never shared albumId URI, which collides across songs in the same folder).
+     * Note: Android's ContentResolver.loadThumbnail(songUri) delegates to MediaProvider's shared
+     * ALBUM_ID table, which returns folder-wide artwork across unrelated tracks in the same folder
+     * (e.g. "Download"). Always return null here so only genuine per-track embedded ID3/MP4 pictures
+     * (extracted via MediaMetadataRetriever) or explicit per-song covers are used.
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun extractFastMediaStoreBitmap(context: Context, songId: Long, albumId: Long): Bitmap? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && songId > 0L) {
-            try {
-                val songUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
-                val bmp = context.contentResolver.loadThumbnail(songUri, Size(512, 512), null)
-                if (bmp != null && bmp.width > 8 && bmp.height > 8) return bmp
-            } catch (_: Throwable) {}
-        }
         return null
     }
 
@@ -607,14 +609,6 @@ object ArtworkManager {
             } finally {
                 try { mmr.release() } catch (_: Throwable) {}
             }
-        }
-
-        // 5. Fast MediaStore thumbnail / albumart fallback
-        val mediaStoreBmp = extractFastMediaStoreBitmap(context, songId, albumId)
-        if (mediaStoreBmp != null) {
-            val saved = writeBitmapAtomically(persistentFile, mediaStoreBmp, 90, songId)
-            putCachedNotificationBitmap(songId, mediaStoreBmp)
-            if (saved != null) return saved
         }
 
         return null

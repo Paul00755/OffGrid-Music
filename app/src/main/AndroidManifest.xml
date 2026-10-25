@@ -80,23 +80,8 @@
         </receiver>
 
         <receiver
-            android:name=".widget.CardMusicWidgetProvider"
-            android:label="Card Music Player (3x3)"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
-                <action android:name="com.example.widget.ACTION_NEXT" />
-                <action android:name="com.example.widget.ACTION_PREV" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_card_info" />
-        </receiver>
-
-        <receiver
-            android:name=".widget.WideMusicWidgetProvider"
-            android:label="Wide Music Player (4x2)"
+            android:name=".widget.FullArtworkMusicWidgetProvider"
+            android:label="Full Artwork Music Widget"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -107,20 +92,55 @@
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/widget_wide_info" />
+                android:resource="@xml/widget_full_artwork_info" />
         </receiver>
 
         <receiver
-            android:name=".widget.PillMusicWidgetProvider"
-            android:label="Pill Music Player (3x1)"
+            android:name=".widget.SmallMusicWidgetProvider"
+            android:label="Small Music Widget"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.example.widget.ACTION_NEXT" />
+                <action android:name="com.example.widget.ACTION_PREV" />
+                <action android:name="com.example.widget.ACTION_FAVORITE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/widget_pill_info" />
+                android:resource="@xml/widget_small_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.MediumMusicWidgetProvider"
+            android:label="Medium Music Widget"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.example.widget.ACTION_NEXT" />
+                <action android:name="com.example.widget.ACTION_PREV" />
+                <action android:name="com.example.widget.ACTION_FAVORITE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_medium_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SecondaryMusicWidgetProvider"
+            android:label="Secondary Music Widget"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.example.widget.ACTION_NEXT" />
+                <action android:name="com.example.widget.ACTION_PREV" />
+                <action android:name="com.example.widget.ACTION_FAVORITE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_secondary_info" />
         </receiver>
 
         <provider

@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import com.example.service.PlaybackManager
 
-class WideMusicWidgetProvider : AppWidgetProvider() {
+class SecondaryMusicWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val playbackManager = PlaybackManager.activeInstance
@@ -22,7 +22,12 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
             WidgetUpdateManager.ACTION_WIDGET_PLAY_PAUSE -> playbackManager?.togglePlayPause()
             WidgetUpdateManager.ACTION_WIDGET_NEXT -> playbackManager?.skipToNext()
             WidgetUpdateManager.ACTION_WIDGET_PREV -> playbackManager?.skipToPrevious()
-            WidgetUpdateManager.ACTION_WIDGET_FAVORITE -> playbackManager?.toggleCurrentSongFavorite()
+            WidgetUpdateManager.ACTION_WIDGET_FAVORITE -> {
+                val currentSong = playbackManager?.playbackState?.value?.currentSong
+                if (currentSong != null) {
+                    WidgetUpdateManager.toggleFavoriteSong(context, currentSong.id)
+                }
+            }
         }
 
         val state = playbackManager?.playbackState?.value ?: com.example.service.PlaybackState()

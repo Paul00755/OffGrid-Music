@@ -1476,259 +1476,84 @@ fun SettingsScreen(
                 }
             }
 
-            // 1. Redesigned Studio Control Center Hero Header
+            // 1. Sleek Top Search Bar with Back Action
             item(key = "settings_hero_dashboard") {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = BentoCardSurface,
-                    border = BorderStroke(
-                        1.dp,
-                        Brush.linearGradient(
-                            listOf(
-                                BentoPrimary.copy(alpha = 0.55f),
-                                BentoBorder.copy(alpha = 0.45f),
-                                Color(0xFFBB86FC).copy(alpha = 0.35f)
-                            )
-                        )
-                    ),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        BentoPrimary.copy(alpha = 0.08f),
-                                        Color.Transparent
-                                    )
-                                )
-                            )
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            handleBack()
+                        },
+                        modifier = Modifier.size(46.dp)
                     ) {
-                        // Top Bar: Back Button, Title & Subtitle, Quick All-In-One Toggle
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = BentoTextPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(
+                            1.dp,
+                            if (searchQuery.isNotBlank()) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = BentoCardPurple,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    handleBack()
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Back",
-                                        tint = BentoTextPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.width(12.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Control Studio",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = BentoTextPrimary
-                                )
-                                Text(
-                                    text = "Audio DSP • Visual Themes • Cloud Sync • Storage",
-                                    fontSize = 11.sp,
-                                    color = BentoTextSecondary
-                                )
-                            }
-
-                            Surface(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    showAllInOneList = !showAllInOneList
-                                    if (showAllInOneList) selectedSection = SettingsSection.ALL
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (showAllInOneList) BentoPrimary.copy(alpha = 0.18f) else BentoCardPurple,
-                                border = BorderStroke(1.dp, if (showAllInOneList) BentoPrimary else BentoBorder.copy(alpha = 0.5f))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (showAllInOneList) Icons.Default.GridView else Icons.Default.ViewList,
-                                        contentDescription = null,
-                                        tint = if (showAllInOneList) BentoPrimary else BentoTextSecondary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = if (searchQuery.isNotBlank()) BentoPrimary else BentoTextSubtle,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = {
                                     Text(
-                                        text = if (showAllInOneList) "Hub View" else "All List",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (showAllInOneList) BentoPrimary else BentoTextPrimary
+                                        "Search equalizer, sleep timer, cache, themes...",
+                                        fontSize = 12.5.sp,
+                                        color = BentoTextSubtle,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
-                                }
-                            }
-                        }
-
-                        // Interactive Quick Status Strip
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            item(key = "status_pill_theme") {
-                                val modeLabel = if (extraDarkMode && !themeMode.equals("LIGHT", ignoreCase = true)) {
-                                    "Extra Dark"
-                                } else {
-                                    themeMode.lowercase().replaceFirstChar { it.uppercase() }
-                                }
-                                Surface(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        navigateToSection(SettingsSection.UI)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFFBB86FC).copy(alpha = 0.14f),
-                                    border = BorderStroke(1.dp, Color(0xFFBB86FC).copy(alpha = 0.35f))
+                                },
+                                singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedTextColor = BentoTextPrimary,
+                                    unfocusedTextColor = BentoTextPrimary,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { searchQuery = "" },
+                                    modifier = Modifier.size(28.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Icon(Icons.Default.Palette, contentDescription = null, tint = Color(0xFFBB86FC), modifier = Modifier.size(13.dp))
-                                        Text(modeLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                                    }
-                                }
-                            }
-                            item(key = "status_pill_eq") {
-                                Surface(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        navigateToSection(SettingsSection.AUDIO)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF00E5FF).copy(alpha = 0.14f),
-                                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Icon(Icons.Default.Equalizer, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(13.dp))
-                                        Text("EQ: $equalizerPreset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                                    }
-                                }
-                            }
-                            item(key = "status_pill_sleep") {
-                                val sleepLabel = if (sleepTimerState.isActive) {
-                                    if (sleepTimerState.mode == "SONGS") {
-                                        "Sleep: ${sleepTimerState.elapsedSongs}/${sleepTimerState.totalSongs} trk"
-                                    } else {
-                                        "Sleep: ${sleepTimerState.remainingSeconds / 60}m"
-                                    }
-                                } else "Sleep: Off"
-                                Surface(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        navigateToSection(SettingsSection.PLAYBACK)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFFFF9100).copy(alpha = if (sleepTimerState.isActive) 0.22f else 0.12f),
-                                    border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = if (sleepTimerState.isActive) 0.55f else 0.3f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Icon(Icons.Default.Bedtime, contentDescription = null, tint = Color(0xFFFF9100), modifier = Modifier.size(13.dp))
-                                        Text(sleepLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                                    }
-                                }
-                            }
-                            item(key = "status_pill_hz") {
-                                Surface(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        navigateToSection(SettingsSection.UI)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF00E676).copy(alpha = 0.14f),
-                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Icon(Icons.Default.Speed, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(13.dp))
-                                        Text(if (highRefreshRate) "90/120Hz" else "60Hz", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                                    }
-                                }
-                            }
-                        }
-
-                        // Elegant Frosted Search Box
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(
-                                1.dp,
-                                if (searchQuery.isNotBlank()) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.30f)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = null,
-                                    tint = if (searchQuery.isNotBlank()) BentoPrimary else BentoTextSubtle,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                TextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    placeholder = {
-                                        Text(
-                                            "Search equalizer, sleep timer, cache, themes...",
-                                            fontSize = 12.5.sp,
-                                            color = BentoTextSubtle
-                                        )
-                                    },
-                                    singleLine = true,
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        focusedTextColor = BentoTextPrimary,
-                                        unfocusedTextColor = BentoTextPrimary,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = { searchQuery = "" },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
-                                    }
+                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
@@ -1737,71 +1562,7 @@ fun SettingsScreen(
             }
         }
 
-        if (!isSearching && (isTopLevelHub || showAllInOneList)) {
-                // 2. Subtle & Elegant Category Navigation Chips (Quick Navigation Hub)
-                item(key = "settings_category_chips") {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(SettingsSection.entries, key = { it.name }, contentType = { "section_chip" }) { section ->
-                            val isSelected = selectedSection == section && searchQuery.isEmpty()
-                            val sectionAccent = when (section) {
-                                SettingsSection.ALL -> BentoPrimary
-                                SettingsSection.AUDIO -> Color(0xFF00E5FF)
-                                SettingsSection.UI -> Color(0xFFBB86FC)
-                                SettingsSection.HOME_FEED -> Color(0xFF7C4DFF)
-                                SettingsSection.PLAYBACK -> Color(0xFFFF9100)
-                                SettingsSection.CACHE -> Color(0xFF00E676)
-                                SettingsSection.LIBRARY -> Color(0xFF2979FF)
-                                SettingsSection.OTHER -> Color(0xFFFF5252)
-                                SettingsSection.CLOUD_SYNC -> Color(0xFF00E5FF)
-                            }
-                            val chipBg = if (isSelected) sectionAccent.copy(alpha = 0.12f) else BentoCardSurface
-                            val chipBorder = if (isSelected) sectionAccent.copy(alpha = 0.38f) else BentoBorder.copy(alpha = 0.28f)
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = chipBg,
-                                border = BorderStroke(1.dp, chipBorder),
-                                modifier = Modifier.clickable {
-                                    HapticUtils.performClickHaptic(context)
-                                    searchQuery = ""
-                                    navigateToSection(section)
-                                }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = section.icon,
-                                        contentDescription = null,
-                                        tint = if (isSelected) sectionAccent else BentoTextSecondary,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = section.title,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (isSelected) BentoTextPrimary else BentoTextSecondary
-                                    )
-                                    if (isSelected) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .size(5.dp)
-                                                .clip(CircleShape)
-                                                .background(sectionAccent)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if (anyMatches) {
+        if (isSearching && anyMatches) {
                 item(key = "settings_search_results_badge") {
                     Surface(
                         shape = RoundedCornerShape(12.dp),

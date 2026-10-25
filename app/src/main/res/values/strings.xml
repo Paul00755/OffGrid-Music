@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">OffGrid Music</string>
-    <string name="widget_card_description">Music Player Card widget with artwork and controls</string>
-    <string name="widget_wide_description">Wide Music Player widget with split artwork and controls</string>
-    <string name="widget_pill_description">Compact Pill Music Player widget with play and artwork</string>
+    <string name="widget_full_artwork_description">Full Artwork Music Widget with edge-to-edge album cover, progress bar, and controls</string>
+    <string name="widget_small_description">Small Music Widget with inset album cover, favorite button, progress bar, and controls</string>
+    <string name="widget_medium_description">Medium Music Widget with split album cover, progress bar, and controls</string>
+    <string name="widget_secondary_description">Secondary Music Widget with left-bleed album cover, glowing waveform progress bar, and controls</string>
 </resources>

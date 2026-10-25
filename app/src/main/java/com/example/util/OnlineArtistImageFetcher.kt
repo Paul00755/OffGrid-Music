@@ -27,6 +27,18 @@ object OnlineArtistImageFetcher {
     private val songCache = ConcurrentHashMap<String, String>()
     private val negativeSongCache = ConcurrentHashMap.newKeySet<String>()
 
+    private val GENERIC_ALBUM_OR_FOLDER_NAMES = setOf(
+        "<unknown>", "unknown", "unknown album", "unknown artist",
+        "download", "downloads", "music", "audio", "songs", "tracks", "single", "singles",
+        "whatsapp audio", "telegram", "telegram audio", "ringtones", "recordings",
+        "notifications", "alarms", "podcasts", "folder", "sdcard", "internal storage"
+    )
+
+    private fun isGenericAlbumOrFolder(name: String): Boolean {
+        val lower = name.trim().lowercase()
+        return lower.isBlank() || lower in GENERIC_ALBUM_OR_FOLDER_NAMES || lower.startsWith("track ") || lower.startsWith("audio_")
+    }
+
     suspend fun getSongArtworkUrl(
         context: Context,
         title: String,
@@ -36,6 +48,15 @@ object OnlineArtistImageFetcher {
         cacheEnabled: Boolean = true,
         songId: Long = 0L
     ): String? {
+        // 0. If this song has a manual cover, never override it with online cache
+        if (songId > 0L) {
+            val manualCover = ManualTagStore.getManualMetadata(context, songId, "")?.artworkUri
+                ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, songId, "")
+            if (!manualCover.isNullOrBlank()) {
+                return manualCover
+            }
+        }
+
         // 1. Check stable songId-based cache first
         if (songId > 0L && cacheEnabled) {
             val idPrefs = context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
@@ -46,10 +67,11 @@ object OnlineArtistImageFetcher {
         }
 
         val cleanTitle = TagCleaner.cleanTitle(title, "")
-        val cleanArtist = TagCleaner.cleanArtist(artist).let { if (it.equals("Unknown Artist", ignoreCase = true)) "" else it }
-        val cleanAlbum = TagCleaner.cleanAlbum(album).let { if (it.equals("Unknown Album", ignoreCase = true)) "" else it }
+        val cleanArtist = TagCleaner.cleanArtist(artist).let { if (isGenericAlbumOrFolder(it)) "" else it }
+        val cleanAlbum = TagCleaner.cleanAlbum(album).let { if (isGenericAlbumOrFolder(it)) "" else it }
 
-        if (cleanTitle.isBlank() && cleanAlbum.isBlank()) {
+        // Require a meaningful song title so unrelated tracks in the same folder never share a generic album cover
+        if (cleanTitle.isBlank() || isGenericAlbumOrFolder(cleanTitle)) {
             return null
         }
 
@@ -76,12 +98,10 @@ object OnlineArtistImageFetcher {
 
         return withContext(Dispatchers.IO) {
             try {
-                // 1. Search Query optimization
+                // 1. Search Query optimization (strictly anchored on the song's own title)
                 val queryTerm = when {
                     cleanTitle.isNotBlank() && cleanArtist.isNotBlank() -> "$cleanArtist $cleanTitle"
-                    cleanTitle.isNotBlank() -> cleanTitle
-                    cleanAlbum.isNotBlank() && cleanArtist.isNotBlank() -> "$cleanArtist $cleanAlbum"
-                    else -> cleanAlbum
+                    else -> cleanTitle
                 }
 
                 fun fetchItunes(term: String): String? {
@@ -140,21 +160,16 @@ object OnlineArtistImageFetcher {
                     return null
                 }
 
-                // Step A: Search iTunes with primary term (Artist + Title)
+                // Step A: Search iTunes with primary term (Artist + Title or Title)
                 var resolvedOnline = fetchItunes(queryTerm)
 
-                // Step B: Search Deezer with primary term (Artist + Title)
+                // Step B: Search Deezer with primary term (Artist + Title or Title)
                 if (resolvedOnline == null) {
                     resolvedOnline = fetchDeezer(queryTerm)
                 }
 
-                // Step C: Search by distinct Album if provided
-                if (resolvedOnline == null && cleanAlbum.isNotBlank() && cleanArtist.isNotBlank()) {
-                    resolvedOnline = getAlbumImageUrl(context, cleanAlbum, cleanArtist, preferUltraHd, cacheEnabled)
-                }
-
-                // Step D: Only as a strict fallback if title is multi-word and distinctive (> 12 chars or > 2 words)
-                if (resolvedOnline == null && cleanTitle.length > 12 && cleanTitle.contains(" ")) {
+                // Step C: Only if Artist + Title failed, try distinctive multi-word Title alone
+                if (resolvedOnline == null && cleanArtist.isNotBlank() && cleanTitle.length > 8 && cleanTitle.contains(" ")) {
                     resolvedOnline = fetchItunes(cleanTitle) ?: fetchDeezer(cleanTitle)
                 }
 

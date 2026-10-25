@@ -62,14 +62,6 @@ fun NowPlayingNeonWaveform(
     val song = playbackState.currentSong ?: return
     val context = LocalContext.current
 
-    val infiniteTransition = rememberInfiniteTransition(label = "neon_phase")
-    val wavePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (Math.PI * 2).toFloat(),
-        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Restart),
-        label = "phase"
-    )
-
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
     val safePos = positionMs.coerceIn(0L, duration)
     val progress = (safePos.toFloat() / duration.toFloat()).coerceIn(0f, 1f)

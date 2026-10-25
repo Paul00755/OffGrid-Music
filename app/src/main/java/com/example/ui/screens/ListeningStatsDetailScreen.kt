@@ -8,12 +8,15 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -118,6 +121,10 @@ fun ListeningStatsDetailScreen(
     // Filtered period Flows
     val dailyStatsFlow = remember(daysForPeriod) { getDailyStats(daysForPeriod) }
     val dailyStats by dailyStatsFlow.collectAsState(initial = emptyList())
+
+    // 365-day Flow for the Listening Activity Heatmap
+    val heatmapStatsFlow = remember { getDailyStats(365) }
+    val heatmapStats by heatmapStatsFlow.collectAsState(initial = emptyList())
 
     val timeOfDayFlow = remember(filterStartTimeMs) { getTimeOfDayStats(filterStartTimeMs) }
     val timeOfDay by timeOfDayFlow.collectAsState(initial = TimeOfDayDistribution())
@@ -349,9 +356,17 @@ fun ListeningStatsDetailScreen(
                 }
             }
 
-            // 7-Day Visual Summary Bar Chart
+            // Period Visual Summary Bar Chart
             item {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 140) {
+                    val chartTitle = remember(selectedPeriod) {
+                        when (selectedPeriod) {
+                            DetailedStatsPeriod.SEVEN_DAYS -> "7-Day Listening Duration"
+                            DetailedStatsPeriod.THIRTY_DAYS -> "30-Day Listening Duration"
+                            DetailedStatsPeriod.NINETY_DAYS -> "3-Month Listening Duration"
+                            DetailedStatsPeriod.ALL_TIME -> "All-Time Listening Duration"
+                        }
+                    }
                     BentoCard(
                         modifier = Modifier.fillMaxWidth(),
                         backgroundColor = BentoCardSurface
@@ -363,7 +378,7 @@ fun ListeningStatsDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
+                                     Icon(
                                         imageVector = Icons.Default.BarChart,
                                         contentDescription = null,
                                         tint = BentoPrimary,
@@ -371,16 +386,16 @@ fun ListeningStatsDetailScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "7-Day Listening Duration",
+                                        text = chartTitle,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = BentoTextPrimary
                                     )
                                 }
 
-                                val weeklyTotalMs = remember(dailyStats) { dailyStats.sumOf { it.durationMs } }
+                                val periodTotalMs = remember(dailyStats) { dailyStats.sumOf { it.durationMs } }
                                 Text(
-                                    text = "Total: ${formatListeningDuration(weeklyTotalMs)}",
+                                    text = "Total: ${formatListeningDuration(periodTotalMs)}",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = BentoPrimary
@@ -397,6 +412,16 @@ fun ListeningStatsDetailScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // Listening Activity Heatmap (GitHub-style contribution grid)
+            item {
+                AnimatedStatsSection(visible = screenEntered, delayMs = 175) {
+                    ListeningActivityHeatmapCard(
+                        dailyStats = heatmapStats,
+                        accentColor = BentoPrimary
+                    )
                 }
             }
 
@@ -1265,3 +1290,270 @@ fun WrappedSummaryShowcaseCard(
         }
     }
 }
+
+@Composable
+private fun ListeningActivityHeatmapCard(
+    dailyStats: List<DailyListeningStat>,
+    accentColor: Color = BentoPrimary
+) {
+    // Build a 7-row (Sun..Sat) x N-week matrix aligned by day of week, covering up to 52 weeks
+    val weeksData = remember(dailyStats) {
+        if (dailyStats.isEmpty()) {
+            emptyList<List<DailyListeningStat?>>()
+        } else {
+            val cal = Calendar.getInstance().apply {
+                timeInMillis = dailyStats.first().dayStartMs
+            }
+            // Shift so Monday = 0, Tuesday = 1, ..., Sunday = 6 (matches Mon/Wed/Fri row labels)
+            val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK) // Sun=1..Sat=7
+            val leadingNulls = when (dayOfWeek) {
+                Calendar.MONDAY -> 0
+                Calendar.TUESDAY -> 1
+                Calendar.WEDNESDAY -> 2
+                Calendar.THURSDAY -> 3
+                Calendar.FRIDAY -> 4
+                Calendar.SATURDAY -> 5
+                else -> 6
+            }
+            val padded = buildList<DailyListeningStat?> {
+                repeat(leadingNulls) { add(null) }
+                addAll(dailyStats)
+            }
+            padded.chunked(7).map { week ->
+                if (week.size < 7) week + List(7 - week.size) { null } else week
+            }
+        }
+    }
+
+    var selectedDay by remember(dailyStats) {
+        mutableStateOf(dailyStats.lastOrNull { it.isToday } ?: dailyStats.lastOrNull())
+    }
+
+    val maxDurationMs = remember(dailyStats) {
+        val max = dailyStats.maxOfOrNull { it.durationMs } ?: 0L
+        maxOf(max, 30 * 60 * 1000L) // minimum 30 min scale for 4 intensity tiers
+    }
+
+    val activeDaysCount = remember(dailyStats) {
+        dailyStats.count { it.durationMs > 0L }
+    }
+
+    val scrollState = rememberScrollState()
+    LaunchedEffect(weeksData.size) {
+        if (weeksData.isNotEmpty()) {
+            scrollState.scrollTo(scrollState.maxValue)
+        }
+    }
+
+    BentoCard(
+        modifier = Modifier.fillMaxWidth(),
+        backgroundColor = BentoCardSurface
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.GridOn,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Listening Activity Heatmap",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextPrimary
+                    )
+                }
+
+                Text(
+                    text = "$activeDaysCount active day${if (activeDaysCount != 1) "s" else ""}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accentColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Selected Day Info Pill
+            selectedDay?.let { day ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = BentoCardDarkPurple,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (day.isToday) "Today • ${day.fullDate}" else "${day.dayLabel} • ${day.fullDate}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BentoTextPrimary
+                        )
+                        Text(
+                            text = "${formatListeningDuration(day.durationMs)} (${day.trackCount} track${if (day.trackCount != 1) "s" else ""})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                // Day-of-week labels column (Mon, Wed, Fri) matching reference heatmap
+                Column(
+                    modifier = Modifier
+                        .padding(top = 18.dp, end = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    val dayLabels = listOf("Mon", "", "Wed", "", "Fri", "", "")
+                    dayLabels.forEach { label ->
+                        Box(
+                            modifier = Modifier.height(12.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 9.sp,
+                                color = BentoTextSecondary,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                // Horizontally scrollable weeks grid with month headers on top
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(scrollState),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    var lastShownMonth = ""
+                    weeksData.forEach { week ->
+                        val firstStatInWeek = week.firstOrNull { it != null }
+                        val monthName = firstStatInWeek?.fullDate?.substringBefore(' ') ?: ""
+                        val dayNum = firstStatInWeek?.fullDate?.substringAfter(' ')?.toIntOrNull() ?: 99
+                        val showMonthHeader = monthName.isNotEmpty() && monthName != lastShownMonth && dayNum <= 14
+                        if (showMonthHeader) {
+                            lastShownMonth = monthName
+                        }
+
+                        Column(
+                            horizontalAlignment = Alignment.Start,
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .height(15.dp)
+                                    .width(12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (showMonthHeader) {
+                                    Text(
+                                        text = monthName,
+                                        fontSize = 9.sp,
+                                        color = BentoTextSecondary,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Visible
+                                    )
+                                }
+                            }
+
+                            week.forEach { dayStat ->
+                                val isSelected = dayStat != null && selectedDay?.dayStartMs == dayStat.dayStartMs
+                                val cellColor = when {
+                                    dayStat == null -> Color.Transparent
+                                    dayStat.durationMs <= 0L -> Color(0xFF1E2230)
+                                    else -> {
+                                        val ratio = (dayStat.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
+                                        when {
+                                            ratio < 0.25f -> accentColor.copy(alpha = 0.30f)
+                                            ratio < 0.50f -> accentColor.copy(alpha = 0.52f)
+                                            ratio < 0.75f -> accentColor.copy(alpha = 0.76f)
+                                            else -> accentColor
+                                        }
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(cellColor)
+                                        .then(
+                                            if (isSelected) {
+                                                Modifier.border(1.dp, Color.White, RoundedCornerShape(3.dp))
+                                            } else Modifier
+                                        )
+                                        .then(
+                                            if (dayStat != null) {
+                                                Modifier.clickable { selectedDay = dayStat }
+                                            } else Modifier
+                                        )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Bottom-right "Less [][][][][] More" legend matching the reference image
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Less",
+                    fontSize = 10.sp,
+                    color = BentoTextSecondary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                val legendColors = listOf(
+                    Color(0xFF1E2230),
+                    accentColor.copy(alpha = 0.30f),
+                    accentColor.copy(alpha = 0.52f),
+                    accentColor.copy(alpha = 0.76f),
+                    accentColor
+                )
+                legendColors.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 1.5.dp)
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(2.5.dp))
+                            .background(color)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "More",
+                    fontSize = 10.sp,
+                    color = BentoTextSecondary
+                )
+            }
+        }
+    }
+}
+

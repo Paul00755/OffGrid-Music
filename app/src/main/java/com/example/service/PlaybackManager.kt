@@ -1356,21 +1356,25 @@ class PlaybackManager(
                         val qIds = userPreferences.lastQueueIds.firstOrNull() ?: emptyList()
                         val qIdx = userPreferences.lastQueueIndex.firstOrNull() ?: 0
                         val pos = userPreferences.lastPosition.firstOrNull() ?: 0L
+                        val db = com.example.data.local.AppDatabase.getInstance(context)
+                        val songs = mutableListOf<Song>()
                         if (qIds.isNotEmpty()) {
-                            val db = com.example.data.local.AppDatabase.getInstance(context)
-                            val songs = mutableListOf<Song>()
                             for (id in qIds) {
                                 db.songDao().getSongById(id)?.toDomainModel()?.let { songs.add(it) }
                             }
-                            if (songs.isNotEmpty()) {
-                                withContext(Dispatchers.Main) {
-                                    if (!player.isPlaying && !_playbackState.value.isPlaying && autoPlayOnHeadphoneConnection) {
-                                        restorePlaybackState(songs, qIdx.coerceIn(songs.indices), pos)
-                                        if (fadeInMs > 0) {
-                                            playWithFade(fadeInMs)
-                                        } else {
-                                            play()
-                                        }
+                        }
+                        if (songs.isEmpty()) {
+                            val allLibrarySongs = db.songDao().getAllSongs().firstOrNull()?.map { it.toDomainModel() } ?: emptyList()
+                            songs.addAll(allLibrarySongs)
+                        }
+                        if (songs.isNotEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                if (!player.isPlaying && !_playbackState.value.isPlaying && autoPlayOnHeadphoneConnection) {
+                                    restorePlaybackState(songs, qIdx.coerceIn(songs.indices), pos.coerceAtLeast(0L))
+                                    if (fadeInMs > 0) {
+                                        playWithFade(fadeInMs)
+                                    } else {
+                                        play()
                                     }
                                 }
                             }

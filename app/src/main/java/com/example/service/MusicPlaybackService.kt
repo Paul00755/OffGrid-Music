@@ -318,37 +318,6 @@ class MusicPlaybackService : MediaSessionService() {
                 }
                 val hasActiveMedia = session.player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
                 onUpdateNotification(session, hasActiveMedia)
-                lastMediaNotification?.let { mn ->
-                    mn.notification.flags = mn.notification.flags or
-                            Notification.FLAG_ONGOING_EVENT or
-                            Notification.FLAG_NO_CLEAR
-                    mn.notification.visibility = Notification.VISIBILITY_PUBLIC
-                    val bmp = currentSong?.let { com.example.util.ArtworkManager.getCachedNotificationBitmap(it.id) }
-                    if (bmp != null && !bmp.isRecycled) {
-                        @Suppress("DEPRECATION")
-                        mn.notification.largeIcon = bmp
-                    }
-                    try {
-                        lastNotificationCallback?.onNotificationChanged(mn)
-                    } catch (_: Throwable) {}
-                    try {
-                        if (hasActiveMedia) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                startForeground(
-                                    mn.notificationId,
-                                    mn.notification,
-                                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                                )
-                            } else {
-                                startForeground(mn.notificationId, mn.notification)
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                    try {
-                        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                        notificationManager?.notify(mn.notificationId, mn.notification)
-                    } catch (_: Throwable) {}
-                }
             } catch (_: Exception) {}
         }
     }
