@@ -201,5 +201,24 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// Guard all KSP tasks against KSP2's benign post-disposal AWT-EventQueue NullPointerException
+// (BinaryFileTypeDecompilers.notifyDecompilerSetChange running after ApplicationManager disposal).
+tasks.matching { it.name.startsWith("ksp") }.configureEach {
+  doFirst {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+      val msg = throwable.message.orEmpty()
+      val isBenignKspAwtRace =
+        thread.name.startsWith("AWT-EventQueue") &&
+          throwable is NullPointerException &&
+          (msg.contains("ksp.com.intellij.openapi.application.Application") ||
+            throwable.stackTrace.any { it.className.startsWith("ksp.com.intellij.") })
+      if (!isBenignKspAwtRace) {
+        previous?.uncaughtException(thread, throwable)
+      }
+    }
+  }
 }

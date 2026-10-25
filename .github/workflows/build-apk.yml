@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -34,6 +34,10 @@ jobs:
 
       - name: Setup Environment and Persistent Keystore
         run: |
+          # Disable setup-java's overly broad regex problem matcher so benign KSP2/AWT daemon logs
+          # never produce false-positive error annotations on successful builds
+          echo "::remove-matcher owner=java::"
+
           # 1. Ensure .env exists for Secrets Gradle Plugin
           if [ ! -f .env ]; then
             if [ -f .env.example ]; then
@@ -99,7 +103,7 @@ jobs:
           echo "APK_SIZE=$APK_SIZE" >> $GITHUB_ENV
 
       - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: OffGrid-Music-APK
           path: |
