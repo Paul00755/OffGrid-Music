@@ -118,7 +118,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // User-facing display name with fallback to Firebase displayName or email prefix or Guest.
-    // If not authenticated, always returns generic guest name to prevent data leakage from prior users.
     val effectiveDisplayName: StateFlow<String> = combine(userAccount, customDisplayName) { account, customName ->
         if (account == null) {
             "Music Lover"
@@ -178,10 +177,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             authUiState.value = AuthUiState.Loading
             val result = authManager.signInWithGoogle(activity)
             result.fold(
-                onSuccess = {
-                    authUiState.value = AuthUiState.Success("Signed in successfully with Google")
+                onSuccess = { account ->
+                    if (!account.displayName.isNullOrBlank() && customDisplayName.value.isNullOrBlank()) {
+                        preferences.setCustomDisplayName(account.displayName)
+                    }
+                    if (!account.photoUrl.isNullOrBlank() && customAvatarUri.value.isNullOrBlank()) {
+                        preferences.setCustomAvatarUri(account.photoUrl)
+                    }
                     preferences.setSkipAuthPrompt(true)
+                    authUiState.value = AuthUiState.Success("Signed in successfully with Google")
                     showAuthScreen.value = false
+                    // Issue #2 Fix: Immediately trigger full cloud backup/sync upon Google sign-in
+                    cloudSyncRepository.onAuthStateChanged(account.uid)
+                    cloudSyncRepository.performSyncNow()
                 },
                 onFailure = { error ->
                     if (error is GoogleSignInCancelledException ||
@@ -205,10 +213,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             authUiState.value = AuthUiState.Loading
             val result = authManager.signInWithEmail(email, pass)
             result.fold(
-                onSuccess = {
-                    authUiState.value = AuthUiState.Success("Signed in successfully")
+                onSuccess = { account ->
+                    if (!account.displayName.isNullOrBlank() && customDisplayName.value.isNullOrBlank()) {
+                        preferences.setCustomDisplayName(account.displayName)
+                    }
+                    if (!account.photoUrl.isNullOrBlank() && customAvatarUri.value.isNullOrBlank()) {
+                        preferences.setCustomAvatarUri(account.photoUrl)
+                    }
                     preferences.setSkipAuthPrompt(true)
+                    authUiState.value = AuthUiState.Success("Signed in successfully")
                     showAuthScreen.value = false
+                    // Issue #2 Fix: Immediately trigger full cloud backup/sync upon Email sign-in
+                    cloudSyncRepository.onAuthStateChanged(account.uid)
+                    cloudSyncRepository.performSyncNow()
                 },
                 onFailure = { error ->
                     authUiState.value = AuthUiState.Error(error.message ?: "Sign in failed")
@@ -230,13 +247,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             authUiState.value = AuthUiState.Loading
             val result = authManager.signUpWithEmail(email, pass, displayName)
             result.fold(
-                onSuccess = {
+                onSuccess = { account ->
                     if (!displayName.isNullOrBlank()) {
                         preferences.setCustomDisplayName(displayName.trim())
                     }
-                    authUiState.value = AuthUiState.Success("Account created successfully")
                     preferences.setSkipAuthPrompt(true)
+                    authUiState.value = AuthUiState.Success("Account created successfully")
                     showAuthScreen.value = false
+                    // Issue #2 Fix: Immediately trigger initial cloud sync upon account registration
+                    cloudSyncRepository.onAuthStateChanged(account.uid)
+                    cloudSyncRepository.performSyncNow()
                 },
                 onFailure = { error ->
                     authUiState.value = AuthUiState.Error(error.message ?: "Sign up failed")
@@ -247,7 +267,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendPasswordReset(email: String, onDone: ((Boolean, String) -> Unit)? = null) {
         val currentState = passwordResetState.value
-        // Block action if currently sending or within the 60-second cooldown
         if (currentState is PasswordResetUiState.Sending || currentState is PasswordResetUiState.SentCooldown) {
             onDone?.invoke(false, "Please wait for cooldown to finish before requesting another email.")
             return
@@ -553,7 +572,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _isOptimizingDatabase = MutableStateFlow(false)
     val isOptimizingDatabase: StateFlow<Boolean> = _isOptimizingDatabase.asStateFlow()
 
-    // Lyrics State (Initialized BEFORE init blocks to prevent NullPointerException on startup)
+    // Lyrics State
     private val _currentLyrics = MutableStateFlow<Lyrics?>(null)
     val currentLyrics: StateFlow<Lyrics?> = _currentLyrics.asStateFlow()
 
@@ -563,7 +582,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLyricsSearchQuery: String = ""
     private var cachedLyricsCandidates: List<com.example.service.LyricsCandidate> = emptyList()
 
-    // Audio & Lyrics Transcription / Translation State (KeyStore loaded off Main Thread in init)
+    // Audio & Lyrics Transcription / Translation State
     val secureApiKeyStore = SecureApiKeyStore(getApplication())
     val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Lazily, "TRANSCRIBE")
@@ -758,6 +777,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setThemeMode(mode: String) = viewModelScope.launch {
         val targetMode = mode.uppercase()
         preferences.setThemeMode(targetMode)
+        if (targetMode == "LIGHT") {
+            preferences.setAmoledMode(false)
+        } else if (targetMode == "AMOLED") {
+            preferences.setAmoledMode(true)
+        }
         val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
         if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode)) {
             val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode)
@@ -770,14 +794,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preferences.setUiTheme(themeId)
         val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(themeId)
         val currentMode = themeMode.value.uppercase()
+        if (!selectedTheme.isDark) {
+            preferences.setAmoledMode(false)
+        }
         if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(selectedTheme, currentMode)) {
             val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
             preferences.setThemeMode(newMode)
         }
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
+
     fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch { preferences.setHomeScreenLayout(layoutId) }
-    fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch { 
+    fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch {
         preferences.setNowPlayingLayout(layoutId)
         val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
             com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
@@ -789,16 +817,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch { preferences.setPlaylistsLayout(layoutId) }
     fun setWaveformStyle(style: String) = viewModelScope.launch { preferences.setWaveformStyle(style) }
-    fun setAmoledMode(enabled: Boolean) = viewModelScope.launch { preferences.setAmoledMode(enabled) }
-    fun setAccentColorPreset(preset: String) = viewModelScope.launch { 
+    fun setAmoledMode(enabled: Boolean) = viewModelScope.launch {
+        val currentMode = themeMode.value.uppercase()
+        if (currentMode == "LIGHT" && enabled) {
+            preferences.setAmoledMode(false)
+            return@launch
+        }
+        preferences.setAmoledMode(enabled)
+        if (!enabled && currentMode == "AMOLED") {
+            preferences.setThemeMode("DARK")
+        }
+    }
+    fun setAccentColorPreset(preset: String) = viewModelScope.launch {
         preferences.setAccentColorPreset(preset)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
-    fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch { 
+    fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch {
         preferences.setCustomAccentColor(colorInt)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
-    fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch { 
+    fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch {
         preferences.setDynamicArtworkTheme(enabled)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
@@ -1124,14 +1162,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (song.id != lastFetchedSongId) {
                         lastFetchedSongId = song.id
                         lyricsFetchJob?.cancel()
-                        // Reset search lyrics state for new track so old candidate results don't leak to next/prev song
                         lyricsSearchResults.value = emptyList()
                         lastLyricsSearchSongId = null
                         lastLyricsSearchQuery = ""
                         cachedLyricsCandidates = emptyList()
                         _canUndoLyricsForCurrentSong.value = previousLyricsHistory.containsKey(song.id)
                         _transcribeErrorMessage.value = null
-                        // Instantly reset _currentLyrics to loading state for this specific song ID
                         _currentLyrics.value = com.example.data.model.Lyrics(
                             songId = song.id,
                             plainLyrics = null,
@@ -1377,12 +1413,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createPlaylistWithSongs(name: String, songs: List<Song>, onCreated: (Long) -> Unit = {}) {
-        viewModelScope.launch {
-            val playlistId = repository.createPlaylist(name)
-            songs.forEach { song ->
-                repository.addSongToPlaylist(playlistId, song.id)
+        viewModelScope.launch(Dispatchers.IO) {
+            val createdIds = repository.createPlaylistsWithSongsBatch(listOf(name to songs))
+            val playlistId = createdIds.firstOrNull() ?: repository.createPlaylist(name)
+            withContext(Dispatchers.Main) {
+                onCreated(playlistId)
             }
-            onCreated(playlistId)
+        }
+    }
+
+    /**
+     * Issue #6: Batch-imports multiple M3U playlists in a single background transaction.
+     */
+    fun createPlaylistsWithSongsBatch(
+        playlistsBatch: List<Pair<String, List<Song>>>,
+        onCompleted: (List<Long>) -> Unit = {}
+    ) {
+        if (playlistsBatch.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val createdIds = repository.createPlaylistsWithSongsBatch(playlistsBatch)
+            withContext(Dispatchers.Main) {
+                onCompleted(createdIds)
+            }
         }
     }
 
@@ -1500,6 +1552,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun startSleepTimerMinutes(minutes: Int, finishLastSong: Boolean = false) = sleepTimerManager.startTimerMinutes(minutes, finishLastSong)
     fun startSleepTimerSongs(count: Int) = playbackManager.startTrackSleepTimer(count)
     fun addSleepTimerMinutes(minutes: Int) = sleepTimerManager.addMinutes(minutes)
+    fun setSleepTimerFinishLastSong(enabled: Boolean) = sleepTimerManager.setFinishLastSong(enabled)
     fun cancelSleepTimer() = sleepTimerManager.cancelTimer()
 
     fun associateCustomLrc(song: Song, lrcContent: String) {
@@ -1611,7 +1664,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id)
             if (!finalArt.isNullOrBlank()) {
                 com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, finalArt)
-                // Pre-decode bitmap for notification so status bar and lockscreen get it instantaneously
                 try {
                     val bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(getApplication(), finalArt, 512)
                     if (bmp != null) {
@@ -1698,7 +1750,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ex?.message ?: "Invalid Gemini API key. Please check your key and try again."
             }
             _keyValidationErrorMessage.value = msg
-            // If the user entered an invalid key, turn toggle OFF
             if (ex !is java.io.IOException || !secureApiKeyStore.hasApiKey()) {
                 preferences.setTranscribeTranslateEnabled(false)
             }
@@ -1744,7 +1795,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return@launch
         }
 
-        // Before starting processing, verify connection
         val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
         if (connectionCheck.isFailure) {
             val ex = connectionCheck.exceptionOrNull()
@@ -1881,7 +1931,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return@launch
         }
 
-        // Before starting processing, verify connection
         val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
         if (connectionCheck.isFailure) {
             val ex = connectionCheck.exceptionOrNull()
@@ -2006,20 +2055,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
         db.lyricsDao().insertLyrics(entity)
 
-        // Generate .lrc format content with timestamps if synced or plain lines
         val lrcContent = if (!preview.syncedLyricsJson.isNullOrBlank()) {
             com.example.util.LrcParser.formatSyncedJsonToLrc(preview.syncedLyricsJson) ?: preview.plainLyrics
         } else {
             preview.plainLyrics
         }
 
-        // Clean song title for safe file naming
         val rawTitle = preview.song.title.ifBlank { preview.song.displayTitle }
         val safeFileName = rawTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "song_${preview.song.id}" }
         val lrcFileName = "$safeFileName.lrc"
 
         try {
-            // 1. Save companion .lrc file in the same folder as the audio track if accessible
             if (preview.song.path.isNotBlank()) {
                 val audioFile = java.io.File(preview.song.path)
                 val parentDir = audioFile.parentFile
@@ -2041,7 +2087,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // 2. Save into public external storage Music/Lyrics directory
             try {
                 val publicMusicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
                 val publicLyricsFolder = java.io.File(publicMusicDir, "Lyrics")
@@ -2056,7 +2101,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } catch (_: Exception) {}
 
-            // 2b. Android 10+ MediaStore direct export to device storage
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                 try {
                     val resolver = getApplication<android.app.Application>().contentResolver
@@ -2075,7 +2119,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
             }
 
-            // 3. Save into app's external files directory as backup
             try {
                 val appLyricsDir = getApplication<android.app.Application>().getExternalFilesDir("Lyrics")
                 if (appLyricsDir != null) {
@@ -2084,14 +2127,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (_: Exception) {}
 
-            // 4. Update internal cache file
             try {
                 val cacheLyricsFile = getApplication<android.app.Application>().cacheDir.resolve("lyrics").resolve("${preview.song.id}.lrc")
                 cacheLyricsFile.parentFile?.mkdirs()
                 cacheLyricsFile.writeText(lrcContent, Charsets.UTF_8)
             } catch (_: Exception) {}
 
-            // 5. Try updating tags directly on device storage audio file (ID3v2 for MP3)
             try {
                 com.example.util.AudioTagWriter.writeAudioTags(
                     context = getApplication(),
@@ -2132,7 +2173,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val previous = previousLyricsHistory.remove(songId)
 
         if (previous == null || (previous.plainLyrics.isNullOrBlank() && previous.syncedLyricsJson.isNullOrBlank())) {
-            // Restore to NO lyrics state
             db.lyricsDao().deleteLyrics(songId)
             withContext(Dispatchers.Main) {
                 if (playbackState.value.currentSong?.id == songId) {
@@ -2141,7 +2181,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         } else {
-            // Restore exact previous lyrics entity
             val entity = com.example.data.local.LyricsEntity(
                 songId = songId,
                 plainLyrics = previous.plainLyrics,
@@ -2165,8 +2204,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         audioRouteManager.unregister()
-        // Note: Do NOT call playbackManager.release() here! PlaybackManager is an application-level singleton
-        // that must continue continuous playback in the background even when MainActivity/ViewModel is destroyed.
         super.onCleared()
     }
 }

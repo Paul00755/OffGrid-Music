@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: MusicViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsState()
+            val extraDarkMode by viewModel.amoledMode.collectAsState()
             val uiTheme by viewModel.uiTheme.collectAsState()
             val accentColorPreset by viewModel.accentColorPreset.collectAsState()
             val customAccentColor by viewModel.customAccentColor.collectAsState()
@@ -102,6 +103,7 @@ class MainActivity : ComponentActivity() {
                 MyApplicationTheme(
                     uiTheme = uiTheme,
                     themeMode = themeMode,
+                    extraDarkMode = extraDarkMode,
                     accentColorPreset = accentColorPreset,
                     accentColor = effectiveAccentColor
                 ) {
@@ -144,6 +146,14 @@ class MainActivity : ComponentActivity() {
                     val showAccountScreen by viewModel.showAccountScreen.collectAsState()
                     val authUiState by viewModel.authUiState.collectAsState()
                     val syncStatus by viewModel.syncStatus.collectAsState()
+
+                    // Issue #1 Safeguard: If an existing user updates the app and already has songs/playlists,
+                    // automatically mark onboarding as completed so they go straight to HomeScreen.
+                    LaunchedEffect(isOnboardingCompleted, allSongs.size, allPlaylists.size) {
+                        if (!isOnboardingCompleted && (allSongs.isNotEmpty() || allPlaylists.isNotEmpty())) {
+                            viewModel.completeOnboarding()
+                        }
+                    }
 
                     var backPressedTime by remember { mutableLongStateOf(0L) }
                     var songForAddToPlaylist by remember { mutableStateOf<com.example.data.model.Song?>(null) }
@@ -236,8 +246,8 @@ class MainActivity : ComponentActivity() {
                         com.example.ui.components.SplashScreen(
                             onDismiss = { viewModel.dismissSplash() }
                         )
-                    } else if (!isOnboardingCompleted) {
-                        // 2. Once Startup Animation finishes, display Onboarding Screen options
+                    } else if (!isOnboardingCompleted && allSongs.isEmpty() && allPlaylists.isEmpty()) {
+                        // 2. Once Startup Animation finishes, display Onboarding Screen options (only for truly new installs)
                         val fullDeviceScanSetting by viewModel.fullDeviceScan.collectAsState()
                         val maxSongDurationSetting by viewModel.maxSongDuration.collectAsState()
 
@@ -304,10 +314,14 @@ class MainActivity : ComponentActivity() {
                                                 .widthIn(max = 680.dp)
                                                 .fillMaxWidth()
                                         ) {
-                                            val shouldShowMiniPlayer = playbackState.currentSong != null &&
-                                                !showAccountScreen &&
-                                                !showAuthScreen &&
-                                                selectedTab != NavTab.SETTINGS
+                                            // Issue #7 Requirement:
+                                            // Enable the Mini-Player / floating bar while accessing the Settings screen
+                                            // & Account screen, but hide the bottom navigation bar (Home, Library, Playlists, Search)
+                                            // while in the Settings screen or Account screen.
+                                            val isSettingsOrAccountActive = showAccountScreen ||
+                                                (selectedTab == NavTab.SETTINGS && selectedPlaylist == null && selectedSmartPlaylist == null)
+                                            val shouldShowMiniPlayer = playbackState.currentSong != null && !showAuthScreen
+                                            val shouldShowBottomNavBar = !showAuthScreen && !isSettingsOrAccountActive
 
                                             if (shouldShowMiniPlayer) {
                                                 val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsState()
@@ -333,19 +347,25 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             }
 
-                                            FloatingPillNavBar(
-                                                selectedTab = selectedTab,
-                                                playbackState = playbackState,
-                                                onTabSelected = {
-                                                    viewModel.closeAccountScreen()
-                                                    viewModel.closeAuthScreen()
-                                                    viewModel.selectPlaylist(null)
-                                                    viewModel.selectSmartPlaylist(null)
-                                                    viewModel.navigateToTab(it)
-                                                },
-                                                onTogglePlayPause = { viewModel.togglePlayPause() },
-                                                onOpenNowPlaying = { viewModel.showNowPlaying.value = true }
-                                            )
+                                            AnimatedVisibility(
+                                                visible = shouldShowBottomNavBar,
+                                                enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
+                                                exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(150))
+                                            ) {
+                                                FloatingPillNavBar(
+                                                    selectedTab = selectedTab,
+                                                    playbackState = playbackState,
+                                                    onTabSelected = {
+                                                        viewModel.closeAccountScreen()
+                                                        viewModel.closeAuthScreen()
+                                                        viewModel.selectPlaylist(null)
+                                                        viewModel.selectSmartPlaylist(null)
+                                                        viewModel.navigateToTab(it)
+                                                    },
+                                                    onTogglePlayPause = { viewModel.togglePlayPause() },
+                                                    onOpenNowPlaying = { viewModel.showNowPlaying.value = true }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -552,6 +572,9 @@ class MainActivity : ComponentActivity() {
                                                             val importedPlaylist = allPlaylists.find { it.id == playlistId }
                                                             viewModel.selectPlaylist(importedPlaylist ?: com.example.data.model.Playlist(id = playlistId, name = name, songCount = songs.size))
                                                         }
+                                                    },
+                                                    onImportMultipleM3uPlaylists = { batch ->
+                                                        viewModel.createPlaylistsWithSongsBatch(batch)
                                                     },
                                                     onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
                                                     onOpenSearch = { viewModel.navigateToTab(NavTab.SEARCH) },
@@ -1090,14 +1113,19 @@ class MainActivity : ComponentActivity() {
 
                 val modes = disp?.supportedModes
                 if (!modes.isNullOrEmpty()) {
-                    val maxMode = modes.maxByOrNull { it.refreshRate }
-                    val standard60HzMode = modes.firstOrNull { it.refreshRate in 58f..62f }
-                        ?: modes.minByOrNull { it.refreshRate }
+                    val curMode = disp.mode
+                    val sameResModes = modes.filter {
+                        it.physicalWidth == curMode.physicalWidth &&
+                            it.physicalHeight == curMode.physicalHeight
+                    }.ifEmpty { modes.toList() }
+
+                    val maxMode = sameResModes.maxByOrNull { it.refreshRate }
+                    val standard60HzMode = sameResModes.minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
                     val targetModeId = if (enabled && maxMode != null) maxMode.modeId else (standard60HzMode?.modeId ?: 0)
-                    val targetRefreshRate = if (enabled && maxMode != null) maxMode.refreshRate else 60f
+                    val targetRefreshRate = if (enabled && maxMode != null) maxMode.refreshRate else (standard60HzMode?.refreshRate ?: 60f)
 
                     val params = win.attributes
-                    if (params.preferredDisplayModeId != targetModeId) {
+                    if (params.preferredDisplayModeId != targetModeId || params.preferredRefreshRate != targetRefreshRate) {
                         params.preferredDisplayModeId = targetModeId
                         @Suppress("DEPRECATION")
                         params.preferredRefreshRate = targetRefreshRate

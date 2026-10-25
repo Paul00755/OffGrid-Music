@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
@@ -19,6 +20,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.OAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -111,6 +113,20 @@ class AuthManager(
         )
     }
 
+    /**
+     * Multi-stage Google Sign-In with automatic fallback:
+     *
+     * 1. Stage 1: Credential Manager `GetGoogleIdOption(filterByAuthorizedAccounts = true)`
+     * 2. Stage 2: Credential Manager `GetGoogleIdOption(filterByAuthorizedAccounts = false)`
+     * 3. Stage 3: Credential Manager `GetSignInWithGoogleOption(serverClientId)`
+     *    - Note: Play Services Credential Manager throws `GetCredentialCancellationException("activity is cancelled by the user.")`
+     *      when the user selects an account in the bottom sheet if the APK signing SHA-1 is not yet matched by Play Services.
+     *      Therefore, if Stage 2 or Stage 3 fails or throws a Play Services cancellation/developer error after the sheet was shown,
+     *      we seamlessly fall back to Stage 4 (`startActivityForSignInWithProvider` via Firebase Web OAuth).
+     * 4. Stage 4: Firebase `OAuthProvider("google.com")` (`auth.startActivityForSignInWithProvider`), which authenticates
+     *    against the Firebase Web OAuth client directly and works across all debug/CI/release signing keys without requiring
+     *    Android SHA-1 registration in Play Services.
+     */
     suspend fun signInWithGoogle(activity: Activity): Result<UserAccount> {
         val auth = getFirebaseAuth() ?: return Result.failure(
             Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
@@ -120,65 +136,92 @@ class AuthManager(
             return Result.failure(Exception("Google Sign-In configuration error: Missing Web Client ID"))
         }
 
-        // Stage 1: Attempt account discovery with previously authorized accounts (fast auto-select)
+        // Stage 1: Fast authorized account check
         val stage1Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = true)
-
-        val credential = if (stage1Result.isSuccess) {
-            stage1Result.getOrThrow()
-        } else {
-            val stage1Exception = stage1Result.exceptionOrNull()
-            if (stage1Exception is GetCredentialCancellationException ||
-                stage1Exception is GoogleSignInCancelledException ||
-                stage1Exception?.message?.contains("cancel", ignoreCase = true) == true) {
-                Log.d(TAG, "Google Sign-In was cancelled by user during Stage 1")
-                return Result.failure(GoogleSignInCancelledException())
-            }
-
-            // Stage 1 is an optimization for previously signed-in accounts. If it fails for ANY reason
-            // other than cancellation (such as first-time sign-in, NoCredential, or unhandled provider type),
-            // seamlessly proceed to Stage 2 with filterByAuthorizedAccounts = false to display the full account picker.
-            Log.d(TAG, "Stage 1 returned no credentials; retrying Stage 2 with filterByAuthorizedAccounts = false")
-            val stage2Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = false)
-            if (stage2Result.isSuccess) {
-                stage2Result.getOrThrow()
-            } else {
-                val stage2Exception = stage2Result.exceptionOrNull()
-                if (stage2Exception is GetCredentialCancellationException ||
-                    stage2Exception is GoogleSignInCancelledException ||
-                    stage2Exception?.message?.contains("cancel", ignoreCase = true) == true) {
-                    Log.d(TAG, "Google Sign-In was cancelled by user during Stage 2")
-                    return Result.failure(GoogleSignInCancelledException())
-                }
-
-                // Secondary fallback using GetSignInWithGoogleOption for older Play Services implementations
-                val fallbackResult = tryGetCredentialWithSignInWithGoogle(activity, serverClientId)
-                if (fallbackResult.isSuccess) {
-                    fallbackResult.getOrThrow()
-                } else {
-                    val finalException = fallbackResult.exceptionOrNull() ?: stage2Exception ?: stage1Exception ?: Exception("Google Sign-In failed")
-                    Log.e(TAG, "Google Sign-In stages failed", finalException)
-                    return Result.failure(handleGoogleSignInException(finalException))
-                }
-            }
+        if (stage1Result.isSuccess) {
+            val firebaseSignIn = signInFirebaseWithCredential(auth, stage1Result.getOrThrow())
+            if (firebaseSignIn.isSuccess) return firebaseSignIn
         }
 
+        // Stage 2: Full account picker via GetGoogleIdOption(filterByAuthorizedAccounts = false)
+        Log.d(TAG, "Proceeding to Stage 2 with filterByAuthorizedAccounts = false")
+        val stage2Result = tryGetGoogleCredential(activity, serverClientId, filterByAuthorizedAccounts = false)
+        if (stage2Result.isSuccess) {
+            val firebaseSignIn = signInFirebaseWithCredential(auth, stage2Result.getOrThrow())
+            if (firebaseSignIn.isSuccess) return firebaseSignIn
+        }
+
+        // Stage 3: Explicit GetSignInWithGoogleOption bottom sheet
+        Log.d(TAG, "Proceeding to Stage 3 with GetSignInWithGoogleOption")
+        val stage3Result = tryGetCredentialWithSignInWithGoogle(activity, serverClientId)
+        if (stage3Result.isSuccess) {
+            val firebaseSignIn = signInFirebaseWithCredential(auth, stage3Result.getOrThrow())
+            if (firebaseSignIn.isSuccess) return firebaseSignIn
+        }
+
+        val stage3Ex = stage3Result.exceptionOrNull()
+        val stage2Ex = stage2Result.exceptionOrNull()
+
+        // Stage 4: Universal Firebase OAuthProvider("google.com") fallback.
+        // Whenever Play Services Credential Manager fails (including false-positive RESULT_CANCELED
+        // when selecting an account on a CI-signed APK), fall back to Firebase's direct Google OAuth flow.
+        Log.d(TAG, "Credential Manager did not return an ID token (${stage3Ex?.message ?: stage2Ex?.message}); falling back to Firebase OAuthProvider(google.com)")
+        val oauthFallbackResult = signInWithFirebaseGoogleOAuthProvider(activity, auth)
+        if (oauthFallbackResult.isSuccess) {
+            return oauthFallbackResult
+        }
+
+        val finalException = oauthFallbackResult.exceptionOrNull()
+            ?: stage3Ex
+            ?: stage2Ex
+            ?: stage1Result.exceptionOrNull()
+            ?: Exception("Google Sign-In failed")
+        Log.e(TAG, "All Google Sign-In stages failed", finalException)
+        return Result.failure(handleGoogleSignInException(finalException))
+    }
+
+    private fun extractGoogleIdToken(credential: Credential): String? {
+        try {
+            if (credential is GoogleIdTokenCredential) {
+                return credential.idToken.takeIf { it.isNotBlank() }
+            }
+            if (credential is CustomCredential) {
+                if (
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL ||
+                    credential.type.contains("google_id_token", ignoreCase = true)
+                ) {
+                    val googleCred = GoogleIdTokenCredential.createFrom(credential.data)
+                    return googleCred.idToken.takeIf { it.isNotBlank() }
+                }
+                // Fallback attempt to parse bundle directly even if custom type string differs
+                return try {
+                    GoogleIdTokenCredential.createFrom(credential.data).idToken.takeIf { it.isNotBlank() }
+                } catch (_: Exception) {
+                    credential.data.getString("com.google.android.libraries.identity.googleid.BUNDLE_KEY_ID_TOKEN")
+                        ?.takeIf { it.isNotBlank() }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to extract Google ID token from credential (${credential.type})", e)
+        }
+        return null
+    }
+
+    private suspend fun signInFirebaseWithCredential(
+        auth: FirebaseAuth,
+        credential: Credential
+    ): Result<UserAccount> {
         return try {
-            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                val idToken = googleIdTokenCredential.idToken
-                if (idToken.isBlank()) {
-                    return Result.failure(Exception("Google Sign-In failed: Empty ID token received"))
-                }
-                val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = auth.signInWithCredential(authCredential).await()
-                val user = authResult.user
-                if (user != null) {
-                    Result.success(user.toUserAccount())
-                } else {
-                    Result.failure(Exception("Failed to get user after Google sign-in"))
-                }
+            val idToken = extractGoogleIdToken(credential)
+                ?: return Result.failure(Exception("Unsupported or empty Google ID token from Credential Manager: ${credential.type}"))
+            val authCredential = GoogleAuthProvider.getCredential(idToken, null)
+            val authResult = auth.signInWithCredential(authCredential).await()
+            val user = authResult.user
+            if (user != null) {
+                Result.success(user.toUserAccount())
             } else {
-                Result.failure(Exception("Unsupported credential type returned from Credential Manager: ${credential.type}"))
+                Result.failure(Exception("Failed to get user after Google sign-in"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Firebase credential sign-in failed", e)
@@ -186,11 +229,38 @@ class AuthManager(
         }
     }
 
+    private suspend fun signInWithFirebaseGoogleOAuthProvider(
+        activity: Activity,
+        auth: FirebaseAuth
+    ): Result<UserAccount> {
+        return try {
+            val pendingTask = auth.pendingAuthResult
+            val authResult = if (pendingTask != null) {
+                pendingTask.await()
+            } else {
+                val provider = OAuthProvider.newBuilder("google.com")
+                    .addCustomParameter("prompt", "select_account")
+                    .setScopes(listOf("email", "profile"))
+                    .build()
+                auth.startActivityForSignInWithProvider(activity, provider).await()
+            }
+            val user = authResult?.user ?: auth.currentUser
+            if (user != null) {
+                Result.success(user.toUserAccount())
+            } else {
+                Result.failure(Exception("Google sign-in did not return an authenticated user."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Firebase OAuthProvider(google.com) sign-in failed", e)
+            Result.failure(e)
+        }
+    }
+
     private suspend fun tryGetGoogleCredential(
         activity: Activity,
         serverClientId: String,
         filterByAuthorizedAccounts: Boolean
-    ): Result<androidx.credentials.Credential> {
+    ): Result<Credential> {
         return try {
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(filterByAuthorizedAccounts)
@@ -212,7 +282,7 @@ class AuthManager(
     private suspend fun tryGetCredentialWithSignInWithGoogle(
         activity: Activity,
         serverClientId: String
-    ): Result<androidx.credentials.Credential> {
+    ): Result<Credential> {
         return try {
             val signInOption = GetSignInWithGoogleOption.Builder(serverClientId)
                 .build()
@@ -248,7 +318,9 @@ class AuthManager(
         }
         val msg = e.message ?: ""
         return when {
-            msg.contains("cancelled", ignoreCase = true) || msg.contains("canceled", ignoreCase = true) ->
+            msg.contains("web operation was canceled", ignoreCase = true) ||
+            msg.contains("cancelled by user", ignoreCase = true) ||
+            msg.contains("canceled by user", ignoreCase = true) ->
                 GoogleSignInCancelledException()
             isNoCredentialException(e) ->
                 Exception("No Google accounts found on this device. Please add a Google account in device Settings and try again.")
@@ -274,12 +346,16 @@ class AuthManager(
     }
 
     suspend fun signInWithEmail(email: String, pass: String): Result<UserAccount> {
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank() || pass.isBlank()) {
+            return Result.failure(Exception("Please enter both your email address and password."))
+        }
         val auth = getFirebaseAuth() ?: return Result.failure(
             Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
         )
         return try {
-            val result = auth.signInWithEmailAndPassword(email.trim(), pass).await()
-            val user = result.user
+            val result = auth.signInWithEmailAndPassword(cleanEmail, pass).await()
+            val user = result.user ?: auth.currentUser
             if (user != null) {
                 Result.success(user.toUserAccount())
             } else {
@@ -292,18 +368,29 @@ class AuthManager(
     }
 
     suspend fun signUpWithEmail(email: String, pass: String, displayName: String?): Result<UserAccount> {
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank() || pass.isBlank()) {
+            return Result.failure(Exception("Please enter a valid email address and password."))
+        }
+        if (pass.length < 6) {
+            return Result.failure(Exception("The password is too weak. Please use at least 6 characters."))
+        }
         val auth = getFirebaseAuth() ?: return Result.failure(
             Exception("Authentication service is temporarily unavailable. Please verify your internet connection or try again shortly.")
         )
         return try {
-            val result = auth.createUserWithEmailAndPassword(email.trim(), pass).await()
-            val user = result.user
+            val result = auth.createUserWithEmailAndPassword(cleanEmail, pass).await()
+            val user = result.user ?: auth.currentUser
             if (user != null) {
                 if (!displayName.isNullOrBlank()) {
-                    val updateRequest = UserProfileChangeRequest.Builder()
-                        .setDisplayName(displayName.trim())
-                        .build()
-                    user.updateProfile(updateRequest).await()
+                    try {
+                        val updateRequest = UserProfileChangeRequest.Builder()
+                            .setDisplayName(displayName.trim())
+                            .build()
+                        user.updateProfile(updateRequest).await()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal: failed to set displayName after sign-up", e)
+                    }
                 }
                 Result.success(user.toUserAccount())
             } else {
@@ -386,17 +473,22 @@ class AuthManager(
         val friendlyMsg = when {
             msg.contains("ERROR_INVALID_EMAIL", ignoreCase = true) || msg.contains("badly formatted", ignoreCase = true) ->
                 "The email address is badly formatted."
-            msg.contains("ERROR_WRONG_PASSWORD", ignoreCase = true) || msg.contains("invalid credential", ignoreCase = true) ->
+            msg.contains("ERROR_WRONG_PASSWORD", ignoreCase = true) ||
+            msg.contains("INVALID_LOGIN_CREDENTIALS", ignoreCase = true) ||
+            msg.contains("invalid credential", ignoreCase = true) ||
+            msg.contains("supplied auth credential is incorrect", ignoreCase = true) ->
                 "Invalid email or password. Please verify your credentials."
-            msg.contains("ERROR_USER_NOT_FOUND", ignoreCase = true) ->
+            msg.contains("ERROR_USER_NOT_FOUND", ignoreCase = true) ||
+            msg.contains("no user record", ignoreCase = true) ->
                 "No account exists with this email address."
-            msg.contains("ERROR_EMAIL_ALREADY_IN_USE", ignoreCase = true) ->
+            msg.contains("ERROR_EMAIL_ALREADY_IN_USE", ignoreCase = true) ||
+            msg.contains("already in use", ignoreCase = true) ->
                 "An account with this email address already exists."
             msg.contains("WEAK_PASSWORD", ignoreCase = true) ->
                 "The password is too weak. Please use at least 6 characters."
             msg.contains("NETWORK_ERROR", ignoreCase = true) || msg.contains("network error", ignoreCase = true) ->
                 "Network error. Please check your internet connection."
-            msg.contains("TOO_MANY_REQUESTS", ignoreCase = true) ->
+            msg.contains("TOO_MANY_REQUESTS", ignoreCase = true) || msg.contains("unusual activity", ignoreCase = true) ->
                 "Too many attempts. Please try again in a few moments."
             msg.contains("ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL", ignoreCase = true) ||
             msg.contains("account-exists-with-different-credential", ignoreCase = true) ->

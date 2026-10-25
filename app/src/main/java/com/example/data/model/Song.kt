@@ -1,7 +1,9 @@
 package com.example.data.model
 
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 
+@Immutable
 data class Song(
     val id: Long,
     val title: String,
@@ -28,14 +30,21 @@ data class Song(
 ) {
     val contentUri: Uri
         get() = when {
-            contentUriString.startsWith("content://") || contentUriString.startsWith("http://") || contentUriString.startsWith("https://") || contentUriString.startsWith("android.resource://") || contentUriString.startsWith("file://") -> Uri.parse(contentUriString)
+            contentUriString.startsWith("content://") ||
+                contentUriString.startsWith("http://") ||
+                contentUriString.startsWith("https://") ||
+                contentUriString.startsWith("android.resource://") ||
+                contentUriString.startsWith("file://") -> Uri.parse(contentUriString)
             path.isNotBlank() && java.io.File(path).exists() -> Uri.fromFile(java.io.File(path))
             contentUriString.isNotBlank() -> Uri.parse(contentUriString)
             path.isNotBlank() -> Uri.fromFile(java.io.File(path))
             else -> Uri.EMPTY
         }
 
-    val displayTitle: String by lazy(LazyThreadSafetyMode.NONE) {
+    // Use LazyThreadSafetyMode.PUBLICATION so concurrent access from Main UI and IO threads
+    // (e.g., LibraryScreen + ArtworkResolutionCache.preloadWindow + PlaybackManager) never throws
+    // a fatal NullPointerException inside UnsafeLazyImpl.initializer!!()
+    val displayTitle: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (isManuallyEdited) {
             title
         } else {
@@ -44,15 +53,16 @@ data class Song(
         }
     }
 
-    val displayArtist: String by lazy(LazyThreadSafetyMode.NONE) {
+    val displayArtist: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (artist.isBlank() || artist.contains("unknown", ignoreCase = true)) "Unknown Artist" else artist
     }
 
-    val displayAlbum: String by lazy(LazyThreadSafetyMode.NONE) {
+    val displayAlbum: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (album.isBlank() || album.contains("unknown", ignoreCase = true)) "Unknown Album" else album
     }
 }
 
+@Immutable
 data class Album(
     val id: Long,
     val name: String,
@@ -62,6 +72,7 @@ data class Album(
     val year: Int = 0
 )
 
+@Immutable
 data class Artist(
     val id: Long,
     val name: String,
@@ -69,6 +80,7 @@ data class Artist(
     val albumCount: Int = 0
 )
 
+@Immutable
 data class FolderInfo(
     val path: String,
     val name: String,
@@ -79,6 +91,7 @@ data class FolderInfo(
     val isAccessible: Boolean = true
 )
 
+@Immutable
 data class Playlist(
     val id: Long,
     val name: String,
@@ -96,12 +109,14 @@ data class ListeningStats(
     val uniqueTrackCount: Int = 0
 )
 
+@Immutable
 data class ArtistStat(
     val name: String,
     val playCount: Int,
     val totalDurationMs: Long
 )
 
+@Immutable
 data class AlbumStat(
     val name: String,
     val artist: String,
@@ -126,7 +141,6 @@ data class Lyrics(
         }
         val result = mutableListOf<Pair<Long, String>>()
 
-        // Try parsing JSON format from LrcParser
         val trimmed = target.trim()
         if (trimmed.startsWith("[")) {
             try {
@@ -144,12 +158,11 @@ data class Lyrics(
                 if (result.isNotEmpty()) {
                     return result.sortedBy { it.first }
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Fallthrough to LrcParser
             }
         }
 
-        // Fallback using robust LrcParser
         val lrcLines = com.example.util.LrcParser.parseLrcToLines(target)
         return lrcLines.map { Pair(it.timeMs, it.text) }
     }
@@ -171,16 +184,17 @@ data class TimeOfDayDistribution(
     val nightDurationMs: Long = 0L
 ) {
     val totalMs: Long get() = morningDurationMs + afternoonDurationMs + eveningDurationMs + nightDurationMs
-    val dominantVibe: String get() {
-        if (totalMs == 0L) return "Sonic Explorer"
-        val max = maxOf(morningDurationMs, afternoonDurationMs, eveningDurationMs, nightDurationMs)
-        return when (max) {
-            nightDurationMs -> "Night Owl"
-            morningDurationMs -> "Early Bird"
-            afternoonDurationMs -> "Daytime Groover"
-            else -> "Evening Relaxer"
+    val dominantVibe: String
+        get() {
+            if (totalMs == 0L) return "Sonic Explorer"
+            val max = maxOf(morningDurationMs, afternoonDurationMs, eveningDurationMs, nightDurationMs)
+            return when (max) {
+                nightDurationMs -> "Night Owl"
+                morningDurationMs -> "Early Bird"
+                afternoonDurationMs -> "Daytime Groover"
+                else -> "Evening Relaxer"
+            }
         }
-    }
 }
 
 data class WrappedData(
@@ -198,4 +212,3 @@ data class WrappedData(
     val listenerArchetype: String = "The Sonic Explorer",
     val archetypeDescription: String = "You listen across deep music journeys with distinct taste."
 )
-

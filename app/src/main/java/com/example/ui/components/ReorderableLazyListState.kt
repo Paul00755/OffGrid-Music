@@ -31,12 +31,14 @@ enum class AutoScrollDirection {
 /**
  * High-precision, 1:1 finger-anchored drag-and-drop reorder controller for LazyColumn.
  *
- * Guarantees:
- * - Only the single dragged item moves with the user's finger (`draggedKey` & `draggedIndex`).
- * - Exact LayoutInfo-driven swap detection: uses actual visible item offsets & heights (including spacing)
- *   so items swap cleanly only when the dragged item's center crosses a neighbor's center.
- * - Smooth, continuous edge auto-scrolling proportional to finger proximity to top/bottom viewport edges,
- *   keeping the dragged item locked under the user's finger even when LazyColumn has header items.
+ * Key production fixes:
+ * 1. Prevents Jetpack Compose's `LazyListState` key-anchoring jump when swapping at `firstVisibleItemIndex`
+ *    during upward drag/auto-scroll by pinning `requestScrollToItem(savedFirstIndex, savedFirstOffset)`.
+ * 2. Prevents fast drags outside the visible window from swapping the dragged item out of `visibleItemsInfo`
+ *    (which would dispose its `pointerInput` composable mid-gesture) by clamping swaps to the currently
+ *    visible item window while `scrollBy` brings off-screen items into view.
+ * 3. Commits any completed swaps in `onDragCancel()` so fast-dragging out of the window or sheet boundary
+ *    never snaps the song back to its original position.
  */
 class ReorderableLazyListState(
     val listState: LazyListState,
@@ -86,6 +88,7 @@ class ReorderableLazyListState(
         private set
     var maxItemIndex: Int = 0
         private set
+    private var headerOffsetCount: Int = 0
     private var autoScrollJob: Job? = null
     private var edgeZoneHoldStartMs: Long = 0L
 
@@ -99,33 +102,77 @@ class ReorderableLazyListState(
     }
 
     /**
+     * Computes the currently visible bounds in data-list index space (`minIndex..maxIndex`)
+     * so a fast finger fling cannot swap the dragged item completely outside the rendered viewport
+     * before `LazyColumn` has scrolled to reveal the target items.
+     */
+    private fun resolveVisibleDataIndexBounds(minIndex: Int, maxIndex: Int): IntRange {
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return minIndex..maxIndex
+
+        val matched = draggedKey?.let { k -> visible.firstOrNull { it.key == k } }
+        val curr = currentDraggedIndex
+        if (matched != null && curr != null) {
+            headerOffsetCount = (matched.index - curr).coerceAtLeast(0)
+        }
+
+        val firstVisibleDataIdx = (visible.first().index - headerOffsetCount).coerceIn(minIndex, maxIndex)
+        val lastVisibleDataIdx = (visible.last().index - headerOffsetCount).coerceIn(minIndex, maxIndex)
+        return if (firstVisibleDataIdx <= lastVisibleDataIdx) {
+            firstVisibleDataIdx..lastVisibleDataIdx
+        } else {
+            minIndex..maxIndex
+        }
+    }
+
+    /**
      * Checks and executes an adjacent swap when the dragged item's visual center crosses
-     * the neighbor item's center (with a small hysteresis margin to prevent jitter).
+     * the neighbor item's center. Also pins `firstVisibleItemIndex` when a swap touches the
+     * first visible item in `LazyColumn` so upward dragging/auto-scrolling never jumps.
      */
     fun checkAndPerformSwap(minIndex: Int = minItemIndex, maxIndex: Int = maxItemIndex): Boolean {
         val curr = currentDraggedIndex ?: return false
         val stepHeight = resolveEffectiveStepHeight()
         val swapThreshold = stepHeight * 0.5f
-        val hysteresis = stepHeight * 0.05f
+        val hysteresis = stepHeight * 0.04f
 
-        if (dragOffsetY > (swapThreshold + hysteresis) && curr < maxIndex) {
+        val visibleBounds = resolveVisibleDataIndexBounds(minIndex, maxIndex)
+        val effectiveMin = visibleBounds.first.coerceAtLeast(minIndex)
+        val effectiveMax = visibleBounds.last.coerceAtMost(maxIndex)
+
+        val savedFirstIndex = listState.firstVisibleItemIndex
+        val savedFirstOffset = listState.firstVisibleItemScrollOffset
+
+        if (dragOffsetY > (swapThreshold + hysteresis) && curr < effectiveMax) {
             val next = curr + 1
+            val currLayoutIndex = curr + headerOffsetCount
+            val touchesFirstVisible = currLayoutIndex == savedFirstIndex || (currLayoutIndex - 1) == savedFirstIndex
+
             currentDraggedIndex = next
             draggedIndex = next
             dragOffsetY -= stepHeight
             try {
                 onMove(curr, next)
+                if (touchesFirstVisible) {
+                    listState.requestScrollToItem(savedFirstIndex, savedFirstOffset)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("ReorderableLazyList", "Error swapping item from $curr to $next", e)
             }
             return true
-        } else if (dragOffsetY < -(swapThreshold + hysteresis) && curr > minIndex) {
+        } else if (dragOffsetY < -(swapThreshold + hysteresis) && curr > effectiveMin) {
             val prev = curr - 1
+            val prevLayoutIndex = prev + headerOffsetCount
+            val touchesFirstVisible = prevLayoutIndex <= savedFirstIndex + 1
+
             currentDraggedIndex = prev
             draggedIndex = prev
             dragOffsetY += stepHeight
             try {
                 onMove(curr, prev)
+                if (touchesFirstVisible) {
+                    listState.requestScrollToItem(savedFirstIndex, savedFirstOffset)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("ReorderableLazyList", "Error swapping item from $curr to $prev", e)
             }
@@ -174,6 +221,7 @@ class ReorderableLazyListState(
             ?: visibleItems.firstOrNull { it.index == safeIndex }
 
         if (matchedItem != null) {
+            headerOffsetCount = (matchedItem.index - safeIndex).coerceAtLeast(0)
             draggedItemViewportY = matchedItem.offset.toFloat()
             if (matchedItem.size > 0) {
                 itemHeightPx = matchedItem.size.toFloat()
@@ -204,8 +252,8 @@ class ReorderableLazyListState(
         draggedItemViewportY += dragAmount
         val newOffset = dragOffsetY + dragAmount
 
-        val boundaryClamp = stepHeight * 0.55f
-        val atTopLimit = currIdx <= minIndex && !listState.canScrollBackward
+        val boundaryClamp = stepHeight * 0.65f
+        val atTopLimit = currIdx <= minIndex && (!listState.canScrollBackward || currIdx == 0)
         val atBottomLimit = currIdx >= maxIndex && !listState.canScrollForward
 
         if (atTopLimit && newOffset < -boundaryClamp) {
@@ -214,11 +262,18 @@ class ReorderableLazyListState(
             dragOffsetY = boundaryClamp
         } else {
             dragOffsetY = newOffset
-            val maxAllowedSwaps = (maxIndex - minIndex + 1).coerceAtLeast(1)
+            val maxAllowedSwaps = 4
             var swaps = 0
             while (checkAndPerformSwap(minIndex, maxIndex) && swaps < maxAllowedSwaps) {
                 swaps++
             }
+        }
+
+        // Keep draggedItemViewportY synchronized with actual layout offset + dragOffsetY when visible
+        val visible = listState.layoutInfo.visibleItemsInfo
+        val matched = draggedKey?.let { k -> visible.firstOrNull { it.key == k } }
+        if (matched != null) {
+            draggedItemViewportY = matched.offset.toFloat() + dragOffsetY
         }
     }
 
@@ -226,12 +281,8 @@ class ReorderableLazyListState(
         onDrag(dragAmount = dragAmount, minIndex = minItemIndex, maxIndex = maxIndex)
     }
 
-    fun onDragEnd(velocity: Float = 0f) {
-        isPointerDown = false
-        stopAutoScrollLoop()
-        status = DragReorderStatus.DROPPING
-
-        val maxAllowedSwaps = (maxItemIndex - minItemIndex + 1).coerceAtLeast(1)
+    private fun commitPendingReorderIfNeeded() {
+        val maxAllowedSwaps = 4
         var swaps = 0
         while (checkAndPerformSwap(minItemIndex, maxItemIndex) && swaps < maxAllowedSwaps) {
             swaps++
@@ -239,7 +290,6 @@ class ReorderableLazyListState(
 
         val from = initialDraggedIndex
         val to = currentDraggedIndex
-
         if (from != null && to != null && from != to) {
             try {
                 onDragEndCallback(from, to)
@@ -247,6 +297,14 @@ class ReorderableLazyListState(
                 android.util.Log.e("ReorderableLazyList", "Error in onDragEndCallback", e)
             }
         }
+    }
+
+    fun onDragEnd(velocity: Float = 0f) {
+        isPointerDown = false
+        stopAutoScrollLoop()
+        status = DragReorderStatus.DROPPING
+
+        commitPendingReorderIfNeeded()
 
         dragOffsetY = 0f
         draggedIndex = null
@@ -260,10 +318,17 @@ class ReorderableLazyListState(
         edgeZoneHoldStartMs = 0L
     }
 
+    /**
+     * When a fast drag reaches outside the visible window or gets cancelled by pointer disposal,
+     * we STILL commit the new position (`commitPendingReorderIfNeeded()`) instead of discarding it,
+     * so the dragged song stays at the position the user dragged it to rather than snapping back.
+     */
     fun onDragCancel() {
         isPointerDown = false
         stopAutoScrollLoop()
         status = DragReorderStatus.CANCELLED
+
+        commitPendingReorderIfNeeded()
 
         dragOffsetY = 0f
         draggedIndex = null
@@ -309,13 +374,18 @@ class ReorderableLazyListState(
 
                         if (viewportHeight > 0f && (listState.canScrollForward || listState.canScrollBackward)) {
                             val stepHeight = resolveEffectiveStepHeight()
-                            // Generous 22% edge zones so auto-scroll engages smoothly as the user approaches top/bottom
-                            val edgeZoneSize = (viewportHeight * 0.22f).coerceIn(stepHeight * 1.1f, stepHeight * 2.6f).coerceIn(110f, 260f)
+                            // Responsive 26% edge zones for both top (upward) and bottom (downward) auto-scroll
+                            val edgeZoneSize = (viewportHeight * 0.26f)
+                                .coerceIn(stepHeight * 1.35f, stepHeight * 3.0f)
+                                .coerceIn(130f, 300f)
                             val topEdgeEnd = viewportStart + edgeZoneSize
                             val bottomEdgeStart = viewportEnd - edgeZoneSize
 
-                            val itemTop = draggedItemViewportY
-                            val itemBottom = itemTop + itemHeightPx.coerceAtLeast(48f)
+                            // Use the minimum of finger-tracked Y and actual rendered visual top for upward trigger
+                            // and maximum for downward trigger so fast drags trigger auto-scroll immediately.
+                            val visualTop = getDraggedItemVisualTop()
+                            val itemTop = minOf(visualTop, draggedItemViewportY)
+                            val itemBottom = maxOf(visualTop, draggedItemViewportY) + itemHeightPx.coerceAtLeast(48f)
 
                             var targetScrollDelta = 0f
                             var currentDirection = AutoScrollDirection.NONE
@@ -327,42 +397,42 @@ class ReorderableLazyListState(
                                 currentDirection = AutoScrollDirection.UP
                                 val penetration = (topEdgeEnd - itemTop).coerceAtLeast(0f)
                                 val normalized = (penetration / edgeZoneSize).coerceIn(0f, 1f)
-                                val curve = normalized * (0.35f + 0.65f * normalized)
-                                val minVelocity = 3.5f
-                                val maxVelocity = 24.0f
+                                val curve = normalized * (0.45f + 0.55f * normalized)
+                                val minVelocity = 5.0f
+                                val maxVelocity = 28.0f
                                 var speed = minVelocity + (maxVelocity - minVelocity) * curve
 
                                 if (itemTop < viewportStart) {
-                                    val overRatio = ((viewportStart - itemTop) / edgeZoneSize).coerceIn(0f, 1.2f)
-                                    speed += overRatio * 6.0f
+                                    val overRatio = ((viewportStart - itemTop) / edgeZoneSize).coerceIn(0f, 1.5f)
+                                    speed += overRatio * 10.0f
                                 }
 
                                 val now = System.currentTimeMillis()
                                 if (edgeZoneHoldStartMs == 0L) edgeZoneHoldStartMs = now
-                                val holdMultiplier = 1f + ((now - edgeZoneHoldStartMs) / 1000f).coerceIn(0f, 0.45f)
+                                val holdMultiplier = 1f + ((now - edgeZoneHoldStartMs) / 900f).coerceIn(0f, 0.55f)
 
-                                speed = (speed * holdMultiplier).coerceIn(minVelocity, 28.0f)
+                                speed = (speed * holdMultiplier).coerceIn(minVelocity, 36.0f)
                                 targetScrollDelta = -speed
                                 autoScrollVelocity = speed
                             } else if (itemBottom > bottomEdgeStart && canScrollDown) {
                                 currentDirection = AutoScrollDirection.DOWN
                                 val penetration = (itemBottom - bottomEdgeStart).coerceAtLeast(0f)
                                 val normalized = (penetration / edgeZoneSize).coerceIn(0f, 1f)
-                                val curve = normalized * (0.35f + 0.65f * normalized)
-                                val minVelocity = 3.5f
-                                val maxVelocity = 24.0f
+                                val curve = normalized * (0.45f + 0.55f * normalized)
+                                val minVelocity = 5.0f
+                                val maxVelocity = 28.0f
                                 var speed = minVelocity + (maxVelocity - minVelocity) * curve
 
                                 if (itemBottom > viewportEnd) {
-                                    val overRatio = ((itemBottom - viewportEnd) / edgeZoneSize).coerceIn(0f, 1.2f)
-                                    speed += overRatio * 6.0f
+                                    val overRatio = ((itemBottom - viewportEnd) / edgeZoneSize).coerceIn(0f, 1.5f)
+                                    speed += overRatio * 10.0f
                                 }
 
                                 val now = System.currentTimeMillis()
                                 if (edgeZoneHoldStartMs == 0L) edgeZoneHoldStartMs = now
-                                val holdMultiplier = 1f + ((now - edgeZoneHoldStartMs) / 1000f).coerceIn(0f, 0.45f)
+                                val holdMultiplier = 1f + ((now - edgeZoneHoldStartMs) / 900f).coerceIn(0f, 0.55f)
 
-                                speed = (speed * holdMultiplier).coerceIn(minVelocity, 28.0f)
+                                speed = (speed * holdMultiplier).coerceIn(minVelocity, 36.0f)
                                 targetScrollDelta = speed
                                 autoScrollVelocity = speed
                             } else {
@@ -382,21 +452,27 @@ class ReorderableLazyListState(
                                 if (consumed != 0f) {
                                     dragOffsetY += consumed
 
-                                    val boundaryClamp = stepHeight * 0.55f
-                                    val atTopLimit = currIdx <= minItemIndex && !listState.canScrollBackward
-                                    val atBottomLimit = currIdx >= maxItemIndex && !listState.canScrollForward
+                                    val boundaryClamp = stepHeight * 0.65f
+                                    val latestIdx = currentDraggedIndex ?: currIdx
+                                    val atTopLimit = latestIdx <= minItemIndex && !listState.canScrollBackward
+                                    val atBottomLimit = latestIdx >= maxItemIndex && !listState.canScrollForward
                                     if (atTopLimit && dragOffsetY < -boundaryClamp) {
                                         dragOffsetY = -boundaryClamp
                                     } else if (atBottomLimit && dragOffsetY > boundaryClamp) {
                                         dragOffsetY = boundaryClamp
                                     }
 
-                                    val maxAllowedSwaps = (maxItemIndex - minItemIndex + 1).coerceAtLeast(1)
                                     var swaps = 0
-                                    while (checkAndPerformSwap(minItemIndex, maxItemIndex) && swaps < maxAllowedSwaps) {
+                                    while (checkAndPerformSwap(minItemIndex, maxItemIndex) && swaps < 3) {
                                         swaps++
                                     }
                                 } else {
+                                    // Even if LazyColumn hit the scroll limit (e.g. header reached top),
+                                    // still allow remaining visible items above/below to swap!
+                                    var swaps = 0
+                                    while (checkAndPerformSwap(minItemIndex, maxItemIndex) && swaps < 3) {
+                                        swaps++
+                                    }
                                     autoScrollVelocity = 0f
                                 }
                             }
@@ -409,7 +485,7 @@ class ReorderableLazyListState(
                     }
 
                     try {
-                        withFrameNanos { /* frame tick */ }
+                        withFrameNanos { /* VSYNC frame tick */ }
                     } catch (_: Exception) {
                         delay(16L)
                     }

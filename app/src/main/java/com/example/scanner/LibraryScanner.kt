@@ -65,6 +65,7 @@ class LibraryScanner(
     companion object {
         private const val TAG = "LibraryScanner"
         private const val SQLITE_BATCH_SIZE = 250
+        private const val PROGRESS_EMIT_INTERVAL_MS = 250L
 
         @Volatile
         private var INSTANCE: LibraryScanner? = null
@@ -76,15 +77,24 @@ class LibraryScanner(
                 }
             }
         }
+
+        /**
+         * Computes a collision-free 62-bit positive synthetic ID for files discovered outside MediaStore
+         * (placed above 1_000_000_000_000L so they never collide with 32-bit MediaStore IDs).
+         */
+        fun computeStablePathId(normPath: String): Long {
+            var hash = -0x340d631b7bdddcdbL // FNV-1a 64-bit offset basis
+            for (i in normPath.indices) {
+                hash = hash xor normPath[i].code.toLong()
+                hash *= 0x100000001b3L // FNV-1a 64-bit prime
+            }
+            val positive = (hash and 0x3FFFFFFF_FFFFFFFFL).coerceAtLeast(1L)
+            return 1_000_000_000_000L + positive
+        }
     }
 
     /**
      * Authoritative single pipeline for creating or updating SongEntity instances.
-     * Guarantees:
-     * - User-manually-edited metadata (title, artist, album, artwork) is preserved 100%.
-     * - Unedited titles/metadata are cleaned using the authoritative TagCleaner.
-     * - Stable identity and playback stats (playCount, lastPlayed, isFavorite) are retained.
-     * - Existing artwork is never lost during re-indexing.
      */
     fun buildOrUpdateSongEntity(
         existing: SongEntity?,
@@ -106,8 +116,8 @@ class LibraryScanner(
         val resolvedId = existing?.id ?: id
         val manualMeta = com.example.util.ManualTagStore.getManualMetadata(context, resolvedId, filePath)
         val isManual = existing?.isManuallyEdited == true ||
-                (existing != null && com.example.util.ManualTagStore.isManuallyEdited(context, existing.id, existing.path)) ||
-                manualMeta != null
+            (existing != null && com.example.util.ManualTagStore.isManuallyEdited(context, existing.id, existing.path)) ||
+            manualMeta != null
 
         val manualArt = manualMeta?.artworkUri
             ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, resolvedId, filePath)
@@ -194,14 +204,24 @@ class LibraryScanner(
     private var debounceJob: Job? = null
     var onScanCompletedListener: (() -> Unit)? = null
 
-    init {
-        // Auto-detection is started after onboarding & storage permissions are ready
-    }
-
     private suspend fun insertSongsSafelyInBatches(songs: List<SongEntity>) {
         if (songs.isEmpty()) return
         for (chunk in songs.chunked(SQLITE_BATCH_SIZE)) {
             songDao.insertSongs(chunk)
+        }
+    }
+
+    private suspend fun updateSongsSafelyInBatches(songs: List<SongEntity>) {
+        if (songs.isEmpty()) return
+        for (chunk in songs.chunked(SQLITE_BATCH_SIZE)) {
+            songDao.updateSongs(chunk)
+        }
+    }
+
+    private suspend fun deleteSongsSafelyInBatches(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        for (chunk in ids.chunked(SQLITE_BATCH_SIZE)) {
+            songDao.deleteSongsByIds(chunk)
         }
     }
 
@@ -344,7 +364,7 @@ class LibraryScanner(
     private fun scheduleDebouncedAutoDetection() {
         debounceJob?.cancel()
         debounceJob = scope.launch {
-            delay(1200L)
+            delay(1500L)
             val prefs = UserPreferencesRepository.getInstance(context)
             val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
             if (isOnboarded) {
@@ -353,10 +373,6 @@ class LibraryScanner(
         }
     }
 
-    /**
-     * Incremental automatic detection of newly added songs.
-     * Only runs after onboarding is completed. Strictly respects included/excluded folders and duration bounds.
-     */
     suspend fun detectAndImportNewSongs(): Int = withContext(Dispatchers.IO) {
         val prefs = UserPreferencesRepository.getInstance(context)
         val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
@@ -461,7 +477,6 @@ class LibraryScanner(
                             continue
                         }
 
-                        // Verify actual file exists on storage if accessible
                         val fileObj = File(filePath)
                         if (filePath.startsWith("/") && (!fileObj.exists() || !fileObj.isFile || fileObj.length() <= 0L)) {
                             filteredRejected++
@@ -491,7 +506,7 @@ class LibraryScanner(
                         }
 
                         val isAudioMime = mimeType?.startsWith("audio/", ignoreCase = true) == true ||
-                                mimeType.equals("application/ogg", ignoreCase = true)
+                            mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
                         if (!isAudioMime && !isAudioExt) {
@@ -619,10 +634,8 @@ class LibraryScanner(
 
     /**
      * Authoritative Full Rescan across MediaStore and target directories.
-     * - Deduplicates strictly by normalized physical file path (`normPath`) so no track is ever double-counted.
-     * - Enforces includedFolders, excludedFolders, and min/max duration bounds accurately.
-     * - Batches SQLite inserts in chunks of 250 to prevent SQLiteException / CursorWindow crashes.
-     * - Reports the exact count of genuine tracks found in this scan run.
+     * Uses batch deletes (`deleteSongsSafelyInBatches`) and batch inserts (`insertSongsSafelyInBatches`)
+     * so scanning never causes SQLite / Room InvalidationTracker storms or OOM crashes.
      */
     suspend fun scanLibrary(
         includedFolders: List<FolderEntity> = emptyList(),
@@ -651,13 +664,11 @@ class LibraryScanner(
             val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
             val normIncludedPaths = includedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
 
-            // Keyed strictly by normalized physical file path so MediaStore + File traversal NEVER double-count the same file!
             val foundSongsByNormPath = LinkedHashMap<String, SongEntity>()
             val seenMediaStoreIds = HashSet<Long>()
             var lastEmitTime = 0L
 
             try {
-                // 1. Resilient MediaStore Scan
                 val projectionList = buildList {
                     add(MediaStore.Audio.Media._ID)
                     add(MediaStore.Audio.Media.TITLE)
@@ -732,7 +743,6 @@ class LibraryScanner(
                             continue
                         }
 
-                        // Verify actual file exists on storage (eliminates stale/ghost MediaStore rows)
                         val fileObj = File(filePath)
                         if (filePath.startsWith("/") && (!fileObj.exists() || !fileObj.isFile || fileObj.length() <= 0L)) {
                             filteredRejected++
@@ -763,7 +773,7 @@ class LibraryScanner(
                         }
 
                         val isAudioMime = mimeType?.startsWith("audio/", ignoreCase = true) == true ||
-                                mimeType.equals("application/ogg", ignoreCase = true)
+                            mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
                         if (!isAudioMime && !isAudioExt) {
@@ -825,7 +835,7 @@ class LibraryScanner(
                         )
 
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitTime > 80) {
+                        if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                             lastEmitTime = now
                             val folderName = if (parentFolder.isNotBlank()) parentFolder.substringAfterLast('/').ifBlank { "Media Store" } else "Media Store"
                             _scanProgress.value = ScanProgress(
@@ -885,7 +895,7 @@ class LibraryScanner(
                             retriever = retriever,
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
-                                if (now - lastEmitTime > 80) {
+                                if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                                     lastEmitTime = now
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
@@ -906,7 +916,7 @@ class LibraryScanner(
                     try { retriever.release() } catch (_: Exception) {}
                 }
 
-                // 3. Synchronize Discovered Songs with Room Database (preserving play counts, favorites, and manual edits)
+                // 3. Synchronize Discovered Songs with Room Database
                 val existingSongs = songDao.getAllSongsOnce()
                 val existingById = existingSongs.associateBy { it.id }
                 val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
@@ -931,20 +941,20 @@ class LibraryScanner(
                         dateAdded = song.dateAdded,
                         format = song.format
                     )
-                }
+                }.distinctBy { it.id }
 
                 val validNormPathsInThisScan = mergedSongsList.map { normalizePath(it.path) }.toHashSet()
                 val validIdsInThisScan = mergedSongsList.map { it.id }.toHashSet()
 
                 songDao.deleteUnusedSampleSongs()
 
-                // Remove any existing DB song that is no longer in the allowed folders/duration scope or was duplicated under a synthetic ID
-                for (dbSong in existingSongs) {
+                val obsoleteIds = existingSongs.mapNotNull { dbSong ->
                     val normDbPath = normalizePath(dbSong.path)
                     if (!validNormPathsInThisScan.contains(normDbPath) || !validIdsInThisScan.contains(dbSong.id)) {
-                        songDao.deleteSong(dbSong.id)
-                    }
+                        dbSong.id
+                    } else null
                 }
+                deleteSongsSafelyInBatches(obsoleteIds)
 
                 if (mergedSongsList.isNotEmpty()) {
                     insertSongsSafelyInBatches(mergedSongsList)
@@ -978,7 +988,7 @@ class LibraryScanner(
 
     /**
      * Fast Quick Scan: Quickly prunes missing/excluded/filtered files and indexes new audio tracks
-     * without touching user-edited tags, play counts, or favorites.
+     * using batch updates and batch deletes to prevent Room InvalidationTracker storms.
      */
     suspend fun quickScanAndCleanLibrary(
         includedFolders: List<FolderEntity> = emptyList(),
@@ -997,13 +1007,13 @@ class LibraryScanner(
             var lastEmitTime = 0L
 
             try {
-                // 1. Clean missing/excluded/duplicate songs and normalize existing unedited library tracks
                 val existingSongs = songDao.getAllSongsOnce()
                 val seenNormPaths = HashSet<String>()
                 val songsToUpdate = mutableListOf<SongEntity>()
+                val idsToDelete = mutableListOf<Long>()
 
-                // Sort so MediaStore IDs (< 1_000_000_000) win over synthetic hash IDs if duplicates exist
-                val sortedExisting = existingSongs.sortedBy { if (it.id in 1..999_999_999L) 0 else 1 }
+                // Sort so MediaStore IDs (< 1_000_000_000_000L) win over synthetic hash IDs if duplicates exist
+                val sortedExisting = existingSongs.sortedBy { if (it.id in 1 until 1_000_000_000_000L) 0 else 1 }
 
                 for (dbSong in sortedExisting) {
                     filesDiscovered++
@@ -1011,8 +1021,7 @@ class LibraryScanner(
 
                     val normDbPath = normalizePath(dbSong.path)
                     if (!seenNormPaths.add(normDbPath)) {
-                        // Duplicate entry for the same physical file path
-                        songDao.deleteSong(dbSong.id)
+                        idsToDelete.add(dbSong.id)
                         duplicatesSkipped++
                         continue
                     }
@@ -1028,7 +1037,7 @@ class LibraryScanner(
                         val isTooLong = maxAudioDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0 && dbSong.durationMs > maxAudioDurationMs
 
                         if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
-                            songDao.deleteSong(dbSong.id)
+                            idsToDelete.add(dbSong.id)
                             filteredRejected++
                             continue
                         }
@@ -1053,9 +1062,8 @@ class LibraryScanner(
                     }
                 }
 
-                for (song in songsToUpdate) {
-                    songDao.updateSong(song)
-                }
+                deleteSongsSafelyInBatches(idsToDelete)
+                updateSongsSafelyInBatches(songsToUpdate)
                 songDao.deleteMissingSongs()
 
                 val refreshedExisting = songDao.getAllSongsOnce()
@@ -1182,7 +1190,7 @@ class LibraryScanner(
                         }
 
                         val isAudioMime = mimeType?.startsWith("audio/", ignoreCase = true) == true ||
-                                mimeType.equals("application/ogg", ignoreCase = true)
+                            mimeType.equals("application/ogg", ignoreCase = true)
                         val isAudioExt = ext in AUDIO_EXTENSIONS || AUDIO_EXTENSIONS.any { filePath.lowercase().endsWith(".$it") }
 
                         if (!isAudioMime && !isAudioExt) {
@@ -1232,7 +1240,7 @@ class LibraryScanner(
                         newSongsByNormPath[normP] = newSong
 
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitTime > 80) {
+                        if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                             lastEmitTime = now
                             val folderName = if (parentFolder.isNotBlank()) parentFolder.substringAfterLast('/').ifBlank { "Quick Scan" } else "Quick Scan"
                             _scanProgress.value = ScanProgress(
@@ -1294,7 +1302,7 @@ class LibraryScanner(
                             newSongsList = directNewList,
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
-                                if (now - lastEmitTime > 80) {
+                                if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                                     lastEmitTime = now
                                     val currentValid = refreshedExisting.size + newSongsByNormPath.size + directNewList.size
                                     _scanProgress.value = ScanProgress(
@@ -1320,7 +1328,7 @@ class LibraryScanner(
                     }
                 } catch (_: Exception) {}
 
-                val finalNewSongs = newSongsByNormPath.values.toList()
+                val finalNewSongs = newSongsByNormPath.values.distinctBy { it.id }.toList()
                 if (finalNewSongs.isNotEmpty()) {
                     insertSongsSafelyInBatches(finalNewSongs)
                 }
@@ -1337,6 +1345,7 @@ class LibraryScanner(
                     isScanning = false,
                     isFinished = true
                 )
+                try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in quickScanAndCleanLibrary", e)
                 _scanProgress.value = ScanProgress(
@@ -1437,7 +1446,7 @@ class LibraryScanner(
                         val cleanedTitle = TagCleaner.cleanTitle(rawTitle, file.name)
                         val cleanedArtist = TagCleaner.cleanArtist(rawArtist)
                         val cleanedAlbum = TagCleaner.cleanAlbum(rawAlbum)
-                        val fileId = normPath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+                        val fileId = computeStablePathId(normPath)
 
                         val song = SongEntity(
                             id = fileId,
@@ -1546,7 +1555,7 @@ class LibraryScanner(
                             continue
                         }
 
-                        val fileId = normPath.hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+                        val fileId = computeStablePathId(normPath)
                         val song = buildOrUpdateSongEntity(
                             existing = null,
                             id = fileId,

@@ -40,6 +40,7 @@ fun SettingsTabRoute(
     val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
     val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
+    val extraDarkMode by viewModel.amoledMode.collectAsState()
     val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
     val normalizeAudio by viewModel.normalizeAudio.collectAsState()
     val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
@@ -108,6 +109,8 @@ fun SettingsTabRoute(
         onSetWaveformStyle = { viewModel.setWaveformStyle(it) },
         themeMode = themeMode,
         onSetThemeMode = { viewModel.setThemeMode(it) },
+        extraDarkMode = extraDarkMode,
+        onSetExtraDarkMode = { viewModel.setAmoledMode(it) },
         uiTheme = uiTheme,
         onSetUiTheme = { viewModel.setUiTheme(it) },
         displayScale = viewModel.displayScale.collectAsState().value,
@@ -224,6 +227,7 @@ fun SettingsTabRoute(
         onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
         onStartSongCountTimer = { viewModel.startSleepTimerSongs(it) },
         onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
+        onSetSleepTimerFinishLastSong = { viewModel.setSleepTimerFinishLastSong(it) },
         onCancelSleepTimer = { viewModel.cancelSleepTimer() },
         onScanLibrary = { viewModel.scanLibrary() },
         onQuickScanAndCleanLibrary = { viewModel.quickScanAndCleanLibrary() },

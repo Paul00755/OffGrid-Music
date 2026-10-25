@@ -3,6 +3,7 @@ package com.example.service
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +54,7 @@ class SleepTimerManager(
     }
 
     // Use a persistent supervisor scope so background playback timer survives Activity lifecycles
-    private val scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val _state = MutableStateFlow(SleepTimerState())
     val state: StateFlow<SleepTimerState> = _state.asStateFlow()
@@ -67,13 +68,14 @@ class SleepTimerManager(
 
     fun startTimerMinutes(minutes: Int, finishLastSong: Boolean = false) {
         cancelTimer()
-        val durationSec = minutes * 60L
+        val validMinutes = minutes.coerceAtLeast(1)
+        val durationSec = validMinutes * 60L
         val targetEndTimeMs = android.os.SystemClock.elapsedRealtime() + durationSec * 1000L
 
         _state.value = SleepTimerState(
             isActive = true,
             remainingSeconds = durationSec,
-            initialMinutes = minutes,
+            initialMinutes = validMinutes,
             mode = "TIME",
             finishLastSong = finishLastSong,
             isWaitingForCurrentTrackToEnd = false
@@ -81,37 +83,47 @@ class SleepTimerManager(
 
         timerJob = scope.launch(Dispatchers.Main) {
             while (true) {
-                delay(500)
+                delay(400)
                 val remainingMs = targetEndTimeMs - android.os.SystemClock.elapsedRealtime()
                 if (remainingMs <= 0L) {
                     break
                 }
-                val secLeft = (remainingMs / 1000L).coerceAtLeast(0L)
+                val secLeft = ((remainingMs + 999L) / 1000L).coerceAtLeast(0L)
                 if (_state.value.remainingSeconds != secLeft) {
                     _state.value = _state.value.copy(remainingSeconds = secLeft)
                 }
             }
 
             val playing = isPlaybackActive?.invoke() ?: false
-            android.util.Log.d(TAG, "TIME sleep timer countdown reached 0. finishLastSong=$finishLastSong, isPlaying=$playing")
+            val shouldFinishLastSong = _state.value.finishLastSong
+            android.util.Log.d(TAG, "TIME sleep timer countdown reached 0. finishLastSong=$shouldFinishLastSong, isPlaying=$playing")
 
-            if (!finishLastSong || !playing) {
-                // Scenario 1: Stop immediately
+            if (!shouldFinishLastSong || !playing) {
+                // Scenario 1: Normal sleep timer (without finish last track) -> stop immediately
                 android.util.Log.d(TAG, "Stopping playback immediately (Scenario 1)")
                 _state.value = SleepTimerState()
                 timerJob = null
                 onTimerExpired()
             } else {
-                // Scenario 2: Wait for current track to finish, then transit to next song and stop at 0:00
-                android.util.Log.d(TAG, "Waiting for current track to complete before stopping (Scenario 2)")
+                // Scenario 2: Normal sleep timer with finish last track enabled ->
+                // Let current Song D finish completely, then transition UI to Song E at 0:00 and stop.
+                android.util.Log.d(TAG, "Waiting for current track to complete before transitioning to next track at 0:00 (Scenario 2)")
                 _state.value = _state.value.copy(
                     remainingSeconds = 0L,
-                    isWaitingForCurrentTrackToEnd = true
+                    isWaitingForCurrentTrackToEnd = true,
+                    isFinalSleepTrack = true
                 )
             }
         }
     }
 
+    /**
+     * Starts a track-based sleep timer:
+     * Example: Song A is currently playing and user sets 5 songs as track count.
+     * Since the timer is set during Song A, the count begins from Song B (Song B = track 1),
+     * then Song C (2), Song D (3), Song E (4), Song F (5th track).
+     * After Song F finishes, playback transitions to Song G screen and stops at 0:00.
+     */
     @Synchronized
     fun startSongCount(count: Int, baselineIdentity: String?, currentSongId: Long? = null) {
         cancelTimer()
@@ -124,6 +136,8 @@ class SleepTimerManager(
             else -> null
         }
         initialSongId = parsedSongId
+        // If no song is currently loaded/playing when the timer is set, the very first song played is Track 1.
+        // If Song A is currently loaded/playing, Song A is the baseline and Song B will be Track 1.
         hasPassedInitialSong = (baselineIdentity == null && parsedSongId == null)
         completedEligibleTracks = 0
 
@@ -143,11 +157,11 @@ class SleepTimerManager(
             lastProcessedTrackIdentity = null,
             finalTrackIdentity = null,
             isFinalTrack = false,
+            isFinalSleepTrack = false,
             stopPending = false,
             phase = TrackSleepTimerPhase.ARMED
         )
-        android.util.Log.d(TAG, "Timer enabled")
-        android.util.Log.d(TAG, "Baseline = ${baselineIdentity ?: "None"}")
+        android.util.Log.d(TAG, "Track sleep timer enabled: target=$validCount, baseline=${baselineIdentity ?: parsedSongId ?: "None"}")
     }
 
     fun startSongCount(count: Int, currentSongId: Long? = null) {
@@ -170,31 +184,26 @@ class SleepTimerManager(
                 baselineTrackIdentity = identity,
                 initialSongId = parsedSongId ?: curr.initialSongId
             )
-            android.util.Log.d(TAG, "Baseline = $identity")
+            android.util.Log.d(TAG, "Baseline updated = $identity")
         }
     }
 
-    /**
-     * Evaluates track eligibility and increments the counter exactly once per eligible occurrence.
-     * Marks the track as final track when targetTrackCount is reached.
-     */
     @Synchronized
     fun onTrackOccurrenceEligible(occurrenceId: String, trackName: String? = null): Boolean {
         val curr = _state.value
         if (!curr.isTrackTimerActive || curr.mode != "SONGS") return false
 
-        // Baseline track is ignored and must never be counted
-        if (occurrenceId == curr.baselineTrackIdentity || (initialSongId != null && occurrenceId == "song_$initialSongId")) {
+        // Baseline track (Song A) is ignored and must never be counted as Track 1
+        if (!hasPassedInitialSong && (occurrenceId == curr.baselineTrackIdentity || (initialSongId != null && occurrenceId == "song_$initialSongId"))) {
             return false
         }
 
-        // Guarantee that one track occurrence can consume only one counter increment
         if (countedOccurrences.contains(occurrenceId)) {
             return curr.isFinalTrack
         }
 
         countedOccurrences.add(occurrenceId)
-        val newCounted = curr.countedTrackCount + 1
+        val newCounted = if (completedEligibleTracks > 0) completedEligibleTracks else (curr.countedTrackCount + 1)
         completedEligibleTracks = newCounted
         val isFinal = (newCounted >= curr.targetTrackCount)
         val remaining = (curr.targetTrackCount - newCounted).coerceAtLeast(0)
@@ -209,13 +218,6 @@ class SleepTimerManager(
             isFinalSleepTrack = isFinal,
             stopPending = isFinal
         )
-
-        val name = trackName ?: occurrenceId
-        if (isFinal) {
-            android.util.Log.d(TAG, "$name transition → eligible → $newCounted/${curr.targetTrackCount} → FINAL_TRACK")
-        } else {
-            android.util.Log.d(TAG, "$name transition → eligible → $newCounted/${curr.targetTrackCount}")
-        }
         return isFinal
     }
 
@@ -231,14 +233,21 @@ class SleepTimerManager(
         val curr = _state.value
         if (!curr.isTrackTimerActive || curr.mode != "SONGS") return false
         if (curr.isFinalTrack && (curr.finalTrackIdentity == occurrenceId || curr.stopPending)) {
-            android.util.Log.d(TAG, "F completion → FINAL_TRACK_COMPLETED")
+            android.util.Log.d(TAG, "Final track completed -> FINAL_TRACK_COMPLETED")
             return true
         }
         return false
     }
 
     /**
-     * Handles track transitions specifically for SONGS mode.
+     * Handles track transitions for SONGS mode.
+     * Example trace (target = 5, set during Song A):
+     * - Transition A -> B: Song A (baseline) finished -> Song B starts as Track 1 (1/5).
+     * - Transition B -> C: Song B (Track 1) finished -> Song C starts as Track 2 (2/5).
+     * - Transition C -> D: Song C (Track 2) finished -> Song D starts as Track 3 (3/5).
+     * - Transition D -> E: Song D (Track 3) finished -> Song E starts as Track 4 (4/5).
+     * - Transition E -> F: Song E (Track 4) finished -> Song F starts as Track 5 (5/5, isFinalTrack = true).
+     * - Transition F -> G: Song F (Track 5) finished -> returns true so PlaybackManager transitions UI to Song G at 0:00 and pauses!
      */
     @Synchronized
     fun onTrackTransition(
@@ -254,46 +263,28 @@ class SleepTimerManager(
         val oldOccurrence = oldSessionId ?: oldTrackId?.let { "song_$it" }
         val newOccurrence = newTrackId?.let { "song_$it" }
 
-        val isOldEligible = isOldQualified || oldNaturalEnd
-
-        // 1. If old track was marked as the final counted track (F)
+        // 1. If the finishing track was the Nth (final) counted track (Song F),
+        // then transitioning to Song G completes the sleep timer and stops at 0:00 on Song G!
         if (curr.isFinalTrack || curr.isFinalSleepTrack) {
-            if (isOldEligible) {
-                // F completed -> new track is G -> STOP on G at 0:00!
-                _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
-                cancelTimer()
-                android.util.Log.d(TAG, "Final track completed → stopping on next track at 0:00")
-                return true
-            } else {
-                // Ineligible skip of final track: current track remains final track candidate
-                android.util.Log.d(TAG, "Ineligible skip of final track; new track $newOccurrence is final track candidate")
-                _state.value = curr.copy(
-                    lastProcessedTrackIdentity = newOccurrence,
-                    finalTrackIdentity = newOccurrence
-                )
-                return false
-            }
+            _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
+            cancelTimer()
+            android.util.Log.d(TAG, "Final counted track ($oldTrackId) finished -> transitioning to next track ($newTrackId) at 0:00 and stopping")
+            return true
         }
 
-        // 2. Check if baseline track (A) is finishing
-        val isOldBaseline = !hasPassedInitialSong && (
-            (curr.baselineTrackIdentity != null && (oldOccurrence == curr.baselineTrackIdentity || oldSessionId == curr.baselineTrackIdentity)) ||
-            (initialSongId != null && oldTrackId == initialSongId)
-        )
-
-        if (isOldBaseline) {
+        // 2. Check if we are transitioning out of the initial baseline track (Song A) into Track 1 (Song B)
+        if (!hasPassedInitialSong) {
             hasPassedInitialSong = true
-            // Baseline track A has completed without being counted.
-            // New track (B) is starting as Count 1.
+            // Baseline track A finished; new track B is Track 1
             completedEligibleTracks = 1
-        } else if (isOldEligible) {
-            hasPassedInitialSong = true
+        } else {
+            // Subsequent transition (B -> C, C -> D, D -> E, E -> F)
             completedEligibleTracks++
         }
 
         val currentTrackNumber = completedEligibleTracks.coerceIn(1, curr.targetTrackCount)
         val isFinal = (currentTrackNumber >= curr.targetTrackCount)
-        val remaining = (curr.targetTrackCount - currentTrackNumber + 1).coerceIn(1, curr.targetTrackCount)
+        val remaining = (curr.targetTrackCount - currentTrackNumber).coerceAtLeast(0)
         val nextPhase = if (isFinal) TrackSleepTimerPhase.FINAL_TRACK else TrackSleepTimerPhase.COUNTING
 
         _state.value = curr.copy(
@@ -310,9 +301,9 @@ class SleepTimerManager(
 
         val name = newTrackId?.let { "Song $it" } ?: (newOccurrence ?: "Track")
         if (isFinal) {
-            android.util.Log.d(TAG, "$name transition → count $currentTrackNumber/${curr.targetTrackCount} → FINAL_TRACK")
+            android.util.Log.d(TAG, "$name started -> Track $currentTrackNumber/${curr.targetTrackCount} (FINAL_TRACK)")
         } else {
-            android.util.Log.d(TAG, "$name transition → count $currentTrackNumber/${curr.targetTrackCount}")
+            android.util.Log.d(TAG, "$name started -> Track $currentTrackNumber/${curr.targetTrackCount} ($remaining tracks after this)")
         }
 
         return false
@@ -323,12 +314,11 @@ class SleepTimerManager(
         val curr = _state.value
         if (curr.isTrackTimerActive && curr.mode == "SONGS" && curr.isFinalTrack) {
             _state.value = curr.copy(phase = TrackSleepTimerPhase.WAITING_FOR_COMPLETION)
-            android.util.Log.d(TAG, "Final track waiting for completion")
         }
     }
 
     /**
-     * Called when the player reaches STATE_ENDED (playlist ended).
+     * Called when the player reaches STATE_ENDED (end of queue).
      */
     @Synchronized
     fun onPlaybackEnded(finishedSongId: Long?, isQualified: Boolean = true, sessionId: String? = null): Boolean {
@@ -341,14 +331,14 @@ class SleepTimerManager(
                 scope.launch(Dispatchers.Main) {
                     onTimerExpired()
                 }
+                return true
             }
             return false
         } else if (curr.mode == "SONGS") {
-            val wasEligible = isQualified
-            if (wasEligible && (curr.isFinalSleepTrack || curr.isFinalTrack || (completedEligibleTracks >= curr.targetTrackCount) || (curr.countedTrackCount >= curr.targetTrackCount))) {
+            if (curr.isFinalSleepTrack || curr.isFinalTrack || (completedEligibleTracks >= curr.targetTrackCount) || (curr.countedTrackCount >= curr.targetTrackCount)) {
                 _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
                 cancelTimer()
-                android.util.Log.d(TAG, "F completion → FINAL_TRACK_COMPLETED")
+                android.util.Log.d(TAG, "Final track ended at end of queue -> FINAL_TRACK_COMPLETED")
                 return true
             }
         }
@@ -388,7 +378,7 @@ class SleepTimerManager(
             val currentSec = if (curr.remainingSeconds > 0) curr.remainingSeconds else 0L
             val addedSec = minutes * 60L
             val totalSec = currentSec + addedSec
-            val totalMins = (totalSec / 60).toInt().coerceAtLeast(1)
+            val totalMins = ((totalSec + 59L) / 60L).toInt().coerceAtLeast(1)
             startTimerMinutes(totalMins, curr.finishLastSong)
         }
     }
@@ -412,18 +402,19 @@ class SleepTimerManager(
         }
     }
 
-    fun toggleFinishLastSong() {
+    fun setFinishLastSong(enabled: Boolean) {
         val curr = _state.value
-        if (curr.isActive) {
-            val newFinish = !curr.finishLastSong
-            _state.value = curr.copy(finishLastSong = newFinish)
-            if (!newFinish && (curr.isWaitingForCurrentTrackToEnd || curr.remainingSeconds <= 0L)) {
-                _state.value = SleepTimerState()
-                timerJob?.cancel()
-                timerJob = null
-                onTimerExpired()
-            }
+        _state.value = curr.copy(finishLastSong = enabled)
+        if (curr.isActive && curr.mode == "TIME" && !enabled && (curr.isWaitingForCurrentTrackToEnd || curr.remainingSeconds <= 0L)) {
+            _state.value = SleepTimerState()
+            timerJob?.cancel()
+            timerJob = null
+            onTimerExpired()
         }
+    }
+
+    fun toggleFinishLastSong() {
+        setFinishLastSong(!_state.value.finishLastSong)
     }
 
     @Synchronized
@@ -439,6 +430,3 @@ class SleepTimerManager(
         android.util.Log.d(TAG, "Timer cancelled/reset")
     }
 }
-
-
-

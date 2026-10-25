@@ -496,6 +496,8 @@ fun SettingsScreen(
     onSetWaveformStyle: (String) -> Unit = {},
     themeMode: String = "DARK",
     onSetThemeMode: (String) -> Unit = {},
+    extraDarkMode: Boolean = false,
+    onSetExtraDarkMode: (Boolean) -> Unit = {},
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     onSetUiTheme: (String) -> Unit = {},
     displayScale: String = "DEFAULT",
@@ -624,6 +626,7 @@ fun SettingsScreen(
     onStartSleepTimer: (minutes: Int, finishLastSong: Boolean) -> Unit = { _, _ -> },
     onStartSongCountTimer: (songs: Int) -> Unit = {},
     onAddSleepTimerMinutes: (minutes: Int) -> Unit = {},
+    onSetSleepTimerFinishLastSong: (Boolean) -> Unit = {},
     onCancelSleepTimer: () -> Unit = {},
     onScanLibrary: () -> Unit = {},
     onQuickScanAndCleanLibrary: () -> Unit = {},
@@ -708,7 +711,7 @@ fun SettingsScreen(
     var showColorPickerDialog by remember { mutableStateOf(false) }
     var showCustomTrackDialog by remember { mutableStateOf(false) }
     var showCustomMinutesDialog by remember { mutableStateOf(false) }
-    var finishLastSongSettings by remember { mutableStateOf(sleepTimerState.finishLastSong) }
+    var finishLastSongSettings by remember(sleepTimerState.finishLastSong) { mutableStateOf(sleepTimerState.finishLastSong) }
     var diagnosticsRefreshTrigger by remember { mutableIntStateOf(0) }
     var showHeadphonePermissionDialog by remember { mutableStateOf(false) }
 
@@ -997,7 +1000,9 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .clickable {
                                 HapticUtils.performClickHaptic(context)
-                                finishLastSongSettings = !finishLastSongSettings
+                                val updated = !finishLastSongSettings
+                                finishLastSongSettings = updated
+                                onSetSleepTimerFinishLastSong(updated)
                             }
                     ) {
                         Row(
@@ -1006,7 +1011,10 @@ fun SettingsScreen(
                         ) {
                             Checkbox(
                                 checked = finishLastSongSettings,
-                                onCheckedChange = { finishLastSongSettings = it },
+                                onCheckedChange = {
+                                    finishLastSongSettings = it
+                                    onSetSleepTimerFinishLastSong(it)
+                                },
                                 colors = CheckboxDefaults.colors(checkedColor = BentoPrimary)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -1295,7 +1303,7 @@ fun SettingsScreen(
 
     val uiMatches = matchesSettingsSearch(
         searchQuery,
-        "ui", "theme", "themes", "dark", "light", "amoled", "oled", "pure black", "color", "accent",
+        "ui", "theme", "themes", "dark", "light", "extra dark", "extra dark mode", "pitch black", "amoled", "oled", "pure black", "color", "accent",
         "palette", "custom color", "picker", "dynamic", "artwork theme", "layout", "now playing",
         "playlist", "home layout", "bento", "mosaic", "grid", "compact", "cards", "high res",
         "online artwork", "cover", "lyrics", "lyrics autoscroll", "autoscroll", "synced lyrics",
@@ -1470,7 +1478,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 1. Futuristic Hero Dashboard Header
+            // 1. Redesigned Studio Control Center Hero Header
             item(key = "settings_hero_dashboard") {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
@@ -1479,9 +1487,9 @@ fun SettingsScreen(
                         1.dp,
                         Brush.linearGradient(
                             listOf(
-                                BentoPrimary.copy(alpha = 0.5f),
-                                BentoBorder.copy(alpha = 0.35f),
-                                BentoPrimary.copy(alpha = 0.2f)
+                                BentoPrimary.copy(alpha = 0.55f),
+                                BentoBorder.copy(alpha = 0.45f),
+                                Color(0xFFBB86FC).copy(alpha = 0.35f)
                             )
                         )
                     ),
@@ -1493,7 +1501,7 @@ fun SettingsScreen(
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
-                                        BentoPrimary.copy(alpha = 0.04f),
+                                        BentoPrimary.copy(alpha = 0.08f),
                                         Color.Transparent
                                     )
                                 )
@@ -1501,20 +1509,20 @@ fun SettingsScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Top Bar: Back Button, Title, System Subtitle
+                        // Top Bar: Back Button, Title & Subtitle, Quick All-In-One Toggle
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
+                                color = BentoCardPurple,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
                                 onClick = {
                                     HapticUtils.performClickHaptic(context)
                                     handleBack()
                                 },
-                                modifier = Modifier.size(38.dp)
+                                modifier = Modifier.size(40.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -1530,11 +1538,145 @@ fun SettingsScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Settings",
+                                    text = "Control Studio",
                                     fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.ExtraBold,
                                     color = BentoTextPrimary
                                 )
+                                Text(
+                                    text = "Audio DSP • Visual Themes • Cloud Sync • Storage",
+                                    fontSize = 11.sp,
+                                    color = BentoTextSecondary
+                                )
+                            }
+
+                            Surface(
+                                onClick = {
+                                    HapticUtils.performClickHaptic(context)
+                                    showAllInOneList = !showAllInOneList
+                                    if (showAllInOneList) selectedSection = SettingsSection.ALL
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (showAllInOneList) BentoPrimary.copy(alpha = 0.18f) else BentoCardPurple,
+                                border = BorderStroke(1.dp, if (showAllInOneList) BentoPrimary else BentoBorder.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (showAllInOneList) Icons.Default.GridView else Icons.Default.ViewList,
+                                        contentDescription = null,
+                                        tint = if (showAllInOneList) BentoPrimary else BentoTextSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = if (showAllInOneList) "Hub View" else "All List",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (showAllInOneList) BentoPrimary else BentoTextPrimary
+                                    )
+                                }
+                            }
+                        }
+
+                        // Interactive Quick Status Strip
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            item(key = "status_pill_theme") {
+                                val modeLabel = if (extraDarkMode && !themeMode.equals("LIGHT", ignoreCase = true)) {
+                                    "Extra Dark"
+                                } else {
+                                    themeMode.lowercase().replaceFirstChar { it.uppercase() }
+                                }
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        navigateToSection(SettingsSection.UI)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFFBB86FC).copy(alpha = 0.14f),
+                                    border = BorderStroke(1.dp, Color(0xFFBB86FC).copy(alpha = 0.35f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(Icons.Default.Palette, contentDescription = null, tint = Color(0xFFBB86FC), modifier = Modifier.size(13.dp))
+                                        Text(modeLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                    }
+                                }
+                            }
+                            item(key = "status_pill_eq") {
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        navigateToSection(SettingsSection.AUDIO)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF00E5FF).copy(alpha = 0.14f),
+                                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.35f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(Icons.Default.Equalizer, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(13.dp))
+                                        Text("EQ: $equalizerPreset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                    }
+                                }
+                            }
+                            item(key = "status_pill_sleep") {
+                                val sleepLabel = if (sleepTimerState.isActive) {
+                                    if (sleepTimerState.mode == "SONGS") {
+                                        "Sleep: ${sleepTimerState.elapsedSongs}/${sleepTimerState.totalSongs} trk"
+                                    } else {
+                                        "Sleep: ${sleepTimerState.remainingSeconds / 60}m"
+                                    }
+                                } else "Sleep: Off"
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        navigateToSection(SettingsSection.PLAYBACK)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFFFF9100).copy(alpha = if (sleepTimerState.isActive) 0.22f else 0.12f),
+                                    border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = if (sleepTimerState.isActive) 0.55f else 0.3f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(Icons.Default.Bedtime, contentDescription = null, tint = Color(0xFFFF9100), modifier = Modifier.size(13.dp))
+                                        Text(sleepLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                    }
+                                }
+                            }
+                            item(key = "status_pill_hz") {
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        navigateToSection(SettingsSection.UI)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF00E676).copy(alpha = 0.14f),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(Icons.Default.Speed, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(13.dp))
+                                        Text(if (highRefreshRate) "90/120Hz" else "60Hz", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                    }
+                                }
                             }
                         }
 
@@ -2582,6 +2724,9 @@ fun SettingsScreen(
                                         isSelected = isSelected,
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
+                                            if (!theme.isDark) {
+                                                onSetExtraDarkMode(false)
+                                            }
                                             onSetUiTheme(theme.id)
                                         }
                                     )
@@ -2698,11 +2843,15 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
-                        // 3. Display Mode Selection (Dark / Light / AMOLED / System)
+                        // 3. Display Mode Selection (Dark / Light / AMOLED / System) & Extra Dark Mode
                         val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
                         val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme)
+                        val isDarkThemeActive = !themeMode.equals("LIGHT", ignoreCase = true) &&
+                            !(themeMode.equals("SYSTEM", ignoreCase = true) && !isSystemDark) &&
+                            currentTheme.isDark
+                        val isExtraDarkActive = (extraDarkMode || themeMode.equals("AMOLED", ignoreCase = true)) && isDarkThemeActive
 
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                             SettingsSegmentedSelector(
                                 options = listOf(
@@ -2714,6 +2863,11 @@ fun SettingsScreen(
                                 selectedOption = themeMode.uppercase(),
                                 onSelectOption = { newMode ->
                                     HapticUtils.performClickHaptic(context)
+                                    if (newMode.equals("LIGHT", ignoreCase = true)) {
+                                        onSetExtraDarkMode(false)
+                                    } else if (newMode.equals("AMOLED", ignoreCase = true)) {
+                                        onSetExtraDarkMode(true)
+                                    }
                                     if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, newMode, isSystemDark)) {
                                         val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(newMode, isSystemDark)
                                         onSetUiTheme(fallback.id)
@@ -2722,6 +2876,145 @@ fun SettingsScreen(
                                 },
                                 accentColor = Color(0xFFBB86FC)
                             )
+
+                            // Issue #7 Requirement: "Extra Dark Mode" option under UI & Theme
+                            // Turns on only when Dark Theme is selected; automatically turns off when Light Theme is selected;
+                            // ensures all UI cards, borders, and texts remain crisp and visible across the entire app.
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.14f) else BentoCardPurple.copy(alpha = 0.65f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        HapticUtils.performClickHaptic(context)
+                                        if (!isDarkThemeActive) {
+                                            onSetExtraDarkMode(false)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "Extra Dark Mode requires Dark Theme. Switch from Light to Dark Theme first.",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            val nextVal = !isExtraDarkActive
+                                            onSetExtraDarkMode(nextVal)
+                                            if (!nextVal && themeMode.equals("AMOLED", ignoreCase = true)) {
+                                                onSetThemeMode("DARK")
+                                            }
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(
+                                                    if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.22f)
+                                                    else BentoCardSurface
+                                                )
+                                                .border(
+                                                    1.dp,
+                                                    if (isExtraDarkActive) Color(0xFFBB86FC) else BentoBorder,
+                                                    RoundedCornerShape(10.dp)
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DarkMode,
+                                                contentDescription = "Extra Dark Mode",
+                                                tint = if (isExtraDarkActive) Color(0xFFBB86FC) else BentoTextSecondary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Extra Dark Mode",
+                                                    fontSize = 14.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BentoTextPrimary
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = if (!isDarkThemeActive) {
+                                                        BentoBorder.copy(alpha = 0.4f)
+                                                    } else if (isExtraDarkActive) {
+                                                        Color(0xFFBB86FC).copy(alpha = 0.22f)
+                                                    } else {
+                                                        BentoCardSurface
+                                                    }
+                                                ) {
+                                                    Text(
+                                                        text = when {
+                                                            !isDarkThemeActive -> "Dark Theme Only"
+                                                            isExtraDarkActive -> "Active"
+                                                            else -> "OLED Ready"
+                                                        },
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isExtraDarkActive) Color(0xFFBB86FC) else BentoTextSecondary,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = if (!isDarkThemeActive) {
+                                                    "Disabled while Light Theme is selected • Automatically turns off in Light Theme"
+                                                } else if (isExtraDarkActive) {
+                                                    "True pitch-black #000000 canvas with high-contrast borders & legible text across all screens"
+                                                } else {
+                                                    "Apply pitch-black surfaces with luminous borders across the app when Dark Theme is active"
+                                                },
+                                                fontSize = 11.5.sp,
+                                                color = BentoTextSecondary,
+                                                lineHeight = 15.sp
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Switch(
+                                        checked = isExtraDarkActive,
+                                        enabled = isDarkThemeActive,
+                                        onCheckedChange = { checked ->
+                                            HapticUtils.performClickHaptic(context)
+                                            if (!isDarkThemeActive) {
+                                                onSetExtraDarkMode(false)
+                                            } else {
+                                                onSetExtraDarkMode(checked)
+                                                if (!checked && themeMode.equals("AMOLED", ignoreCase = true)) {
+                                                    onSetThemeMode("DARK")
+                                                }
+                                            }
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.Black,
+                                            checkedTrackColor = Color(0xFFBB86FC),
+                                            uncheckedThumbColor = BentoTextSecondary,
+                                            uncheckedTrackColor = BentoCardSurface
+                                        )
+                                    )
+                                }
+                            }
                         }
 
                         SettingsDivider()
@@ -3141,12 +3434,19 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { finishLastSongSettings = !finishLastSongSettings }
+                                .clickable {
+                                    val updated = !finishLastSongSettings
+                                    finishLastSongSettings = updated
+                                    onSetSleepTimerFinishLastSong(updated)
+                                }
                                 .padding(vertical = 2.dp)
                         ) {
                             Checkbox(
                                 checked = finishLastSongSettings,
-                                onCheckedChange = { finishLastSongSettings = it },
+                                onCheckedChange = {
+                                    finishLastSongSettings = it
+                                    onSetSleepTimerFinishLastSong(it)
+                                },
                                 colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFF9100))
                             )
                             Spacer(modifier = Modifier.width(6.dp))

@@ -1,6 +1,5 @@
 package com.example.service
 
-import android.media.MediaMetadataRetriever
 import com.example.data.local.LyricsDao
 import com.example.data.local.LyricsEntity
 import com.example.data.model.Lyrics
@@ -85,42 +84,74 @@ class LyricsFetcher(
      * - LRCLIB (international open database)
      * - JioSaavn (premier source for Tamil, South Asian, and new releases)
      * - NetEase Cloud Music (massive catalog of synced LRC lyrics)
+     *
+     * Issue #9 Enhancement: If the query includes an artist or movie/album and returns few/no results,
+     * automatically runs a fallback pass using ONLY the song name and disambiguates multiple matches
+     * using the artist/album/movie tokens.
      */
     suspend fun searchAvailableLyrics(query: String): List<LyricsCandidate> = withContext(Dispatchers.IO) {
         val cleanQ = cleanSearchQuery(query)
         if (cleanQ.isBlank()) return@withContext emptyList()
 
-        coroutineScope {
-            val lrclibDef = async { searchLrclibCandidates(cleanQ) }
-            val jioSaavnDef = async { searchJioSaavnCandidates(cleanQ) }
-            val netEaseDef = async { searchNetEaseCandidates(cleanQ) }
+        val primaryResults = queryAllCandidateProviders(cleanQ)
+        val titleOnlyQuery = extractSongTitleOnlyFromQuery(cleanQ)
 
-            val lrclibResults = try { lrclibDef.await() } catch (_: Exception) { emptyList() }
-            val jioSaavnResults = try { jioSaavnDef.await() } catch (_: Exception) { emptyList() }
-            val netEaseResults = try { netEaseDef.await() } catch (_: Exception) { emptyList() }
-
-            val combined = mutableListOf<LyricsCandidate>()
-            combined.addAll(lrclibResults)
-            combined.addAll(jioSaavnResults)
-            combined.addAll(netEaseResults)
-
-            // Deduplicate by text signature while preserving distinct sources
-            val seen = mutableSetOf<String>()
-            val deduped = mutableListOf<LyricsCandidate>()
-            for (c in combined) {
-                val key = "${c.source}:${c.trackName.lowercase()}:${c.artistName.lowercase()}:${c.isSynced}"
-                if (seen.add(key)) {
-                    deduped.add(c)
-                }
-            }
-
-            // Sort: Synced lyrics first, Tamil script matches prominently, then by track name
-            deduped.sortedWith(
-                compareByDescending<LyricsCandidate> { it.isSynced }
-                    .thenByDescending { isTamilText(it.plainLyrics ?: "") || isTamilText(it.trackName) }
-                    .thenBy { it.trackName.lowercase() }
-            )
+        val fallbackResults = if (titleOnlyQuery.isNotBlank() &&
+            !titleOnlyQuery.equals(cleanQ, ignoreCase = true) &&
+            primaryResults.none { it.isSynced }
+        ) {
+            queryAllCandidateProviders(titleOnlyQuery)
+        } else {
+            emptyList()
         }
+
+        val combined = mutableListOf<LyricsCandidate>()
+        combined.addAll(primaryResults)
+        combined.addAll(fallbackResults)
+
+        val seen = mutableSetOf<String>()
+        val deduped = mutableListOf<LyricsCandidate>()
+        for (c in combined) {
+            val key = "${c.source}:${c.trackName.lowercase()}:${c.artistName.lowercase()}:${c.isSynced}"
+            if (seen.add(key)) {
+                deduped.add(c)
+            }
+        }
+
+        val hintTokens = cleanQ.lowercase()
+            .split(Regex("""[\s,\-&/()]+"""))
+            .filter { it.length >= 3 && !titleOnlyQuery.lowercase().contains(it) }
+
+        deduped.sortedWith(
+            compareByDescending<LyricsCandidate> { it.isSynced }
+                .thenByDescending { candidate ->
+                    val hay = "${candidate.artistName} ${candidate.albumName}".lowercase()
+                    hintTokens.count { hay.contains(it) }
+                }
+                .thenByDescending { isTamilText(it.plainLyrics ?: "") || isTamilText(it.trackName) }
+                .thenBy { it.trackName.lowercase() }
+        )
+    }
+
+    private suspend fun queryAllCandidateProviders(cleanQ: String): List<LyricsCandidate> = coroutineScope {
+        val lrclibDef = async { searchLrclibCandidates(cleanQ) }
+        val jioSaavnDef = async { searchJioSaavnCandidates(cleanQ) }
+        val netEaseDef = async { searchNetEaseCandidates(cleanQ) }
+
+        val lrclibResults = try { lrclibDef.await() } catch (_: Exception) { emptyList() }
+        val jioSaavnResults = try { jioSaavnDef.await() } catch (_: Exception) { emptyList() }
+        val netEaseResults = try { netEaseDef.await() } catch (_: Exception) { emptyList() }
+
+        buildList {
+            addAll(lrclibResults)
+            addAll(jioSaavnResults)
+            addAll(netEaseResults)
+        }
+    }
+
+    private fun extractSongTitleOnlyFromQuery(cleanQ: String): String {
+        val dashSplit = cleanQ.split(Regex("""\s+[-–—|]\s+""")).firstOrNull()?.trim() ?: cleanQ
+        return TagCleaner.cleanTitle(dashSplit, dashSplit).trim()
     }
 
     private fun searchLrclibCandidates(cleanQ: String): List<LyricsCandidate> {
@@ -349,7 +380,9 @@ class LyricsFetcher(
         val isTamilSong = isTamilText(cleanTitle) || isTamilText(cleanArtist) || isTamilText(cleanAlbum) ||
                 isTamilArtist(cleanArtist) || cleanTitle.contains("tamil", ignoreCase = true)
 
-        // 4. Try fetching from LRCLIB API - prioritizing synced lyrics
+        // =========================================================================
+        // PASS 1: EXISTING MULTI-PROVIDER FETCH ENGINE (Unchanged Primary Pipeline)
+        // =========================================================================
         var lrclibResult: Pair<String?, String?>? = null
 
         // 4a. Direct LRCLIB get with exact tags + duration
@@ -451,26 +484,60 @@ class LyricsFetcher(
             return@withContext entity.toDomainModel()
         }
 
+        // =========================================================================
+        // PASS 2 (ISSUE #9 FALLBACK): SONG-NAME-ONLY FETCH WITH ARTIST/ALBUM/MOVIE
+        // DISAMBIGUATION WHEN MULTIPLE SONGS SHARE THE SAME NAME
+        // =========================================================================
+        // Sometimes lyrics sources have a different artist/singer/music-director string
+        // than the local audio tag. When Pass 1 fails to find synced lyrics (or any lyrics),
+        // we query using ONLY the song name (`cleanTitle`), and use `cleanArtist`,
+        // `primaryArtist`, `cleanAlbum` (movie/album name), and `durationSec` ONLY to
+        // disambiguate when multiple songs are returned with the same song name!
+        val titleOnlyDisambiguated = fetchLyricsBySongNameOnlyWithDisambiguation(
+            songTitle = cleanTitle,
+            fullArtist = cleanArtist,
+            primaryArtist = primaryArtist,
+            albumOrMovie = cleanAlbum,
+            durationSec = durationSec.toInt()
+        )
+
+        if (titleOnlyDisambiguated != null && !titleOnlyDisambiguated.syncedLyricsRaw.isNullOrBlank()) {
+            val (_, json) = com.example.util.LrcParser.parseLrcContent(titleOnlyDisambiguated.syncedLyricsRaw)
+            val entity = LyricsEntity(
+                songId = song.id,
+                plainLyrics = titleOnlyDisambiguated.plainLyrics ?: lrclibResult?.first ?: fallbackPlain,
+                syncedLyricsJson = json ?: titleOnlyDisambiguated.syncedLyricsRaw,
+                isCached = true,
+                source = "${titleOnlyDisambiguated.source} (Title Match)"
+            )
+            lyricsDao.insertLyrics(entity)
+            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
+            return@withContext entity.toDomainModel()
+        }
+
         // 7. Query Lyrist API (indexes newly released songs, singles, and hot drops)
         var lyristResult: Pair<String?, String?>? = null
-        if (lrclibResult?.first.isNullOrBlank() && jioSaavnResult?.first.isNullOrBlank()) {
+        if (lrclibResult?.first.isNullOrBlank() && jioSaavnResult?.first.isNullOrBlank() && titleOnlyDisambiguated?.plainLyrics.isNullOrBlank()) {
             lyristResult = fetchLyristLyrics(cleanTitle, primaryArtist.ifBlank { cleanArtist })
+            if (lyristResult == null && cleanTitle.isNotBlank()) {
+                // Song-name-only fallback on Lyrist
+                lyristResult = fetchLyristLyrics(cleanTitle, "")
+            }
         }
 
         // 8. Fallback to lyrics.ovh if still no lyrics found
         var ovhResult: Pair<String?, String?>? = null
-        if (lrclibResult?.first.isNullOrBlank() && jioSaavnResult?.first.isNullOrBlank() && lyristResult?.first.isNullOrBlank() && cleanArtist.isNotBlank()) {
+        if (lrclibResult?.first.isNullOrBlank() && jioSaavnResult?.first.isNullOrBlank() && titleOnlyDisambiguated?.plainLyrics.isNullOrBlank() && lyristResult?.first.isNullOrBlank() && cleanArtist.isNotBlank()) {
             ovhResult = fetchOvhLyrics(cleanTitle, primaryArtist.ifBlank { cleanArtist })
         }
 
-        // Prioritize final result:
-        // If Tamil song and JioSaavn provided native Tamil script lyrics, prefer them!
         val isJioSaavnTamil = jioSaavnResult?.first?.let { isTamilText(it) } == true
         val bestPlain = when {
             isTamilSong && isJioSaavnTamil -> jioSaavnResult?.first
             !lrclibResult?.first.isNullOrBlank() -> lrclibResult?.first
             !jioSaavnResult?.first.isNullOrBlank() -> jioSaavnResult?.first
             !netEaseResult?.first.isNullOrBlank() -> netEaseResult?.first
+            !titleOnlyDisambiguated?.plainLyrics.isNullOrBlank() -> titleOnlyDisambiguated?.plainLyrics
             !lyristResult?.first.isNullOrBlank() -> lyristResult?.first
             !ovhResult?.first.isNullOrBlank() -> ovhResult?.first
             else -> fallbackPlain
@@ -481,6 +548,7 @@ class LyricsFetcher(
             !lrclibResult?.first.isNullOrBlank() -> "Online (LRCLIB)"
             !jioSaavnResult?.first.isNullOrBlank() -> "Online (JioSaavn)"
             !netEaseResult?.first.isNullOrBlank() -> "Online (NetEase)"
+            !titleOnlyDisambiguated?.plainLyrics.isNullOrBlank() -> "${titleOnlyDisambiguated?.source ?: "Online"} (Title Match)"
             !lyristResult?.first.isNullOrBlank() -> "Online (Lyrist - Recent)"
             !ovhResult?.first.isNullOrBlank() -> "Online (Lyrics.ovh)"
             else -> fallbackSource
@@ -510,12 +578,185 @@ class LyricsFetcher(
         return@withContext fallback.toDomainModel()
     }
 
+    /**
+     * Issue #9 Fallback Method:
+     * Searches LRCLIB, JioSaavn, and NetEase using ONLY the song title (`songTitle`),
+     * including transliteration variants for regional/Tamil titles.
+     * - If only 1 song match is found, returns it directly even if the artist name on the
+     *   provider differs from the local file's artist tag.
+     * - If multiple songs with the same name are found, uses `fullArtist`, `primaryArtist`,
+     *   `albumOrMovie` (album/movie name), and `durationSec` to score and select the right song.
+     */
+    private suspend fun fetchLyricsBySongNameOnlyWithDisambiguation(
+        songTitle: String,
+        fullArtist: String,
+        primaryArtist: String,
+        albumOrMovie: String,
+        durationSec: Int
+    ): LyricsCandidate? = coroutineScope {
+        val cleanSongTitle = cleanSearchQuery(songTitle)
+        if (cleanSongTitle.length < 2) return@coroutineScope null
+
+        val titleQueries = buildList {
+            add(cleanSongTitle)
+            val strippedParen = cleanSongTitle.replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), "").trim()
+            if (strippedParen.length >= 2 && !strippedParen.equals(cleanSongTitle, ignoreCase = true)) {
+                add(strippedParen)
+            }
+            for (variant in TransliterationUtil.normalizeSearchQuery(strippedParen.ifBlank { cleanSongTitle })) {
+                if (variant.length >= 2 && none { it.equals(variant, ignoreCase = true) }) {
+                    add(variant)
+                }
+            }
+        }.take(3)
+
+        val allCandidates = mutableListOf<LyricsCandidate>()
+        for (titleQ in titleQueries) {
+            val lrcDef = async { searchLrclibByTrackNameOnly(titleQ) }
+            val saavnDef = async { searchJioSaavnCandidates(titleQ) }
+            val netEaseDef = async { searchNetEaseCandidates(titleQ) }
+
+            allCandidates.addAll(try { lrcDef.await() } catch (_: Exception) { emptyList() })
+            allCandidates.addAll(try { saavnDef.await() } catch (_: Exception) { emptyList() })
+            allCandidates.addAll(try { netEaseDef.await() } catch (_: Exception) { emptyList() })
+
+            if (allCandidates.any { it.isSynced }) break
+        }
+
+        if (allCandidates.isEmpty()) return@coroutineScope null
+
+        val normalizedTargetTitle = normalizeComparisonToken(cleanSongTitle)
+        // Filter to candidates whose track title reasonably matches our song name
+        val titleMatchedCandidates = allCandidates.filter { candidate ->
+            val candTitle = normalizeComparisonToken(candidate.trackName)
+            candTitle == normalizedTargetTitle ||
+                candTitle.contains(normalizedTargetTitle) ||
+                normalizedTargetTitle.contains(candTitle)
+        }.ifEmpty { allCandidates }
+
+        // If only a single candidate exists, return it immediately without rejecting due to artist mismatch
+        if (titleMatchedCandidates.size == 1) {
+            return@coroutineScope titleMatchedCandidates.first()
+        }
+
+        // Multiple songs found with the same name: disambiguate using artist / album / movie name & duration
+        val artistTokens = "$fullArtist $primaryArtist"
+            .lowercase()
+            .split(Regex("""[\s,\-&/().]+"""))
+            .filter { it.length >= 3 && it != "unknown" && it != "artist" }
+            .distinct()
+
+        val albumMovieTokens = albumOrMovie
+            .lowercase()
+            .split(Regex("""[\s,\-&/().]+"""))
+            .filter { it.length >= 3 && it != "unknown" && it != "album" && it != "movie" && it != "ost" }
+            .distinct()
+
+        titleMatchedCandidates.maxByOrNull { candidate ->
+            var score = 0
+            val candTitleNorm = normalizeComparisonToken(candidate.trackName)
+            val candArtistLower = candidate.artistName.lowercase()
+            val candAlbumLower = candidate.albumName.lowercase()
+
+            // Exact title match bonus
+            if (candTitleNorm == normalizedTargetTitle) {
+                score += 300
+            } else if (candTitleNorm.startsWith(normalizedTargetTitle) || normalizedTargetTitle.startsWith(candTitleNorm)) {
+                score += 150
+            }
+
+            // Disambiguate among same-named songs using Album / Movie name first, then Artist name
+            if (albumMovieTokens.isNotEmpty()) {
+                val albumMatches = albumMovieTokens.count { token ->
+                    candAlbumLower.contains(token) || candArtistLower.contains(token) || candidate.trackName.lowercase().contains(token)
+                }
+                score += albumMatches * 220
+            }
+
+            if (artistTokens.isNotEmpty()) {
+                val artistMatches = artistTokens.count { token ->
+                    candArtistLower.contains(token) || candAlbumLower.contains(token)
+                }
+                score += artistMatches * 180
+            }
+
+            // Duration proximity bonus
+            if (durationSec > 0 && candidate.durationSec > 0) {
+                val diff = abs(durationSec - candidate.durationSec)
+                when {
+                    diff <= 2 -> score += 200
+                    diff <= 6 -> score += 120
+                    diff <= 15 -> score += 50
+                    diff > 45 -> score -= 100
+                }
+            }
+
+            // Prefer synced lyrics when disambiguated scores are close
+            if (candidate.isSynced) {
+                score += 250
+            }
+
+            score
+        }
+    }
+
+    private fun searchLrclibByTrackNameOnly(trackName: String): List<LyricsCandidate> {
+        val results = mutableListOf<LyricsCandidate>()
+        try {
+            val titleEnc = URLEncoder.encode(trackName, "UTF-8")
+            val url = "https://lrclib.net/api/search?track_name=$titleEnc"
+            val request = Request.Builder().url(url).header("User-Agent", "OffGridMusicPlayer/2.0").build()
+            val response = okHttpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string()
+                if (!bodyStr.isNullOrBlank()) {
+                    val arr = JSONArray(bodyStr)
+                    for (i in 0 until minOf(arr.length(), 10)) {
+                        val obj = arr.getJSONObject(i)
+                        val id = obj.optString("id", "lrc_title_$i")
+                        val tName = obj.optString("trackName", "Unknown Track")
+                        val aName = obj.optString("artistName", "Unknown Artist")
+                        val alName = obj.optString("albumName", "")
+                        val duration = obj.optInt("duration", 0)
+                        val plain = obj.optString("plainLyrics", null)
+                        val synced = obj.optString("syncedLyrics", null)
+
+                        if (!plain.isNullOrBlank() || !synced.isNullOrBlank()) {
+                            val isSyncedLyrics = !synced.isNullOrBlank() && com.example.util.LrcParser.parseLrcToLines(synced).isNotEmpty()
+                            results.add(
+                                LyricsCandidate(
+                                    id = id,
+                                    trackName = tName,
+                                    artistName = aName,
+                                    albumName = alName,
+                                    durationSec = duration,
+                                    plainLyrics = plain,
+                                    syncedLyricsRaw = synced,
+                                    source = if (isSyncedLyrics) "LRCLIB (Synced)" else "LRCLIB",
+                                    isSynced = isSyncedLyrics
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return results
+    }
+
+    private fun normalizeComparisonToken(input: String): String {
+        return input.lowercase()
+            .replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), " ")
+            .replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+
     private fun extractEmbeddedLyrics(audioPath: String): String? {
         if (audioPath.isBlank()) return null
         return try {
             val file = java.io.File(audioPath)
             if (!file.exists() || !file.canRead()) return null
-            // Check if audio file tags or sidecar cache has lyrics
             null
         } catch (_: Exception) {
             null
@@ -839,7 +1080,6 @@ class LyricsFetcher(
                     if (!rawLyrics.isNullOrBlank()) {
                         val cleaned = unescapeHtml(rawLyrics)
                         if (cleaned.isNotBlank()) {
-                            // Check if synced timestamps [mm:ss] exist in the body
                             if (cleaned.contains(Regex("""\[\d{2}:\d{2}"""))) {
                                 val (plain, synced) = com.example.util.LrcParser.parseLrcContent(cleaned)
                                 return Pair(plain ?: cleaned, synced)

@@ -53,6 +53,9 @@ interface SongDao {
     @Update
     suspend fun updateSong(song: SongEntity)
 
+    @Update
+    suspend fun updateSongs(songs: List<SongEntity>)
+
     @Query("UPDATE songs SET isManuallyEdited = :isManual WHERE id = :songId")
     suspend fun updateManualEditStatus(songId: Long, isManual: Boolean = true)
 
@@ -94,6 +97,9 @@ interface SongDao {
 
     @Query("DELETE FROM songs WHERE id = :id")
     suspend fun deleteSong(id: Long)
+
+    @Query("DELETE FROM songs WHERE id IN (:ids)")
+    suspend fun deleteSongsByIds(ids: List<Long>)
 
     @Query("SELECT COUNT(*) FROM songs WHERE isMissing = 0")
     fun getSongCount(): Flow<Int>
@@ -219,6 +225,14 @@ interface PlaylistDao {
     """)
     fun getPlaylistSongs(playlistId: Long): Flow<List<SongEntity>>
 
+    @Query("""
+        SELECT s.* FROM songs s 
+        INNER JOIN playlist_songs ps ON s.id = ps.songId 
+        WHERE ps.playlistId = :playlistId 
+        ORDER BY ps.position ASC
+    """)
+    suspend fun getPlaylistSongsOnce(playlistId: Long): List<SongEntity>
+
     @Query("SELECT COUNT(*) FROM playlist_songs WHERE playlistId = :playlistId")
     suspend fun getPlaylistSongCount(playlistId: Long): Int
 
@@ -269,7 +283,7 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists")
     suspend fun getAllPlaylistsOnce(): List<PlaylistEntity>
 
-    @Query("SELECT * FROM playlist_songs")
+    @Query("SELECT * FROM playlist_songs ORDER BY playlistId ASC, position ASC")
     suspend fun getAllPlaylistSongsOnce(): List<PlaylistSongCrossRef>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -295,6 +309,9 @@ data class RecentlyPlayedHistoryItem(
 interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaybackHistory(history: PlaybackHistoryEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaybackHistoryBatch(histories: List<PlaybackHistoryEntity>)
 
     @Query("SELECT * FROM playback_history WHERE sessionId = :sessionId LIMIT 1")
     suspend fun getHistoryBySessionId(sessionId: String): PlaybackHistoryEntity?
@@ -508,4 +525,3 @@ interface SmartPlaylistDao {
     @Query("DELETE FROM smart_playlists")
     suspend fun clearAllSmartPlaylists()
 }
-

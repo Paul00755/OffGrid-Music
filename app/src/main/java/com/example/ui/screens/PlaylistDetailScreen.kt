@@ -4,6 +4,8 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -29,8 +31,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.ui.zIndex
 import com.example.data.model.Playlist
 import com.example.data.model.Song
@@ -108,7 +108,7 @@ fun PlaylistDetailScreen(
     val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     // Maintain a mutable list of entries for live drag-and-drop reordering with position-independent stable composite keys
-    val initialEntries = remember(playlist.id, playlistSongs) {
+    val initialEntries = remember(playlist.id) {
         buildPlaylistEntries(playlistSongs, playlist.id)
     }
     val localEntries = remember(playlist.id) {
@@ -128,6 +128,7 @@ fun PlaylistDetailScreen(
                     val item = localEntries.removeAt(from)
                     val safeTo = to.coerceIn(0, localEntries.size)
                     localEntries.add(safeTo, item)
+                    lastSavedOrderIds = localEntries.map { it.song.id }
                     HapticUtils.performTickHaptic(context)
                 } catch (e: Exception) {
                     android.util.Log.e("PlaylistDetailScreen", "Error in onMove: from=$from to=$to", e)
@@ -203,11 +204,20 @@ fun PlaylistDetailScreen(
                 localEntries.clear()
                 localEntries.addAll(remainingEntries)
             } else {
-                // Same song set: If newIds matches lastSavedOrderIds, DB write is confirmed
-                if (lastSavedOrderIds != null && newIds == lastSavedOrderIds) {
-                    lastSavedOrderIds = null
+                // Same song set: If newIds matches lastSavedOrderIds, DB write is confirmed.
+                // If user has NOT reordered locally in this session (lastSavedOrderIds == null)
+                // and DB emitted a new order (e.g. from cloud sync or initial load), sync to it.
+                if (lastSavedOrderIds != null) {
+                    if (newIds == lastSavedOrderIds) {
+                        lastSavedOrderIds = null
+                    }
+                } else if (currentIds != newIds) {
+                    localEntries.clear()
+                    localEntries.addAll(buildPlaylistEntries(playlistSongs, playlist.id))
+                    return@LaunchedEffect
                 }
-                // Live update song metadata (title, artist, album, artwork, lyrics) for existing entries
+
+                // Live update song metadata (title, artist, album, artwork, favorite) in-place without changing order
                 val updatedSongMap = playlistSongs.associateBy { it.id }
                 for (i in localEntries.indices) {
                     val currentEntry = localEntries[i]
@@ -216,7 +226,8 @@ fun PlaylistDetailScreen(
                             updated.title != currentEntry.song.title ||
                             updated.artist != currentEntry.song.artist ||
                             updated.album != currentEntry.song.album ||
-                            updated.artworkUri != currentEntry.song.artworkUri)) {
+                            updated.artworkUri != currentEntry.song.artworkUri ||
+                            updated.isFavorite != currentEntry.song.isFavorite)) {
                         localEntries[i] = currentEntry.copy(song = updated)
                     }
                 }
@@ -266,17 +277,21 @@ fun PlaylistDetailScreen(
         }
     }
 
+    // M3U Export ALWAYS exports in the user's custom order (`localEntries.map { it.song }`)
+    // (or if they explicitly sorted and saved, localEntries holds that exact order).
     val m3uExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("audio/x-mpegurl")
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                val songsToExport = if (selectedSortOrder == PlaylistSortOrder.CUSTOM) localEntries.map { it.song } else displaySongs
-                val m3uContent = M3uParser.exportM3u(playlist.name, songsToExport)
+                val customOrderedSongs = localEntries.map { it.song }.ifEmpty { displaySongs }
+                onReorderSongs?.invoke(customOrderedSongs)
+                val m3uContent = M3uParser.exportM3u(playlist.name, customOrderedSongs)
                 context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    stream.write(m3uContent.toByteArray())
+                    stream.write(m3uContent.toByteArray(Charsets.UTF_8))
+                    stream.flush()
                 }
-                Toast.makeText(context, "Exported ${playlist.name} as M3U", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Exported ${playlist.name} (${customOrderedSongs.size} tracks in custom order)", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
             }
@@ -301,115 +316,76 @@ fun PlaylistDetailScreen(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-        // Top Bar
-        item(key = "playlist_top_bar") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        if (selectedSortOrder == PlaylistSortOrder.CUSTOM) {
-                            val updatedSongs = localEntries.map { it.song }
-                            if (updatedSongs.isNotEmpty()) {
-                                onReorderSongs?.invoke(updatedSongs)
-                            }
-                        }
-                        onBackClick()
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(BentoCardDarkPurple)
+            // Top Bar
+            item(key = "playlist_top_bar") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = BentoTextPrimary
-                    )
-                }
-
-                Text(
-                    text = playlist.name,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BentoTextPrimary,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false).padding(horizontal = 8.dp)
-                )
-
-                Box {
                     IconButton(
-                        onClick = { showOptionsMenu = true },
+                        onClick = {
+                            if (selectedSortOrder == PlaylistSortOrder.CUSTOM) {
+                                val updatedSongs = localEntries.map { it.song }
+                                if (updatedSongs.isNotEmpty()) {
+                                    onReorderSongs?.invoke(updatedSongs)
+                                }
+                            }
+                            onBackClick()
+                        },
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
                             .background(BentoCardDarkPurple)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Playlist Options",
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
                             tint = BentoTextPrimary
                         )
                     }
 
-                    DropdownMenu(
-                        expanded = showOptionsMenu,
-                        onDismissRequest = { showOptionsMenu = false },
-                        modifier = Modifier.background(BentoCardSurface)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Rename Playlist", color = BentoTextPrimary) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            },
-                            onClick = {
-                                showOptionsMenu = false
-                                renameText = playlist.name
-                                showRenameDialog = true
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Change Playlist Cover", color = BentoTextPrimary) },
-                            onClick = {
-                                showOptionsMenu = false
-                                artworkPickerLauncher.launch("image/*")
-                            }
-                        )
-                        if (playlist.artworkUri != null) {
-                            DropdownMenuItem(
-                                text = { Text("Remove Custom Cover", color = BentoTextSecondary) },
-                                onClick = {
-                                    showOptionsMenu = false
-                                    onUpdatePlaylistArtwork(playlist.id, null)
-                                }
+                    Text(
+                        text = playlist.name,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(horizontal = 8.dp)
+                    )
+
+                    Box {
+                        IconButton(
+                            onClick = { showOptionsMenu = true },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(BentoCardDarkPurple)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Playlist Options",
+                                tint = BentoTextPrimary
                             )
                         }
-                        DropdownMenuItem(
-                            text = { Text("Export as M3U", color = BentoTextPrimary) },
-                            onClick = {
-                                showOptionsMenu = false
-                                m3uExportLauncher.launch("${playlist.name}.m3u")
-                            }
-                        )
-                        if (onRemoveDuplicates != null) {
+
+                        DropdownMenu(
+                            expanded = showOptionsMenu,
+                            onDismissRequest = { showOptionsMenu = false },
+                            modifier = Modifier.background(BentoCardSurface)
+                        ) {
                             DropdownMenuItem(
-                                text = { Text("Remove Duplicate Songs", color = BentoTextPrimary) },
+                                text = { Text("Rename Playlist", color = BentoTextPrimary) },
                                 leadingIcon = {
                                     Icon(
-                                        imageVector = Icons.Default.ContentCopy,
+                                        imageVector = Icons.Default.Edit,
                                         contentDescription = null,
                                         tint = BentoPrimary,
                                         modifier = Modifier.size(20.dp)
@@ -417,233 +393,420 @@ fun PlaylistDetailScreen(
                                 },
                                 onClick = {
                                     showOptionsMenu = false
-                                    onRemoveDuplicates()
+                                    renameText = playlist.name
+                                    showRenameDialog = true
                                 }
                             )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("Delete Playlist", color = BentoAccentPinkText) },
-                            onClick = {
-                                showOptionsMenu = false
-                                showDeleteConfirmation = true
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Header Card with Large Artwork Block
-        item(key = "playlist_header_card") {
-            BentoCard(
-                modifier = Modifier.fillMaxWidth(),
-                backgroundColor = BentoCardSurface
-            ) {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        com.example.ui.components.PlaylistCover(
-                            playlist = playlist,
-                            playlistSongs = playlistSongs,
-                            modifier = Modifier.size(80.dp),
-                            cornerRadius = 16
-                        )
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = playlist.name,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = BentoTextPrimary
+                            DropdownMenuItem(
+                                text = { Text("Change Playlist Cover", color = BentoTextPrimary) },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    artworkPickerLauncher.launch("image/*")
+                                }
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val totalHoursText = if (totalMinutes >= 60) {
-                                val hrs = totalMinutes / 60
-                                val mins = totalMinutes % 60
-                                if (mins > 0) "${hrs}h ${mins}m" else "${hrs}h"
-                            } else "$totalMinutes mins"
-                            Text(
-                                text = "${playlistSongs.size} tracks • $totalHoursText",
-                                fontSize = 13.sp,
-                                color = BentoTextSecondary
-                            )
-                        }
-                    }
-
-                    if (playlistSongs.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Button(
+                            if (playlist.artworkUri != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove Custom Cover", color = BentoTextSecondary) },
                                     onClick = {
-                                        if (displaySongs.isNotEmpty()) {
-                                            if (onPlayAll != null) {
-                                                onPlayAll(displaySongs)
-                                            } else {
-                                                onSongClick(displaySongs.first(), displaySongs)
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Play All",
-                                        tint = BentoOnPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Play All", color = BentoOnPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (displaySongs.isNotEmpty()) {
-                                            if (onShuffleAll != null) {
-                                                onShuffleAll(displaySongs)
-                                            } else {
-                                                val shuffled = displaySongs.shuffled()
-                                                if (shuffled.isNotEmpty()) onSongClick(shuffled.first(), shuffled)
-                                            }
-                                            Toast.makeText(context, "Shuffling ${displaySongs.size} tracks", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Shuffle,
-                                        contentDescription = "Shuffle",
-                                        tint = BentoOnPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Shuffle", color = BentoOnPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                }
+                                        showOptionsMenu = false
+                                        onUpdatePlaylistArtwork(playlist.id, null)
+                                    }
+                                )
                             }
+                            DropdownMenuItem(
+                                text = { Text("Export as M3U", color = BentoTextPrimary) },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    val customOrderedSongs = localEntries.map { it.song }
+                                    if (customOrderedSongs.isNotEmpty()) {
+                                        onReorderSongs?.invoke(customOrderedSongs)
+                                    }
+                                    m3uExportLauncher.launch("${playlist.name}.m3u")
+                                }
+                            )
+                            if (onRemoveDuplicates != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove Duplicate Songs", color = BentoTextPrimary) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        showOptionsMenu = false
+                                        onRemoveDuplicates()
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Delete Playlist", color = BentoAccentPinkText) },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    showDeleteConfirmation = true
+                                }
+                            )
                         }
                     }
                 }
             }
-        }
 
-        // Sorting & Reordering Toolbar Card
-        if (playlistSongs.isNotEmpty()) {
-            item(key = "playlist_sort_toolbar") {
-                Card(
+            // Header Card with Large Artwork Block
+            item(key = "playlist_header_card") {
+                BentoCard(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                    shape = RoundedCornerShape(16.dp)
+                    backgroundColor = BentoCardSurface
                 ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Column {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Sort,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                            com.example.ui.components.PlaylistCover(
+                                playlist = playlist,
+                                playlistSongs = localEntries.map { it.song }.ifEmpty { playlistSongs },
+                                modifier = Modifier.size(80.dp),
+                                cornerRadius = 16
+                            )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Sort & Reorder",
-                                    fontSize = 13.sp,
+                                    text = playlist.name,
+                                    fontSize = 20.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BentoTextPrimary
                                 )
-                            }
-
-                            if (selectedSortOrder != PlaylistSortOrder.CUSTOM) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    TextButton(
-                                        onClick = {
-                                            localEntries.clear()
-                                            localEntries.addAll(displayEntries)
-                                            selectedSortOrder = PlaylistSortOrder.CUSTOM
-                                            val updatedSongs = displayEntries.map { it.song }
-                                            lastSavedOrderIds = updatedSongs.map { it.id }
-                                            onReorderSongs?.invoke(updatedSongs)
-                                            Toast.makeText(context, "Saved as playlist order", Toast.LENGTH_SHORT).show()
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                    ) {
-                                        Text("Save Order", fontSize = 11.5.sp, color = BentoPrimary, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    IconButton(
-                                        onClick = { isAscending = !isAscending },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                                            contentDescription = if (isAscending) "Ascending" else "Descending",
-                                            tint = BentoPrimary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            } else {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val totalHoursText = if (totalMinutes >= 60) {
+                                    val hrs = totalMinutes / 60
+                                    val mins = totalMinutes % 60
+                                    if (mins > 0) "${hrs}h ${mins}m" else "${hrs}h"
+                                } else "$totalMinutes mins"
                                 Text(
-                                    text = "Drag ≡ handle to reorder",
-                                    fontSize = 11.5.sp,
+                                    text = "${playlistSongs.size} tracks • $totalHoursText",
+                                    fontSize = 13.sp,
                                     color = BentoTextSecondary
                                 )
                             }
                         }
 
-                        // Horizontal Sort Chips Row
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(PlaylistSortOrder.entries) { sortOption ->
-                                val isSelected = selectedSortOrder == sortOption
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isSelected) BentoPrimary else BentoCardSurface)
-                                        .clickable {
-                                            selectedSortOrder = sortOption
-                                            HapticUtils.performClickHaptic(context)
-                                        }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        if (playlistSongs.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
+                                    Button(
+                                        onClick = {
+                                            if (displaySongs.isNotEmpty()) {
+                                                if (onPlayAll != null) {
+                                                    onPlayAll(displaySongs)
+                                                } else {
+                                                    onSongClick(displaySongs.first(), displaySongs)
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play All",
+                                            tint = BentoOnPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Play All", color = BentoOnPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            if (displaySongs.isNotEmpty()) {
+                                                if (onShuffleAll != null) {
+                                                    onShuffleAll(displaySongs)
+                                                } else {
+                                                    val shuffled = displaySongs.shuffled()
+                                                    if (shuffled.isNotEmpty()) onSongClick(shuffled.first(), shuffled)
+                                                }
+                                                Toast.makeText(context, "Shuffling ${displaySongs.size} tracks", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shuffle,
+                                            contentDescription = "Shuffle",
+                                            tint = BentoOnPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Shuffle", color = BentoOnPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sorting & Reordering Toolbar Card
+            if (playlistSongs.isNotEmpty()) {
+                item(key = "playlist_sort_toolbar") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Sort,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "Sort & Reorder",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                }
+
+                                if (selectedSortOrder != PlaylistSortOrder.CUSTOM) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
+                                        TextButton(
+                                            onClick = {
+                                                localEntries.clear()
+                                                localEntries.addAll(displayEntries)
+                                                selectedSortOrder = PlaylistSortOrder.CUSTOM
+                                                val updatedSongs = displayEntries.map { it.song }
+                                                lastSavedOrderIds = updatedSongs.map { it.id }
+                                                onReorderSongs?.invoke(updatedSongs)
+                                                Toast.makeText(context, "Saved as custom playlist order", Toast.LENGTH_SHORT).show()
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("Save Order", fontSize = 11.5.sp, color = BentoPrimary, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        IconButton(
+                                            onClick = { isAscending = !isAscending },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                                                contentDescription = if (isAscending) "Ascending" else "Descending",
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Text(
+                                        text = "Drag ≡ handle to reorder",
+                                        fontSize = 11.5.sp,
+                                        color = BentoTextSecondary
+                                    )
+                                }
+                            }
+
+                            // Horizontal Sort Chips Row
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(PlaylistSortOrder.entries) { sortOption ->
+                                    val isSelected = selectedSortOrder == sortOption
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) BentoPrimary else BentoCardSurface)
+                                            .clickable {
+                                                selectedSortOrder = sortOption
+                                                HapticUtils.performClickHaptic(context)
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = sortOption.icon,
+                                                contentDescription = null,
+                                                tint = if (isSelected) BentoOnPrimary else BentoTextSecondary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = sortOption.displayName,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) BentoOnPrimary else BentoTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Song Items
+            if (displaySongs.isEmpty()) {
+                item(key = "playlist_empty_state") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No songs in this playlist yet.",
+                            fontSize = 14.sp,
+                            color = BentoTextSecondary
+                        )
+                    }
+                }
+            } else {
+                itemsIndexed(
+                    items = if (selectedSortOrder == PlaylistSortOrder.CUSTOM) localEntries else displayEntries,
+                    key = { _, entry -> entry.stableKey },
+                    contentType = { _, _ -> "playlist_song_item" }
+                ) { index, entry ->
+                    val song = entry.song
+                    val isCustomOrder = selectedSortOrder == PlaylistSortOrder.CUSTOM
+                    val isDragging = isCustomOrder && (
+                        reorderableState.draggedKey == entry.stableKey ||
+                            (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
+                        )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = if (isDragging) null else spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            )
+                            .zIndex(if (isDragging) 100f else 0f)
+                    ) {
+                        if (isDragging) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(64.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = BentoCardDarkPurple.copy(alpha = 0.25f),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.5.dp,
+                                    BentoPrimary.copy(alpha = 0.45f)
+                                )
+                            ) {}
+                        }
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    if (isDragging) {
+                                        translationY = reorderableState.dragOffsetY
+                                        scaleX = 1.03f
+                                        scaleY = 1.03f
+                                        rotationZ = (reorderableState.dragOffsetY * 0.015f).coerceIn(-2f, 2f)
+                                        shadowElevation = 16.dp.toPx()
+                                    }
+                                },
+                            colors = CardDefaults.cardColors(containerColor = if (isDragging) BentoCardDarkPurple else Color.Transparent),
+                            border = if (isDragging) androidx.compose.foundation.BorderStroke(1.5.dp, BentoPrimary) else null,
+                            elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 12.dp else 0.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Interactive Reorder Drag Handle (Only active in Custom Order)
+                                if (isCustomOrder) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .reorderableDragHandle(
+                                                state = reorderableState,
+                                                getIndex = {
+                                                    val found = localEntries.indexOfFirst { it.stableKey == entry.stableKey }
+                                                    if (found >= 0) found else index
+                                                },
+                                                getMinIndex = { 0 },
+                                                getMaxIndex = { (localEntries.size - 1).coerceAtLeast(0) },
+                                                getKey = { entry.stableKey },
+                                                onStartFeedback = { HapticUtils.performTickHaptic(context) },
+                                                onEndFeedback = { HapticUtils.performClickHaptic(context) }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Icon(
-                                            imageVector = sortOption.icon,
-                                            contentDescription = null,
-                                            tint = if (isSelected) BentoOnPrimary else BentoTextSecondary,
-                                            modifier = Modifier.size(14.dp)
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = "Drag to reorder",
+                                            tint = if (isDragging) BentoPrimary else BentoTextSecondary,
+                                            modifier = Modifier.size(22.dp)
                                         )
-                                        Text(
-                                            text = sortOption.displayName,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) BentoOnPrimary else BentoTextSecondary
+                                    }
+                                }
+
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SongItem(
+                                        song = song,
+                                        isPlaying = currentPlayingSongId == song.id,
+                                        onClick = {
+                                            if (!reorderableState.isDragging && !reorderableState.isSettling) {
+                                                onSongClick(song, displaySongs)
+                                            }
+                                        },
+                                        onFavoriteToggle = { onFavoriteToggle(song) },
+                                        onMoreClick = { selectedSongForMenu = song }
+                                    )
+
+                                    if (selectedSongForMenu?.id == song.id) {
+                                        SongActionMenu(
+                                            expanded = true,
+                                            song = song,
+                                            isInPlaylist = true,
+                                            playlistName = playlist.name,
+                                            onDismissRequest = { selectedSongForMenu = null },
+                                            onPlayNext = { onPlayNext(song) },
+                                            onAddToQueue = { onAddToQueue(song) },
+                                            onAddToPlaylist = { songForAddToPlaylist = song },
+                                            onRemoveFromPlaylist = { onRemoveSongFromPlaylist(playlist.id, song.id) },
+                                            onEditTags = if (onEditTags != null) { { onEditTags(song) } } else null,
+                                            onDeleteSong = { onDeleteSong(song) }
                                         )
                                     }
                                 }
@@ -653,149 +816,6 @@ fun PlaylistDetailScreen(
                 }
             }
         }
-
-        // Song Items
-        if (displaySongs.isEmpty()) {
-            item(key = "playlist_empty_state") {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No songs in this playlist yet.",
-                        fontSize = 14.sp,
-                        color = BentoTextSecondary
-                    )
-                }
-            }
-        } else {
-            itemsIndexed(
-                items = if (selectedSortOrder == PlaylistSortOrder.CUSTOM) localEntries else displayEntries,
-                key = { _, entry -> entry.stableKey },
-                contentType = { _, _ -> "playlist_song_item" }
-            ) { index, entry ->
-                val song = entry.song
-                val isCustomOrder = selectedSortOrder == PlaylistSortOrder.CUSTOM
-                val isDragging = isCustomOrder && (
-                    reorderableState.draggedKey == entry.stableKey ||
-                        (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateItem(
-                            fadeInSpec = null,
-                            fadeOutSpec = null,
-                            placementSpec = if (isDragging) null else spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMediumLow
-                            )
-                        )
-                        .zIndex(if (isDragging) 100f else 0f)
-                ) {
-                    if (isDragging) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(64.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = BentoCardDarkPurple.copy(alpha = 0.25f),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.5.dp,
-                                BentoPrimary.copy(alpha = 0.45f)
-                            )
-                        ) {}
-                    }
-
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                if (isDragging) {
-                                    translationY = reorderableState.dragOffsetY
-                                    scaleX = 1.03f
-                                    scaleY = 1.03f
-                                    rotationZ = (reorderableState.dragOffsetY * 0.015f).coerceIn(-2f, 2f)
-                                    shadowElevation = 16.dp.toPx()
-                                }
-                            },
-                        colors = CardDefaults.cardColors(containerColor = if (isDragging) BentoCardDarkPurple else Color.Transparent),
-                        border = if (isDragging) androidx.compose.foundation.BorderStroke(1.5.dp, BentoPrimary) else null,
-                        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 12.dp else 0.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(end = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Interactive Reorder Drag Handle (Only active in Custom Order)
-                            if (isCustomOrder) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .reorderableDragHandle(
-                                            state = reorderableState,
-                                            getIndex = {
-                                                val found = localEntries.indexOfFirst { it.stableKey == entry.stableKey }
-                                                if (found >= 0) found else index
-                                            },
-                                            getMinIndex = { 0 },
-                                            getMaxIndex = { (localEntries.size - 1).coerceAtLeast(0) },
-                                            getKey = { entry.stableKey },
-                                            onStartFeedback = { HapticUtils.performTickHaptic(context) },
-                                            onEndFeedback = { HapticUtils.performClickHaptic(context) }
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DragHandle,
-                                        contentDescription = "Drag to reorder",
-                                        tint = if (isDragging) BentoPrimary else BentoTextSecondary,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-
-                            Box(modifier = Modifier.weight(1f)) {
-                                SongItem(
-                                    song = song,
-                                    isPlaying = currentPlayingSongId == song.id,
-                                    onClick = {
-                                        if (!reorderableState.isDragging && !reorderableState.isSettling) {
-                                            onSongClick(song, displaySongs)
-                                        }
-                                    },
-                                    onFavoriteToggle = { onFavoriteToggle(song) },
-                                    onMoreClick = { selectedSongForMenu = song }
-                                )
-
-                                if (selectedSongForMenu?.id == song.id) {
-                                    SongActionMenu(
-                                        expanded = true,
-                                        song = song,
-                                        isInPlaylist = true,
-                                        playlistName = playlist.name,
-                                        onDismissRequest = { selectedSongForMenu = null },
-                                        onPlayNext = { onPlayNext(song) },
-                                        onAddToQueue = { onAddToQueue(song) },
-                                        onAddToPlaylist = { songForAddToPlaylist = song },
-                                        onRemoveFromPlaylist = { onRemoveSongFromPlaylist(playlist.id, song.id) },
-                                        onEditTags = if (onEditTags != null) { { onEditTags(song) } } else null,
-                                        onDeleteSong = { onDeleteSong(song) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
         if (displaySongs.size > 5) {
             FastScrollbar(
@@ -850,7 +870,7 @@ fun PlaylistDetailScreen(
                 }
             },
             containerColor = BentoCardSurface,
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(16.dp)
         )
     }
 

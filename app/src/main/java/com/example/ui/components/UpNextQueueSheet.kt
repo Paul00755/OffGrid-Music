@@ -20,10 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -74,7 +78,7 @@ fun UpNextQueueSheet(
         }
     }
 
-    val initialEntries = remember(queue) {
+    val initialEntries = remember {
         buildQueueEntries(queue)
     }
 
@@ -82,8 +86,11 @@ fun UpNextQueueSheet(
         mutableStateListOf<QueueEntryItem>().apply { addAll(initialEntries) }
     }
 
-    // Track the exact QueueEntryItem (by stableKey) that is currently playing so dragging tracks
-    // around in localQueue ALWAYS highlights the true Now Playing track occurrence (not a fixed index number!)
+    // Track the last order committed by user drag-and-drop so an asynchronous PlaybackState emission
+    // never overwrites localQueue with stale pre-drag order before PlaybackManager finishes applying updateQueueOrder.
+    var lastCommittedOrderIds by remember { mutableStateOf<List<Long>?>(null) }
+
+    // Track the exact QueueEntryItem (by stableKey) that is currently playing
     var playingEntryKey by remember {
         val initIdx = if (currentIndex in initialEntries.indices) currentIndex
         else initialEntries.indexOfFirst { it.song.id == currentSong?.id }.coerceAtLeast(0)
@@ -91,7 +98,7 @@ fun UpNextQueueSheet(
     }
 
     val density = LocalDensity.current
-    val itemHeightPx = with(density) { 68.dp.toPx() }
+    val itemHeightPx = with(density) { 66.dp.toPx() }
 
     val currentActualIndex = remember(localQueue.toList(), playingEntryKey, currentSong?.id, currentIndex) {
         val byKey = if (playingEntryKey != null) {
@@ -106,7 +113,7 @@ fun UpNextQueueSheet(
         }
     }
 
-    val safeInitialIndex = remember(currentActualIndex, localQueue.size) {
+    val safeInitialIndex = remember {
         if (localQueue.isNotEmpty() && currentActualIndex in localQueue.indices) {
             (currentActualIndex - 1).coerceIn(0, localQueue.size - 1)
         } else 0
@@ -125,6 +132,7 @@ fun UpNextQueueSheet(
                     val item = localQueue.removeAt(from)
                     val safeTo = to.coerceIn(0, localQueue.size)
                     localQueue.add(safeTo, item)
+                    lastCommittedOrderIds = localQueue.map { it.song.id }
                     HapticUtils.performTickHaptic(context)
                 } catch (e: Exception) {
                     android.util.Log.e("UpNextQueueSheet", "Error in onMove: from=$from to=$to", e)
@@ -134,6 +142,7 @@ fun UpNextQueueSheet(
         onDragEnd = { from, to ->
             try {
                 val updatedSongs = localQueue.map { it.song }
+                lastCommittedOrderIds = updatedSongs.map { it.id }
                 if (onUpdateQueue != null) {
                     onUpdateQueue.invoke(updatedSongs)
                 } else if (from != to) {
@@ -145,7 +154,24 @@ fun UpNextQueueSheet(
         }
     )
 
-    // Scroll to active track only when playback switches to a different song while not dragging
+    // Prevent ModalBottomSheet from intercepting vertical drag/scroll gestures inside the queue list
+    val sheetScrollGuard = remember(reorderableState) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
+                // Consume leftover upward/downward scroll so the bottom sheet doesn't drag/collapse while scrolling or reordering
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                return available
+            }
+        }
+    }
+
     LaunchedEffect(currentSong?.id) {
         if (!reorderableState.isDragging && !reorderableState.isSettling && localQueue.isNotEmpty()) {
             val targetIdx = if (currentIndex in localQueue.indices && localQueue[currentIndex].song.id == currentSong?.id) {
@@ -161,6 +187,20 @@ fun UpNextQueueSheet(
 
     LaunchedEffect(queue, currentIndex, currentSong?.id, reorderableState.isDragging, reorderableState.isSettling) {
         if (!reorderableState.isDragging && !reorderableState.isSettling) {
+            val incomingIds = queue.map { it.id }
+            val currentLocalIds = localQueue.map { it.song.id }
+
+            if (lastCommittedOrderIds != null) {
+                if (incomingIds == lastCommittedOrderIds) {
+                    lastCommittedOrderIds = null
+                } else if (incomingIds.size == currentLocalIds.size && incomingIds.toSet() == currentLocalIds.toSet()) {
+                    // Ignore stale intermediate PlaybackState emission that hasn't reflected our committed order yet
+                    return@LaunchedEffect
+                } else {
+                    lastCommittedOrderIds = null
+                }
+            }
+
             val currentSongs = localQueue.map { it.song }
             if (currentSongs != queue && queue.isNotEmpty()) {
                 val newEntries = buildQueueEntries(queue)
@@ -212,8 +252,9 @@ fun UpNextQueueSheet(
         Column(
             modifier = modifier
                 .fillMaxWidth()
+                .fillMaxHeight(0.88f)
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
+                .padding(bottom = 20.dp)
         ) {
             // Header Row
             Row(
@@ -298,8 +339,9 @@ fun UpNextQueueSheet(
 
                     IconButton(
                         onClick = {
-                            if (reorderableState.isDragging) {
-                                onUpdateQueue?.invoke(localQueue.map { it.song })
+                            val currentSongs = localQueue.map { it.song }
+                            if (currentSongs.isNotEmpty() && currentSongs != queue) {
+                                onUpdateQueue?.invoke(currentSongs)
                             }
                             onDismiss()
                         },
@@ -327,8 +369,6 @@ fun UpNextQueueSheet(
                     Text("Queue is empty", color = BentoTextSecondary, fontSize = 15.sp)
                 }
             } else {
-                // Pinned Now Playing Track Banner (kept outside LazyColumn so LazyColumn indices 0..N-1
-                // map 1:1 to queue items for rock-solid drag-and-drop & auto-scroll)
                 val activePlayingSong = localQueue.getOrNull(currentActualIndex)?.song ?: currentSong
                 if (activePlayingSong != null) {
                     Text(
@@ -425,15 +465,22 @@ fun UpNextQueueSheet(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .nestedScroll(sheetScrollGuard)
+                ) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(
                             items = localQueue,
-                            key = { _, entry -> entry.stableKey }
+                            key = { _, entry -> entry.stableKey },
+                            contentType = { _, _ -> "queue_track_item" }
                         ) { index, entry ->
                             val song = entry.song
                             val isCurrent = (playingEntryKey != null && entry.stableKey == playingEntryKey) ||
@@ -535,7 +582,7 @@ fun UpNextQueueSheet(
                                             )
                                         }
 
-                                        // Track Status / Queue Position Indicator (Displays active GraphicEq icon for Now Playing track)
+                                        // Track Status / Queue Position Indicator
                                         Box(
                                             modifier = Modifier.width(28.dp),
                                             contentAlignment = Alignment.CenterStart
@@ -635,6 +682,7 @@ fun UpNextQueueSheet(
                                                     onRemoveFromQueue = {
                                                         if (index in localQueue.indices) {
                                                             localQueue.removeAt(index)
+                                                            lastCommittedOrderIds = localQueue.map { it.song.id }
                                                             onRemoveFromQueue(index)
                                                         }
                                                     },
@@ -643,7 +691,9 @@ fun UpNextQueueSheet(
                                                             val itm = localQueue.removeAt(index)
                                                             val topTarget = (currentActualIndex + 1).coerceIn(0, localQueue.size)
                                                             localQueue.add(topTarget, itm)
-                                                            onUpdateQueue?.invoke(localQueue.map { it.song })
+                                                            val updatedSongs = localQueue.map { it.song }
+                                                            lastCommittedOrderIds = updatedSongs.map { it.id }
+                                                            onUpdateQueue?.invoke(updatedSongs)
                                                         }
                                                     },
                                                     onDeleteSong = { /* Handled at app level */ }

@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 enum class AppUiTheme(
     val id: String,
@@ -195,6 +196,7 @@ enum class AppUiTheme(
 fun MyApplicationTheme(
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     themeMode: String = "DARK",
+    extraDarkMode: Boolean = false,
     accentColorPreset: String = "ORANGE",
     accentColor: Color? = null,
     content: @Composable () -> Unit
@@ -207,7 +209,6 @@ fun MyApplicationTheme(
         AppUiTheme.getDefaultThemeForMode(themeMode, isSystemInDark)
     }
     val effectiveMode = themeMode.uppercase()
-    val isAmoled = effectiveMode == "AMOLED"
     val isDark = when (effectiveMode) {
         "AMOLED", "DARK" -> true
         "LIGHT" -> false
@@ -215,7 +216,9 @@ fun MyApplicationTheme(
         else -> activeTheme.isDark
     }
 
-    // Resolved primary accent
+    // Extra Dark Mode is strictly active ONLY when Dark Theme is active (never in Light Theme)
+    val isExtraDark = isDark && (extraDarkMode || effectiveMode == "AMOLED")
+
     val primaryColor = accentColor ?: when (accentColorPreset.uppercase()) {
         "PINK" -> if (isDark) Color(0xFFFF4081) else Color(0xFFD81B60)
         "GREEN" -> if (isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
@@ -230,147 +233,149 @@ fun MyApplicationTheme(
         else -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
     }
 
-    val colorScheme = if (isDark) {
+    val highContrastOnPrimary = if (primaryColor.luminance() > 0.42f) Color(0xFF08080C) else Color.White
+
+    val baseColorScheme = if (isDark) {
         when (activeTheme) {
             AppUiTheme.MIDNIGHT_OBSIDIAN -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color(0xFF002733),
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.25f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF9FA8DA),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF0D0D15),
-                surface = if (isAmoled) Color(0xFF08080C) else Color(0xFF161622),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF0D0D15),
+                surface = if (isExtraDark) Color(0xFF0B0B12) else Color(0xFF161622),
                 onBackground = Color.White,
                 onSurface = Color.White,
-                surfaceVariant = if (isAmoled) Color(0xFF121218) else Color(0xFF1E1C2C),
-                onSurfaceVariant = Color(0xFFA5A5B8),
-                outline = if (isAmoled) Color(0xFF202028) else Color(0xFF2A283C)
+                surfaceVariant = if (isExtraDark) Color(0xFF141420) else Color(0xFF1E1C2C),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFD0D4E4) else Color(0xFFA5A5B8),
+                outline = if (isExtraDark) Color(0xFF2C2E42) else Color(0xFF2A283C)
             )
             AppUiTheme.PURE_AMOLED -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color.Black,
-                primaryContainer = primaryColor.copy(alpha = 0.22f),
+                onPrimary = highContrastOnPrimary,
+                primaryContainer = primaryColor.copy(alpha = 0.24f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF80DEEA),
                 background = Color(0xFF000000),
-                surface = Color(0xFF0C0C10),
+                surface = Color(0xFF0B0B12),
                 onBackground = Color.White,
                 onSurface = Color.White,
-                surfaceVariant = Color(0xFF14141A),
-                onSurfaceVariant = Color(0xFF9E9EA8),
-                outline = Color(0xFF22222C)
+                surfaceVariant = Color(0xFF151520),
+                onSurfaceVariant = Color(0xFFD0D4E4),
+                outline = Color(0xFF2D2F42)
             )
             AppUiTheme.CYBERPUNK_NEON -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color.White,
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.25f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF00F5D4),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF0B071A),
-                surface = if (isAmoled) Color(0xFF0A0614) else Color(0xFF170E30),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF0B071A),
+                surface = if (isExtraDark) Color(0xFF0C071A) else Color(0xFF170E30),
                 onBackground = Color(0xFFFBFBFF),
                 onSurface = Color(0xFFFBFBFF),
-                surfaceVariant = if (isAmoled) Color(0xFF180E2E) else Color(0xFF231545),
-                onSurfaceVariant = Color(0xFFB39DDB),
-                outline = if (isAmoled) Color(0xFF2E1850) else Color(0xFF3C2066)
+                surfaceVariant = if (isExtraDark) Color(0xFF170E2E) else Color(0xFF231545),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFD7C8F5) else Color(0xFFB39DDB),
+                outline = if (isExtraDark) Color(0xFF36205E) else Color(0xFF3C2066)
             )
             AppUiTheme.NORDIC_FROST -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color(0xFF002028),
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.22f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF80DEEA),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF081420),
-                surface = if (isAmoled) Color(0xFF060D14) else Color(0xFF102334),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF081420),
+                surface = if (isExtraDark) Color(0xFF07101A) else Color(0xFF102334),
                 onBackground = Color(0xFFF0F8FF),
                 onSurface = Color(0xFFF0F8FF),
-                surfaceVariant = if (isAmoled) Color(0xFF102030) else Color(0xFF183248),
-                onSurfaceVariant = Color(0xFF90A4AE),
-                outline = if (isAmoled) Color(0xFF1A364E) else Color(0xFF22445E)
+                surfaceVariant = if (isExtraDark) Color(0xFF0F1E2E) else Color(0xFF183248),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFC5D8E6) else Color(0xFF90A4AE),
+                outline = if (isExtraDark) Color(0xFF23425C) else Color(0xFF22445E)
             )
             AppUiTheme.EMERALD_FOREST -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color(0xFF00240F),
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.22f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF81C784),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF07160D),
-                surface = if (isAmoled) Color(0xFF050F09) else Color(0xFF0F2618),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF07160D),
+                surface = if (isExtraDark) Color(0xFF07120B) else Color(0xFF0F2618),
                 onBackground = Color(0xFFF1FBF4),
                 onSurface = Color(0xFFF1FBF4),
-                surfaceVariant = if (isAmoled) Color(0xFF0F2418) else Color(0xFF173623),
-                onSurfaceVariant = Color(0xFF9DB8A4),
-                outline = if (isAmoled) Color(0xFF183824) else Color(0xFF1F482F)
+                surfaceVariant = if (isExtraDark) Color(0xFF0E2116) else Color(0xFF173623),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFC4DEC9) else Color(0xFF9DB8A4),
+                outline = if (isExtraDark) Color(0xFF20452E) else Color(0xFF1F482F)
             )
             AppUiTheme.SUNSET_AMBER -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color(0xFF331400),
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.24f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFFFFB74D),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF160D09),
-                surface = if (isAmoled) Color(0xFF100906) else Color(0xFF261611),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF160D09),
+                surface = if (isExtraDark) Color(0xFF120B08) else Color(0xFF261611),
                 onBackground = Color(0xFFFFF7F2),
                 onSurface = Color(0xFFFFF7F2),
-                surfaceVariant = if (isAmoled) Color(0xFF22130E) else Color(0xFF382019),
-                onSurfaceVariant = Color(0xFFBCAAA4),
-                outline = if (isAmoled) Color(0xFF361E17) else Color(0xFF4D2B20)
+                surfaceVariant = if (isExtraDark) Color(0xFF20130E) else Color(0xFF382019),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFE0CFC8) else Color(0xFFBCAAA4),
+                outline = if (isExtraDark) Color(0xFF42261D) else Color(0xFF4D2B20)
             )
             AppUiTheme.CRIMSON_VELVET -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color.White,
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.25f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFFFF80AB),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF16060B),
-                surface = if (isAmoled) Color(0xFF100408) else Color(0xFF260C14),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF16060B),
+                surface = if (isExtraDark) Color(0xFF12060A) else Color(0xFF260C14),
                 onBackground = Color(0xFFFFF5F7),
                 onSurface = Color(0xFFFFF5F7),
-                surfaceVariant = if (isAmoled) Color(0xFF220812) else Color(0xFF38121E),
-                onSurfaceVariant = Color(0xFFC29BA5),
-                outline = if (isAmoled) Color(0xFF38141F) else Color(0xFF521C2A)
+                surfaceVariant = if (isExtraDark) Color(0xFF200A12) else Color(0xFF38121E),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFE5C5CE) else Color(0xFFC29BA5),
+                outline = if (isExtraDark) Color(0xFF471928) else Color(0xFF521C2A)
             )
             AppUiTheme.ROYAL_AMETHYST -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color(0xFF1E004A),
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.25f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFFD1C4E9),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF0F0A1C),
-                surface = if (isAmoled) Color(0xFF0A0614) else Color(0xFF1E1335),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF0F0A1C),
+                surface = if (isExtraDark) Color(0xFF0C0817) else Color(0xFF1E1335),
                 onBackground = Color(0xFFFAF5FF),
                 onSurface = Color(0xFFFAF5FF),
-                surfaceVariant = if (isAmoled) Color(0xFF1A1030) else Color(0xFF2B1C4A),
-                onSurfaceVariant = Color(0xFFB39DDB),
-                outline = if (isAmoled) Color(0xFF2C1B46) else Color(0xFF3D2562)
+                surfaceVariant = if (isExtraDark) Color(0xFF18102C) else Color(0xFF2B1C4A),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFD8CAF2) else Color(0xFFB39DDB),
+                outline = if (isExtraDark) Color(0xFF362259) else Color(0xFF3D2562)
             )
             AppUiTheme.PORCELAIN_SLATE -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color.White,
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.22f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFF94A3B8),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF0F172A),
-                surface = if (isAmoled) Color(0xFF080D14) else Color(0xFF1E293B),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF0F172A),
+                surface = if (isExtraDark) Color(0xFF0A0F1A) else Color(0xFF1E293B),
                 onBackground = Color(0xFFF8FAFC),
                 onSurface = Color(0xFFF8FAFC),
-                surfaceVariant = if (isAmoled) Color(0xFF121B28) else Color(0xFF334155),
-                onSurfaceVariant = Color(0xFF94A3B8),
-                outline = if (isAmoled) Color(0xFF1E293B) else Color(0xFF475569)
+                surfaceVariant = if (isExtraDark) Color(0xFF141E30) else Color(0xFF334155),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFCBD5E1) else Color(0xFF94A3B8),
+                outline = if (isExtraDark) Color(0xFF2B3B54) else Color(0xFF475569)
             )
             AppUiTheme.WARM_PARCHMENT -> darkColorScheme(
                 primary = primaryColor,
-                onPrimary = Color.White,
+                onPrimary = highContrastOnPrimary,
                 primaryContainer = primaryColor.copy(alpha = 0.22f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFFD4B996),
-                background = if (isAmoled) Color(0xFF000000) else Color(0xFF1A130C),
-                surface = if (isAmoled) Color(0xFF100B06) else Color(0xFF291E13),
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF1A130C),
+                surface = if (isExtraDark) Color(0xFF120D08) else Color(0xFF291E13),
                 onBackground = Color(0xFFFFF8ED),
                 onSurface = Color(0xFFFFF8ED),
-                surfaceVariant = if (isAmoled) Color(0xFF1C130B) else Color(0xFF3B2C1C),
-                onSurfaceVariant = Color(0xFFD4B996),
-                outline = if (isAmoled) Color(0xFF2E1E10) else Color(0xFF4D3822)
+                surfaceVariant = if (isExtraDark) Color(0xFF1F160E) else Color(0xFF3B2C1C),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFE5D2B8) else Color(0xFFD4B996),
+                outline = if (isExtraDark) Color(0xFF3D2C1C) else Color(0xFF4D3822)
             )
         }
     } else {
@@ -380,7 +385,7 @@ fun MyApplicationTheme(
                 onPrimary = Color.White,
                 primaryContainer = primaryColor.copy(alpha = 0.16f),
                 onPrimaryContainer = Color(0xFF0F172A),
-                secondary = Color(0xFF475569),
+                secondary = Color(0xFF475559),
                 background = Color(0xFFF1F5F9),
                 surface = Color(0xFFFFFFFF),
                 onBackground = Color(0xFF0F172A),
@@ -519,9 +524,8 @@ fun MyApplicationTheme(
     }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = baseColorScheme,
         typography = Typography,
         content = content
     )
 }
-

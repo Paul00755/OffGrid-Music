@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,7 +31,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.*
@@ -55,19 +53,22 @@ import com.example.ui.components.BentoCard
 import com.example.ui.components.FastScrollbar
 import com.example.ui.components.PlaylistCover
 import com.example.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlaylistsScreen(
     playlists: List<Playlist>,
-    smartPlaylists: List<com.example.data.model.SmartPlaylist> = emptyList(),
+    smartPlaylists: List<SmartPlaylist> = emptyList(),
     allSongs: List<Song> = emptyList(),
     playlistViewMode: String = "GRID",
     onToggleViewMode: () -> Unit = {},
     onCreatePlaylist: (String) -> Unit,
-    onCreateSmartPlaylist: (com.example.data.model.SmartPlaylist) -> Unit = {},
+    onCreateSmartPlaylist: (SmartPlaylist) -> Unit = {},
     onPlaylistClick: (Playlist) -> Unit,
-    onSmartPlaylistClick: (com.example.data.model.SmartPlaylist) -> Unit = {},
+    onSmartPlaylistClick: (SmartPlaylist) -> Unit = {},
     onPlayNow: (Playlist) -> Unit = {},
     onPlayNext: (Playlist) -> Unit = {},
     onAddToQueue: (Playlist) -> Unit = {},
@@ -76,6 +77,7 @@ fun PlaylistsScreen(
     onDeleteSmartPlaylist: (Long) -> Unit = {},
     onUpdatePlaylistArtwork: (Long, String?) -> Unit = { _, _ -> },
     onImportM3uPlaylist: (name: String, songs: List<Song>) -> Unit = { _, _ -> },
+    onImportMultipleM3uPlaylists: ((List<Pair<String, List<Song>>>) -> Unit)? = null,
     onBackClick: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
@@ -90,13 +92,14 @@ fun PlaylistsScreen(
     var renamePlaylistText by remember { mutableStateOf("") }
     var importResultDialog by remember { mutableStateOf<M3uImportResult?>(null) }
     var multiImportResultDialog by remember { mutableStateOf<List<M3uImportResult>?>(null) }
+    var isParsingM3uFiles by remember { mutableStateOf(false) }
     var selectedPlaylistForArtwork by remember { mutableStateOf<Long?>(null) }
     var playlistToDelete by remember { mutableStateOf<Playlist?>(null) }
     var smartPlaylistToDelete by remember { mutableStateOf<SmartPlaylist?>(null) }
 
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
-    // Smart Criteria Dialog
     if (showSmartCriteriaDialog) {
         com.example.ui.components.SmartPlaylistCriteriaDialog(
             allSongs = allSongs,
@@ -108,7 +111,6 @@ fun PlaylistsScreen(
         )
     }
 
-    // New Playlist Type Selector Dialog
     if (showCreateDialog) {
         var isSmartSelected by remember { mutableStateOf(false) }
 
@@ -152,20 +154,20 @@ fun PlaylistsScreen(
                         OutlinedTextField(
                             value = playlistNameText,
                             onValueChange = { playlistNameText = it },
-                            label = { Text("Playlist Name", color = Color.White.copy(alpha = 0.7f)) },
+                            label = { Text("Playlist Name", color = BentoTextSecondary) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
+                                focusedTextColor = BentoTextPrimary,
+                                unfocusedTextColor = BentoTextPrimary,
                                 focusedBorderColor = BentoPrimary,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                                unfocusedBorderColor = BentoBorder
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else {
                         Text(
                             text = "Smart Playlists update automatically based on dynamic filters like Genre, Play Count, Recency, and Sorting.",
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = BentoTextSecondary,
                             fontSize = 13.sp
                         )
                     }
@@ -184,14 +186,14 @@ fun PlaylistsScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = Color.Black)
+                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
                 ) {
                     Text(if (isSmartSelected) "Configure Criteria" else "Create", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) {
-                    Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                    Text("Cancel", color = BentoTextSecondary)
                 }
             }
         )
@@ -201,67 +203,115 @@ fun PlaylistsScreen(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
-            val results = mutableListOf<M3uImportResult>()
-            var invalidFileCount = 0
-            uris.forEach { uri ->
-                var fileName = ""
-                try {
-                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            if (idx >= 0) fileName = cursor.getString(idx) ?: ""
-                        }
-                    }
-                } catch (_: Exception) {}
-                if (fileName.isBlank()) {
-                    fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "Playlist_${System.currentTimeMillis()}"
-                }
-                val cleanName = try { android.net.Uri.decode(fileName) } catch (_: Exception) { fileName }
-                val isM3uFormat = cleanName.lowercase().endsWith(".m3u") || cleanName.lowercase().endsWith(".m3u8")
+            isParsingM3uFiles = true
+            coroutineScope.launch {
+                val (results, invalidFileCount) = withContext(Dispatchers.IO) {
+                    val parsedList = mutableListOf<M3uImportResult>()
+                    var ignoredCount = 0
+                    val usedNamesInBatch = HashSet<String>()
 
-                if (!isM3uFormat) {
-                    invalidFileCount++
-                    return@forEach
-                }
-
-                try {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        // Safely read text up to 2MB to prevent OOM on non-playlist files
-                        val content = stream.bufferedReader(Charsets.UTF_8).use { reader ->
-                            val sb = StringBuilder()
-                            val buffer = CharArray(4096)
-                            var charsRead: Int
-                            var totalChars = 0
-                            while (reader.read(buffer).also { charsRead = it } != -1) {
-                                sb.append(buffer, 0, charsRead)
-                                totalChars += charsRead
-                                if (totalChars > 2 * 1024 * 1024) break
+                    uris.forEachIndexed { idx, uri ->
+                        var fileName = ""
+                        try {
+                            context.contentResolver.query(
+                                uri,
+                                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                                null,
+                                null,
+                                null
+                            )?.use { cursor ->
+                                if (cursor.moveToFirst()) {
+                                    val colIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                    if (colIdx >= 0) fileName = cursor.getString(colIdx) ?: ""
+                                }
                             }
-                            sb.toString()
+                        } catch (_: Exception) {}
+
+                        if (fileName.isBlank()) {
+                            fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "Playlist_${idx + 1}"
                         }
-                        val playlistName = cleanName.substringBeforeLast('.')
-                        val result = M3uParser.parseM3uContent(playlistName, content, allSongs)
-                        results.add(result)
+                        val cleanName = try { Uri.decode(fileName) } catch (_: Exception) { fileName }
+                        val lowerName = cleanName.lowercase()
+                        val hasM3uExtension = lowerName.endsWith(".m3u") || lowerName.endsWith(".m3u8")
+
+                        try {
+                            context.contentResolver.openInputStream(uri)?.use { stream ->
+                                val content = stream.bufferedReader(Charsets.UTF_8).use { reader ->
+                                    val sb = StringBuilder()
+                                    val buffer = CharArray(4096)
+                                    var charsRead: Int
+                                    var totalChars = 0
+                                    while (reader.read(buffer).also { charsRead = it } != -1) {
+                                        sb.append(buffer, 0, charsRead)
+                                        totalChars += charsRead
+                                        if (totalChars > 2 * 1024 * 1024) break
+                                    }
+                                    sb.toString()
+                                }
+
+                                val looksLikeM3uContent = content.contains("#EXTM3U", ignoreCase = true) ||
+                                    content.contains("#EXTINF", ignoreCase = true)
+
+                                if (!hasM3uExtension && !looksLikeM3uContent) {
+                                    ignoredCount++
+                                    return@forEachIndexed
+                                }
+
+                                var basePlaylistName = cleanName.substringBeforeLast('.').trim()
+                                    .ifBlank { "Imported Playlist ${idx + 1}" }
+                                if (!usedNamesInBatch.add(basePlaylistName.lowercase())) {
+                                    basePlaylistName = "$basePlaylistName (${idx + 1})"
+                                    usedNamesInBatch.add(basePlaylistName.lowercase())
+                                }
+
+                                val result = M3uParser.parseM3uContent(basePlaylistName, content, allSongs)
+                                if (result.totalEntries > 0 || hasM3uExtension) {
+                                    parsedList.add(result)
+                                } else {
+                                    ignoredCount++
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            ignoredCount++
+                        }
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                    parsedList to ignoredCount
                 }
-            }
 
-            if (invalidFileCount > 0) {
-                Toast.makeText(context, "Only .m3u playlist files are allowed. $invalidFileCount non-.m3u file(s) were ignored.", Toast.LENGTH_LONG).show()
-            }
+                isParsingM3uFiles = false
 
-            if (results.isNotEmpty()) {
-                if (results.size == 1) {
-                    importResultDialog = results.first()
-                } else {
-                    multiImportResultDialog = results
+                if (invalidFileCount > 0 && results.isEmpty()) {
+                    Toast.makeText(
+                        context,
+                        "Only .m3u / .m3u8 playlist files are supported ($invalidFileCount file(s) skipped).",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else if (invalidFileCount > 0) {
+                    Toast.makeText(
+                        context,
+                        "Skipped $invalidFileCount non-playlist file(s). Found ${results.size} valid playlist(s).",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
-            } else if (invalidFileCount == 0) {
-                Toast.makeText(context, "No valid playlists found in selected files", Toast.LENGTH_SHORT).show()
+
+                if (results.isNotEmpty()) {
+                    if (results.size == 1) {
+                        importResultDialog = results.first()
+                    } else {
+                        multiImportResultDialog = results
+                    }
+                } else if (invalidFileCount == 0) {
+                    Toast.makeText(context, "No valid playlists found in selected files", Toast.LENGTH_SHORT).show()
+                }
             }
         }
+    }
+
+    val launchM3uPicker = {
+        // Use "*/*" so Android's SAF file picker allows selecting multiple .m3u / .m3u8 files
+        // across all OEM file managers (many OEMs classify .m3u8 as application/octet-stream or text/plain)
+        m3uPickerLauncher.launch(arrayOf("*/*"))
     }
 
     val artworkPickerLauncher = rememberLauncherForActivityResult(
@@ -275,9 +325,9 @@ fun PlaylistsScreen(
         selectedPlaylistForArtwork = null
     }
 
-    val currentLayout = com.example.ui.theme.PlaylistsLayout.fromId(playlistsLayout)
+    val currentLayout = PlaylistsLayout.fromId(playlistsLayout)
     when (currentLayout) {
-        com.example.ui.theme.PlaylistsLayout.MAGAZINE_HERO -> {
+        PlaylistsLayout.MAGAZINE_HERO -> {
             com.example.ui.screens.layouts.PlaylistsScreenMagazineHero(
                 playlists = playlists,
                 smartPlaylists = smartPlaylists,
@@ -298,11 +348,11 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
+                onImportM3u = launchM3uPicker,
                 modifier = modifier
             )
         }
-        com.example.ui.theme.PlaylistsLayout.COMPACT_LIST -> {
+        PlaylistsLayout.COMPACT_LIST -> {
             com.example.ui.screens.layouts.PlaylistsScreenCompactList(
                 playlists = playlists,
                 smartPlaylists = smartPlaylists,
@@ -323,11 +373,11 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
+                onImportM3u = launchM3uPicker,
                 modifier = modifier
             )
         }
-        com.example.ui.theme.PlaylistsLayout.GLOW_CARDS -> {
+        PlaylistsLayout.GLOW_CARDS -> {
             com.example.ui.screens.layouts.PlaylistsScreenGlowCards(
                 playlists = playlists,
                 smartPlaylists = smartPlaylists,
@@ -348,11 +398,11 @@ fun PlaylistsScreen(
                     selectedPlaylistForArtwork = pl.id
                     artworkPickerLauncher.launch("image/*")
                 },
-                onImportM3u = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
+                onImportM3u = launchM3uPicker,
                 modifier = modifier
             )
         }
-        com.example.ui.theme.PlaylistsLayout.BENTO_GRID -> {
+        PlaylistsLayout.BENTO_GRID -> {
             Box(
                 modifier = modifier.fillMaxSize(),
                 contentAlignment = Alignment.TopCenter
@@ -362,417 +412,444 @@ fun PlaylistsScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                 ) {
-        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                modifier = Modifier.weight(1f, fill = false),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    onClick = onBackClick,
-                    shape = CircleShape,
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to Home",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column {
-                    Text(
-                        text = "Playlists",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = BentoTextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${playlists.size + smartPlaylists.size} collections",
-                        fontSize = 11.5.sp,
-                        color = BentoTextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Search Button
-                Surface(
-                    onClick = onOpenSearch,
-                    shape = CircleShape,
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // Favorites Button
-                Surface(
-                    onClick = onOpenFavorites,
-                    shape = CircleShape,
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = "Favorites",
-                            tint = BentoAccentPinkText,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // View Mode Toggle Button (Grid vs List)
-                Surface(
-                    onClick = onToggleViewMode,
-                    shape = CircleShape,
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (playlistViewMode == "GRID") Icons.Default.ViewList else Icons.Default.GridView,
-                            contentDescription = "Toggle Grid/List View",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // Import M3U Button
-                Surface(
-                    onClick = { m3uPickerLauncher.launch(arrayOf("audio/x-mpegurl", "application/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl")) },
-                    shape = CircleShape,
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.FileDownload,
-                            contentDescription = "Import M3U",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                // New Playlist Button
-                Surface(
-                    onClick = { showCreateDialog = true },
-                    shape = CircleShape,
-                    color = BentoPrimary.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.32f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "New Playlist",
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Smart Playlists Hub Section
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Smart Playlists Hub",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BentoTextPrimary
-                    )
-                }
-
-                TextButton(onClick = { showSmartCriteriaDialog = true }) {
-                    Text("+ Create", color = BentoPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            if (smartPlaylists.isEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showSmartCriteriaDialog = true },
-                    colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BentoPrimary.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier.weight(1f, fill = false),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = BentoPrimary
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Build Dynamic Smart Playlists",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = BentoTextPrimary
-                            )
-                            Text(
-                                text = "Auto-generate playlists by genre, play count, recency & limit.",
-                                fontSize = 12.sp,
-                                color = BentoTextSecondary
-                            )
-                        }
-                    }
-                }
-            } else {
-                androidx.compose.foundation.lazy.LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    itemsIndexed(smartPlaylists, key = { idx, smart -> "${smart.id}_$idx" }) { _, smart ->
-                        val matchedCount = remember(smart, allSongs) { smart.filterSongs(allSongs).size }
-                        Card(
-                            modifier = Modifier
-                                .width(210.dp)
-                                .clickable { onSmartPlaylistClick(smart) },
-                            colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            Surface(
+                                onClick = onBackClick,
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(38.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                                Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(20.dp)
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Back to Home",
+                                        tint = BentoTextPrimary,
+                                        modifier = Modifier.size(19.dp)
                                     )
-                                    IconButton(
-                                        onClick = { smartPlaylistToDelete = smart },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                                            contentDescription = "Delete",
-                                            tint = BentoTextSecondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
                                 }
+                            }
 
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column {
                                 Text(
-                                    text = smart.name,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    text = "Playlists",
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = BentoTextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-
                                 Text(
-                                    text = "$matchedCount tracks matched",
-                                    fontSize = 12.sp,
-                                    color = BentoPrimary,
-                                    fontWeight = FontWeight.SemiBold
+                                    text = "${playlists.size + smartPlaylists.size} collections",
+                                    fontSize = 11.5.sp,
+                                    color = BentoTextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                            }
+                        }
 
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(
+                                onClick = onOpenSearch,
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Search",
+                                        tint = BentoTextPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                onClick = onOpenFavorites,
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Favorite,
+                                        contentDescription = "Favorites",
+                                        tint = BentoAccentPinkText,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                onClick = onToggleViewMode,
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (playlistViewMode == "GRID") Icons.Default.ViewList else Icons.Default.GridView,
+                                        contentDescription = "Toggle Grid/List View",
+                                        tint = BentoTextPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                onClick = launchM3uPicker,
+                                shape = CircleShape,
+                                color = BentoCardSurface,
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileDownload,
+                                        contentDescription = "Import M3U",
+                                        tint = BentoTextPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                onClick = { showCreateDialog = true },
+                                shape = CircleShape,
+                                color = BentoPrimary.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.32f)),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "New Playlist",
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Smart Playlists Hub Section
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Smart Playlists Hub",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                            }
+
+                            TextButton(onClick = { showSmartCriteriaDialog = true }) {
+                                Text("+ Create", color = BentoPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (smartPlaylists.isEmpty()) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showSmartCriteriaDialog = true },
+                                colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    smart.getCriteriaBadges().take(3).forEach { badge ->
-                                        Box(
-                                            modifier = Modifier
-                                                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(BentoPrimary.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = BentoPrimary
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Build Dynamic Smart Playlists",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary
+                                        )
+                                        Text(
+                                            text = "Auto-generate playlists by genre, play count, recency & limit.",
+                                            fontSize = 12.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            androidx.compose.foundation.lazy.LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                itemsIndexed(smartPlaylists, key = { idx, smart -> "${smart.id}_$idx" }) { _, smart ->
+                                    val matchedCount = remember(smart, allSongs) { smart.filterSongs(allSongs).size }
+                                    Card(
+                                        modifier = Modifier
+                                            .width(210.dp)
+                                            .clickable { onSmartPlaylistClick(smart) },
+                                        colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AutoAwesome,
+                                                    contentDescription = null,
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                IconButton(
+                                                    onClick = { smartPlaylistToDelete = smart },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Delete",
+                                                        tint = BentoTextSecondary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+
                                             Text(
-                                                text = badge,
-                                                fontSize = 9.sp,
-                                                color = BentoTextSecondary
+                                                text = smart.name,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoTextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
+
+                                            Text(
+                                                text = "$matchedCount tracks matched",
+                                                fontSize = 12.sp,
+                                                color = BentoPrimary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                smart.getCriteriaBadges().take(3).forEach { badge ->
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(BentoCardSurface.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = badge,
+                                                            fontSize = 9.sp,
+                                                            color = BentoTextSecondary
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-        if (playlists.isEmpty()) {
+                    if (playlists.isEmpty()) {
+                        BentoCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = BentoCardSurface
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QueueMusic,
+                                    contentDescription = null,
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Text(
+                                    text = "No Playlists Created",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = "Tap + to create custom playlists or use the import icon to import single or multiple .M3U / .M3U8 playlists.",
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary
+                                )
+                            }
+                        }
+                    } else {
+                        if (playlistViewMode == "GRID") {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                contentPadding = PaddingValues(bottom = 120.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                            ) {
+                                items(playlists, key = { it.id }, contentType = { "playlist_grid_card" }) { playlist ->
+                                    PlaylistGridCard(
+                                        playlist = playlist,
+                                        onClick = { onPlaylistClick(playlist) },
+                                        onPlayNow = { onPlayNow(playlist) },
+                                        onPlayNext = { onPlayNext(playlist) },
+                                        onAddToQueue = { onAddToQueue(playlist) },
+                                        onRename = {
+                                            playlistToRename = playlist
+                                            renamePlaylistText = playlist.name
+                                        },
+                                        onChangeCover = {
+                                            selectedPlaylistForArtwork = playlist.id
+                                            artworkPickerLauncher.launch("image/*")
+                                        },
+                                        onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
+                                        onDelete = { playlistToDelete = playlist }
+                                    )
+                                }
+                            }
+                        } else {
+                            val listState = rememberLazyListState()
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                            ) {
+                                LazyColumn(
+                                    state = listState,
+                                    contentPadding = PaddingValues(bottom = 120.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(playlists, key = { it.id }, contentType = { "playlist_list_card" }) { playlist ->
+                                        PlaylistListCard(
+                                            playlist = playlist,
+                                            onClick = { onPlaylistClick(playlist) },
+                                            onPlayNow = { onPlayNow(playlist) },
+                                            onPlayNext = { onPlayNext(playlist) },
+                                            onAddToQueue = { onAddToQueue(playlist) },
+                                            onRename = {
+                                                playlistToRename = playlist
+                                                renamePlaylistText = playlist.name
+                                            },
+                                            onChangeCover = {
+                                                selectedPlaylistForArtwork = playlist.id
+                                                artworkPickerLauncher.launch("image/*")
+                                            },
+                                            onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
+                                            onDelete = { playlistToDelete = playlist }
+                                        )
+                                    }
+                                }
 
-            BentoCard(
-                modifier = Modifier.fillMaxWidth(),
-                backgroundColor = BentoCardSurface
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.QueueMusic,
-                        contentDescription = null,
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Text(
-                        text = "No Playlists Created",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BentoTextPrimary
-                    )
-                    Text(
-                        text = "Tap + to create custom playlists or use the import icon to import .M3U / .M3U8 playlists.",
-                        fontSize = 12.sp,
-                        color = BentoTextSecondary
-                    )
-                }
-            }
-        } else {
-            if (playlistViewMode == "GRID") {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    contentPadding = PaddingValues(bottom = 120.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth().weight(1f)
-                ) {
-                    items(playlists, key = { it.id }, contentType = { "playlist_grid_card" }) { playlist ->
-                        PlaylistGridCard(
-                            playlist = playlist,
-                            onClick = { onPlaylistClick(playlist) },
-                            onPlayNow = { onPlayNow(playlist) },
-                            onPlayNext = { onPlayNext(playlist) },
-                            onAddToQueue = { onAddToQueue(playlist) },
-                            onRename = {
-                                playlistToRename = playlist
-                                renamePlaylistText = playlist.name
-                            },
-                            onChangeCover = {
-                                selectedPlaylistForArtwork = playlist.id
-                                artworkPickerLauncher.launch("image/*")
-                            },
-                            onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
-                            onDelete = { playlistToDelete = playlist }
-                        )
-                    }
-                }
-            } else {
-                val listState = rememberLazyListState()
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = PaddingValues(bottom = 120.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(playlists, key = { it.id }, contentType = { "playlist_list_card" }) { playlist ->
-                            PlaylistListCard(
-                                playlist = playlist,
-                                onClick = { onPlaylistClick(playlist) },
-                                onPlayNow = { onPlayNow(playlist) },
-                                onPlayNext = { onPlayNext(playlist) },
-                                onAddToQueue = { onAddToQueue(playlist) },
-                                onRename = {
-                                    playlistToRename = playlist
-                                    renamePlaylistText = playlist.name
-                                },
-                                onChangeCover = {
-                                    selectedPlaylistForArtwork = playlist.id
-                                    artworkPickerLauncher.launch("image/*")
-                                },
-                                onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
-                                onDelete = { playlistToDelete = playlist }
-                            )
+                                FastScrollbar(
+                                    listState = listState,
+                                    totalItems = playlists.size,
+                                    bottomPadding = 120.dp,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                )
+                            }
                         }
                     }
-
-                    FastScrollbar(
-                        listState = listState,
-                        totalItems = playlists.size,
-                        bottomPadding = 120.dp,
-                        modifier = Modifier.align(Alignment.CenterEnd)
-                    )
                 }
             }
         }
     }
-}
-}
-}
+
+    if (isParsingM3uFiles) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Reading Playlist Files...", color = BentoTextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = BentoPrimary,
+                        strokeWidth = 2.5.dp
+                    )
+                    Text(
+                        text = "Matching tracks against your library...",
+                        fontSize = 13.5.sp,
+                        color = BentoTextSecondary
+                    )
+                }
+            },
+            confirmButton = {},
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 
     playlistToRename?.let { targetPlaylist ->
         AlertDialog(
@@ -888,7 +965,7 @@ fun PlaylistsScreen(
     if (result != null) {
         AlertDialog(
             onDismissRequest = { importResultDialog = null },
-            title = { Text("M3U Import Summary", color = BentoTextPrimary) },
+            title = { Text("M3U Import Summary", color = BentoTextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Playlist Name: ${result.playlistName}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
@@ -902,10 +979,11 @@ fun PlaylistsScreen(
                     onClick = {
                         onImportM3uPlaylist(result.playlistName, result.matchedSongs)
                         importResultDialog = null
+                        Toast.makeText(context, "Imported \"${result.playlistName}\" (${result.matchedSongs.size} songs)", Toast.LENGTH_SHORT).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
                 ) {
-                    Text("Import ${result.matchedSongs.size} Songs", color = BentoOnPrimary)
+                    Text("Import ${result.matchedSongs.size} Songs", color = BentoOnPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -913,7 +991,8 @@ fun PlaylistsScreen(
                     Text("Cancel", color = BentoTextSecondary)
                 }
             },
-            containerColor = BentoCardSurface
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
@@ -921,42 +1000,82 @@ fun PlaylistsScreen(
     if (multiResults != null) {
         val totalPlaylists = multiResults.size
         val totalSongsToImport = multiResults.sumOf { it.matchedSongs.size }
+        val totalMissing = multiResults.sumOf { it.missingPaths.size }
 
         AlertDialog(
             onDismissRequest = { multiImportResultDialog = null },
-            title = { Text("Batch Import Playlists ($totalPlaylists)", color = BentoTextPrimary, fontWeight = FontWeight.Bold) },
+            title = {
+                Text(
+                    "Batch Import Playlists ($totalPlaylists)",
+                    color = BentoTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Found $totalPlaylists valid playlist files:", fontSize = 13.sp, color = BentoTextSecondary)
-                    Column(
+                    Text(
+                        "Selected $totalPlaylists playlist files:",
+                        fontSize = 13.sp,
+                        color = BentoTextSecondary
+                    )
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp)
-                            .background(BentoCardDarkPurple.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                            .heightIn(max = 220.dp)
+                            .background(BentoCardDarkPurple.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                            .border(1.dp, BentoBorder.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        multiResults.forEach { r ->
+                        itemsIndexed(multiResults, key = { idx, r -> "${r.playlistName}_$idx" }) { _, r ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(r.playlistName, fontSize = 13.sp, color = BentoTextPrimary, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
-                                Text("${r.matchedSongs.size} songs", fontSize = 12.sp, color = BentoPrimary)
+                                Text(
+                                    text = r.playlistName,
+                                    fontSize = 13.sp,
+                                    color = BentoTextPrimary,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                )
+                                Text(
+                                    text = "${r.matchedSongs.size}/${r.totalEntries} matched",
+                                    fontSize = 12.sp,
+                                    color = BentoPrimary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
                     }
-                    Text("Total $totalSongsToImport matched songs will be imported across $totalPlaylists playlists.", fontSize = 12.sp, color = BentoTextSecondary)
+                    Text(
+                        text = "Total $totalSongsToImport matched songs will be imported across $totalPlaylists playlists" +
+                            if (totalMissing > 0) " ($totalMissing missing tracks skipped)." else ".",
+                        fontSize = 12.sp,
+                        color = BentoTextSecondary
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        multiResults.forEach { r ->
-                            onImportM3uPlaylist(r.playlistName, r.matchedSongs)
+                        val batchPayload = multiResults.map { it.playlistName to it.matchedSongs }
+                        if (onImportMultipleM3uPlaylists != null) {
+                            onImportMultipleM3uPlaylists(batchPayload)
+                        } else {
+                            multiResults.forEach { r ->
+                                onImportM3uPlaylist(r.playlistName, r.matchedSongs)
+                            }
                         }
                         multiImportResultDialog = null
-                        Toast.makeText(context, "Imported $totalPlaylists playlists successfully", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            "Imported $totalPlaylists playlists ($totalSongsToImport tracks) successfully",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
                 ) {
@@ -968,7 +1087,8 @@ fun PlaylistsScreen(
                     Text("Cancel", color = BentoTextSecondary)
                 }
             },
-            containerColor = BentoCardSurface
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }
@@ -1080,7 +1200,7 @@ private fun PlaylistGridCard(
                                 onAddToQueue()
                             }
                         )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(alpha = 0.1f))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = BentoBorder.copy(alpha = 0.4f))
                         DropdownMenuItem(
                             text = { Text("Open Playlist", color = BentoTextPrimary) },
                             onClick = {
@@ -1269,7 +1389,7 @@ private fun PlaylistListCard(
                             onAddToQueue()
                         }
                     )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(alpha = 0.1f))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = BentoBorder.copy(alpha = 0.4f))
                     DropdownMenuItem(
                         text = { Text("Open Playlist", color = BentoTextPrimary) },
                         onClick = {

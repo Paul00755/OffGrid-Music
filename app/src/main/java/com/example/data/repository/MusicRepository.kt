@@ -4,16 +4,16 @@ import com.example.data.local.*
 import com.example.data.model.*
 import com.example.scanner.LibraryScanner
 import com.example.scanner.ScanProgress
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MusicRepository(
@@ -126,7 +126,7 @@ class MusicRepository(
         if (playlistId <= 0) return
         try {
             playlistDao.recordPlaylistPlay(
-                com.example.data.local.PlaylistPlayEventEntity(
+                PlaylistPlayEventEntity(
                     playlistId = playlistId,
                     timestamp = System.currentTimeMillis()
                 )
@@ -136,7 +136,6 @@ class MusicRepository(
 
     suspend fun checkAndSeedInitialData() {
         try {
-            // Clean up any remaining legacy sample songs from previous runs
             songDao.deleteSampleSongs()
         } catch (_: Exception) {}
     }
@@ -294,7 +293,7 @@ class MusicRepository(
             .flowOn(Dispatchers.IO)
     }
 
-    fun getDailyListeningStats(days: Int = 7): Flow<List<com.example.data.model.DailyListeningStat>> {
+    fun getDailyListeningStats(days: Int = 7): Flow<List<DailyListeningStat>> {
         val cal = java.util.Calendar.getInstance().apply {
             set(java.util.Calendar.HOUR_OF_DAY, 0)
             set(java.util.Calendar.MINUTE, 0)
@@ -308,7 +307,7 @@ class MusicRepository(
         val fullDateFormat = java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault())
 
         return historyDao.getPlaybackHistorySince(startTime).map { historyRecords ->
-            val daySlots = mutableListOf<com.example.data.model.DailyListeningStat>()
+            val daySlots = mutableListOf<DailyListeningStat>()
             val currentCal = java.util.Calendar.getInstance()
             val todayDayOfYear = currentCal.get(java.util.Calendar.DAY_OF_YEAR)
             val todayYear = currentCal.get(java.util.Calendar.YEAR)
@@ -333,7 +332,7 @@ class MusicRepository(
                 val count = dayHistory.count { it.isQualified }
 
                 daySlots.add(
-                    com.example.data.model.DailyListeningStat(
+                    DailyListeningStat(
                         dayStartMs = dayStart,
                         dayLabel = label,
                         fullDate = fullDate,
@@ -347,7 +346,7 @@ class MusicRepository(
         }
     }
 
-    fun getTimeOfDayDistribution(startTime: Long): Flow<com.example.data.model.TimeOfDayDistribution> {
+    fun getTimeOfDayDistribution(startTime: Long): Flow<TimeOfDayDistribution> {
         return historyDao.getPlaybackHistorySince(startTime).map { records ->
             var morning = 0L
             var afternoon = 0L
@@ -365,7 +364,7 @@ class MusicRepository(
                     else -> night += rec.listenedDurationMs
                 }
             }
-            com.example.data.model.TimeOfDayDistribution(
+            TimeOfDayDistribution(
                 morningDurationMs = morning,
                 afternoonDurationMs = afternoon,
                 eveningDurationMs = evening,
@@ -373,7 +372,6 @@ class MusicRepository(
             )
         }
     }
-
 
     fun getTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int> {
         return historyDao.getTrackCountBetween(startTime, endTime)
@@ -512,11 +510,11 @@ class MusicRepository(
     }
 
     private fun notifyPlaylistUpdated(playlistId: Long) {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val pl = playlistDao.getPlaylistById(playlistId)
                 if (pl != null) {
-                    val songs = playlistDao.getPlaylistSongs(playlistId).firstOrNull()?.map { it.toDomainModel() } ?: emptyList()
+                    val songs = playlistDao.getPlaylistSongsOnce(playlistId).map { it.toDomainModel() }
                     cloudSyncRepository?.onPlaylistUpdatedAsync(playlistId, pl.name, pl.isPinned, songs)
                 }
             } catch (_: Exception) {}
@@ -527,6 +525,57 @@ class MusicRepository(
         val id = playlistDao.insertPlaylist(PlaylistEntity(name = name))
         notifyPlaylistUpdated(id)
         return id
+    }
+
+    /**
+     * Batch creates or merges multiple playlists with their ordered song IDs on Dispatchers.IO.
+     * Used by multiple M3U playlist import so importing 10+ playlists at once is instantaneous
+     * and never causes N+1 single-song DB queries or UI freezes.
+     */
+    suspend fun createPlaylistsWithSongsBatch(
+        playlistsToImport: List<Pair<String, List<Long>>>
+    ): List<Pair<Long, Int>> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<Pair<Long, Int>>()
+        val existingPlaylists = playlistDao.getAllPlaylistsOnce()
+        val existingByName = existingPlaylists.associateBy { it.name.trim().lowercase() }.toMutableMap()
+
+        for ((rawName, songIds) in playlistsToImport) {
+            val cleanName = rawName.trim().ifBlank { "Imported Playlist" }
+            val existing = existingByName[cleanName.lowercase()]
+            val playlistId = if (existing != null) {
+                existing.id
+            } else {
+                val createdAt = System.currentTimeMillis()
+                val newId = playlistDao.insertPlaylist(
+                    PlaylistEntity(
+                        name = cleanName,
+                        createdAt = createdAt
+                    )
+                )
+                existingByName[cleanName.lowercase()] = PlaylistEntity(
+                    id = newId,
+                    name = cleanName,
+                    createdAt = createdAt
+                )
+                newId
+            }
+
+            val existingOrderedIds = playlistDao.getPlaylistSongsOnce(playlistId).map { it.id }
+            val combinedUniqueIds = (existingOrderedIds + songIds).distinct()
+            val crossRefs = combinedUniqueIds.mapIndexed { idx, sId ->
+                PlaylistSongCrossRef(
+                    playlistId = playlistId,
+                    songId = sId,
+                    position = idx
+                )
+            }
+            if (crossRefs.isNotEmpty()) {
+                playlistDao.updatePlaylistOrder(playlistId, crossRefs)
+            }
+            notifyPlaylistUpdated(playlistId)
+            results.add(playlistId to combinedUniqueIds.size)
+        }
+        results
     }
 
     suspend fun renamePlaylist(playlistId: Long, newName: String) {
@@ -544,7 +593,7 @@ class MusicRepository(
             return false
         }
         if (addAtTop) {
-            val existingSongs = playlistDao.getPlaylistSongs(playlistId).firstOrNull() ?: emptyList()
+            val existingSongs = playlistDao.getPlaylistSongsOnce(playlistId)
             val crossRefs = mutableListOf<PlaylistSongCrossRef>()
             crossRefs.add(PlaylistSongCrossRef(playlistId, songId, 0))
             existingSongs.forEachIndexed { index, song ->
@@ -573,7 +622,7 @@ class MusicRepository(
     }
 
     suspend fun removeDuplicateSongsFromPlaylist(playlistId: Long): Int {
-        val songsList = playlistDao.getPlaylistSongs(playlistId).firstOrNull() ?: emptyList()
+        val songsList = playlistDao.getPlaylistSongsOnce(playlistId)
         if (songsList.size <= 1) return 0
 
         val seenKeys = mutableSetOf<String>()
@@ -656,7 +705,7 @@ class MusicRepository(
                 finalArtworkUri = persistentUri
             }
         } else if (finalArtworkUri.isNullOrBlank()) {
-            // Treat artwork as independent metadata: Preserve existing artwork across title/tag changes
+            // Preserve existing artwork across title/tag changes
             finalArtworkUri = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
                 ?: song.artworkUri
                 ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
@@ -664,7 +713,7 @@ class MusicRepository(
         }
 
         if (!finalArtworkUri.isNullOrBlank()) {
-            com.example.ui.components.ArtworkResolutionCache.cache[song.id] = finalArtworkUri
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri)
         }
 
         val updatedSong = song.copy(
@@ -692,7 +741,6 @@ class MusicRepository(
             lyrics = newLyrics
         )
 
-        // Keep online artwork cache synchronized with the new metadata
         com.example.util.OnlineArtistImageFetcher.updateSongMetadataCacheKeys(
             context = context,
             songId = song.id,
@@ -717,8 +765,8 @@ class MusicRepository(
             } else if (existingLyrics != null && !existingLyrics.syncedLyricsJson.isNullOrBlank()) {
                 val existingFormatted = com.example.util.LrcParser.formatSyncedJsonToLrc(existingLyrics.syncedLyricsJson)
                 val isUnchanged = newLyrics.isBlank() ||
-                        newLyrics.trim() == existingFormatted?.trim() ||
-                        newLyrics.trim() == existingLyrics.plainLyrics?.trim()
+                    newLyrics.trim() == existingFormatted?.trim() ||
+                    newLyrics.trim() == existingLyrics.plainLyrics?.trim()
                 if (isUnchanged) {
                     existingLyrics.syncedLyricsJson
                 } else {
@@ -742,7 +790,6 @@ class MusicRepository(
             }
         }
 
-        // Write tags directly to local device storage audio file (ID3v2 for MP3, .lrc companion, MediaStore, and MediaScanner)
         try {
             com.example.util.AudioTagWriter.writeAudioTags(
                 context = context,

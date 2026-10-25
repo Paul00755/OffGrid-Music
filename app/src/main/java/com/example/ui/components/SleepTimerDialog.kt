@@ -9,7 +9,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.*
@@ -31,6 +30,7 @@ fun SleepTimerDialog(
     onStartTimerMinutes: (Int, Boolean) -> Unit,
     onStartSongCount: (Int) -> Unit,
     onAddMinutes: (Int) -> Unit = {},
+    onSetFinishLastSong: (Boolean) -> Unit = {},
     onCancelTimer: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -38,7 +38,7 @@ fun SleepTimerDialog(
     var customHours by remember { mutableStateOf("") }
     var customMinutes by remember { mutableStateOf("") }
     var customSongs by remember { mutableStateOf("") }
-    var finishLastSongTime by remember { mutableStateOf(timerState.finishLastSong) }
+    var finishLastSongTime by remember(timerState.finishLastSong) { mutableStateOf(timerState.finishLastSong) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     val predefinedMinutes = listOf(5, 10, 15, 20, 30, 45, 60, 90, 120)
@@ -57,7 +57,7 @@ fun SleepTimerDialog(
                 if (timerState.isActive) {
                     val statusText = if (timerState.mode == "TIME") {
                         if (timerState.isWaitingForCurrentTrackToEnd || timerState.remainingSeconds <= 0L) {
-                            "Active: Finishing current track before stopping"
+                            "Active: Finishing current track before stopping on next track at 0:00"
                         } else {
                             val mins = timerState.remainingSeconds / 60
                             val secs = timerState.remainingSeconds % 60
@@ -66,11 +66,11 @@ fun SleepTimerDialog(
                         }
                     } else {
                         if (timerState.isFinalSleepTrack) {
-                            "Active: Final track (${timerState.elapsedSongs}/${timerState.totalSongs}) - stopping after track"
+                            "Active: Final track (${timerState.elapsedSongs}/${timerState.totalSongs}) - stopping on next track at 0:00"
                         } else if (timerState.elapsedSongs > 0) {
-                            "Active: Track ${timerState.elapsedSongs} of ${timerState.totalSongs} (${timerState.remainingSongs} remaining)"
+                            "Active: Track ${timerState.elapsedSongs} of ${timerState.totalSongs} (${timerState.remainingSongs} after this)"
                         } else {
-                            "Active: ${timerState.remainingSongs} of ${timerState.totalSongs} ${if (timerState.totalSongs == 1) "track" else "tracks"} remaining"
+                            "Active: Counting ${timerState.totalSongs} ${if (timerState.totalSongs == 1) "track" else "tracks"} starting from next song"
                         }
                     }
                     Text(
@@ -135,7 +135,7 @@ fun SleepTimerDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1E1E28))
+                        .background(BentoCardDarkPurple)
                         .padding(4.dp)
                 ) {
                     Box(
@@ -219,7 +219,7 @@ fun SleepTimerDialog(
                                         text = if (mins >= 60) "${mins / 60}h ${mins % 60}m".replace(" 0m", "") else "$mins mins",
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Medium,
-                                        color = if (isSelected) BentoOnPrimary else Color.White
+                                        color = if (isSelected) BentoOnPrimary else BentoTextPrimary
                                     )
                                 }
                             }
@@ -261,7 +261,7 @@ fun SleepTimerDialog(
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
                             ) {
-                                Text("Set")
+                                Text("Set", color = BentoOnPrimary)
                             }
                         }
 
@@ -271,12 +271,19 @@ fun SleepTimerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { finishLastSongTime = !finishLastSongTime }
+                                .clickable {
+                                    val updated = !finishLastSongTime
+                                    finishLastSongTime = updated
+                                    onSetFinishLastSong(updated)
+                                }
                                 .padding(vertical = 4.dp)
                         ) {
                             Checkbox(
                                 checked = finishLastSongTime,
-                                onCheckedChange = { finishLastSongTime = it }
+                                onCheckedChange = { updated ->
+                                    finishLastSongTime = updated
+                                    onSetFinishLastSong(updated)
+                                }
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Column {
@@ -287,7 +294,7 @@ fun SleepTimerDialog(
                                     color = BentoTextPrimary
                                 )
                                 Text(
-                                    text = "Lets the song currently playing finish completely",
+                                    text = "Finishes current song, transitions to next song & stops at 0:00",
                                     fontSize = 11.sp,
                                     color = BentoTextSecondary
                                 )
@@ -297,7 +304,11 @@ fun SleepTimerDialog(
                 } else {
                     // Track Count options
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Stop automatically after track count:", fontSize = 12.5.sp, color = BentoTextSecondary)
+                        Text(
+                            "Counts from the next track after current song, then stops on the following track at 0:00:",
+                            fontSize = 12.sp,
+                            color = BentoTextSecondary
+                        )
 
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(3),
@@ -322,7 +333,7 @@ fun SleepTimerDialog(
                                         text = "$count ${if (count == 1) "track" else "tracks"}",
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Medium,
-                                        color = if (isSelected) BentoOnPrimary else Color.White
+                                        color = if (isSelected) BentoOnPrimary else BentoTextPrimary
                                     )
                                 }
                             }
@@ -354,7 +365,7 @@ fun SleepTimerDialog(
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
                             ) {
-                                Text("Set")
+                                Text("Set", color = BentoOnPrimary)
                             }
                         }
                     }
@@ -385,4 +396,3 @@ fun SleepTimerDialog(
         containerColor = BentoCardSurface
     )
 }
-

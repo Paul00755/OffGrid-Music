@@ -1,17 +1,29 @@
 package com.example.data.local
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_settings")
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "user_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 class UserPreferencesRepository(private val context: Context) {
+
+    private val safeData: Flow<Preferences> = context.dataStore.data.catch {
+        emit(emptyPreferences())
+    }
 
     private object PreferenceKeys {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
@@ -41,7 +53,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // Expanded Customization Settings
         val WAVEFORM_STYLE = stringPreferencesKey("waveform_style") // "SNAKE", "CLASSIC", "SMOOTH_WAVE", "BARS", "DOTS", "MINIMAL"
-        val AMOLED_MODE = booleanPreferencesKey("amoled_mode")
+        val AMOLED_MODE = booleanPreferencesKey("amoled_mode") // Extra Dark Mode
         val ACCENT_COLOR_PRESET = stringPreferencesKey("accent_color_preset") // "PURPLE", "PINK", "CYAN", "GREEN", "ORANGE"
         val CORNER_RADIUS_DP = intPreferencesKey("corner_radius_dp") // 12, 16, 20, 24
         val FONT_SIZE_SCALE = stringPreferencesKey("font_size_scale") // "SMALL", "MEDIUM", "LARGE"
@@ -124,15 +136,15 @@ class UserPreferencesRepository(private val context: Context) {
         val AUDIO_TRANSCRIBE_TARGET_LANG = stringPreferencesKey("audio_transcribe_target_lang") // "en", "ta", "hi", "ml"
     }
 
-    val isTranscribeTranslateEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val isTranscribeTranslateEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false
     }
 
-    val audioTranscribeMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val audioTranscribeMode: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF"
     }
 
-    val audioTranscribeTargetLang: Flow<String> = context.dataStore.data.map { prefs ->
+    val audioTranscribeTargetLang: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta"
     }
 
@@ -154,23 +166,23 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val automaticBackupEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val automaticBackupEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: false
     }
 
-    val backupFrequency: Flow<com.example.data.sync.BackupFrequency> = context.dataStore.data.map { prefs ->
+    val backupFrequency: Flow<com.example.data.sync.BackupFrequency> = safeData.map { prefs ->
         com.example.data.sync.BackupFrequency.fromString(prefs[PreferenceKeys.BACKUP_FREQUENCY])
     }
 
-    val lastSyncedTimestamp: Flow<Long> = context.dataStore.data.map { prefs ->
+    val lastSyncedTimestamp: Flow<Long> = safeData.map { prefs ->
         prefs[PreferenceKeys.LAST_SYNCED_TIMESTAMP] ?: 0L
     }
 
-    val lastBackupTimestamp: Flow<Long> = context.dataStore.data.map { prefs ->
+    val lastBackupTimestamp: Flow<Long> = safeData.map { prefs ->
         prefs[PreferenceKeys.LAST_BACKUP_TIMESTAMP] ?: 0L
     }
 
-    val lastBackupDataHash: Flow<String> = context.dataStore.data.map { prefs ->
+    val lastBackupDataHash: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.LAST_BACKUP_DATA_HASH] ?: ""
     }
 
@@ -201,7 +213,7 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val settingsLastUpdatedAt: Flow<Long> = context.dataStore.data.map { prefs ->
+    val settingsLastUpdatedAt: Flow<Long> = safeData.map { prefs ->
         prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
     }
 
@@ -212,9 +224,15 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun exportUserSettings(): com.example.data.sync.CloudUserSettings {
-        val prefs = context.dataStore.data.first()
+        val prefs = safeData.first()
+        val effectiveThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        val effectiveAmoled = if (effectiveThemeMode.equals("LIGHT", ignoreCase = true)) {
+            false
+        } else {
+            prefs[PreferenceKeys.AMOLED_MODE] ?: false
+        }
         return com.example.data.sync.CloudUserSettings(
-            themeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK",
+            themeMode = effectiveThemeMode,
             uiTheme = prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN",
             homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC",
             nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS",
@@ -222,7 +240,7 @@ class UserPreferencesRepository(private val context: Context) {
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE",
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0,
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true,
-            amoledMode = prefs[PreferenceKeys.AMOLED_MODE] ?: false,
+            amoledMode = effectiveAmoled,
             cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16,
             fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM",
             artworkSize = prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM",
@@ -303,7 +321,8 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
-                prefs[PreferenceKeys.AMOLED_MODE] = cloud.amoledMode
+                // Enforce Extra Dark Mode rule: cannot be ON when Light theme is active
+                prefs[PreferenceKeys.AMOLED_MODE] = if (cloud.themeMode.equals("LIGHT", ignoreCase = true)) false else cloud.amoledMode
                 prefs[PreferenceKeys.CORNER_RADIUS_DP] = cloud.cornerRadiusDp
                 prefs[PreferenceKeys.FONT_SIZE_SCALE] = cloud.fontSizeScale
                 prefs[PreferenceKeys.ARTWORK_SIZE] = cloud.artworkSize
@@ -378,7 +397,7 @@ class UserPreferencesRepository(private val context: Context) {
         return applied
     }
 
-    val skipAuthPrompt: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val skipAuthPrompt: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SKIP_AUTH_PROMPT] ?: false
     }
 
@@ -388,7 +407,7 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val customDisplayName: Flow<String?> = context.dataStore.data.map { prefs ->
+    val customDisplayName: Flow<String?> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME]
     }
 
@@ -402,7 +421,7 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val customAvatarUri: Flow<String?> = context.dataStore.data.map { prefs ->
+    val customAvatarUri: Flow<String?> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_AVATAR_URI]
     }
 
@@ -416,12 +435,12 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val lastActiveUid: Flow<String?> = context.dataStore.data.map { prefs ->
+    val lastActiveUid: Flow<String?> = safeData.map { prefs ->
         prefs[PreferenceKeys.LAST_ACTIVE_UID]
     }
 
     suspend fun getLastActiveUid(): String? {
-        return context.dataStore.data.first()[PreferenceKeys.LAST_ACTIVE_UID]
+        return safeData.first()[PreferenceKeys.LAST_ACTIVE_UID]
     }
 
     suspend fun setLastActiveUid(uid: String?) {
@@ -445,7 +464,7 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val databaseStorageTier: Flow<String> = context.dataStore.data.map { prefs ->
+    val databaseStorageTier: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED"
     }
 
@@ -455,15 +474,15 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val cacheLyricsEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val cacheLyricsEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: true
     }
 
-    val cacheAlbumArtEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val cacheAlbumArtEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: true
     }
 
-    val cacheSongArtWorkEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val cacheSongArtWorkEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: true
     }
 
@@ -476,7 +495,7 @@ class UserPreferencesRepository(private val context: Context) {
     @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = false
     @Volatile var cachedAutoPlayOnAppStartup: Boolean = false
 
-    val customEqBands: Flow<List<Float>> = context.dataStore.data.map { prefs ->
+    val customEqBands: Flow<List<Float>> = safeData.map { prefs ->
         val raw = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0"
         try {
             raw.split(",").map { it.trim().toFloat() }
@@ -485,27 +504,27 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val customBassBoost: Flow<Int> = context.dataStore.data.map { prefs ->
+    val customBassBoost: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0
     }
 
-    val customVirtualizer: Flow<Int> = context.dataStore.data.map { prefs ->
+    val customVirtualizer: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0
     }
 
-    val fetchOnlineArtworkHighRes: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val fetchOnlineArtworkHighRes: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: false
     }
 
-    val alwaysShuffleMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val alwaysShuffleMode: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: false
     }
 
-    val gesturePlaybackEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val gesturePlaybackEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: true
     }
 
-    val homeSections: Flow<List<String>> = context.dataStore.data.map { prefs ->
+    val homeSections: Flow<List<String>> = safeData.map { prefs ->
         val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
         raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
@@ -516,22 +535,53 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val highRefreshRate: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val highRefreshRate: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true
     }
 
     private val bootCachePrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
 
-    fun isOnboardingCompletedSync(): Boolean {
+    /**
+     * Checks whether this installation is an existing user upgrading from a previous build:
+     * - Checks `bootCachePrefs["onboarding_completed"]`
+     * - Checks if `offgrid_music_db` already exists on disk with user data or if storage permission
+     *   was already granted in a previous version.
+     * If so, caches `onboarding_completed = true` so the app opens straight to the Home screen.
+     */
+    private fun detectExistingInstallation(): Boolean {
         return try {
-            bootCachePrefs.getBoolean("onboarding_completed", false)
+            if (bootCachePrefs.getBoolean("onboarding_completed", false)) return true
+
+            val dbFile = context.getDatabasePath("offgrid_music_db")
+            val hasExistingDb = dbFile != null && dbFile.exists() && dbFile.length() > 16384L
+
+            val requiredPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                android.Manifest.permission.READ_MEDIA_AUDIO
+            } else {
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+            val hasAudioPermission = ContextCompat.checkSelfPermission(
+                context,
+                requiredPerm
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (hasExistingDb && hasAudioPermission) {
+                bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
+                true
+            } else {
+                false
+            }
         } catch (_: Exception) {
             false
         }
     }
 
-    val isOnboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        val completed = prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: bootCachePrefs.getBoolean("onboarding_completed", false)
+    fun isOnboardingCompletedSync(): Boolean {
+        return detectExistingInstallation()
+    }
+
+    val isOnboardingCompleted: Flow<Boolean> = safeData.map { prefs ->
+        val completed = prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: detectExistingInstallation()
         try {
             if (bootCachePrefs.getBoolean("onboarding_completed", false) != completed) {
                 bootCachePrefs.edit().putBoolean("onboarding_completed", completed).apply()
@@ -540,236 +590,247 @@ class UserPreferencesRepository(private val context: Context) {
         completed
     }
 
-    val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val themeMode: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
     }
 
-    val uiTheme: Flow<String> = context.dataStore.data.map { prefs ->
+    val uiTheme: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN"
     }
 
-    val displayScale: Flow<String> = context.dataStore.data.map { prefs ->
+    val displayScale: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.DISPLAY_SCALE] ?: "DEFAULT"
     }
 
-    val homeScreenLayout: Flow<String> = context.dataStore.data.map { prefs ->
+    val homeScreenLayout: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC"
     }
 
-    val nowPlayingLayout: Flow<String> = context.dataStore.data.map { prefs ->
+    val nowPlayingLayout: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS"
     }
 
-    val playlistsLayout: Flow<String> = context.dataStore.data.map { prefs ->
+    val playlistsLayout: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "GLOW_CARDS"
     }
 
-    val isDynamicArtworkTheme: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val isDynamicArtworkTheme: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true
     }
 
-    val customAccentColor: Flow<Int> = context.dataStore.data.map { prefs ->
+    val customAccentColor: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0
     }
 
-    val lyricsFetchMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val lyricsFetchMode: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: "WIFI_ONLY"
     }
 
-    val resumeOnBluetooth: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val resumeOnBluetooth: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: false
     }
 
-    val pauseOnHeadsetUnplug: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val pauseOnHeadsetUnplug: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: true
     }
 
-    val repeatMode: Flow<Int> = context.dataStore.data.map { prefs ->
+    val repeatMode: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.REPEAT_MODE] ?: 0
     }
 
-    val shuffleMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val shuffleMode: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHUFFLE_MODE] ?: false
     }
 
-    val lastSongId: Flow<Long> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.LAST_SONG_ID] ?: -1L
+    val lastSongId: Flow<Long> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LAST_SONG_ID] ?: bootCachePrefs.getLong("last_song_id", -1L)
     }
 
-    val lastPosition: Flow<Long> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.LAST_POSITION] ?: 0L
+    val lastPosition: Flow<Long> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LAST_POSITION] ?: bootCachePrefs.getLong("last_position", 0L)
     }
 
-    val lastDuration: Flow<Long> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.LAST_DURATION] ?: 0L
+    val lastDuration: Flow<Long> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LAST_DURATION] ?: bootCachePrefs.getLong("last_duration", 0L)
     }
 
-    val lastQueueIds: Flow<List<Long>> = context.dataStore.data.map { prefs ->
-        val raw = prefs[PreferenceKeys.LAST_QUEUE_IDS] ?: ""
+    val lastQueueIds: Flow<List<Long>> = safeData.map { prefs ->
+        val raw = prefs[PreferenceKeys.LAST_QUEUE_IDS]
+            ?: bootCachePrefs.getString("last_queue_ids", "")
+            ?: ""
         if (raw.isBlank()) emptyList() else raw.split(",").mapNotNull { it.toLongOrNull() }
     }
 
-    val lastQueueIndex: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.LAST_QUEUE_INDEX] ?: 0
+    val lastQueueIndex: Flow<Int> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LAST_QUEUE_INDEX] ?: bootCachePrefs.getInt("last_queue_index", 0)
     }
 
-    val addToQueuePosition: Flow<String> = context.dataStore.data.map { prefs ->
+    val addToQueuePosition: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM"
     }
 
-    val playlistAddSongPosition: Flow<String> = context.dataStore.data.map { prefs ->
+    val playlistAddSongPosition: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM"
     }
 
-    val playlistViewMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val playlistViewMode: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID"
     }
 
-    val waveformStyle: Flow<String> = context.dataStore.data.map { prefs ->
+    val waveformStyle: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE"
     }
 
-    val amoledMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[PreferenceKeys.AMOLED_MODE] ?: false
+    /**
+     * Extra Dark Mode (`amoledMode`):
+     * Strictly gated by Dark Theme — if `themeMode` is `"LIGHT"`, it always evaluates to `false`.
+     */
+    val amoledMode: Flow<Boolean> = safeData.map { prefs ->
+        val mode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        if (mode.equals("LIGHT", ignoreCase = true)) {
+            false
+        } else {
+            prefs[PreferenceKeys.AMOLED_MODE] ?: false
+        }
     }
 
-    val accentColorPreset: Flow<String> = context.dataStore.data.map { prefs ->
+    val accentColorPreset: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE"
     }
 
-    val cornerRadiusDp: Flow<Int> = context.dataStore.data.map { prefs ->
+    val cornerRadiusDp: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16
     }
 
-    val fontSizeScale: Flow<String> = context.dataStore.data.map { prefs ->
+    val fontSizeScale: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM"
     }
 
-    val artworkSize: Flow<String> = context.dataStore.data.map { prefs ->
+    val artworkSize: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM"
     }
 
-    val showArtist: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val showArtist: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHOW_ARTIST] ?: true
     }
 
-    val showAlbum: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val showAlbum: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHOW_ALBUM] ?: true
     }
 
-    val showAudioOutput: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val showAudioOutput: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: true
     }
 
-    val miniPlayerStyle: Flow<String> = context.dataStore.data.map { prefs ->
+    val miniPlayerStyle: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: "FLOATING"
     }
 
-    val miniPlayerShowPrevious: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val miniPlayerShowPrevious: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: true
     }
 
-    val miniPlayerShowNext: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val miniPlayerShowNext: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: true
     }
 
-    val miniPlayerShowFavorite: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val miniPlayerShowFavorite: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: true
     }
 
-    val gaplessPlayback: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val gaplessPlayback: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: true
     }
 
-    val normalizeAudio: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val normalizeAudio: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: false
     }
 
-    val autoPlayOnHeadphoneConnection: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val autoPlayOnHeadphoneConnection: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false
     }
 
-    val autoPlayOnAppStartup: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val autoPlayOnAppStartup: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: false
     }
 
-    val crossfadeDurationSec: Flow<Int> = context.dataStore.data.map { prefs ->
+    val crossfadeDurationSec: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: 0
     }
 
-    val lyricsAutoScroll: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val lyricsAutoScroll: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: true
     }
 
-    val lyricsFontSize: Flow<String> = context.dataStore.data.map { prefs ->
+    val lyricsFontSize: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: "MEDIUM"
     }
 
-    val notificationEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val notificationEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: true
     }
 
-    val pauseOnZeroVolume: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val pauseOnZeroVolume: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: true
     }
-    
-    val autoResumeOnVolumeIncrease: Flow<Boolean> = context.dataStore.data.map { prefs ->
+
+    val autoResumeOnVolumeIncrease: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: true
     }
-    
-    val ignoreAudioDuration: Flow<Int> = context.dataStore.data.map { prefs ->
+
+    val ignoreAudioDuration: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0
     }
 
-    val maxSongDuration: Flow<Int> = context.dataStore.data.map { prefs ->
+    val maxSongDuration: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.MAX_SONG_DURATION] ?: 300
     }
 
-    val fullDeviceScan: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val fullDeviceScan: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.FULL_DEVICE_SCAN] ?: false
     }
 
-    val fadeInOutMs: Flow<Int> = context.dataStore.data.map { prefs ->
+    val fadeInOutMs: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
     }
 
-    val fadeInMs: Flow<Int> = context.dataStore.data.map { prefs ->
+    val fadeInMs: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.FADE_IN_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
     }
 
-    val fadeOutMs: Flow<Int> = context.dataStore.data.map { prefs ->
+    val fadeOutMs: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.FADE_OUT_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
     }
 
-    val shakeToSkip: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val shakeToSkip: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: false
     }
 
-    val keepScreenAwake: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val keepScreenAwake: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: false
     }
 
-    val audioBalance: Flow<Float> = context.dataStore.data.map { prefs ->
+    val audioBalance: Flow<Float> = safeData.map { prefs ->
         prefs[PreferenceKeys.AUDIO_BALANCE] ?: 0f
     }
 
-    val equalizerPreset: Flow<String> = context.dataStore.data.map { prefs ->
+    val equalizerPreset: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.EQUALIZER_PRESET] ?: "NORMAL"
     }
 
-    val reduceVolumeOnNotification: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val reduceVolumeOnNotification: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true
     }
 
-    val playDuringCamera: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val playDuringCamera: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: false
     }
 
-    val scrobbleThresholdType: Flow<String> = context.dataStore.data.map { prefs ->
+    val scrobbleThresholdType: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS"
     }
 
-    val scrobbleThresholdValue: Flow<Int> = context.dataStore.data.map { prefs ->
+    val scrobbleThresholdValue: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30
     }
 
@@ -792,11 +853,11 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setPauseOnZeroVolume(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = enabled }
     }
-    
+
     suspend fun setAutoResumeOnVolumeIncrease(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = enabled }
     }
-    
+
     suspend fun setIgnoreAudioDuration(durationSec: Int) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = durationSec }
     }
@@ -817,7 +878,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setFadeInOutMs(ms: Int) {
-        context.dataStore.edit { prefs -> 
+        context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.FADE_IN_OUT_MS] = ms
             prefs[PreferenceKeys.FADE_IN_MS] = ms
             prefs[PreferenceKeys.FADE_OUT_MS] = ms
@@ -860,8 +921,19 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.WAVEFORM_STYLE] = style }
     }
 
+    /**
+     * Enables/disables Extra Dark Mode (`amoled_mode`), strictly requiring Dark Theme.
+     * If the user is currently in Light Theme, Extra Dark Mode will not turn on.
+     */
     suspend fun setAmoledMode(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AMOLED_MODE] = enabled }
+        context.dataStore.edit { prefs ->
+            val currentThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+            if (currentThemeMode.equals("LIGHT", ignoreCase = true)) {
+                prefs[PreferenceKeys.AMOLED_MODE] = false
+            } else {
+                prefs[PreferenceKeys.AMOLED_MODE] = enabled
+            }
+        }
     }
 
     suspend fun setAccentColorPreset(preset: String) {
@@ -977,11 +1049,11 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    val librarySortOption: Flow<String> = context.dataStore.data.map { prefs ->
+    val librarySortOption: Flow<String> = safeData.map { prefs ->
         prefs[stringPreferencesKey("library_sort_option")] ?: "RECENTLY_ADDED"
     }
 
-    val librarySortAscending: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val librarySortAscending: Flow<Boolean> = safeData.map { prefs ->
         prefs[booleanPreferencesKey("library_sort_ascending")] ?: true
     }
 
@@ -992,11 +1064,30 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Persists the current playback and Up-Next queue order both in `SharedPreferences` (synchronously/immediately)
+     * and in `DataStore` so even if the user closes/swipes away the app milliseconds after reordering the queue,
+     * the custom queue order is 100% preserved on next launch.
+     */
     suspend fun saveLastPlaybackState(songId: Long, position: Long, queueIds: List<Long>, queueIndex: Int, duration: Long = 0L) {
+        val serializedIds = queueIds.joinToString(",")
+        try {
+            bootCachePrefs.edit().apply {
+                putLong("last_song_id", songId)
+                putLong("last_position", position)
+                putString("last_queue_ids", serializedIds)
+                putInt("last_queue_index", queueIndex)
+                if (duration > 0L) {
+                    putLong("last_duration", duration)
+                }
+                apply()
+            }
+        } catch (_: Exception) {}
+
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.LAST_SONG_ID] = songId
             prefs[PreferenceKeys.LAST_POSITION] = position
-            prefs[PreferenceKeys.LAST_QUEUE_IDS] = queueIds.joinToString(",")
+            prefs[PreferenceKeys.LAST_QUEUE_IDS] = serializedIds
             prefs[PreferenceKeys.LAST_QUEUE_INDEX] = queueIndex
             if (duration > 0L) {
                 prefs[PreferenceKeys.LAST_DURATION] = duration
@@ -1025,9 +1116,16 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Sets the theme mode ("DARK", "LIGHT", "SYSTEM").
+     * If "LIGHT" is selected, Extra Dark Mode (`amoled_mode`) is automatically turned off.
+     */
     suspend fun setThemeMode(mode: String) {
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.THEME_MODE] = mode
+            if (mode.equals("LIGHT", ignoreCase = true)) {
+                prefs[PreferenceKeys.AMOLED_MODE] = false
+            }
         }
     }
 
