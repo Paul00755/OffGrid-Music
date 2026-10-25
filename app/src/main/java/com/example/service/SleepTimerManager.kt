@@ -263,13 +263,24 @@ class SleepTimerManager(
         val oldOccurrence = oldSessionId ?: oldTrackId?.let { "song_$it" }
         val newOccurrence = newTrackId?.let { "song_$it" }
 
+        val oldWasEligible = isOldQualified || oldNaturalEnd
+
         // 1. If the finishing track was the Nth (final) counted track (Song F),
-        // then transitioning to Song G completes the sleep timer and stops at 0:00 on Song G!
+        // and it completed or qualified, transitioning to Song G completes the sleep timer and stops at 0:00 on Song G!
+        // If the user skipped the final track before qualification, the new track becomes the final track candidate instead.
         if (curr.isFinalTrack || curr.isFinalSleepTrack) {
-            _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
-            cancelTimer()
-            android.util.Log.d(TAG, "Final counted track ($oldTrackId) finished -> transitioning to next track ($newTrackId) at 0:00 and stopping")
-            return true
+            if (oldWasEligible) {
+                _state.value = curr.copy(phase = TrackSleepTimerPhase.STOPPED)
+                cancelTimer()
+                android.util.Log.d(TAG, "Final counted track ($oldTrackId) finished -> transitioning to next track ($newTrackId) at 0:00 and stopping")
+                return true
+            } else {
+                _state.value = curr.copy(
+                    lastProcessedTrackIdentity = newOccurrence,
+                    finalTrackIdentity = newOccurrence
+                )
+                return false
+            }
         }
 
         // 2. Check if we are transitioning out of the initial baseline track (Song A) into Track 1 (Song B)
@@ -277,14 +288,14 @@ class SleepTimerManager(
             hasPassedInitialSong = true
             // Baseline track A finished; new track B is Track 1
             completedEligibleTracks = 1
-        } else {
-            // Subsequent transition (B -> C, C -> D, D -> E, E -> F)
+        } else if (oldWasEligible) {
+            // Subsequent eligible transition (B -> C, C -> D, D -> E, E -> F)
             completedEligibleTracks++
         }
 
         val currentTrackNumber = completedEligibleTracks.coerceIn(1, curr.targetTrackCount)
         val isFinal = (currentTrackNumber >= curr.targetTrackCount)
-        val remaining = (curr.targetTrackCount - currentTrackNumber).coerceAtLeast(0)
+        val remaining = (curr.targetTrackCount - currentTrackNumber + 1).coerceAtLeast(1)
         val nextPhase = if (isFinal) TrackSleepTimerPhase.FINAL_TRACK else TrackSleepTimerPhase.COUNTING
 
         _state.value = curr.copy(
@@ -303,7 +314,7 @@ class SleepTimerManager(
         if (isFinal) {
             android.util.Log.d(TAG, "$name started -> Track $currentTrackNumber/${curr.targetTrackCount} (FINAL_TRACK)")
         } else {
-            android.util.Log.d(TAG, "$name started -> Track $currentTrackNumber/${curr.targetTrackCount} ($remaining tracks after this)")
+            android.util.Log.d(TAG, "$name started -> Track $currentTrackNumber/${curr.targetTrackCount} ($remaining tracks remaining)")
         }
 
         return false

@@ -22,7 +22,6 @@
     <application
         android:name=".MusicApplication"
         android:allowBackup="true"
-        android:extractNativeLibs="false"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:enableOnBackInvokedCallback="true"

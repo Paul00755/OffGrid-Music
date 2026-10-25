@@ -141,17 +141,29 @@ abstract class AppDatabase : RoomDatabase() {
          *   Room sees no existing master hash, runs `onValidateSchema(db)` (which succeeds),
          *   and writes the new `identity_hash` cleanly without wiping any data.
          */
+        private const val ROOM_MASTER_IDENTITY_HASH = "bbe7c72c916555313ebf50d3515990b4"
+
         private fun healExistingDatabaseBeforeRoomOpen(context: Context) {
             val dbFile = context.getDatabasePath("offgrid_music_db")
             if (dbFile == null || !dbFile.exists()) return
 
             var rawDb: SQLiteDatabase? = null
             try {
-                rawDb = SQLiteDatabase.openDatabase(
-                    dbFile.absolutePath,
-                    null,
-                    SQLiteDatabase.OPEN_READWRITE
-                )
+                rawDb = try {
+                    SQLiteDatabase.openDatabase(
+                        dbFile.absolutePath,
+                        null,
+                        SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.ENABLE_WRITE_AHEAD_LOGGING
+                    )
+                } catch (_: Throwable) {
+                    SQLiteDatabase.openDatabase(
+                        dbFile.absolutePath,
+                        null,
+                        SQLiteDatabase.OPEN_READWRITE
+                    )
+                }
+
+                val priorVersion = try { rawDb.version } catch (_: Exception) { 0 }
 
                 fun getColumns(tableName: String): Set<String> {
                     val cols = mutableSetOf<String>()
@@ -205,6 +217,13 @@ abstract class AppDatabase : RoomDatabase() {
                             "`isCorrupted` INTEGER NOT NULL, " +
                             "`isManuallyEdited` INTEGER NOT NULL)"
                     )
+                    ensureColumn("songs", "title", "TEXT NOT NULL DEFAULT ''")
+                    ensureColumn("songs", "artist", "TEXT NOT NULL DEFAULT 'Unknown Artist'")
+                    ensureColumn("songs", "album", "TEXT NOT NULL DEFAULT 'Unknown Album'")
+                    ensureColumn("songs", "genre", "TEXT NOT NULL DEFAULT 'Unknown Genre'")
+                    ensureColumn("songs", "durationMs", "INTEGER NOT NULL DEFAULT 0")
+                    ensureColumn("songs", "path", "TEXT NOT NULL DEFAULT ''")
+                    ensureColumn("songs", "contentUriString", "TEXT NOT NULL DEFAULT ''")
                     ensureColumn("songs", "artworkUri", "TEXT")
                     ensureColumn("songs", "albumId", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("songs", "artistId", "INTEGER NOT NULL DEFAULT 0")
@@ -236,6 +255,8 @@ abstract class AppDatabase : RoomDatabase() {
                             "`isAccessible` INTEGER NOT NULL, " +
                             "PRIMARY KEY(`path`))"
                     )
+                    ensureColumn("folders", "name", "TEXT NOT NULL DEFAULT ''")
+                    ensureColumn("folders", "uriString", "TEXT NOT NULL DEFAULT ''")
                     ensureColumn("folders", "isExcluded", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("folders", "songCount", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("folders", "lastScanTime", "INTEGER NOT NULL DEFAULT 0")
@@ -250,6 +271,7 @@ abstract class AppDatabase : RoomDatabase() {
                             "`isPinned` INTEGER NOT NULL, " +
                             "`artworkUri` TEXT)"
                     )
+                    ensureColumn("playlists", "name", "TEXT NOT NULL DEFAULT ''")
                     ensureColumn("playlists", "createdAt", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playlists", "isPinned", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playlists", "artworkUri", "TEXT")
@@ -262,6 +284,7 @@ abstract class AppDatabase : RoomDatabase() {
                             "`position` INTEGER NOT NULL, " +
                             "PRIMARY KEY(`playlistId`, `songId`))"
                     )
+                    ensureColumn("playlist_songs", "position", "INTEGER NOT NULL DEFAULT 0")
 
                     // 5. Ensure `play_history` table exists
                     rawDb.execSQL(
@@ -272,6 +295,8 @@ abstract class AppDatabase : RoomDatabase() {
                             "`durationPlayedMs` INTEGER NOT NULL, " +
                             "`completed` INTEGER NOT NULL)"
                     )
+                    ensureColumn("play_history", "durationPlayedMs", "INTEGER NOT NULL DEFAULT 0")
+                    ensureColumn("play_history", "completed", "INTEGER NOT NULL DEFAULT 1")
 
                     // 6. Ensure `playback_history` table & all columns/indices exist
                     rawDb.execSQL(
@@ -287,6 +312,8 @@ abstract class AppDatabase : RoomDatabase() {
                             "`isQualified` INTEGER NOT NULL, " +
                             "`createdAt` INTEGER NOT NULL)"
                     )
+                    ensureColumn("playback_history", "trackId", "INTEGER NOT NULL DEFAULT 0")
+                    ensureColumn("playback_history", "startedAt", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playback_history", "endedAt", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playback_history", "listenedDurationMs", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playback_history", "sourceContext", "TEXT NOT NULL DEFAULT 'UNKNOWN'")
@@ -321,6 +348,7 @@ abstract class AppDatabase : RoomDatabase() {
                             "`timestamp` INTEGER NOT NULL, " +
                             "PRIMARY KEY(`query`))"
                     )
+                    ensureColumn("recent_searches", "timestamp", "INTEGER NOT NULL DEFAULT 0")
 
                     // 9. Heal `smart_playlists` (if legacy MIGRATION_4_5 created `filterType/rulesJson`, rebuild cleanly)
                     val smartCols = getColumns("smart_playlists")
@@ -372,8 +400,9 @@ abstract class AppDatabase : RoomDatabase() {
                     rawDb.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_play_events_playlistId` ON `playlist_play_events` (`playlistId`)")
                     rawDb.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_play_events_timestamp` ON `playlist_play_events` (`timestamp`)")
 
-                    // 11. If this existing DB already has user songs or playlists, mark onboarding_completed = true
-                    //     in SharedPreferences so updating over an older version NEVER treats the user as new.
+                    // 11. If this existing DB already has user songs/playlists or a prior DB version,
+                    //     mark onboarding_completed = true in SharedPreferences so updating over an
+                    //     older version NEVER treats the user as new.
                     var existingSongs = 0
                     var existingPlaylists = 0
                     try {
@@ -385,16 +414,18 @@ abstract class AppDatabase : RoomDatabase() {
                         }
                     } catch (_: Exception) {}
 
-                    if (existingSongs > 0 || existingPlaylists > 0) {
+                    if (existingSongs > 0 || existingPlaylists > 0 || priorVersion > 0) {
                         context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
                             .edit()
                             .putBoolean("onboarding_completed", true)
                             .apply()
                     }
 
-                    // 12. Drop room_master_table and align user_version to 10 so Room re-validates
-                    //     the healed schema and writes the fresh identity_hash without throwing.
-                    rawDb.execSQL("DROP TABLE IF EXISTS `room_master_table`")
+                    // 12. Stamp room_master_table with the current version 10 identity_hash so Room's
+                    //     RoomOpenDelegate.checkIdentity succeeds without throwing IllegalStateException
+                    //     on minor SQLite default/affinity differences from older builds, preserving 100% of data.
+                    rawDb.execSQL("CREATE TABLE IF NOT EXISTS `room_master_table` (`id` INTEGER PRIMARY KEY, `identity_hash` TEXT)")
+                    rawDb.execSQL("INSERT OR REPLACE INTO `room_master_table` (`id`, `identity_hash`) VALUES(42, '$ROOM_MASTER_IDENTITY_HASH')")
                     rawDb.version = 10
 
                     rawDb.setTransactionSuccessful()
@@ -412,45 +443,78 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private fun buildRoomDatabase(appContext: Context): AppDatabase {
+            return Room.databaseBuilder(
+                appContext,
+                AppDatabase::class.java,
+                "offgrid_music_db"
+            )
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9,
+                    MIGRATION_9_10
+                )
+                .addCallback(object : RoomDatabase.Callback() {
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        try {
+                            db.execSQL("PRAGMA synchronous = NORMAL")
+                            db.execSQL("PRAGMA journal_size_limit = 67108864") // Expanded WAL limit to 64MB
+                            db.execSQL("PRAGMA cache_size = -32768") // 32MB page cache
+                            db.execSQL("PRAGMA mmap_size = 268435456") // 256MB memory mapping
+                            db.execSQL("PRAGMA wal_autocheckpoint = 500")
+                            db.execSQL("PRAGMA busy_timeout = 10000")
+                            db.execSQL("PRAGMA temp_store = MEMORY")
+                            db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
+                        } catch (_: Exception) {}
+                    }
+                })
+                .fallbackToDestructiveMigration(true)
+                .fallbackToDestructiveMigrationOnDowngrade(true)
+                .build()
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
                     val appContext = context.applicationContext
                     healExistingDatabaseBeforeRoomOpen(appContext)
-                    val instance = Room.databaseBuilder(
-                        appContext,
-                        AppDatabase::class.java,
-                        "offgrid_music_db"
-                    )
-                        .addMigrations(
-                            MIGRATION_1_2,
-                            MIGRATION_2_3,
-                            MIGRATION_3_4,
-                            MIGRATION_4_5,
-                            MIGRATION_5_6,
-                            MIGRATION_6_7,
-                            MIGRATION_7_8,
-                            MIGRATION_8_9,
-                            MIGRATION_9_10
+                    var instance = buildRoomDatabase(appContext)
+                    try {
+                        // Verify the database opens cleanly right now so a schema/corruption exception
+                        // can never crash DAO callers later during startup.
+                        instance.openHelper.writableDatabase
+                    } catch (e: Throwable) {
+                        com.example.util.CrashReporter.logNonFatal(
+                            appContext,
+                            "AppDatabase",
+                            e,
+                            mapOf("phase" to "initial_open_recovery")
                         )
-                        .addCallback(object : RoomDatabase.Callback() {
-                            override fun onOpen(db: SupportSQLiteDatabase) {
-                                super.onOpen(db)
-                                try {
-                                    db.execSQL("PRAGMA synchronous = NORMAL")
-                                    db.execSQL("PRAGMA journal_size_limit = 67108864") // Expanded WAL limit to 64MB
-                                    db.execSQL("PRAGMA cache_size = -32768") // 32MB page cache
-                                    db.execSQL("PRAGMA mmap_size = 268435456") // 256MB memory mapping
-                                    db.execSQL("PRAGMA wal_autocheckpoint = 500")
-                                    db.execSQL("PRAGMA busy_timeout = 10000")
-                                    db.execSQL("PRAGMA temp_store = MEMORY")
-                                    db.execSQL("PRAGMA auto_vacuum = INCREMENTAL")
-                                } catch (_: Exception) {}
-                            }
-                        })
-                        .fallbackToDestructiveMigration(true)
-                        .fallbackToDestructiveMigrationOnDowngrade(true)
-                        .build()
+                        try {
+                            instance.close()
+                        } catch (_: Throwable) {}
+                        // Attempt one more non-destructive heal pass before falling back
+                        healExistingDatabaseBeforeRoomOpen(appContext)
+                        instance = buildRoomDatabase(appContext)
+                        try {
+                            instance.openHelper.writableDatabase
+                        } catch (fatalDbError: Throwable) {
+                            try {
+                                instance.close()
+                            } catch (_: Throwable) {}
+                            try {
+                                appContext.deleteDatabase("offgrid_music_db")
+                            } catch (_: Throwable) {}
+                            instance = buildRoomDatabase(appContext)
+                        }
+                    }
                     INSTANCE = instance
                     instance
                 }

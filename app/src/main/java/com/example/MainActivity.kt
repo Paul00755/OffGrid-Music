@@ -1090,6 +1090,13 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
+    override fun onStop() {
+        super.onStop()
+        try {
+            com.example.service.PlaybackManager.activeInstance?.ensureBackgroundNotification()
+        } catch (_: Throwable) {}
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         mediaStoreObserver?.let {

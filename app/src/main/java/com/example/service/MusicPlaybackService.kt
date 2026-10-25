@@ -207,7 +207,10 @@ class MusicPlaybackService : MediaSessionService() {
             val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(applicationContext)
             pm.handleHeadphoneConnectedFromBroadcast()
         }
-        super.onStartCommand(intent, flags, startId)
+        val result = super.onStartCommand(intent, flags, startId)
+        if (intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION || session != null) {
+            triggerNotificationUpdate()
+        }
         return START_STICKY
     }
 
@@ -229,6 +232,8 @@ class MusicPlaybackService : MediaSessionService() {
                 val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 notificationManager.cancelAll()
                 stopSelf()
+            } else {
+                triggerNotificationUpdate()
             }
         } catch (e: Throwable) {
             e.printStackTrace()
@@ -246,7 +251,9 @@ class MusicPlaybackService : MediaSessionService() {
             } else {
                 releaseWakeLock()
             }
-            val shouldStartInForeground = startInForegroundRequired || isPlaying || (player.playWhenReady && hasActiveMedia)
+            // Keep service in foreground with active status bar notification whenever media is loaded
+            // so the notification stays active in the status bar while the app is in the background.
+            val shouldStartInForeground = startInForegroundRequired || isPlaying || hasActiveMedia
             super.onUpdateNotification(session, shouldStartInForeground)
         } catch (e: Throwable) {
             try {
@@ -325,6 +332,19 @@ class MusicPlaybackService : MediaSessionService() {
                         lastNotificationCallback?.onNotificationChanged(mn)
                     } catch (_: Throwable) {}
                     try {
+                        if (hasActiveMedia) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                startForeground(
+                                    mn.notificationId,
+                                    mn.notification,
+                                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                                )
+                            } else {
+                                startForeground(mn.notificationId, mn.notification)
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                    try {
                         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                         notificationManager?.notify(mn.notificationId, mn.notification)
                     } catch (_: Throwable) {}
@@ -350,6 +370,7 @@ class MusicPlaybackService : MediaSessionService() {
     companion object {
         const val CHANNEL_ID = "media_playback_channel_v2"
         const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
+        const val ACTION_ENSURE_BACKGROUND_NOTIFICATION = "com.example.service.ACTION_ENSURE_BACKGROUND_NOTIFICATION"
         var instance: MusicPlaybackService? = null
         var lastNotificationCallback: MediaNotification.Provider.Callback? = null
         var lastMediaNotification: MediaNotification? = null

@@ -153,6 +153,7 @@ object CrashReporter {
         sb.appendLine()
 
         sb.appendLine("--- CRASHING THREAD ---")
+        @Suppress("DEPRECATION")
         sb.appendLine("Thread: ${thread.name} [ID: ${thread.id}] (State: ${thread.state}, Daemon: ${thread.isDaemon})")
         sb.appendLine()
 
@@ -164,7 +165,9 @@ object CrashReporter {
         try {
             val allStackTraces = Thread.getAllStackTraces()
             allStackTraces.entries.take(8).forEach { (t, stack) ->
+                @Suppress("DEPRECATION")
                 if (t.id != thread.id) {
+                    @Suppress("DEPRECATION")
                     sb.appendLine("Thread '${t.name}' (id: ${t.id}, state: ${t.state}):")
                     stack.take(5).forEach { elem ->
                         sb.appendLine("    at $elem")

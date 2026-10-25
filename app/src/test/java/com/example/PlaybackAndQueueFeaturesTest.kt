@@ -204,7 +204,13 @@ class PlaybackAndQueueFeaturesTest {
         val artDir = java.io.File(filesDir, "artworks")
         if (!artDir.exists()) artDir.mkdirs()
         val dummyArtFile = java.io.File(artDir, "9999.jpg")
-        dummyArtFile.writeBytes(byteArrayOf(1, 2, 3, 4))
+        val validJpegBytes = ByteArray(300).apply {
+            this[0] = 0xFF.toByte()
+            this[1] = 0xD8.toByte()
+            this[298] = 0xFF.toByte()
+            this[299] = 0xD9.toByte()
+        }
+        dummyArtFile.writeBytes(validJpegBytes)
 
         com.example.ui.components.ArtworkResolutionCache.clear()
         val resolved = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, 9999L)
@@ -213,7 +219,9 @@ class PlaybackAndQueueFeaturesTest {
 
         // Verify authoritative artwork helper
         val song = sampleSongs[0].copy(id = 9999L)
-        val authoritative = com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song)
+        val authoritative = kotlinx.coroutines.runBlocking {
+            com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song)
+        }
         assertNotNull(authoritative)
         assertTrue(authoritative!!.contains("9999.jpg"))
 

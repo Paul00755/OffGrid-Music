@@ -252,7 +252,7 @@ class ReorderableLazyListState(
         draggedItemViewportY += dragAmount
         val newOffset = dragOffsetY + dragAmount
 
-        val boundaryClamp = stepHeight * 0.65f
+        val boundaryClamp = stepHeight * 0.55f
         val atTopLimit = currIdx <= minIndex && (!listState.canScrollBackward || currIdx == 0)
         val atBottomLimit = currIdx >= maxIndex && !listState.canScrollForward
 

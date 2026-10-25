@@ -553,7 +553,9 @@ class UserPreferencesRepository(private val context: Context) {
             if (bootCachePrefs.getBoolean("onboarding_completed", false)) return true
 
             val dbFile = context.getDatabasePath("offgrid_music_db")
-            val hasExistingDb = dbFile != null && dbFile.exists() && dbFile.length() > 16384L
+            val walFile = context.getDatabasePath("offgrid_music_db-wal")
+            val hasExistingDb = (dbFile != null && dbFile.exists() && dbFile.length() > 16384L) ||
+                (walFile != null && walFile.exists() && walFile.length() > 4096L)
 
             val requiredPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 android.Manifest.permission.READ_MEDIA_AUDIO
@@ -565,7 +567,10 @@ class UserPreferencesRepository(private val context: Context) {
                 requiredPerm
             ) == PackageManager.PERMISSION_GRANTED
 
-            if (hasExistingDb && hasAudioPermission) {
+            // On Android 6.0+, runtime audio permissions are never pre-granted on a fresh install.
+            // If audio permission is already granted or an existing database/WAL file with data is present,
+            // this is an in-place app update over an existing installation.
+            if (hasAudioPermission || hasExistingDb) {
                 bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
                 true
             } else {
@@ -581,10 +586,10 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val isOnboardingCompleted: Flow<Boolean> = safeData.map { prefs ->
-        val completed = prefs[PreferenceKeys.ONBOARDING_COMPLETED] ?: detectExistingInstallation()
+        val completed = (prefs[PreferenceKeys.ONBOARDING_COMPLETED] == true) || detectExistingInstallation()
         try {
-            if (bootCachePrefs.getBoolean("onboarding_completed", false) != completed) {
-                bootCachePrefs.edit().putBoolean("onboarding_completed", completed).apply()
+            if (completed && !bootCachePrefs.getBoolean("onboarding_completed", false)) {
+                bootCachePrefs.edit().putBoolean("onboarding_completed", true).apply()
             }
         } catch (_: Exception) {}
         completed

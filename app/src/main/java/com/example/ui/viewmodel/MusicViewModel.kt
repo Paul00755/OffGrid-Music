@@ -1414,8 +1414,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createPlaylistWithSongs(name: String, songs: List<Song>, onCreated: (Long) -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
-            val createdIds = repository.createPlaylistsWithSongsBatch(listOf(name to songs))
-            val playlistId = createdIds.firstOrNull() ?: repository.createPlaylist(name)
+            val createdIds = repository.createPlaylistsWithSongsBatch(listOf(name to songs.map { it.id }))
+            val playlistId = createdIds.firstOrNull()?.first ?: repository.createPlaylist(name)
             withContext(Dispatchers.Main) {
                 onCreated(playlistId)
             }
@@ -1431,7 +1431,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (playlistsBatch.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val createdIds = repository.createPlaylistsWithSongsBatch(playlistsBatch)
+            val batchPayload = playlistsBatch.map { (playlistName, songList) ->
+                playlistName to songList.map { it.id }
+            }
+            val createdIds = repository.createPlaylistsWithSongsBatch(batchPayload).map { it.first }
             withContext(Dispatchers.Main) {
                 onCompleted(createdIds)
             }

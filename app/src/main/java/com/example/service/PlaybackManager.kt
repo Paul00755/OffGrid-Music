@@ -467,14 +467,16 @@ class PlaybackManager(
         }
     }
 
-    fun startMusicPlaybackService() {
+    fun startMusicPlaybackService(action: String? = null) {
         try {
-            val intent = android.content.Intent(context, MusicPlaybackService::class.java)
+            val intent = android.content.Intent(context, MusicPlaybackService::class.java).apply {
+                if (action != null) this.action = action
+            }
             try {
                 context.startService(intent)
             } catch (_: Throwable) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
-                    (player.isPlaying || player.playWhenReady)
+                    (player.isPlaying || player.playWhenReady || player.mediaItemCount > 0 || _playbackState.value.currentSong != null)
                 ) {
                     try {
                         context.startForegroundService(intent)
@@ -484,6 +486,16 @@ class PlaybackManager(
         } catch (e: Throwable) {
             Log.e(TAG, "Error starting MusicPlaybackService", e)
         }
+    }
+
+    fun ensureBackgroundNotification() {
+        try {
+            val hasActiveMedia = _playbackState.value.currentSong != null || player.mediaItemCount > 0
+            if (!hasActiveMedia) return
+            startMusicPlaybackService(MusicPlaybackService.ACTION_ENSURE_BACKGROUND_NOTIFICATION)
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+        } catch (_: Throwable) {}
     }
 
     fun reorderQueue(fromIndex: Int, toIndex: Int) {
@@ -928,7 +940,7 @@ class PlaybackManager(
         player.pause()
         player.playWhenReady = false
         isRestoringPlayback = false
-        updateNotificationLayout()
+        ensureBackgroundNotification()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
