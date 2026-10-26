@@ -655,6 +655,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             allSongs.collect { songs ->
                 if (songs.isNotEmpty()) {
+                    com.example.ui.components.ArtworkResolutionCache.warmAllSongsArtworkInBackground(getApplication(), songs)
                     if (_speedDialSongs.value.isEmpty()) {
                         _speedDialSongs.value = songs.shuffled().take(9)
                     } else {
@@ -1154,8 +1155,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (savedRepeat != 0) {
                         playbackManager.setRepeatMode(savedRepeat)
                     }
-                    playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
-                    if (shouldAutoPlay && queueWithCorrectDuration.isNotEmpty() && !playbackManager.isVolumeZero()) {
+                    if (playbackManager.playbackState.value.queue.isEmpty() || !playbackManager.playbackState.value.isPlaying) {
+                        playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
+                    }
+                    val pendingAction = pendingWidgetAction
+                    if (pendingAction != null) {
+                        pendingWidgetAction = null
+                        executeWidgetActionNow(pendingAction)
+                    } else if (shouldAutoPlay && queueWithCorrectDuration.isNotEmpty() && !playbackManager.isVolumeZero()) {
                         playbackManager.play()
                     }
                 }
@@ -1396,8 +1403,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun getTopAlbumsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 10): Flow<List<com.example.data.model.AlbumStat>> = repository.getTopAlbumsBetween(startTime, endTime, limit)
     fun getMostPlayedPlaylistsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 10): Flow<List<Playlist>> = repository.getMostPlayedPlaylistsBetween(startTime, endTime, limit)
 
+    @Volatile
+    private var pendingWidgetAction: String? = null
+
+    fun enqueueOrExecuteWidgetAction(action: String) {
+        if (playbackManager.playbackState.value.queue.isNotEmpty()) {
+            pendingWidgetAction = null
+            executeWidgetActionNow(action)
+        } else {
+            pendingWidgetAction = action
+        }
+    }
+
+    private fun executeWidgetActionNow(action: String) {
+        when (action) {
+            com.example.widget.WidgetUpdateManager.ACTION_WIDGET_PLAY_PAUSE -> {
+                playbackManager.togglePlayPause()
+            }
+            com.example.widget.WidgetUpdateManager.ACTION_WIDGET_NEXT -> {
+                playbackManager.skipToNext()
+                if (!playbackManager.playbackState.value.isPlaying) {
+                    playbackManager.play()
+                }
+            }
+            com.example.widget.WidgetUpdateManager.ACTION_WIDGET_PREV -> {
+                playbackManager.skipToPrevious()
+                if (!playbackManager.playbackState.value.isPlaying) {
+                    playbackManager.play()
+                }
+            }
+            com.example.widget.WidgetUpdateManager.ACTION_WIDGET_FAVORITE -> {
+                playbackState.value.currentSong?.let { toggleFavorite(it) }
+            }
+        }
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackManager.playbackState.value)
+    }
+
     fun toggleFavorite(song: Song) {
         val newFav = !song.isFavorite
+        com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(getApplication(), song.id, newFav)
         playbackManager.updateSongFavoriteStatus(song.id, newFav)
         viewModelScope.launch(Dispatchers.IO) {
             repository.setFavorite(song.id, newFav, song.path)

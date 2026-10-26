@@ -158,19 +158,19 @@ fun LibraryScreen(
         }
     }
 
-    // Debounced artwork preloading ahead of viewport so scrolling never stutters at 60Hz or 120Hz
+    // Debounced artwork preloading ahead of viewport so scrolling never stutters at 60Hz, 90Hz, or 120Hz
     LaunchedEffect(processedSongs, selectedCategory) {
         if (selectedCategory == LibraryCategory.SONGS && processedSongs.isNotEmpty()) {
             snapshotFlow { songsListState.firstVisibleItemIndex }
                 .distinctUntilChanged()
-                .debounce(45L)
+                .debounce(24L)
                 .collectLatest { firstVisible ->
                     com.example.ui.components.ArtworkResolutionCache.preloadWindow(
                         context = context,
                         songs = processedSongs,
                         firstVisibleIndex = firstVisible,
-                        windowAhead = 28,
-                        windowBehind = 8
+                        windowAhead = 35,
+                        windowBehind = 10
                     )
                 }
         }
@@ -661,29 +661,24 @@ fun LibraryScreen(
 
                             if (isAlphabeticalSort && groupedAlphabetSongs.isNotEmpty()) {
                                 groupedAlphabetSongs.forEach { (letterHeader, songsForLetter) ->
-                                    stickyHeader(key = "letter_header_$letterHeader") {
-                                        Surface(
-                                            color = BentoBackground,
+                                    item(key = "letter_header_$letterHeader", contentType = "letter_header") {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                                                .padding(horizontal = 10.dp, vertical = 4.dp)
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = letterHeader,
-                                                    fontSize = 15.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BentoPrimary
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                HorizontalDivider(
-                                                    modifier = Modifier.weight(1f),
-                                                    color = BentoCardPurple.copy(alpha = 0.5f)
-                                                )
-                                            }
+                                            Text(
+                                                text = letterHeader,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoPrimary
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            HorizontalDivider(
+                                                modifier = Modifier.weight(1f),
+                                                color = BentoCardPurple.copy(alpha = 0.5f)
+                                            )
                                         }
                                     }
 

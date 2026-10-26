@@ -63,6 +63,9 @@ fun SongItem(
         Spacer(modifier = Modifier.width(10.dp))
 
         // Info
+        val subtitleText = remember(song.displayArtist, song.displayAlbum) {
+            "${song.displayArtist} • ${song.displayAlbum}"
+        }
         Column(
             modifier = Modifier.weight(1f)
         ) {
@@ -76,7 +79,7 @@ fun SongItem(
             )
             Spacer(modifier = Modifier.height(1.dp))
             Text(
-                text = "${song.displayArtist} • ${song.displayAlbum}",
+                text = subtitleText,
                 fontSize = 11.5.sp,
                 color = BentoTextSecondary,
                 maxLines = 1,

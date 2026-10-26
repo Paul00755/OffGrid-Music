@@ -32,7 +32,10 @@ object ArtworkManager {
     private fun lockForSong(songId: Long): Any = songLocks.computeIfAbsent(songId) { Any() }
 
     // Bounded semaphore for MediaMetadataRetriever so background preloads never starve visible UI artwork
-    private val mmrSemaphore = Semaphore(6)
+    private val mmrSemaphore = Semaphore(8)
+
+    // In-memory index of verified valid image files (absolutePath -> byteLength) to eliminate repeated RandomAccessFile syscalls
+    private val verifiedValidFiles = ConcurrentHashMap<String, Long>()
 
     private val notificationArtCache = object : android.util.LruCache<Long, ByteArray>(8 * 1024 * 1024) {
         override fun sizeOf(key: Long, value: ByteArray): Int = value.size.coerceAtLeast(1)
@@ -47,9 +50,19 @@ object ArtworkManager {
      * Automatically deletes truncated/corrupted cache files so they are cleanly re-extracted.
      */
     fun isValidCompleteImageFile(file: File?): Boolean {
-        if (file == null || !file.exists() || !file.isFile) return false
+        if (file == null) return false
+        val absPath = file.absolutePath
+        val cachedLen = verifiedValidFiles[absPath]
+        if (cachedLen != null && cachedLen >= 256L) {
+            return true
+        }
+        if (!file.exists() || !file.isFile) {
+            verifiedValidFiles.remove(absPath)
+            return false
+        }
         val len = file.length()
         if (len < 256L) {
+            verifiedValidFiles.remove(absPath)
             try { file.delete() } catch (_: Exception) {}
             return false
         }
@@ -64,6 +77,7 @@ object ArtworkManager {
                     val isPng = (b0 == 0x89 && b1 == 0x50)
                     val isWebp = (b0 == 0x52 && b1 == 0x49)
                     if (!isJpeg && !isPng && !isWebp) {
+                        verifiedValidFiles.remove(absPath)
                         try { file.delete() } catch (_: Exception) {}
                         return false
                     }
@@ -80,6 +94,7 @@ object ArtworkManager {
                             }
                         }
                         if (!hasEoi) {
+                            verifiedValidFiles.remove(absPath)
                             // Truncated JPEG from an interrupted write! Delete it so it gets re-extracted cleanly.
                             try { file.delete() } catch (_: Exception) {}
                             return false
@@ -90,6 +105,7 @@ object ArtworkManager {
                 return false
             }
         }
+        verifiedValidFiles[absPath] = len
         return true
     }
 
@@ -114,6 +130,7 @@ object ArtworkManager {
                         tempFile.copyTo(destFile, overwrite = true)
                         tempFile.delete()
                     }
+                    verifiedValidFiles[destFile.absolutePath] = bytes.size.toLong()
                     true
                 } else {
                     tempFile.delete()
@@ -466,12 +483,16 @@ object ArtworkManager {
             if (deleteFiles) {
                 synchronized(lockForSong(songId)) {
                     val cacheFile = File(File(context.cacheDir, CACHE_DIR_NAME), "$songId.jpg")
+                    verifiedValidFiles.remove(cacheFile.absolutePath)
                     if (cacheFile.exists()) cacheFile.delete()
                     val songArtFile = File(File(context.cacheDir, SONG_ARTWORKS_DIR_NAME), "$songId.jpg")
+                    verifiedValidFiles.remove(songArtFile.absolutePath)
                     if (songArtFile.exists()) songArtFile.delete()
                     val persistentFile = File(File(context.filesDir, CACHE_DIR_NAME), "$songId.jpg")
+                    verifiedValidFiles.remove(persistentFile.absolutePath)
                     if (persistentFile.exists()) persistentFile.delete()
                     val persistentSongArt = File(File(context.filesDir, SONG_ARTWORKS_DIR_NAME), "$songId.jpg")
+                    verifiedValidFiles.remove(persistentSongArt.absolutePath)
                     if (persistentSongArt.exists()) persistentSongArt.delete()
                 }
             }

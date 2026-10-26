@@ -1496,6 +1496,8 @@ class PlaybackManager(
             audioFocusManager.ignoreTransientFocusLoss = value
         }
     private var fadeJob: Job? = null
+    @Volatile
+    private var isFadingOutToPause: Boolean = false
 
     val currentVolumePercent: Int
         get() {
@@ -1528,6 +1530,10 @@ class PlaybackManager(
                 // Never cancel the crossfade or flip UI state to paused during crossfade buffering!
                 if (!isPlaying && isCrossfadeTransitioning && player.playWhenReady) {
                     _playbackState.value = _playbackState.value.copy(isPlaying = true)
+                    return
+                }
+                if (isFadingOutToPause && isPlaying) {
+                    _playbackState.value = _playbackState.value.copy(isPlaying = false)
                     return
                 }
 
@@ -1917,7 +1923,7 @@ class PlaybackManager(
                             currentSong.copy(durationMs = resolvedDur)
                         } else currentSong
 
-                        val isPlayingNow = player.isPlaying || player.playWhenReady
+                        val isPlayingNow = if (isFadingOutToPause) false else (player.isPlaying || player.playWhenReady)
                         _playbackState.value = _playbackState.value.copy(
                             currentSong = updatedSong,
                             positionMs = reliablePos,
@@ -2206,6 +2212,7 @@ class PlaybackManager(
     }
 
     fun pause() {
+        isFadingOutToPause = false
         wasPausedByZeroVolume = false
         cancelCrossfade(resetVolume = true)
         fadeJob?.cancel()
@@ -2217,7 +2224,9 @@ class PlaybackManager(
         currentPositionMs = curPos
         _playbackPositionMs.value = curPos
         _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = curPos)
+        com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
         updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
@@ -2226,30 +2235,46 @@ class PlaybackManager(
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
         currentPositionMs = curPos
         _playbackPositionMs.value = curPos
+        // Immediately flip UI, notification, and widget state to paused (0ms latency)
+        // while keeping audio fading out smoothly in the background!
+        isFadingOutToPause = true
         _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = curPos)
+        com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
+        updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
 
         if (duration > 0 && (player.isPlaying || player.playWhenReady)) {
             performVolumeRampDown(duration) {
+                isFadingOutToPause = false
                 player.playWhenReady = false
                 player.pause()
                 player.volume = 1.0f
-                _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = currentPositionMs)
+                val finalPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
+                currentPositionMs = finalPos
+                _playbackPositionMs.value = finalPos
+                _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = finalPos)
                 updateNotificationLayout()
                 com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
         } else {
+            isFadingOutToPause = false
             pause()
             wasPausedByZeroVolume = fromZeroVolume
         }
     }
 
     fun play() {
+        val wasFadingOut = isFadingOutToPause
+        isFadingOutToPause = false
         audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
         player.volume = 1.0f
 
         val queue = _playbackState.value.queue
+        if (player.mediaItemCount == 0 && queue.isEmpty()) {
+            return
+        }
         if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
             val mediaItems = queue.map { buildMediaItem(it) }
             val idx = _playbackState.value.queueIndex.coerceIn(queue.indices)
@@ -2264,9 +2289,13 @@ class PlaybackManager(
             player.prepare()
         }
 
-        player.playWhenReady = true
-        player.play()
+        // Immediately update UI, notification, and widgets to playing state (0ms latency)
         _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+        com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, true)
+        player.playWhenReady = true
+        if (!wasFadingOut || !player.isPlaying) {
+            player.play()
+        }
         startProgressTracker()
         startMusicPlaybackService()
         updateNotificationLayout()
@@ -2274,12 +2303,18 @@ class PlaybackManager(
     }
 
     fun playWithFade(customFadeInMs: Int? = null) {
+        val wasFadingOut = isFadingOutToPause
+        val currentVolBeforeResume = player.volume.coerceIn(0f, 1f)
+        isFadingOutToPause = false
         audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
         val duration = (customFadeInMs ?: fadeInMs).coerceIn(0, 10000)
 
         val queue = _playbackState.value.queue
+        if (player.mediaItemCount == 0 && queue.isEmpty()) {
+            return
+        }
         if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
             val mediaItems = queue.map { buildMediaItem(it) }
             val idx = _playbackState.value.queueIndex.coerceIn(queue.indices)
@@ -2294,18 +2329,26 @@ class PlaybackManager(
             player.prepare()
         }
 
+        // Immediately update UI, notification, and widgets to playing state (0ms latency)
+        // before starting the volume ramp-up so the Play/Pause button responds instantaneously!
+        _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+        com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, true)
+
         if (duration > 0) {
-            player.volume = 0.0f
+            val startVol = if (wasFadingOut && player.isPlaying) currentVolBeforeResume else 0.0f
+            player.volume = startVol
             player.playWhenReady = true
-            player.play()
-            _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+            if (!player.isPlaying) {
+                player.play()
+            }
             startProgressTracker()
-            performVolumeRampUp(duration, startVolume = 0.0f, targetVolume = 1.0f)
+            performVolumeRampUp(duration, startVolume = startVol, targetVolume = 1.0f)
         } else {
             player.volume = 1.0f
             player.playWhenReady = true
-            player.play()
-            _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+            if (!player.isPlaying) {
+                player.play()
+            }
             startProgressTracker()
         }
         startMusicPlaybackService()
@@ -2314,7 +2357,7 @@ class PlaybackManager(
     }
 
     fun togglePlayPause() {
-        val currentlyPlaying = _playbackState.value.isPlaying || player.isPlaying
+        val currentlyPlaying = if (isFadingOutToPause) false else (_playbackState.value.isPlaying || player.isPlaying)
         if (currentlyPlaying) {
             if (fadeOutMs > 0) {
                 pauseWithFade()
@@ -2901,7 +2944,6 @@ class PlaybackManager(
                     } catch (_: Throwable) {}
                 }
                 withContext(Dispatchers.Main) {
-                    com.example.ui.components.ArtworkResolutionCache.artworkUpdateSignal.longValue++
                     if (_playbackState.value.currentSong?.id == song.id) {
                         updateNotificationLayout()
                         MusicPlaybackService.instance?.triggerNotificationUpdate()
@@ -2950,6 +2992,7 @@ class PlaybackManager(
             positionMs = livePos,
             durationMs = liveDur
         )
+        com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(context, songId, isFavorite)
         updateNotificationLayout()
     }
 
@@ -2960,6 +3003,7 @@ class PlaybackManager(
             }
             return
         }
+        com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(context, songId, isFavorite)
         syncFavoriteStateInMemory(songId, isFavorite)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }

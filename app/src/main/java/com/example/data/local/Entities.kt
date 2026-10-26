@@ -66,7 +66,12 @@ data class SongEntity(
         isMissing = isMissing,
         isCorrupted = isCorrupted,
         isManuallyEdited = isManuallyEdited
-    )
+    ).also {
+        // Pre-warm lazy display strings on background thread during DAO mapping
+        it.displayTitle
+        it.displayArtist
+        it.displayAlbum
+    }
 
     companion object {
         fun fromDomainModel(song: Song): SongEntity = SongEntity(

@@ -16,6 +16,7 @@ import com.example.service.PlaybackState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -29,6 +30,7 @@ object WidgetUpdateManager {
     const val ACTION_WIDGET_SEEK = "com.example.widget.ACTION_SEEK"
     const val EXTRA_SEEK_FRACTION = "extra_seek_fraction"
     const val EXTRA_OPEN_NOW_PLAYING = "com.example.EXTRA_OPEN_NOW_PLAYING"
+    const val EXTRA_WIDGET_ACTION = "com.example.EXTRA_WIDGET_ACTION"
 
     private const val PREFS_NAME = "widget_playback_snapshot"
     private const val KEY_SONG_ID = "song_id"
@@ -50,6 +52,8 @@ object WidgetUpdateManager {
     private var cachedIsDynamicTheme: Boolean = true
     @Volatile
     private var cachedManualAccentArgb: Int = 0xFFFF6D3F.toInt()
+    @Volatile
+    private var cachedLastAccentColor: Int = 0xFFFF6D3F.toInt()
     @Volatile
     private var lastThemeCheckMs: Long = 0L
 
@@ -231,6 +235,12 @@ object WidgetUpdateManager {
 
     private fun checkIsFavorite(context: Context, songId: Long): Boolean {
         if (songId <= 0L) return false
+        val pmSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
+        if (pmSong != null && pmSong.id == songId) {
+            cachedFavSongId = songId
+            cachedIsFavorite = pmSong.isFavorite
+            return pmSong.isFavorite
+        }
         if (songId == cachedFavSongId) return cachedIsFavorite
         return try {
             val db = AppDatabase.getInstance(context.applicationContext)
@@ -245,29 +255,247 @@ object WidgetUpdateManager {
         }
     }
 
+    /**
+     * 0ms synchronous partial widget update for the Favorite heart button across all 4 widget variants.
+     */
+    fun setFavoriteStateImmediate(context: Context, songId: Long, isFavorite: Boolean) {
+        if (songId <= 0L) return
+        cachedFavSongId = songId
+        cachedIsFavorite = isFavorite
+        try {
+            val appContext = context.applicationContext
+            val appWidgetManager = AppWidgetManager.getInstance(appContext)
+            val density = WidgetBitmapRenderer.getRenderDensity(appContext)
+            val accent = cachedLastAccentColor
+            val favBmp30 = WidgetBitmapRenderer.renderFavoriteChipButton(
+                sizePx = (30 * density).toInt(),
+                isFavorite = isFavorite,
+                accentColor = accent
+            )
+            val favBmp28 = WidgetBitmapRenderer.renderFavoriteChipButton(
+                sizePx = (28 * density).toInt(),
+                isFavorite = isFavorite,
+                accentColor = accent
+            )
+
+            val fullIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, FullArtworkMusicWidgetProvider::class.java))
+            for (id in fullIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_full_artwork)
+                views.setImageViewBitmap(R.id.widget_full_btn_favorite, favBmp30)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val smallIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, SmallMusicWidgetProvider::class.java))
+            for (id in smallIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_small)
+                views.setImageViewBitmap(R.id.widget_small_btn_favorite, favBmp30)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val mediumIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, MediumMusicWidgetProvider::class.java))
+            for (id in mediumIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_medium)
+                views.setImageViewBitmap(R.id.widget_medium_btn_favorite, favBmp28)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val secondaryIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, SecondaryMusicWidgetProvider::class.java))
+            for (id in secondaryIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_secondary)
+                views.setImageViewBitmap(R.id.widget_secondary_btn_favorite, favBmp28)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * 0ms synchronous partial widget update for the Play/Pause button across all 4 widget variants.
+     */
+    fun setPlayStateImmediate(context: Context, isPlaying: Boolean) {
+        lastRenderedIsPlaying = isPlaying
+        try {
+            val appContext = context.applicationContext
+            val appWidgetManager = AppWidgetManager.getInstance(appContext)
+            val density = WidgetBitmapRenderer.getRenderDensity(appContext)
+            val accent = cachedLastAccentColor
+
+            val playBmp38 = WidgetBitmapRenderer.renderCircularButton(
+                context = appContext,
+                sizePx = (38 * density).toInt(),
+                buttonColor = accent,
+                iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                isPlaying = isPlaying
+            )
+            val playBmp36 = WidgetBitmapRenderer.renderCircularButton(
+                context = appContext,
+                sizePx = (36 * density).toInt(),
+                buttonColor = accent,
+                iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                isPlaying = isPlaying
+            )
+
+            val fullIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, FullArtworkMusicWidgetProvider::class.java))
+            for (id in fullIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_full_artwork)
+                views.setImageViewBitmap(R.id.widget_full_btn_play_pause, playBmp38)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val smallIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, SmallMusicWidgetProvider::class.java))
+            for (id in smallIds) {
+                val views = RemoteViews(appContext.packageName, R.layout.widget_small)
+                views.setImageViewBitmap(R.id.widget_small_btn_play_pause, playBmp36)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val mediumIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, MediumMusicWidgetProvider::class.java))
+            for (id in mediumIds) {
+                val minWidthDp = getWidgetMinWidthDp(appWidgetManager, id, 320)
+                val playDp = if (minWidthDp < 250) 34 else 38
+                val bmp = if (playDp == 38) playBmp38 else WidgetBitmapRenderer.renderCircularButton(
+                    context = appContext,
+                    sizePx = (playDp * density).toInt(),
+                    buttonColor = accent,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                    isPlaying = isPlaying
+                )
+                val views = RemoteViews(appContext.packageName, R.layout.widget_medium)
+                views.setImageViewBitmap(R.id.widget_medium_btn_play_pause, bmp)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+
+            val secondaryIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, SecondaryMusicWidgetProvider::class.java))
+            for (id in secondaryIds) {
+                val minWidthDp = getWidgetMinWidthDp(appWidgetManager, id, 320)
+                val playDp = if (minWidthDp < 250) 34 else 38
+                val bmp = if (playDp == 38) playBmp38 else WidgetBitmapRenderer.renderCircularButton(
+                    context = appContext,
+                    sizePx = (playDp * density).toInt(),
+                    buttonColor = accent,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                    isPlaying = isPlaying
+                )
+                val views = RemoteViews(appContext.packageName, R.layout.widget_secondary)
+                views.setImageViewBitmap(R.id.widget_secondary_btn_play_pause, bmp)
+                appWidgetManager.partiallyUpdateAppWidget(id, views)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private suspend fun ensureQueueRestoredIfEmpty(appContext: Context, pm: PlaybackManager): Boolean {
+        if (pm.playbackState.value.queue.isNotEmpty()) return true
+        return try {
+            val db = AppDatabase.getInstance(appContext)
+            val allEntities = db.songDao().getAllSongsOnce()
+            if (allEntities.isEmpty()) return false
+            val allSongs = allEntities.map { with(com.example.data.local.SongEntity::toDomainModel) { it.toDomainModel() } }
+            val prefs = UserPreferencesRepository.getInstance(appContext)
+            val lastQueueIds: List<Long> = prefs.lastQueueIds.first()
+            val lastSongId: Long = prefs.lastSongId.first()
+            val lastPos: Long = prefs.lastPosition.first()
+            val lastDur: Long = prefs.lastDuration.first()
+            val lastIdx: Int = prefs.lastQueueIndex.first()
+
+            val snapPrefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val snapSongId = snapPrefs.getLong(KEY_SONG_ID, -1L)
+            val snapPos = snapPrefs.getLong(KEY_POSITION, 0L)
+            val snapDur = snapPrefs.getLong(KEY_DURATION, 0L)
+
+            val songById = allSongs.associateBy { it.id }
+            val mappedQueue: List<com.example.data.model.Song> = lastQueueIds.mapNotNull { id: Long -> songById[id] }
+            val restoredQueue: List<com.example.data.model.Song> = if (mappedQueue.isNotEmpty()) mappedQueue else allSongs
+            val targetSongId = if (lastSongId > 0L) lastSongId else snapSongId
+            val foundIdx = restoredQueue.indexOfFirst { song -> song.id == targetSongId }
+            val targetIdx = if (foundIdx >= 0) foundIdx else lastIdx.coerceIn(restoredQueue.indices)
+            val targetPos = if (lastPos > 0L) lastPos else snapPos
+            val targetDur = if (lastDur > 0L) lastDur else snapDur
+
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                if (pm.playbackState.value.queue.isEmpty()) {
+                    pm.restorePlaybackState(restoredQueue, targetIdx, targetPos, targetDur)
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun launchAppIfClosed(appContext: Context, widgetAction: String) {
+        if (!MainActivity.isActivityAlive) {
+            try {
+                val launchIntent = Intent(appContext, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(EXTRA_WIDGET_ACTION, widgetAction)
+                }
+                appContext.startActivity(launchIntent)
+            } catch (_: Exception) {}
+        }
+    }
+
     fun handleWidgetAction(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val appContext = context.applicationContext
-        val playbackManager = PlaybackManager.activeInstance
+        val isAppClosed = !MainActivity.isActivityAlive
+
+        // If the app is closed, open MainActivity immediately and restore queue + execute action
+        if (isAppClosed) {
+            launchAppIfClosed(appContext, action)
+        }
+
+        val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(appContext)
 
         when (action) {
             ACTION_WIDGET_PLAY_PAUSE -> {
-                val pm = playbackManager ?: PlaybackManager.getInstance(appContext)
-                pm.togglePlayPause()
-                updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                if (pm.playbackState.value.queue.isNotEmpty()) {
+                    pm.togglePlayPause()
+                    updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                } else {
+                    setPlayStateImmediate(appContext, true)
+                    widgetScope.launch {
+                        if (ensureQueueRestoredIfEmpty(appContext, pm)) {
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                pm.play()
+                            }
+                            updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                        }
+                    }
+                }
             }
             ACTION_WIDGET_NEXT -> {
-                val pm = playbackManager ?: PlaybackManager.getInstance(appContext)
-                pm.skipToNext()
-                updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                if (pm.playbackState.value.queue.isNotEmpty()) {
+                    pm.skipToNext()
+                    updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                } else {
+                    widgetScope.launch {
+                        if (ensureQueueRestoredIfEmpty(appContext, pm)) {
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                pm.skipToNext()
+                                pm.play()
+                            }
+                            updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                        }
+                    }
+                }
             }
             ACTION_WIDGET_PREV -> {
-                val pm = playbackManager ?: PlaybackManager.getInstance(appContext)
-                pm.skipToPrevious()
-                updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                if (pm.playbackState.value.queue.isNotEmpty()) {
+                    pm.skipToPrevious()
+                    updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                } else {
+                    widgetScope.launch {
+                        if (ensureQueueRestoredIfEmpty(appContext, pm)) {
+                            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                pm.skipToPrevious()
+                                pm.play()
+                            }
+                            updateAllWidgets(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
+                        }
+                    }
+                }
             }
             ACTION_WIDGET_FAVORITE -> {
-                val liveSongId = playbackManager?.playbackState?.value?.currentSong?.id
+                val liveSongId = pm.playbackState.value.currentSong?.id
                 val snapshotSongId = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .getLong(KEY_SONG_ID, -1L)
                 val targetSongId = if (liveSongId != null && liveSongId > 0L) liveSongId else snapshotSongId
@@ -278,7 +506,6 @@ object WidgetUpdateManager {
             ACTION_WIDGET_SEEK -> {
                 val fraction = intent.getFloatExtra(EXTRA_SEEK_FRACTION, -1f)
                 if (fraction in 0f..1f) {
-                    val pm = playbackManager ?: PlaybackManager.getInstance(appContext)
                     val authState = resolveEffectiveState(appContext, getAuthoritativeState(appContext, pm.playbackState.value))
                     val dur = if (authState.durationMs > 0L) authState.durationMs else (authState.currentSong?.durationMs ?: 0L)
                     if (dur > 0L) {
@@ -296,17 +523,44 @@ object WidgetUpdateManager {
     fun toggleFavoriteSong(context: Context, songId: Long) {
         if (songId <= 0L) return
         val appContext = context.applicationContext
+        val pm = PlaybackManager.activeInstance
+        val currentSong = pm?.playbackState?.value?.currentSong
+        val optimisticNewFav = when {
+            currentSong != null && currentSong.id == songId -> !currentSong.isFavorite
+            songId == cachedFavSongId -> !cachedIsFavorite
+            else -> true
+        }
+
+        // 1. Update widget heart icon in 0ms synchronously on the caller thread!
+        setFavoriteStateImmediate(appContext, songId, optimisticNewFav)
+        if (pm != null) {
+            pm.syncFavoriteStateInMemory(songId, optimisticNewFav)
+        }
+
+        // 2. Persist in Room DB and verify full widget state asynchronously
         widgetScope.launch {
             updateMutex.withLock {
                 try {
                     val db = AppDatabase.getInstance(appContext)
-                    val currentlyFav = db.songDao().getSongById(songId)?.isFavorite == true
-                    val newFav = !currentlyFav
-                    db.songDao().setFavorite(songId, newFav)
+                    val dbSong = db.songDao().getSongById(songId)
+                    val newFav = if (currentSong != null && currentSong.id == songId) {
+                        optimisticNewFav
+                    } else if (dbSong != null) {
+                        !dbSong.isFavorite
+                    } else {
+                        optimisticNewFav
+                    }
+                    if (dbSong != null) {
+                        db.songDao().setFavoriteBySong(songId, dbSong.path, newFav)
+                    } else {
+                        db.songDao().setFavorite(songId, newFav)
+                    }
                     cachedFavSongId = songId
                     cachedIsFavorite = newFav
 
-                    val pm = PlaybackManager.activeInstance
+                    if (newFav != optimisticNewFav) {
+                        setFavoriteStateImmediate(appContext, songId, newFav)
+                    }
                     if (pm != null) {
                         pm.syncFavoriteStateInMemory(songId, newFav)
                     }
@@ -350,6 +604,7 @@ object WidgetUpdateManager {
                 isDynamicTheme = cachedIsDynamicTheme,
                 manualAccentColor = cachedManualAccentArgb
             )
+            cachedLastAccentColor = themeColors.accentColor
             val isFavorite = if (song != null) checkIsFavorite(context, song.id) else false
 
             lastRenderedSongId = song?.id ?: -1L
@@ -471,6 +726,20 @@ object WidgetUpdateManager {
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    private fun getWidgetMinWidthDp(
+        appWidgetManager: AppWidgetManager,
+        widgetId: Int,
+        defaultWidthDp: Int
+    ): Int {
+        return try {
+            val options: Bundle? = appWidgetManager.getAppWidgetOptions(widgetId)
+            val minW = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0) ?: 0
+            if (minW > 40) minW else defaultWidthDp
+        } catch (_: Exception) {
+            defaultWidthDp
+        }
     }
 
     private fun resolveWidgetDimensionsPx(
@@ -663,49 +932,62 @@ object WidgetUpdateManager {
         val progressRatio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
         val density = WidgetBitmapRenderer.getRenderDensity(context)
-        val artBmp = WidgetBitmapRenderer.renderRoundedArtwork(
-            source = sourceBitmap,
-            widthPx = (96 * density).toInt(),
-            heightPx = (96 * density).toInt(),
-            cornerRadiusDp = 16f,
-            context = context
-        )
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
-            sizePx = (30 * density).toInt(),
+            sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
-            heightPx = (16 * density).toInt(),
+            heightPx = (15 * density).toInt(),
             progressRatio = progressRatio,
             accentColor = themeColors.accentColor
-        )
-        val prevBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (32 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PREV
-        )
-        val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (38 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
-            isPlaying = state.isPlaying
-        )
-        val nextBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (32 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 30)
         for (widgetId in appWidgetIds) {
             try {
-                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 340, 150)
+                val minWidthDp = getWidgetMinWidthDp(appWidgetManager, widgetId, 320)
+                // Adapt artwork and control button sizes when user resizes widget horizontally
+                // so Previous and Next track buttons never clip or half-vanish!
+                val artSizeDp = when {
+                    minWidthDp < 215 -> 60
+                    minWidthDp < 255 -> 72
+                    minWidthDp < 290 -> 82
+                    else -> 92
+                }
+                val sideBtnDp = if (minWidthDp < 250) 28 else 32
+                val playBtnDp = if (minWidthDp < 250) 34 else 38
+
+                val artBmp = WidgetBitmapRenderer.renderRoundedArtwork(
+                    source = sourceBitmap,
+                    widthPx = (artSizeDp * density).toInt(),
+                    heightPx = (artSizeDp * density).toInt(),
+                    cornerRadiusDp = 15f,
+                    context = context
+                )
+                val prevBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (sideBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+                )
+                val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (playBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                    isPlaying = state.isPlaying
+                )
+                val nextBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (sideBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+                )
+
+                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 380, 160)
                 val bgBmp = WidgetBitmapRenderer.renderCardBackground(
                     context = context,
                     widthPx = wPx,
@@ -759,41 +1041,52 @@ object WidgetUpdateManager {
 
         val density = WidgetBitmapRenderer.getRenderDensity(context)
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
-            sizePx = (30 * density).toInt(),
+            sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor
         )
         val waveProgBmp = WidgetBitmapRenderer.renderWaveformProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
-            heightPx = (18 * density).toInt(),
+            heightPx = (17 * density).toInt(),
             progressRatio = progressRatio,
             accentColor = themeColors.accentColor
-        )
-        val prevBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (32 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PREV
-        )
-        val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (38 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
-            isPlaying = state.isPlaying
-        )
-        val nextBmp = WidgetBitmapRenderer.renderCircularButton(
-            context = context,
-            sizePx = (32 * density).toInt(),
-            buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 40)
         for (widgetId in appWidgetIds) {
             try {
-                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 340, 150)
+                val minWidthDp = getWidgetMinWidthDp(appWidgetManager, widgetId, 320)
+                val artWidthDp = when {
+                    minWidthDp < 215 -> 72
+                    minWidthDp < 255 -> 86
+                    minWidthDp < 290 -> 98
+                    else -> 112
+                }
+                val sideBtnDp = if (minWidthDp < 250) 28 else 32
+                val playBtnDp = if (minWidthDp < 250) 34 else 38
+
+                val prevBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (sideBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+                )
+                val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (playBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PLAY_PAUSE,
+                    isPlaying = state.isPlaying
+                )
+                val nextBmp = WidgetBitmapRenderer.renderCircularButton(
+                    context = context,
+                    sizePx = (sideBtnDp * density).toInt(),
+                    buttonColor = themeColors.accentColor,
+                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+                )
+
+                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 380, 160)
                 val bgBmp = WidgetBitmapRenderer.renderCardBackground(
                     context = context,
                     widthPx = wPx,
@@ -804,7 +1097,7 @@ object WidgetUpdateManager {
                 )
                 val leftBleedArtBmp = WidgetBitmapRenderer.renderLeftBleedArtwork(
                     source = sourceBitmap,
-                    widthPx = (116 * density).toInt(),
+                    widthPx = (artWidthDp * density).toInt(),
                     heightPx = hPx,
                     leftCornerRadiusDp = 22f,
                     context = context
@@ -855,6 +1148,21 @@ object WidgetUpdateManager {
         action: String,
         requestCode: Int
     ): PendingIntent {
+        // When the app is closed, bind widget controls directly to MainActivity via PendingIntent.getActivity
+        // so tapping ANY widget button opens the app reliably on Android 10-17 and executes the action!
+        if (!MainActivity.isActivityAlive) {
+            val activityIntent = Intent(context, MainActivity::class.java).apply {
+                this.action = action
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_WIDGET_ACTION, action)
+            }
+            return PendingIntent.getActivity(
+                context,
+                requestCode,
+                activityIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
         val intent = Intent(context, providerClass).apply {
             this.action = action
         }

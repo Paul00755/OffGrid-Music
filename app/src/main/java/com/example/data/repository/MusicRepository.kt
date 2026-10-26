@@ -28,12 +28,21 @@ class MusicRepository(
 ) {
     var cloudSyncRepository: com.example.data.sync.CloudSyncRepository? = null
 
-    val allSongs: Flow<List<Song>> = songDao.getAllSongs().map { list -> list.map { it.toDomainModel() } }
-    val favoriteSongs: Flow<List<Song>> = songDao.getFavoriteSongs().map { list -> list.map { it.toDomainModel() } }
-    val recentlyAddedSongs: Flow<List<Song>> = songDao.getRecentlyAddedSongs().map { list -> list.map { it.toDomainModel() } }
+    val allSongs: Flow<List<Song>> = songDao.getAllSongs()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
+    val favoriteSongs: Flow<List<Song>> = songDao.getFavoriteSongs()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
+    val recentlyAddedSongs: Flow<List<Song>> = songDao.getRecentlyAddedSongs()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
     val recentlyPlayedSongs: Flow<List<Song>> = combine(
-        historyDao.getRecentlyPlayedHistory(200),
-        songDao.getRecentlyPlayedSongs()
+        historyDao.getRecentlyPlayedHistory(200).distinctUntilChanged(),
+        songDao.getRecentlyPlayedSongs().distinctUntilChanged()
     ) { historyList, legacySongs ->
         if (historyList.isNotEmpty()) {
             val seenKeys = mutableSetOf<String>()
@@ -55,12 +64,21 @@ class MusicRepository(
         } else {
             legacySongs.take(100).map { it.toDomainModel() }
         }
-    }
-    val mostPlayedSongs: Flow<List<Song>> = songDao.getMostPlayedSongs().map { list -> list.map { it.toDomainModel() } }
+    }.flowOn(Dispatchers.Default)
+    val mostPlayedSongs: Flow<List<Song>> = songDao.getMostPlayedSongs()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
     val scanProgress: Flow<ScanProgress> = libraryScanner.scanProgress
-    val allFolders: Flow<List<FolderInfo>> = folderDao.getAllFolders().map { list -> list.map { it.toDomainModel() } }
-    val recentSearches: Flow<List<String>> = recentSearchDao.getRecentSearches()
-    val smartPlaylists: Flow<List<SmartPlaylist>> = smartPlaylistDao.getAllSmartPlaylists().map { list -> list.map { it.toDomainModel() } }
+    val allFolders: Flow<List<FolderInfo>> = folderDao.getAllFolders()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
+    val recentSearches: Flow<List<String>> = recentSearchDao.getRecentSearches().distinctUntilChanged()
+    val smartPlaylists: Flow<List<SmartPlaylist>> = smartPlaylistDao.getAllSmartPlaylists()
+        .distinctUntilChanged()
+        .map { list -> list.map { it.toDomainModel() } }
+        .flowOn(Dispatchers.Default)
 
     suspend fun createSmartPlaylist(smartPlaylist: SmartPlaylist): Long {
         return smartPlaylistDao.insertSmartPlaylist(SmartPlaylistEntity.fromDomainModel(smartPlaylist))
@@ -70,19 +88,22 @@ class MusicRepository(
         smartPlaylistDao.deleteSmartPlaylist(id)
     }
 
-    val allPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithDetails().map { list ->
-        list.map { item ->
-            Playlist(
-                id = item.id,
-                name = item.name,
-                songCount = item.songCount,
-                totalDurationMs = item.totalDurationMs,
-                createdAt = item.createdAt,
-                isPinned = item.isPinned,
-                artworkUri = item.artworkUri
-            )
+    val allPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithDetails()
+        .distinctUntilChanged()
+        .map { list ->
+            list.map { item ->
+                Playlist(
+                    id = item.id,
+                    name = item.name,
+                    songCount = item.songCount,
+                    totalDurationMs = item.totalDurationMs,
+                    createdAt = item.createdAt,
+                    isPinned = item.isPinned,
+                    artworkUri = item.artworkUri
+                )
+            }
         }
-    }
+        .flowOn(Dispatchers.Default)
 
     suspend fun scanLibrary(
         ignoreAudioDurationMs: Long = 0L,

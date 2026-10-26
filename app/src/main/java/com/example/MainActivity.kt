@@ -42,6 +42,11 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        @Volatile
+        var isActivityAlive: Boolean = false
+    }
+
     private var onPermissionResultCallback: (() -> Unit)? = null
 
     @SuppressLint("InvalidFragmentVersionForActivityResult")
@@ -61,8 +66,10 @@ class MainActivity : ComponentActivity() {
 
     private var mediaStoreObserver: android.database.ContentObserver? = null
     private val openNowPlayingRequest = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    private val pendingWidgetActionRequest = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        isActivityAlive = true
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleWidgetLaunchIntent(intent)
@@ -115,12 +122,22 @@ class MainActivity : ComponentActivity() {
                     val selectedTab by viewModel.selectedTab.collectAsState()
                     val showNowPlaying by viewModel.showNowPlaying.collectAsState()
                     val nowPlayingIntentReq by openNowPlayingRequest.collectAsState()
+                    val widgetActionReq by pendingWidgetActionRequest.collectAsState()
 
                     LaunchedEffect(nowPlayingIntentReq) {
                         if (nowPlayingIntentReq > 0L) {
                             viewModel.dismissSplash()
                             viewModel.showNowPlaying.value = true
                             openNowPlayingRequest.value = 0L
+                        }
+                    }
+
+                    LaunchedEffect(widgetActionReq) {
+                        val action = widgetActionReq
+                        if (!action.isNullOrBlank()) {
+                            viewModel.dismissSplash()
+                            viewModel.enqueueOrExecuteWidgetAction(action)
+                            pendingWidgetActionRequest.value = null
                         }
                     }
                     val searchTabQuery by viewModel.searchTabQuery.collectAsState()
@@ -285,10 +302,13 @@ class MainActivity : ComponentActivity() {
                             }
 
                             LaunchedEffect(Unit) {
+                                com.example.ui.components.ArtworkResolutionCache.ensureDiskIndexWarm(this@MainActivity)
                                 registerMediaStoreObserver()
                                 checkPermissions()
-                                kotlinx.coroutines.delay(800)
-                                triggerQuickScan()
+                                kotlinx.coroutines.delay(1500)
+                                if (viewModel.allSongs.value.isEmpty()) {
+                                    triggerQuickScan()
+                                }
                             }
 
                             val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
@@ -965,7 +985,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleWidgetLaunchIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(com.example.widget.WidgetUpdateManager.EXTRA_OPEN_NOW_PLAYING, false) == true) {
+        if (intent == null) return
+        val widgetAction = intent.getStringExtra(com.example.widget.WidgetUpdateManager.EXTRA_WIDGET_ACTION)
+            ?: intent.action?.takeIf { it.startsWith("com.example.widget.ACTION_") }
+        if (!widgetAction.isNullOrBlank()) {
+            intent.removeExtra(com.example.widget.WidgetUpdateManager.EXTRA_WIDGET_ACTION)
+            if (intent.action?.startsWith("com.example.widget.ACTION_") == true) {
+                intent.action = null
+            }
+            pendingWidgetActionRequest.value = widgetAction
+            try {
+                val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
+                vm.dismissSplash()
+                vm.enqueueOrExecuteWidgetAction(widgetAction)
+            } catch (_: Exception) {}
+        }
+        if (intent.getBooleanExtra(com.example.widget.WidgetUpdateManager.EXTRA_OPEN_NOW_PLAYING, false)) {
             intent.removeExtra(com.example.widget.WidgetUpdateManager.EXTRA_OPEN_NOW_PLAYING)
             openNowPlayingRequest.value = System.currentTimeMillis()
             try {
@@ -976,8 +1011,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        isActivityAlive = true
+        try {
+            com.example.service.PlaybackManager.activeInstance?.let { pm ->
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(applicationContext, pm.playbackState.value)
+            }
+        } catch (_: Throwable) {}
+    }
+
     override fun onResume() {
         super.onResume()
+        isActivityAlive = true
         // No heavy scanning in onResume to prevent UI stutter and resource starvation
     }
 
@@ -1121,6 +1167,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        isActivityAlive = false
+        try {
+            val pmState = com.example.service.PlaybackManager.activeInstance?.playbackState?.value
+                ?: com.example.service.PlaybackState()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(applicationContext, pmState)
+        } catch (_: Throwable) {}
         super.onDestroy()
         mediaStoreObserver?.let {
             try {

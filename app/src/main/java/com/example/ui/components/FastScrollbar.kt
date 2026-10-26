@@ -49,14 +49,7 @@ fun FastScrollbar(
     bottomPadding: androidx.compose.ui.unit.Dp = 16.dp,
     itemLabelProvider: ((Int) -> String?)? = null
 ) {
-    val effectiveTotalItems by remember(totalItems) {
-        derivedStateOf {
-            val layoutTotal = listState.layoutInfo.totalItemsCount
-            if (layoutTotal > 0) layoutTotal else totalItems
-        }
-    }
-
-    if (effectiveTotalItems <= 3 && totalItems <= 3) return
+    if (totalItems <= 3) return
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -75,9 +68,10 @@ fun FastScrollbar(
     val topPaddingPx = with(density) { topPadding.toPx() }
     val bottomPaddingPx = with(density) { bottomPadding.toPx() }
 
-    val stateScrollFraction by remember {
+    val stateScrollFraction by remember(totalItems) {
         derivedStateOf {
-            val count = effectiveTotalItems
+            val layoutTotal = listState.layoutInfo.totalItemsCount
+            val count = if (layoutTotal > 0) layoutTotal else totalItems
             if (count <= 1) 0f
             else {
                 val firstVisible = listState.firstVisibleItemIndex.toFloat()
@@ -116,14 +110,19 @@ fun FastScrollbar(
         label = "fast_scroll_scale"
     )
 
-    if (alphaAnim <= 0.01f && !isVisible) return
-    if (effectiveTotalItems <= 0) return
+    if (!isVisible && alphaAnim <= 0.01f) return
 
-    val maxIndex = (effectiveTotalItems - 1).coerceAtLeast(0)
-    val activeLabel = if (isDragging) {
-        val currentItemIndex = (dragFraction * maxIndex).roundToInt().coerceIn(0, maxIndex)
-        itemLabelProvider?.invoke(currentItemIndex)?.takeIf { it.isNotBlank() }
-    } else null
+    val activeLabel by remember(isDragging, totalItems, itemLabelProvider) {
+        derivedStateOf {
+            if (isDragging) {
+                val layoutTotal = listState.layoutInfo.totalItemsCount
+                val count = if (layoutTotal > 0) layoutTotal else totalItems
+                val maxIndex = (count - 1).coerceAtLeast(0)
+                val currentItemIndex = (dragFraction * maxIndex).roundToInt().coerceIn(0, maxIndex)
+                itemLabelProvider?.invoke(currentItemIndex)?.takeIf { it.isNotBlank() }
+            } else null
+        }
+    }
 
     var pendingTargetIndex by remember { mutableIntStateOf(-1) }
 
@@ -151,7 +150,9 @@ fun FastScrollbar(
     fun scrollToFraction(fraction: Float) {
         val clamped = fraction.coerceIn(0f, 1f)
         dragFraction = clamped
-        val currentMax = (effectiveTotalItems - 1).coerceAtLeast(0)
+        val layoutTotal = listState.layoutInfo.totalItemsCount
+        val count = if (layoutTotal > 0) layoutTotal else totalItems
+        val currentMax = (count - 1).coerceAtLeast(0)
         val targetIndex = (clamped * currentMax).roundToInt().coerceIn(0, currentMax)
         if (targetIndex != lastScrolledIndex) {
             lastScrolledIndex = targetIndex
@@ -228,7 +229,8 @@ fun FastScrollbar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            if (isDragging && activeLabel != null) {
+            val currentLabel = activeLabel
+            if (isDragging && currentLabel != null) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = BentoCardDarkPurple,
@@ -240,7 +242,7 @@ fun FastScrollbar(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = activeLabel,
+                            text = currentLabel,
                             color = BentoTextPrimary,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Black
