@@ -175,3 +175,6 @@
 ---
 
 **🎵 OffGrid Music — Your Music. Your Device. Your Queue. Your Way.**
+<!-- Sample push: README update -->
+> Sample README update: this line demonstrates a small documentation change pushed from the local workspace.
+
