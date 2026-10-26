@@ -151,7 +151,10 @@ data class BackupStoryCardData(
  * Complete latest backup payload representation stored at `users/{uid}/backup/latest`.
  */
 data class UserBackupPayload(
-    val version: Int = 1,
+    val version: Int = 2,
+    val ownerUid: String = "",
+    val snapshotComplete: Boolean = false,
+    val historyStoredSeparately: Boolean = false,
     val backupTimestamp: Long = System.currentTimeMillis(),
     val backupDateFormatted: String = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(backupTimestamp)),
     val dataHash: String = "",
@@ -167,6 +170,10 @@ data class UserBackupPayload(
     val recentSearches: List<CloudRecentSearch> = emptyList(),
     val smartPlaylistsCount: Int = 0,
     val smartPlaylists: List<CloudSmartPlaylist> = emptyList(),
+    val lyricsOffsetsCount: Int = 0,
+    val lyricsOffsets: List<CloudLyricsOffset> = emptyList(),
+    val playlistPlayEventCount: Int = 0,
+    val playlistPlayEventsStoredSeparately: Boolean = false,
     val historyCount: Int = 0,
     val historySample: List<CloudPlaybackEvent> = emptyList(),
     val statistics: BackupStatisticsSummary = BackupStatisticsSummary(),
@@ -174,6 +181,9 @@ data class UserBackupPayload(
 ) {
     fun toMap(): Map<String, Any?> = mapOf(
         "version" to version,
+        "ownerUid" to ownerUid,
+        "snapshotComplete" to snapshotComplete,
+        "historyStoredSeparately" to historyStoredSeparately,
         "backupTimestamp" to backupTimestamp,
         "backupDateFormatted" to backupDateFormatted,
         "dataHash" to dataHash,
@@ -189,6 +199,10 @@ data class UserBackupPayload(
         "recentSearches" to recentSearches.map { it.toMap() },
         "smartPlaylistsCount" to smartPlaylistsCount,
         "smartPlaylists" to smartPlaylists.map { it.toMap() },
+        "lyricsOffsetsCount" to lyricsOffsetsCount,
+        "lyricsOffsets" to lyricsOffsets.map { it.toMap() },
+        "playlistPlayEventCount" to playlistPlayEventCount,
+        "playlistPlayEventsStoredSeparately" to playlistPlayEventsStoredSeparately,
         "historyCount" to historyCount,
         "historySample" to historySample.map { it.toMap() },
         "statistics" to statistics.toMap(),
@@ -199,6 +213,9 @@ data class UserBackupPayload(
         @Suppress("UNCHECKED_CAST")
         fun fromMap(map: Map<String, Any?>): UserBackupPayload = UserBackupPayload(
             version = (map["version"] as? Number)?.toInt() ?: 1,
+            ownerUid = map["ownerUid"] as? String ?: "",
+            snapshotComplete = map["snapshotComplete"] as? Boolean ?: false,
+            historyStoredSeparately = map["historyStoredSeparately"] as? Boolean ?: false,
             backupTimestamp = (map["backupTimestamp"] as? Number)?.toLong() ?: 0L,
             backupDateFormatted = map["backupDateFormatted"] as? String ?: "",
             dataHash = map["dataHash"] as? String ?: "",
@@ -214,10 +231,81 @@ data class UserBackupPayload(
             recentSearches = (map["recentSearches"] as? List<Map<String, Any?>>)?.map { CloudRecentSearch.fromMap(it) } ?: emptyList(),
             smartPlaylistsCount = (map["smartPlaylistsCount"] as? Number)?.toInt() ?: 0,
             smartPlaylists = (map["smartPlaylists"] as? List<Map<String, Any?>>)?.map { CloudSmartPlaylist.fromMap(it) } ?: emptyList(),
+            lyricsOffsetsCount = (map["lyricsOffsetsCount"] as? Number)?.toInt() ?: 0,
+            lyricsOffsets = (map["lyricsOffsets"] as? List<Map<String, Any?>>)?.map { CloudLyricsOffset.fromMap(it) } ?: emptyList(),
+            playlistPlayEventCount = (map["playlistPlayEventCount"] as? Number)?.toInt() ?: 0,
+            playlistPlayEventsStoredSeparately = map["playlistPlayEventsStoredSeparately"] as? Boolean ?: false,
             historyCount = (map["historyCount"] as? Number)?.toInt() ?: 0,
             historySample = (map["historySample"] as? List<Map<String, Any?>>)?.map { CloudPlaybackEvent.fromMap(it) } ?: emptyList(),
             statistics = (map["statistics"] as? Map<String, Any?>)?.let { BackupStatisticsSummary.fromMap(it) } ?: BackupStatisticsSummary(),
             storyCardData = (map["storyCardData"] as? Map<String, Any?>)?.let { BackupStoryCardData.fromMap(it) } ?: BackupStoryCardData()
         )
+
+        /** Reject incomplete, malformed, or cross-account snapshots before applying any local state. */
+        fun isCompleteSnapshot(map: Map<String, Any?>, expectedUid: String): Boolean {
+            val version = (map["version"] as? Number)?.toInt() ?: return false
+            if (version !in 1..2 || expectedUid.isBlank()) return false
+            val profile = map["profile"] as? Map<*, *> ?: return false
+            val payloadUid = (map["ownerUid"] as? String)
+                ?.takeIf { it.isNotBlank() }
+                ?: (profile["uid"] as? String).orEmpty()
+            if (payloadUid.isNotBlank() && payloadUid != expectedUid) return false
+            if (version >= 2 && (map["ownerUid"] != expectedUid || profile["uid"] != expectedUid)) return false
+            if (version >= 2 && ((map["snapshotComplete"] as? Boolean) != true || payloadUid != expectedUid)) return false
+            if ((map["dataHash"] as? String).isNullOrBlank()) return false
+            if (map["settings"] !is Map<*, *>) return false
+            if (map["statistics"] !is Map<*, *> || map["storyCardData"] !is Map<*, *>) return false
+
+            fun listCountMatches(field: String, countField: String): Boolean {
+                val list = map[field] as? List<*> ?: return false
+                val count = (map[countField] as? Number)?.toInt() ?: return false
+                return count >= 0 && count == list.size
+            }
+
+            if (!listCountMatches("favorites", "favoritesCount") ||
+                !listCountMatches("playlists", "playlistsCount") ||
+                !listCountMatches("folders", "foldersCount") ||
+                !listCountMatches("recentSearches", "recentSearchesCount") ||
+                !listCountMatches("smartPlaylists", "smartPlaylistsCount")) return false
+            if (version >= 2 && !listCountMatches("lyricsOffsets", "lyricsOffsetsCount")) return false
+            if (version >= 2 && ((map["playlistPlayEventCount"] as? Number)?.toInt()?.let { it >= 0 } != true ||
+                    (map["playlistPlayEventsStoredSeparately"] as? Boolean) != true)) return false
+
+            fun maps(field: String): List<Map<*, *>>? =
+                (map[field] as? List<*>)?.map { it as? Map<*, *> ?: return null }
+
+            val favorites = maps("favorites") ?: return false
+            if (favorites.any { (it["songSignature"] as? String).isNullOrBlank() }) return false
+            if (favorites.map { it["songSignature"] }.distinct().size != favorites.size) return false
+
+            val playlists = maps("playlists") ?: return false
+            if (playlists.any { playlist ->
+                    (playlist["name"] as? String).isNullOrBlank() ||
+                        (version >= 2 && (playlist["cloudId"] as? String).isNullOrBlank()) ||
+                        (playlist["songs"] as? List<*>)?.any { song ->
+                            val songMap = song as? Map<*, *> ?: return@any true
+                            (songMap["songSignature"] as? String).isNullOrBlank() ||
+                                (songMap["position"] as? Number) == null
+                        } != false
+                }) return false
+            if (version >= 2 && playlists.map { it["cloudId"] }.distinct().size != playlists.size) return false
+
+            if (maps("recentSearches")?.any { (it["query"] as? String).isNullOrBlank() } != false) return false
+            if (maps("smartPlaylists")?.any { (it["name"] as? String).isNullOrBlank() } != false) return false
+            if (version >= 2 && maps("lyricsOffsets")?.any {
+                    (it["songSignature"] as? String).isNullOrBlank() || (it["offsetMs"] as? Number) == null
+                } != false) return false
+
+            val history = map["historySample"] as? List<*> ?: return false
+            val historyCount = (map["historyCount"] as? Number)?.toInt() ?: return false
+            if (historyCount < history.size || (version == 1 && historyCount != history.size)) return false
+            val historyIds = history.map { event ->
+                val eventMap = event as? Map<*, *> ?: return false
+                (eventMap["sessionId"] as? String)?.takeIf { it.isNotBlank() } ?: return false
+            }
+            if (historyIds.distinct().size != historyIds.size) return false
+            if (version >= 2 && (map["historyStoredSeparately"] as? Boolean) != true) return false
+            return true
+        }
     }
 }

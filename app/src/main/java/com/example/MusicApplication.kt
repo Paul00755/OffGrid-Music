@@ -14,11 +14,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 
-class MusicApplication : Application(), ImageLoaderFactory {
+class MusicApplication : Application(), ImageLoaderFactory, androidx.work.Configuration.Provider {
 
     companion object {
         private const val TAG = "MusicApplication"
     }
+
+    override val workManagerConfiguration: androidx.work.Configuration
+        get() = androidx.work.Configuration.Builder().build()
 
     override fun onCreate() {
         super.onCreate()

@@ -1048,6 +1048,35 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    fun getAllLyricsSyncOffsets(): Map<Long, Long> {
+        return try {
+            context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE).all.mapNotNull { (key, value) ->
+                val songId = key.removePrefix("offset_").takeIf { key.startsWith("offset_") }?.toLongOrNull()
+                val offset = (value as? Number)?.toLong()
+                if (songId != null && songId > 0L && offset != null && offset != 0L) songId to offset else null
+            }.toMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /** Applies a batch of lyrics offsets with one disk commit; replace mode removes stale offsets. */
+    fun applyLyricsSyncOffsets(offsetsBySongId: Map<Long, Long>, replace: Boolean = false) {
+        try {
+            val prefs = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+            if (replace) {
+                prefs.all.keys.filter { it.startsWith("offset_") }.forEach(editor::remove)
+            }
+            offsetsBySongId.forEach { (songId, offset) ->
+                if (songId <= 0L) return@forEach
+                val key = "offset_$songId"
+                if (offset == 0L) editor.remove(key) else editor.putLong(key, offset)
+            }
+            editor.commit()
+        } catch (_: Exception) {}
+    }
+
     fun setLyricsSyncOffsetMs(songId: Long, offsetMs: Long) {
         if (songId <= 0) return
         try {

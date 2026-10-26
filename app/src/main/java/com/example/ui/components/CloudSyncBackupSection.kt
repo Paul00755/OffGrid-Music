@@ -56,6 +56,7 @@ fun CloudSyncBackupSection(
     onOpenAuth: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var pendingAction by remember { mutableStateOf<PendingCloudAction?>(null) }
     val dateYearFormatter = remember {
         SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
     }
@@ -337,7 +338,7 @@ fun CloudSyncBackupSection(
                     // Sync Now Button
                     val isSyncing = syncStatus is SyncStatus.Syncing
                     OutlinedButton(
-                        onClick = onSyncNow,
+                        onClick = { pendingAction = PendingCloudAction.Sync },
                         enabled = !isSyncing,
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
@@ -371,7 +372,7 @@ fun CloudSyncBackupSection(
                     // Backup Now Button
                     val isBackingUp = backupStatus is BackupStatus.BackingUp
                     Button(
-                        onClick = onBackupNow,
+                        onClick = { pendingAction = PendingCloudAction.Backup },
                         enabled = !isBackingUp,
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -405,6 +406,27 @@ fun CloudSyncBackupSection(
                     }
                 }
 
+                val operationFeedback = when {
+                    syncStatus is SyncStatus.Error -> syncStatus.message
+                    backupStatus is BackupStatus.Error -> backupStatus.message
+                    syncStatus is SyncStatus.Synced -> "Cloud state synced successfully."
+                    backupStatus is BackupStatus.Success -> "Cloud snapshot saved successfully."
+                    else -> null
+                }
+                operationFeedback?.let { message ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = message,
+                        fontSize = 11.5.sp,
+                        color = if (syncStatus is SyncStatus.Error || backupStatus is BackupStatus.Error) {
+                            Color(0xFFFF5252)
+                        } else {
+                            Color(0xFF00C853)
+                        },
+                        lineHeight = 15.sp
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Storage Notice: Retaining only latest snapshot
@@ -428,7 +450,37 @@ fun CloudSyncBackupSection(
             }
         }
     }
+
+    pendingAction?.let { action ->
+        val isBackup = action == PendingCloudAction.Backup
+        AlertDialog(
+            onDismissRequest = { pendingAction = null },
+            title = { Text(if (isBackup) "Back up current state?" else "Sync from cloud?") },
+            text = {
+                Text(
+                    if (isBackup) {
+                        "Upload this device's supported playlists, favourites, history, and settings as the authoritative cloud snapshot. Items deleted locally will be absent from the new snapshot. This does not download cloud data."
+                    } else {
+                        "Fetch the authoritative cloud state and apply it on this device. Local changes that have not been backed up may be replaced or reconciled. This does not upload local changes."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingAction = null
+                    if (isBackup) onBackupNow() else onSyncNow()
+                }) {
+                    Text(if (isBackup) "Upload Backup" else "Apply Cloud Sync")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingAction = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
+
+private enum class PendingCloudAction { Sync, Backup }
 
 @Composable
 private fun TimestampTile(

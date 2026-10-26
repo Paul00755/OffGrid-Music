@@ -3,12 +3,14 @@ package com.example.data.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 import com.example.data.model.Album
 import com.example.data.model.Artist
 import com.example.data.model.FolderInfo
 import com.example.data.model.Lyrics
 import com.example.data.model.Playlist
 import com.example.data.model.Song
+import java.util.UUID
 
 @Entity(
     tableName = "songs",
@@ -128,7 +130,8 @@ data class PlaylistEntity(
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
     val isPinned: Boolean = false,
-    val artworkUri: String? = null
+    val artworkUri: String? = null,
+    @ColumnInfo(defaultValue = "''") val cloudId: String = "pl_${UUID.randomUUID()}"
 ) {
     fun toDomainModel(songCount: Int, totalDurationMs: Long = 0L): Playlist = Playlist(
         id = id,

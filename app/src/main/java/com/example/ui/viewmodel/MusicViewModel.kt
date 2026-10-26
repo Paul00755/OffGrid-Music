@@ -1247,8 +1247,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                     val resolvedUri = com.example.util.ArtworkManager.getOrExtractArtworkUri(getApplication(), song.id, song.path, song.albumId)
                                     if (!resolvedUri.isNullOrBlank()) {
                                         repository.updateSongArtwork(song.id, resolvedUri)
-                                        com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, resolvedUri)
-                                        playbackManager.updateCurrentSongArtwork(song.id, resolvedUri)
+                                        com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, resolvedUri, song.path)
+                                        playbackManager.updateCurrentSongArtwork(song.id, resolvedUri, song.path)
                                     }
                                 }
                             } catch (_: Exception) {}
@@ -1767,25 +1767,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 newTrackNumber = newTrackNumber
             )
             val finalArt = updatedSong.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(getApplication(), updatedSong.id, updatedSong.path)
-            com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id)
+            com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id, updatedSong.path)
             if (!finalArt.isNullOrBlank()) {
-                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, finalArt)
+                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, finalArt, updatedSong.path)
                 try {
                     val bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(getApplication(), finalArt, 512)
                     if (bmp != null) {
-                        com.example.util.ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp)
+                        com.example.util.ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp, updatedSong.path)
                         val stream = java.io.ByteArrayOutputStream()
                         bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
-                        com.example.util.ArtworkManager.putNotificationArtwork(updatedSong.id, stream.toByteArray(), bmp)
+                        com.example.util.ArtworkManager.putNotificationArtwork(updatedSong.id, stream.toByteArray(), bmp, updatedSong.path)
                     }
                 } catch (_: Throwable) {}
             } else {
-                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, null)
+                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, null, updatedSong.path)
             }
             com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
             playbackManager.updateSongInQueue(updatedSong)
             if (!finalArt.isNullOrBlank()) {
-                playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt)
+                playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt, updatedSong.path)
             }
             com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
             com.example.service.MusicPlaybackService.instance?.triggerNotificationUpdate()

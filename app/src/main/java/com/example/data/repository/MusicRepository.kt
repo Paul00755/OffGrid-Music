@@ -734,7 +734,7 @@ class MusicRepository(
         }
 
         if (!finalArtworkUri.isNullOrBlank()) {
-            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri)
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri, song.path)
         }
 
         val updatedSong = song.copy(

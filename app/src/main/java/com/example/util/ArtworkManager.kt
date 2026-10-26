@@ -37,12 +37,15 @@ object ArtworkManager {
     // In-memory index of verified valid image files (absolutePath -> byteLength) to eliminate repeated RandomAccessFile syscalls
     private val verifiedValidFiles = ConcurrentHashMap<String, Long>()
 
-    private val notificationArtCache = object : android.util.LruCache<Long, ByteArray>(8 * 1024 * 1024) {
-        override fun sizeOf(key: Long, value: ByteArray): Int = value.size.coerceAtLeast(1)
+    private val notificationArtCache = object : android.util.LruCache<String, ByteArray>(8 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ByteArray): Int = value.size.coerceAtLeast(1)
     }
-    private val notificationBitmapCache = object : android.util.LruCache<Long, Bitmap>(16 * 1024 * 1024) {
-        override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount.coerceAtLeast(1)
+    private val notificationBitmapCache = object : android.util.LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount.coerceAtLeast(1)
     }
+
+    private fun notificationArtworkKey(songId: Long, filePath: String?): String =
+        ArtworkResolutionCache.trackIdentity(songId, filePath)
 
     /**
      * Validates that a cached JPEG/PNG file on disk is complete and not a half-written truncated JPEG
@@ -167,50 +170,57 @@ object ArtworkManager {
         }
     }
 
-    fun getCachedNotificationArtwork(songId: Long): ByteArray? {
+    fun getCachedNotificationArtwork(songId: Long, filePath: String? = null): ByteArray? {
         synchronized(notificationArtCache) {
-            return notificationArtCache.get(songId)
+            return notificationArtCache.get(notificationArtworkKey(songId, filePath))
         }
     }
 
-    fun getCachedNotificationBitmap(songId: Long): Bitmap? {
+    fun getCachedNotificationBitmap(songId: Long, filePath: String? = null): Bitmap? {
         synchronized(notificationBitmapCache) {
-            val bmp = notificationBitmapCache.get(songId)
+            val bmp = notificationBitmapCache.get(notificationArtworkKey(songId, filePath))
             return if (bmp != null && !bmp.isRecycled) bmp else null
         }
     }
 
-    fun putCachedNotificationBitmap(songId: Long, bitmap: Bitmap) {
+    fun putCachedNotificationBitmap(songId: Long, bitmap: Bitmap, filePath: String? = null) {
         if (songId <= 0L || bitmap.isRecycled) return
         synchronized(notificationBitmapCache) {
-            notificationBitmapCache.put(songId, bitmap)
+            notificationBitmapCache.put(notificationArtworkKey(songId, filePath), bitmap)
         }
     }
 
-    fun invalidateNotificationArtwork(songId: Long) {
+    fun invalidateNotificationArtwork(songId: Long, filePath: String? = null) {
+        val keys = if (filePath.isNullOrBlank()) {
+            listOf(notificationArtworkKey(songId, null)) +
+                synchronized(notificationArtCache) { notificationArtCache.snapshot().keys.filter { it.startsWith("id:$songId:") } }
+        } else {
+            listOf(notificationArtworkKey(songId, filePath), notificationArtworkKey(songId, null))
+        }
         synchronized(notificationArtCache) {
-            notificationArtCache.remove(songId)
+            keys.forEach(notificationArtCache::remove)
         }
         synchronized(notificationBitmapCache) {
-            notificationBitmapCache.remove(songId)
+            keys.forEach(notificationBitmapCache::remove)
         }
     }
 
-    fun putCachedNotificationArtwork(songId: Long, bytes: ByteArray) {
+    fun putCachedNotificationArtwork(songId: Long, bytes: ByteArray, filePath: String? = null) {
         if (songId <= 0L || bytes.isEmpty()) return
         synchronized(notificationArtCache) {
-            notificationArtCache.put(songId, bytes)
+            notificationArtCache.put(notificationArtworkKey(songId, filePath), bytes)
         }
     }
 
-    fun putNotificationArtwork(songId: Long, bytes: ByteArray, bitmap: Bitmap) {
+    fun putNotificationArtwork(songId: Long, bytes: ByteArray, bitmap: Bitmap, filePath: String? = null) {
         if (songId <= 0L) return
+        val key = notificationArtworkKey(songId, filePath)
         synchronized(notificationArtCache) {
-            notificationArtCache.put(songId, bytes)
+            notificationArtCache.put(key, bytes)
         }
         if (!bitmap.isRecycled) {
             synchronized(notificationBitmapCache) {
-                notificationBitmapCache.put(songId, bitmap)
+                notificationBitmapCache.put(key, bitmap)
             }
         }
     }
@@ -391,14 +401,14 @@ object ArtworkManager {
         artworkUriStr: String? = null
     ): ByteArray? {
         synchronized(notificationArtCache) {
-            val cached = notificationArtCache.get(songId)
+            val cached = notificationArtCache.get(notificationArtworkKey(songId, filePath))
             if (cached != null && cached.isNotEmpty()) return cached
         }
 
         val effectiveUriStr = if (!artworkUriStr.isNullOrBlank()) {
             artworkUriStr
         } else {
-            ArtworkResolutionCache.getMemory(songId)
+            ArtworkResolutionCache.getMemory(songId, filePath)
                 ?: ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)
         }
 
@@ -411,7 +421,7 @@ object ArtworkManager {
             options.inJustDecodeBounds = false
             val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
             if (bmp != null) {
-                putCachedNotificationBitmap(songId, bmp)
+                putCachedNotificationBitmap(songId, bmp, filePath)
                 val stream = ByteArrayOutputStream()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream)
                 stream.toByteArray()
@@ -423,23 +433,23 @@ object ArtworkManager {
         }
 
         synchronized(notificationArtCache) {
-            notificationArtCache.put(songId, finalBytes)
+            notificationArtCache.put(notificationArtworkKey(songId, filePath), finalBytes)
         }
         return finalBytes
     }
 
-    fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String): String? {
+    fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String, filePath: String? = null): String? {
         if (songId <= 0L || url.isBlank()) return null
         // Never overwrite an explicit user-selected manual cover
-        val existingManual = ManualTagStore.getManualMetadata(context, songId, "")?.artworkUri
-            ?: ArtworkResolutionCache.getManualCoverUri(context, songId, "")
+        val existingManual = ManualTagStore.getManualMetadata(context, songId, filePath.orEmpty())?.artworkUri
+            ?: ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
         if (!existingManual.isNullOrBlank()) {
             return existingManual
         }
         return try {
             val destDir = File(context.filesDir, CACHE_DIR_NAME)
             if (!destDir.exists()) destDir.mkdirs()
-            val destFile = File(destDir, "$songId.jpg")
+            val destFile = File(destDir, if (filePath.isNullOrBlank()) "$songId.jpg" else ArtworkResolutionCache.trackFileName(songId, filePath))
 
             val rawBytes = if (url.startsWith("http://") || url.startsWith("https://")) {
                 val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -457,13 +467,14 @@ object ArtworkManager {
                 if (bmp != null) {
                     val savedBytes = writeBitmapAtomically(destFile, bmp, 90, songId)
                     if (savedBytes != null) {
-                        putNotificationArtwork(songId, savedBytes, bmp)
+                        putNotificationArtwork(songId, savedBytes, bmp, filePath)
                         val localUri = Uri.fromFile(destFile).toString()
-                        ArtworkResolutionCache.cache[songId] = localUri
+                        ArtworkResolutionCache.cacheArtwork(songId, filePath, localUri)
                         com.example.service.PlaybackManager.activeInstance?.let { pm ->
-                            if (pm.playbackState.value.currentSong?.id == songId) {
+                            val currentSong = pm.playbackState.value.currentSong
+                            if (currentSong?.id == songId && (filePath.isNullOrBlank() || currentSong.path == filePath)) {
                                 CoroutineScope(Dispatchers.Main).launch {
-                                    pm.updateCurrentSongArtwork(songId, localUri)
+                                pm.updateCurrentSongArtwork(songId, localUri, filePath)
                                 }
                             }
                         }
@@ -621,7 +632,7 @@ object ArtworkManager {
                         val decodedBmp = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, opts)
                         if (decodedBmp != null) {
                             val cleanJpeg = writeBitmapAtomically(persistentFile, decodedBmp, 90, songId)
-                            putCachedNotificationBitmap(songId, decodedBmp)
+                            putCachedNotificationBitmap(songId, decodedBmp, filePath)
                             return cleanJpeg ?: artBytes
                         }
                     }
@@ -675,31 +686,33 @@ object ArtworkManager {
     ): String? = withContext(Dispatchers.IO) {
         // 0. Check in-memory cache first
         if (songId > 0L) {
-            val mem = ArtworkResolutionCache.getMemory(songId)
+            val mem = ArtworkResolutionCache.getMemory(songId, filePath)
             if (!mem.isNullOrBlank()) return@withContext mem
         }
 
         // 1. Check manual song_covers first (highest priority, user-explicit)
         val manualMetaArt = ManualTagStore.getManualMetadata(context, songId, filePath)?.artworkUri
         if (!manualMetaArt.isNullOrBlank()) {
-            if (songId > 0L) ArtworkResolutionCache.cache[songId] = manualMetaArt
+            if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualMetaArt)
             return@withContext manualMetaArt
         }
 
         val manualCoverUri = ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
         if (!manualCoverUri.isNullOrBlank()) {
-            if (songId > 0L) ArtworkResolutionCache.cache[songId] = manualCoverUri
+            if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualCoverUri)
             return@withContext manualCoverUri
         }
 
+        ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)?.let { return@withContext it }
+
         val persistentDir = File(context.filesDir, CACHE_DIR_NAME)
         if (!persistentDir.exists()) persistentDir.mkdirs()
-        val persistentFile = File(persistentDir, "$songId.jpg")
+        val persistentFile = File(persistentDir, ArtworkResolutionCache.trackFileName(songId, filePath))
 
         // 2. Fast-path: If already extracted & verified valid in persistent storage, return immediately!
         if (songId > 0L && isValidCompleteImageFile(persistentFile)) {
             val uriStr = Uri.fromFile(persistentFile).toString()
-            ArtworkResolutionCache.cache[songId] = uriStr
+            ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
             return@withContext uriStr
         }
 
@@ -708,7 +721,7 @@ object ArtworkManager {
             // Re-check after acquiring permit in case another coroutine just extracted it
             if (songId > 0L && isValidCompleteImageFile(persistentFile)) {
                 val uriStr = Uri.fromFile(persistentFile).toString()
-                ArtworkResolutionCache.cache[songId] = uriStr
+                ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                 return@withPermit uriStr
             }
 
@@ -732,9 +745,9 @@ object ArtworkManager {
                             if (bitmap != null) {
                                 val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 90, songId)
                                 if (savedBytes != null) {
-                                    putNotificationArtwork(songId, savedBytes, bitmap)
+                                    putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                     val uriStr = Uri.fromFile(persistentFile).toString()
-                                    ArtworkResolutionCache.cache[songId] = uriStr
+                                    ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                     return@withPermit uriStr
                                 }
                             }
@@ -764,9 +777,9 @@ object ArtworkManager {
                         if (bitmap != null) {
                             val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 90, songId)
                             if (savedBytes != null) {
-                                putNotificationArtwork(songId, savedBytes, bitmap)
+                                putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                 val uriStr = Uri.fromFile(persistentFile).toString()
-                                ArtworkResolutionCache.cache[songId] = uriStr
+                                ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                 return@withPermit uriStr
                             }
                         }
@@ -782,9 +795,9 @@ object ArtworkManager {
             if (mediaStoreBmp != null && songId > 0L) {
                 val savedBytes = writeBitmapAtomically(persistentFile, mediaStoreBmp, 90, songId)
                 if (savedBytes != null) {
-                    putNotificationArtwork(songId, savedBytes, mediaStoreBmp)
+                    putNotificationArtwork(songId, savedBytes, mediaStoreBmp, filePath)
                     val uriStr = Uri.fromFile(persistentFile).toString()
-                    ArtworkResolutionCache.cache[songId] = uriStr
+                    ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                     return@withPermit uriStr
                 }
             }
@@ -794,7 +807,7 @@ object ArtworkManager {
                 val thumbFile = findThumbnailArtwork(filePath, songId, context)
                 if (thumbFile != null && isValidCompleteImageFile(thumbFile)) {
                     val thumbUri = Uri.fromFile(thumbFile).toString()
-                    if (songId > 0L) ArtworkResolutionCache.cache[songId] = thumbUri
+                    if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, thumbUri)
                     return@withPermit thumbUri
                 }
             }
@@ -820,9 +833,9 @@ object ArtworkManager {
             }
 
             val pathHash = if (!songPath.isNullOrBlank()) {
-                songPath.trim().lowercase().hashCode().toLong() and 0x7FFFFFFF_FFFFFFFFL
+                ArtworkResolutionCache.trackIdentity(songId, songPath).substringAfterLast(':')
             } else {
-                songId and 0x7FFFFFFF_FFFFFFFFL
+                (songId and 0x7FFFFFFF_FFFFFFFFL).toString()
             }
             val uniqueThumbBase = "track_${songId}_${pathHash}"
 
@@ -864,13 +877,8 @@ object ArtworkManager {
                 val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
 
                 // Delete older timestamped cover files for this song only after decoding the new cover
-                coversDir.listFiles { file ->
-                    file.name.startsWith("song_${songId}_") && file.name != legacyDestFile.name
-                }?.forEach {
-                    try { it.delete() } catch (_: Exception) {}
-                }
                 appThumbnailDir.listFiles { file ->
-                    (file.name.startsWith("${uniqueThumbBase}_") || file.name.startsWith("track_${songId}_")) &&
+                    file.name.startsWith("${uniqueThumbBase}_") &&
                         file.name != destFile.name && file.name != stableThumbFile.name
                 }?.forEach {
                     try { it.delete() } catch (_: Exception) {}
@@ -884,8 +892,10 @@ object ArtworkManager {
                 if (bitmap != null) {
                     val compressedBytes = writeBitmapAtomically(destFile, bitmap, 92, songId)
                     writeBitmapAtomically(stableThumbFile, bitmap, 92, songId)
-                    writeBitmapAtomically(legacyDestFile, bitmap, 92, songId)
-                    writeBitmapAtomically(stableFile, bitmap, 92, songId)
+                    if (songPath.isNullOrBlank()) {
+                        writeBitmapAtomically(legacyDestFile, bitmap, 92, songId)
+                        writeBitmapAtomically(stableFile, bitmap, 92, songId)
+                    }
 
                     if (extThumbnailDir != null) {
                         try {
@@ -913,33 +923,36 @@ object ArtworkManager {
 
                     val pArtworksDir = File(context.filesDir, CACHE_DIR_NAME)
                     if (!pArtworksDir.exists()) pArtworksDir.mkdirs()
-                    val pArtFile = File(pArtworksDir, "$songId.jpg")
+                    val trackFileName = if (songPath.isNullOrBlank()) "$songId.jpg" else ArtworkResolutionCache.trackFileName(songId, songPath)
+                    val pArtFile = File(pArtworksDir, trackFileName)
                     writeBitmapAtomically(pArtFile, bitmap, 90, songId)
 
                     val pSongArtDir = File(context.filesDir, SONG_ARTWORKS_DIR_NAME)
                     if (!pSongArtDir.exists()) pSongArtDir.mkdirs()
-                    val pSongArtFile = File(pSongArtDir, "$songId.jpg")
+                    val pSongArtFile = File(pSongArtDir, trackFileName)
                     writeBitmapAtomically(pSongArtFile, bitmap, 90, songId)
 
                     val cacheDir = File(context.cacheDir, CACHE_DIR_NAME)
                     if (!cacheDir.exists()) cacheDir.mkdirs()
-                    val cacheFile = File(cacheDir, "$songId.jpg")
+                    val cacheFile = File(cacheDir, trackFileName)
                     writeBitmapAtomically(cacheFile, bitmap, 90, songId)
 
                     val songArtDir = File(context.cacheDir, SONG_ARTWORKS_DIR_NAME)
                     if (!songArtDir.exists()) songArtDir.mkdirs()
-                    val songArtFile = File(songArtDir, "$songId.jpg")
+                    val songArtFile = File(songArtDir, trackFileName)
                     writeBitmapAtomically(songArtFile, bitmap, 90, songId)
 
                     if (compressedBytes != null) {
-                        putNotificationArtwork(songId, compressedBytes, bitmap)
+                        putNotificationArtwork(songId, compressedBytes, bitmap, songPath)
                     } else {
-                        putCachedNotificationBitmap(songId, bitmap)
+                        putCachedNotificationBitmap(songId, bitmap, songPath)
                     }
 
                     try {
                         context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                            .edit().remove(songId.toString()).apply()
+                            .edit().remove(songId.toString())
+                            .remove(ArtworkResolutionCache.trackIdentity(songId, songPath))
+                            .apply()
                     } catch (_: Exception) {}
 
                     val newUri = Uri.fromFile(destFile).toString()
@@ -960,15 +973,17 @@ object ArtworkManager {
                         loader.enqueue(warmReq)
                     } catch (_: Exception) {}
 
-                    ArtworkResolutionCache.notifyArtworkChanged(songId, newUri)
+                    ArtworkResolutionCache.notifyArtworkChanged(songId, newUri, songPath)
                     return@withContext newUri
                 } else {
                     if (writeBytesAtomically(destFile, rawBytes, songId)) {
                         writeBytesAtomically(stableThumbFile, rawBytes, songId)
-                        writeBytesAtomically(legacyDestFile, rawBytes, songId)
-                        writeBytesAtomically(stableFile, rawBytes, songId)
+                        if (songPath.isNullOrBlank()) {
+                            writeBytesAtomically(legacyDestFile, rawBytes, songId)
+                            writeBytesAtomically(stableFile, rawBytes, songId)
+                        }
                         val newUri = Uri.fromFile(destFile).toString()
-                        ArtworkResolutionCache.notifyArtworkChanged(songId, newUri)
+                        ArtworkResolutionCache.notifyArtworkChanged(songId, newUri, songPath)
                         return@withContext newUri
                     }
                 }

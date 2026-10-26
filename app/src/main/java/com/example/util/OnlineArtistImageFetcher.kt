@@ -46,21 +46,26 @@ object OnlineArtistImageFetcher {
         album: String = "",
         preferUltraHd: Boolean = true,
         cacheEnabled: Boolean = true,
-        songId: Long = 0L
+        songId: Long = 0L,
+        filePath: String? = null
     ): String? {
         // 0. If this song has a manual cover, never override it with online cache
         if (songId > 0L) {
-            val manualCover = ManualTagStore.getManualMetadata(context, songId, "")?.artworkUri
-                ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, songId, "")
+            val manualCover = ManualTagStore.getManualMetadata(context, songId, filePath.orEmpty())?.artworkUri
+                ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
             if (!manualCover.isNullOrBlank()) {
                 return manualCover
             }
         }
 
-        // 1. Check stable songId-based cache first
+        val identityKey = if (songId > 0L && !filePath.isNullOrBlank()) {
+            com.example.ui.components.ArtworkResolutionCache.trackIdentity(songId, filePath)
+        } else songId.toString()
+
+        // 1. Check the track-specific cache first
         if (songId > 0L && cacheEnabled) {
             val idPrefs = context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-            val savedById = idPrefs.getString(songId.toString(), null)
+            val savedById = idPrefs.getString(identityKey, null)
             if (!savedById.isNullOrBlank()) {
                 return savedById
             }
@@ -76,7 +81,7 @@ object OnlineArtistImageFetcher {
         }
 
         val cacheKey = if (songId > 0L) {
-            "song_${songId}_${cleanTitle}_${cleanArtist}".lowercase().trim()
+            "${identityKey}_${cleanTitle}_${cleanArtist}".lowercase().trim()
         } else {
             "${cleanTitle}_${cleanArtist}_$cleanAlbum".lowercase().trim()
         }
@@ -90,7 +95,7 @@ object OnlineArtistImageFetcher {
                 songCache[cacheKey] = savedUrl
                 if (songId > 0L) {
                     context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                        .edit().putString(songId.toString(), savedUrl).apply()
+                        .edit().putString(identityKey, savedUrl).apply()
                 }
                 return savedUrl
             }
@@ -180,7 +185,7 @@ object OnlineArtistImageFetcher {
                             .edit().putString(cacheKey, resolvedOnline).apply()
                         if (songId > 0L) {
                             context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
-                                .edit().putString(songId.toString(), resolvedOnline).apply()
+                                .edit().putString(identityKey, resolvedOnline).apply()
                         }
                     }
                     return@withContext resolvedOnline

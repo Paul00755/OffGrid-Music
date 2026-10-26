@@ -41,7 +41,8 @@ data class CloudUserSettings(
     val customBassBoost: Int = 0,
     val customVirtualizer: Int = 0,
     val reduceVolumeOnNotification: Boolean = true,
-    val playDuringCamera: Boolean = true,
+    // Mirrors UserPreferences: absent means pause during camera/system audio focus loss.
+    val playDuringCamera: Boolean = false,
     val scrobbleThresholdType: String = "SECONDS",
     val scrobbleThresholdValue: Int = 30,
     val repeatMode: Int = 0,
@@ -199,7 +200,7 @@ data class CloudUserSettings(
             customBassBoost = (map["customBassBoost"] as? Number)?.toInt() ?: 0,
             customVirtualizer = (map["customVirtualizer"] as? Number)?.toInt() ?: 0,
             reduceVolumeOnNotification = map["reduceVolumeOnNotification"] as? Boolean ?: true,
-            playDuringCamera = map["playDuringCamera"] as? Boolean ?: true,
+            playDuringCamera = map["playDuringCamera"] as? Boolean ?: false,
             scrobbleThresholdType = map["scrobbleThresholdType"] as? String ?: "SECONDS",
             scrobbleThresholdValue = (map["scrobbleThresholdValue"] as? Number)?.toInt() ?: 30,
             repeatMode = (map["repeatMode"] as? Number)?.toInt() ?: 0,
@@ -409,6 +410,27 @@ data class CloudLyricsOffset(
             songSignature = map["songSignature"] as? String ?: "",
             offsetMs = (map["offsetMs"] as? Number)?.toLong() ?: 0L,
             updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
+        )
+    }
+}
+
+/** Stable playlist-play history record; Room playlist IDs are never sent to Firestore. */
+data class CloudPlaylistPlayEvent(
+    val eventId: String = "",
+    val playlistCloudId: String = "",
+    val timestamp: Long = 0L
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "eventId" to eventId,
+        "playlistCloudId" to playlistCloudId,
+        "timestamp" to timestamp
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>): CloudPlaylistPlayEvent = CloudPlaylistPlayEvent(
+            eventId = map["eventId"] as? String ?: "",
+            playlistCloudId = map["playlistCloudId"] as? String ?: "",
+            timestamp = (map["timestamp"] as? Number)?.toLong() ?: 0L
         )
     }
 }

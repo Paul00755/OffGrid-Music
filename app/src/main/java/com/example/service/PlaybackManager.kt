@@ -74,7 +74,7 @@ class PlaybackManager(
                 false
             }
         },
-        onPauseRequested = { pause() },
+        onPauseRequested = { pauseFromAudioFocus() },
         onResumeRequested = { play() },
         onDuckRequested = { duckVol -> try { player.volume = duckVol } catch (_: Throwable) {} },
         onRestoreVolumeRequested = { try { player.volume = 1.0f } catch (_: Throwable) {} }
@@ -334,7 +334,7 @@ class PlaybackManager(
             if (bytes != null && bytes.isNotEmpty()) {
                 val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bmp != null) {
-                    ArtworkManager.putCachedNotificationBitmap(songId, bmp)
+                    ArtworkManager.putCachedNotificationBitmap(songId, bmp, current.path)
                 }
             }
             withContext(Dispatchers.Main) {
@@ -446,7 +446,7 @@ class PlaybackManager(
             .setAlbumTitle(song.displayAlbum)
             .apply {
                 val art = song.artworkUri?.takeIf { it.isNotBlank() }
-                    ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id)
+                    ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
                     ?: song.contentUriString.takeIf { it.startsWith("http") }
                 if (!art.isNullOrBlank()) {
                     try {
@@ -2266,7 +2266,16 @@ class PlaybackManager(
         }
     }
 
+    private fun pauseFromAudioFocus() {
+        pauseInternal()
+    }
+
     fun pause() {
+        audioFocusManager.cancelPendingResume()
+        pauseInternal()
+    }
+
+    private fun pauseInternal() {
         isFadingOutToPause = false
         wasPausedByZeroVolume = false
         cancelCrossfade(resetVolume = true)
@@ -2285,6 +2294,7 @@ class PlaybackManager(
     }
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
+        audioFocusManager.cancelPendingResume()
         wasPausedByZeroVolume = fromZeroVolume
         val duration = (customFadeOutMs ?: fadeOutMs).coerceIn(0, 10000)
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
@@ -2319,6 +2329,7 @@ class PlaybackManager(
     }
 
     fun play() {
+        audioFocusManager.onUserPlayRequested()
         val wasFadingOut = isFadingOutToPause
         isFadingOutToPause = false
         audioFocusManager.requestAudioFocus()
@@ -2358,6 +2369,7 @@ class PlaybackManager(
     }
 
     fun playWithFade(customFadeInMs: Int? = null) {
+        audioFocusManager.onUserPlayRequested()
         val wasFadingOut = isFadingOutToPause
         val currentVolBeforeResume = player.volume.coerceIn(0f, 1f)
         isFadingOutToPause = false
@@ -2734,9 +2746,9 @@ class PlaybackManager(
                                     try {
                                         val authUri = com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, nextSong, false)
                                         if (!authUri.isNullOrBlank()) {
-                                            com.example.ui.components.ArtworkResolutionCache.cache[nextSong.id] = authUri
+                                            com.example.ui.components.ArtworkResolutionCache.cacheArtwork(nextSong.id, nextSong.path, authUri)
                                         }
-                                        val cached = ArtworkManager.getCachedNotificationBitmap(nextSong.id)
+                                        val cached = ArtworkManager.getCachedNotificationBitmap(nextSong.id, nextSong.path)
                                         if (cached == null || cached.isRecycled) {
                                             val artBytes = ArtworkManager.getNotificationArtworkBytes(
                                                 context = context,
@@ -2748,7 +2760,7 @@ class PlaybackManager(
                                             if (artBytes != null && artBytes.isNotEmpty()) {
                                                 val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
                                                 if (bmp != null) {
-                                                    ArtworkManager.putCachedNotificationBitmap(nextSong.id, bmp)
+                                                    ArtworkManager.putCachedNotificationBitmap(nextSong.id, bmp, nextSong.path)
                                                 }
                                             }
                                         }
@@ -2811,6 +2823,7 @@ class PlaybackManager(
 
     fun handleSleepTimerExpired() {
         try {
+            audioFocusManager.cancelPendingResume()
             stopProgressTracker()
             flushSession(isFinal = true)
 
@@ -2910,12 +2923,12 @@ class PlaybackManager(
             scope.launch(Dispatchers.IO) {
                 val bmp = ArtworkManager.decodeBitmapFromUri(context, updatedSong.artworkUri)
                 if (bmp != null) {
-                    ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp)
+                    ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp, updatedSong.path)
                     try {
                         val stream = java.io.ByteArrayOutputStream()
                         bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
                         val bytes = stream.toByteArray()
-                        ArtworkManager.putNotificationArtwork(updatedSong.id, bytes, bmp)
+                        ArtworkManager.putNotificationArtwork(updatedSong.id, bytes, bmp, updatedSong.path)
                     } catch (_: Throwable) {}
                 }
                 withContext(Dispatchers.Main) {
@@ -2933,23 +2946,27 @@ class PlaybackManager(
         }
     }
 
-    fun updateCurrentSongArtwork(songId: Long, artworkUri: String) {
+    fun updateCurrentSongArtwork(songId: Long, artworkUri: String, filePath: String? = null) {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             scope.launch(Dispatchers.Main) {
-                updateCurrentSongArtwork(songId, artworkUri)
+                updateCurrentSongArtwork(songId, artworkUri, filePath)
             }
             return
         }
         val currentSong = _playbackState.value.currentSong
-        val newCurrentSong = if (currentSong?.id == songId) currentSong.copy(artworkUri = artworkUri) else currentSong
+        val matchesSong: (Song) -> Boolean = { candidate ->
+            candidate.id == songId && (filePath.isNullOrBlank() || candidate.path == filePath)
+        }
+        val newCurrentSong = if (currentSong != null && matchesSong(currentSong)) currentSong.copy(artworkUri = artworkUri) else currentSong
         val newQueue = _playbackState.value.queue.map {
-            if (it.id == songId) it.copy(artworkUri = artworkUri) else it
+            if (matchesSong(it)) it.copy(artworkUri = artworkUri) else it
         }
         _playbackState.value = _playbackState.value.copy(
             currentSong = newCurrentSong,
             queue = newQueue
         )
-        val targetIdx = newQueue.indexOfFirst { it.id == songId }
+        val targetIdx = newQueue.indexOfFirst(matchesSong)
+        val targetSong = newQueue.getOrNull(targetIdx) ?: newCurrentSong?.takeIf(matchesSong)
         if (targetIdx >= 0 && targetIdx < player.mediaItemCount) {
             try {
                 player.replaceMediaItem(targetIdx, buildMediaItem(newQueue[targetIdx], loadArtworkBytes = false))
@@ -2958,16 +2975,16 @@ class PlaybackManager(
 
         scope.launch(Dispatchers.IO) {
             val bmp = ArtworkManager.decodeBitmapFromUri(context, artworkUri)
-                ?: ArtworkManager.getOrExtractArtworkUri(context, songId, newCurrentSong?.path ?: "", newCurrentSong?.albumId ?: 0L)?.let {
+                ?: ArtworkManager.getOrExtractArtworkUri(context, songId, targetSong?.path.orEmpty(), targetSong?.albumId ?: 0L)?.let {
                     ArtworkManager.decodeBitmapFromUri(context, it)
                 }
             if (bmp != null) {
-                ArtworkManager.putCachedNotificationBitmap(songId, bmp)
+                ArtworkManager.putCachedNotificationBitmap(songId, bmp, targetSong?.path)
                 try {
                     val stream = java.io.ByteArrayOutputStream()
                     bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
                     val bytes = stream.toByteArray()
-                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp)
+                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp, targetSong?.path)
                 } catch (_: Throwable) {}
             }
             withContext(Dispatchers.Main) {
@@ -2985,7 +3002,7 @@ class PlaybackManager(
             val authUri = try {
                 com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song, false)?.also {
                     if (it.isNotBlank()) {
-                        com.example.ui.components.ArtworkResolutionCache.cache[song.id] = it
+                        com.example.ui.components.ArtworkResolutionCache.cacheArtwork(song.id, song.path, it)
                     }
                 }
             } catch (_: Throwable) { null }
@@ -2998,17 +3015,17 @@ class PlaybackManager(
                 artworkUriStr = authUri ?: song.artworkUri
             )
             if (artBytes != null && artBytes.isNotEmpty()) {
-                val cached = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id)
+                val cached = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
                 if (cached == null || cached.isRecycled) {
                     try {
                         val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
                         if (bmp != null) {
-                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                         }
                     } catch (_: Throwable) {}
                 }
                 withContext(Dispatchers.Main) {
-                    if (_playbackState.value.currentSong?.id == song.id) {
+                    if (_playbackState.value.currentSong?.let { it.id == song.id && it.path == song.path } == true) {
                         updateNotificationLayout()
                         MusicPlaybackService.instance?.triggerNotificationUpdate()
                         com.example.widget.WidgetBitmapRenderer.invalidateSong(song.id)

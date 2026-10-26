@@ -23,7 +23,7 @@ object ArtworkColorExtractor {
 
     suspend fun extractPrimaryColorForSong(context: Context, song: Song?): Color? {
         if (song == null) return null
-        val cacheKey = "song_${song.id}_${song.artworkUri ?: ""}"
+        val cacheKey = "song_${com.example.ui.components.ArtworkResolutionCache.trackIdentity(song.id, song.path)}_${song.artworkUri ?: ""}"
         synchronized(this) {
             colorCache.get(cacheKey)?.let { return it }
         }
@@ -31,7 +31,7 @@ object ArtworkColorExtractor {
         return withContext(Dispatchers.IO) {
             try {
                 // 1. Try fast in-memory bitmap from ArtworkManager
-                val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id)
+                val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
                 if (cachedBmp != null && !cachedBmp.isRecycled) {
                     val color = findProminentColor(cachedBmp)
                     if (color != null) {

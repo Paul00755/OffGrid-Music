@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.firstOrNull
         SmartPlaylistEntity::class,
         PlaylistPlayEventEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -118,6 +118,21 @@ abstract class AppDatabase : RoomDatabase() {
                 try {
                     db.execSQL("ALTER TABLE songs ADD COLUMN isManuallyEdited INTEGER NOT NULL DEFAULT 0")
                 } catch (_: Exception) {}
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val columns = mutableSetOf<String>()
+                db.query("PRAGMA table_info(`playlists`)").use { cursor ->
+                    val nameColumn = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) {
+                        if (nameColumn >= 0) columns += cursor.getString(nameColumn)
+                    }
+                }
+                if ("cloudId" !in columns) {
+                    db.execSQL("ALTER TABLE playlists ADD COLUMN cloudId TEXT NOT NULL DEFAULT ''")
+                }
             }
         }
 
@@ -462,7 +477,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
-                    MIGRATION_9_10
+                    MIGRATION_9_10,
+                    MIGRATION_10_11
                 )
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onOpen(db: SupportSQLiteDatabase) {

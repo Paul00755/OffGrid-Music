@@ -444,4 +444,56 @@ class CloudSyncTest {
         assertFalse("Cloud document must NOT contain binary data", map.containsKey("bytes"))
         assertTrue("Only metadata is stored", map.containsKey("songSignature"))
     }
+
+    @Test
+    fun versionedSnapshotValidationRejectsIncompleteAndCrossAccountData() {
+        val uid = "firebase-user-123"
+        val complete = UserBackupPayload(
+            version = 2,
+            ownerUid = uid,
+            snapshotComplete = true,
+            historyStoredSeparately = true,
+            playlistPlayEventsStoredSeparately = true,
+            dataHash = "sha256-value",
+            profile = BackupProfileData(uid = uid)
+        ).toMap()
+
+        assertTrue(UserBackupPayload.isCompleteSnapshot(complete, uid))
+        assertFalse(UserBackupPayload.isCompleteSnapshot(complete, "different-user"))
+        assertFalse(UserBackupPayload.isCompleteSnapshot(complete + ("snapshotComplete" to false), uid))
+        assertFalse(UserBackupPayload.isCompleteSnapshot(complete + ("ownerUid" to "different-user"), uid))
+    }
+
+    @Test
+    fun legacyVersionOneSnapshotWithoutCloudPlaylistIdsRemainsRestorable() {
+        val uid = "firebase-user-legacy"
+        val legacy = UserBackupPayload(
+            version = 1,
+            dataHash = "legacy-hash",
+            profile = BackupProfileData(uid = uid),
+            playlistsCount = 1,
+            playlists = listOf(
+                CloudPlaylist(
+                    name = "Road Trip",
+                    createdAt = 1_700_000_000_000L,
+                    songs = listOf(CloudPlaylistSongItem(position = 0, songSignature = "track-signature"))
+                )
+            )
+        ).toMap().toMutableMap().apply {
+            put("profile", BackupProfileData(uid = uid).toMap())
+            put("playlists", listOf(CloudPlaylist(
+                name = "Road Trip",
+                createdAt = 1_700_000_000_000L,
+                songs = listOf(CloudPlaylistSongItem(position = 0, songSignature = "track-signature"))
+            ).toMap() - "cloudId"))
+        }
+
+        assertTrue(UserBackupPayload.isCompleteSnapshot(legacy, uid))
+    }
+
+    @Test
+    fun missingCloudCameraPreferenceDefaultsToAutoPauseEnabled() {
+        assertFalse(CloudUserSettings().playDuringCamera)
+        assertFalse(CloudUserSettings.fromMap(emptyMap()).playDuringCamera)
+    }
 }

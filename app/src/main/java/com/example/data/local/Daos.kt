@@ -197,7 +197,7 @@ interface PlaylistDao {
     @Transaction
     suspend fun updatePlaylistOrder(playlistId: Long, crossRefs: List<PlaylistSongCrossRef>) {
         clearPlaylistSongs(playlistId)
-        insertPlaylistSongs(crossRefs)
+        if (crossRefs.isNotEmpty()) insertPlaylistSongs(crossRefs)
     }
 
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
@@ -242,11 +242,20 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET artworkUri = :artworkUri WHERE id = :playlistId")
     suspend fun updatePlaylistArtwork(playlistId: Long, artworkUri: String?)
 
+    @Query("UPDATE playlists SET cloudId = :cloudId WHERE id = :playlistId")
+    suspend fun updatePlaylistCloudId(playlistId: Long, cloudId: String)
+
     @Query("UPDATE playlists SET name = :newName WHERE id = :playlistId")
     suspend fun renamePlaylist(playlistId: Long, newName: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun recordPlaylistPlay(event: PlaylistPlayEventEntity)
+
+    @Query("SELECT * FROM playlist_play_events ORDER BY timestamp ASC")
+    suspend fun getAllPlaylistPlayEventsOnce(): List<PlaylistPlayEventEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPlaylistPlayEvents(events: List<PlaylistPlayEventEntity>)
 
     @Query("""
         SELECT 

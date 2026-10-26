@@ -76,20 +76,20 @@ class MusicPlaybackService : MediaSessionService() {
                                 mediaNotification.notification.tickerText = "${currentSong.displayTitle} - ${currentSong.displayArtist}"
                             } catch (_: Throwable) {}
 
-                            var bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
+                            var bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
                             if (bmp == null || bmp.isRecycled) {
-                                val artBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(currentSong.id)
+                                val artBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(currentSong.id, currentSong.path)
                                 if (artBytes != null && artBytes.isNotEmpty()) {
                                     bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
                                     if (bmp != null) {
-                                        com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp)
+                                        com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp, currentSong.path)
                                     }
                                 }
                             }
                             if (bmp == null || bmp.isRecycled) {
-                                val memCached = com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id)
+                                val memCached = com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id, currentSong.path)
                                 if (memCached != null) {
-                                    bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
+                                    bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
                                 }
                             }
 
@@ -110,7 +110,7 @@ class MusicPlaybackService : MediaSessionService() {
                                     if (loadedBytes != null && loadedBytes.isNotEmpty()) {
                                         val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
                                         if (newBmp != null) {
-                                            com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp)
+                                            com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp, currentSong.path)
                                             withContext(Dispatchers.Main) {
                                                 if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
                                                     triggerNotificationUpdate()
@@ -291,7 +291,7 @@ class MusicPlaybackService : MediaSessionService() {
             try {
                 val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
                 if (currentSong != null) {
-                    val bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id)
+                    val bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
                     if (bmp == null || bmp.isRecycled) {
                         asyncArtDecodeJob?.cancel()
                         asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
@@ -305,7 +305,7 @@ class MusicPlaybackService : MediaSessionService() {
                             if (loadedBytes != null && loadedBytes.isNotEmpty()) {
                                 val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
                                 if (newBmp != null) {
-                                    com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp)
+                                    com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp, currentSong.path)
                                     withContext(Dispatchers.Main) {
                                         if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
                                             triggerNotificationUpdate()

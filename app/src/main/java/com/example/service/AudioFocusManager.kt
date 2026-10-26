@@ -34,7 +34,8 @@ class AudioFocusManager(
 
     @Volatile var hasAudioFocus: Boolean = false
         private set
-    @Volatile private var wasPausedByTransientFocus: Boolean = false
+    @Volatile private var transientInterruptionActive: Boolean = false
+    @Volatile private var shouldResumeAfterTransientFocus: Boolean = false
     @Volatile private var wasDuckedByTransientFocus: Boolean = false
 
     var ignoreTransientFocusLoss: Boolean = false
@@ -44,24 +45,29 @@ class AudioFocusManager(
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 Log.d(TAG, "Permanent audio focus loss, pausing playback")
+                val shouldPause = try { isPlayingProvider() } catch (_: Throwable) { false }
                 hasAudioFocus = false
-                wasPausedByTransientFocus = false
+                transientInterruptionActive = false
+                shouldResumeAfterTransientFocus = false
                 wasDuckedByTransientFocus = false
                 try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                try { onPauseRequested() } catch (_: Throwable) {}
+                if (shouldPause) try { onPauseRequested() } catch (_: Throwable) {}
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 val isPhoneCall = try { audioManager?.mode != AudioManager.MODE_NORMAL } catch (_: Throwable) { false }
                 val shouldPause = isPhoneCall || !ignoreTransientFocusLoss
                 if (shouldPause) {
-                    val currentlyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
-                    if (currentlyPlaying) {
+                    var pauseNow = false
+                    if (!transientInterruptionActive) {
+                        transientInterruptionActive = true
+                        shouldResumeAfterTransientFocus = try { isPlayingProvider() } catch (_: Throwable) { false }
+                        pauseNow = shouldResumeAfterTransientFocus
+                    }
+                    if (pauseNow) {
                         Log.d(TAG, "Transient focus loss (camera, call, or external request), cleanly pausing playback")
-                        wasPausedByTransientFocus = true
                         try { onPauseRequested() } catch (_: Throwable) {}
-                    } else {
+                    } else if (!shouldResumeAfterTransientFocus) {
                         Log.d(TAG, "Transient focus loss received while already paused, preserving paused state")
-                        wasPausedByTransientFocus = false
                     }
                 } else {
                     Log.d(TAG, "Attempting to preserve playback during transient focus loss")
@@ -81,8 +87,10 @@ class AudioFocusManager(
                     wasDuckedByTransientFocus = false
                     try { onRestoreVolumeRequested() } catch (_: Throwable) {}
                 }
-                if (wasPausedByTransientFocus) {
-                    wasPausedByTransientFocus = false
+                val shouldResume = transientInterruptionActive && shouldResumeAfterTransientFocus
+                transientInterruptionActive = false
+                shouldResumeAfterTransientFocus = false
+                if (shouldResume) {
                     Log.d(TAG, "Resuming playback automatically after camera / transient focus")
                     try { onResumeRequested() } catch (_: Throwable) {}
                 }
@@ -135,8 +143,20 @@ class AudioFocusManager(
             Log.w(TAG, "Error abandoning audio focus", e)
         } finally {
             hasAudioFocus = false
-            wasPausedByTransientFocus = false
+            transientInterruptionActive = false
+            shouldResumeAfterTransientFocus = false
             wasDuckedByTransientFocus = false
         }
+    }
+
+    /** A user pause or explicit stop supersedes any pending automatic resume. */
+    fun cancelPendingResume() {
+        transientInterruptionActive = false
+        shouldResumeAfterTransientFocus = false
+    }
+
+    /** A direct user play request supersedes a pending focus-loss resume. */
+    fun onUserPlayRequested() {
+        cancelPendingResume()
     }
 }

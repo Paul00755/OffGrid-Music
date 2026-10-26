@@ -63,7 +63,7 @@ object WidgetUpdateManager {
     private var cachedIsFavorite: Boolean = false
 
     @Volatile
-    private var lastRenderedSongId: Long = -1L
+    private var lastRenderedTrackIdentity: String = ""
     @Volatile
     private var lastRenderedIsPlaying: Boolean = false
     @Volatile
@@ -89,7 +89,7 @@ object WidgetUpdateManager {
 
     fun forceRefreshTheme(context: Context, state: PlaybackState) {
         lastThemeCheckMs = 0L
-        lastRenderedSongId = -1L
+        lastRenderedTrackIdentity = ""
         WidgetBitmapRenderer.clearCache()
         updateAllWidgets(context, state)
     }
@@ -594,9 +594,9 @@ object WidgetUpdateManager {
             val song = state.currentSong
 
             if (fullIds.isEmpty() && smallIds.isEmpty() && mediumIds.isEmpty() && secondaryIds.isEmpty()) {
-                lastRenderedSongId = song?.id ?: -1L
+                lastRenderedTrackIdentity = song?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
                 lastRenderedIsPlaying = state.isPlaying
-                lastRenderedHasArtwork = song != null && com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id) != null
+                lastRenderedHasArtwork = song != null && com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path) != null
                 return
             }
 
@@ -611,7 +611,7 @@ object WidgetUpdateManager {
             cachedLastAccentColor = themeColors.accentColor
             val isFavorite = if (song != null) checkIsFavorite(context, song.id) else false
 
-            lastRenderedSongId = song?.id ?: -1L
+            lastRenderedTrackIdentity = song?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
             lastRenderedIsPlaying = state.isPlaying
             lastRenderedHasArtwork = sourceBitmap != null && !sourceBitmap.isRecycled
 
@@ -657,13 +657,13 @@ object WidgetUpdateManager {
     private fun performProgressOnlyWidgetUpdateInternal(context: Context, rawState: PlaybackState) {
         try {
             val rawSong = rawState.currentSong
-            val rawSongId = rawSong?.id ?: -1L
+            val rawTrackIdentity = rawSong?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
             val hasNewlyDecodedArt = !lastRenderedHasArtwork && rawSong != null &&
-                com.example.util.ArtworkManager.getCachedNotificationBitmap(rawSong.id) != null
+                com.example.util.ArtworkManager.getCachedNotificationBitmap(rawSong.id, rawSong.path) != null
 
             // If track identity, play/pause state, or decoded artwork state changed since the last full render,
             // automatically promote this progress tick to a full update across all 4 widget variants!
-            if (rawSongId != lastRenderedSongId || rawState.isPlaying != lastRenderedIsPlaying || hasNewlyDecodedArt) {
+            if (rawTrackIdentity != lastRenderedTrackIdentity || rawState.isPlaying != lastRenderedIsPlaying || hasNewlyDecodedArt) {
                 performFullWidgetUpdateInternal(context, rawState)
                 return
             }

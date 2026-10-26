@@ -181,16 +181,16 @@ object WidgetBitmapRenderer {
         if (song == null) return null
 
         // 1. Check authoritative in-memory notification bitmap
-        val memBmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id)
+        val memBmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
         if (memBmp != null && !memBmp.isRecycled) return memBmp
 
         // 2. Check in-memory notification artwork bytes
-        val memBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(song.id)
+        val memBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(song.id, song.path)
         if (memBytes != null && memBytes.isNotEmpty()) {
             try {
                 val bmp = BitmapFactory.decodeByteArray(memBytes, 0, memBytes.size)
                 if (bmp != null) {
-                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                     return bmp
                 }
             } catch (_: Throwable) {}
@@ -209,7 +209,7 @@ object WidgetBitmapRenderer {
                         try {
                             val thumb = context.contentResolver.loadThumbnail(uri, Size(512, 512), null)
                             if (thumb != null) {
-                                com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, thumb)
+                                com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, thumb, song.path)
                                 return thumb
                             }
                         } catch (_: Exception) {}
@@ -221,7 +221,7 @@ object WidgetBitmapRenderer {
                         }
                         val bmp = BitmapFactory.decodeStream(stream, null, options)
                         if (bmp != null) {
-                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                             return bmp
                         }
                     }
@@ -234,7 +234,7 @@ object WidgetBitmapRenderer {
                         }
                         val bmp = BitmapFactory.decodeFile(path, options)
                         if (bmp != null) {
-                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                             return bmp
                         }
                     }
@@ -258,7 +258,7 @@ object WidgetBitmapRenderer {
                 }
                 val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
                 if (bmp != null) {
-                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                    com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                     return bmp
                 }
             }
@@ -288,7 +288,7 @@ object WidgetBitmapRenderer {
                         }
                         val bmp = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, options)
                         if (bmp != null) {
-                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                             bmp
                         } else null
                     } else null

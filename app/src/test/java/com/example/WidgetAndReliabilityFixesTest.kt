@@ -8,6 +8,7 @@ import com.example.data.local.UserPreferencesRepository
 import com.example.data.model.Song
 import com.example.data.sync.BackupFrequency
 import com.example.data.sync.CloudUserSettings
+import com.example.service.AudioFocusManager
 import com.example.service.PlaybackState
 import com.example.widget.WidgetBitmapRenderer
 import com.example.widget.WidgetUpdateManager
@@ -199,5 +200,96 @@ class WidgetAndReliabilityFixesTest {
         } finally {
             com.example.service.PlaybackManager.activeInstance = prevInstance
         }
+    }
+
+    @Test
+    fun artworkCacheSeparatesTracksThatShareRoomIdentity() {
+        val cache = com.example.ui.components.ArtworkResolutionCache
+        val songId = 98_765_432L
+        val pathA = "/music/album-a/track.mp3"
+        val pathB = "/music/album-b/track.mp3"
+        val uriA = "file:///cache/track-a.jpg"
+        val uriB = "file:///cache/track-b.jpg"
+
+        cache.invalidateTrack(songId, pathA)
+        cache.invalidateTrack(songId, pathB)
+        cache.cacheArtwork(songId, pathA, uriA)
+        assertEquals(uriA, cache.getMemory(songId, pathA))
+        assertNull("A different file must not inherit the first track's artwork", cache.getMemory(songId, pathB))
+
+        cache.cacheArtwork(songId, pathB, uriB)
+        assertEquals(uriA, cache.getMemory(songId, pathA))
+        assertEquals(uriB, cache.getMemory(songId, pathB))
+
+        val bitmapA = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888)
+        val bitmapB = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888)
+        val bytesA = byteArrayOf(1, 2, 3)
+        val bytesB = byteArrayOf(4, 5, 6)
+        val artworkManager = com.example.util.ArtworkManager
+        try {
+            artworkManager.putCachedNotificationBitmap(songId, bitmapA, pathA)
+            artworkManager.putCachedNotificationArtwork(songId, bytesA, pathA)
+            assertSame(bitmapA, artworkManager.getCachedNotificationBitmap(songId, pathA))
+            assertArrayEquals(bytesA, artworkManager.getCachedNotificationArtwork(songId, pathA))
+            assertNull("Notification artwork must not cross paths for a reused Room ID", artworkManager.getCachedNotificationBitmap(songId, pathB))
+            assertNull(artworkManager.getCachedNotificationArtwork(songId, pathB))
+
+            artworkManager.putCachedNotificationBitmap(songId, bitmapB, pathB)
+            artworkManager.putCachedNotificationArtwork(songId, bytesB, pathB)
+            assertSame(bitmapA, artworkManager.getCachedNotificationBitmap(songId, pathA))
+            assertSame(bitmapB, artworkManager.getCachedNotificationBitmap(songId, pathB))
+            assertArrayEquals(bytesA, artworkManager.getCachedNotificationArtwork(songId, pathA))
+            assertArrayEquals(bytesB, artworkManager.getCachedNotificationArtwork(songId, pathB))
+            artworkManager.invalidateNotificationArtwork(songId, pathA)
+            assertNull(artworkManager.getCachedNotificationBitmap(songId, pathA))
+            assertNull(artworkManager.getCachedNotificationArtwork(songId, pathA))
+            assertSame("Invalidating one file must retain the other file's cover", bitmapB, artworkManager.getCachedNotificationBitmap(songId, pathB))
+            assertArrayEquals(bytesB, artworkManager.getCachedNotificationArtwork(songId, pathB))
+        } finally {
+            artworkManager.invalidateNotificationArtwork(songId)
+            bitmapA.recycle()
+            bitmapB.recycle()
+        }
+        cache.invalidateTrack(songId, pathA)
+        cache.invalidateTrack(songId, pathB)
+    }
+
+    @Test
+    fun overlappingAudioFocusLossResumesOnceAndManualPauseCancelsResume() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        fun listenerFor(manager: AudioFocusManager): android.media.AudioManager.OnAudioFocusChangeListener {
+            val field = AudioFocusManager::class.java.getDeclaredField("focusChangeListener")
+            field.isAccessible = true
+            return field.get(manager) as android.media.AudioManager.OnAudioFocusChangeListener
+        }
+
+        var playing = true
+        var pauseCount = 0
+        var resumeCount = 0
+        val manager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { playing },
+            onPauseRequested = { pauseCount++; playing = false },
+            onResumeRequested = { resumeCount++; playing = true }
+        )
+        val listener = listenerFor(manager)
+        listener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals("Overlapping focus-loss callbacks pause only once", 1, pauseCount)
+        assertEquals("One focus gain resumes the interrupted playback once", 1, resumeCount)
+
+        playing = true
+        val manuallyPausedManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { playing },
+            onPauseRequested = { playing = false },
+            onResumeRequested = { resumeCount++ }
+        )
+        val manualPauseListener = listenerFor(manuallyPausedManager)
+        manualPauseListener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        manuallyPausedManager.cancelPendingResume()
+        manualPauseListener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals("An explicit pause prevents automatic resume", 1, resumeCount)
     }
 }
