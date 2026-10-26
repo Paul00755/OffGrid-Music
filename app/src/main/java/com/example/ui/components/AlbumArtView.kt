@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.content.Context
 import android.graphics.drawable.BitmapDrawable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -475,21 +477,17 @@ fun AlbumArtView(
             return@LaunchedEffect
         }
 
-        if (!resolvedArtworkUri.isNullOrBlank() && !forceHighResOnline) {
+        if (!resolvedArtworkUri.isNullOrBlank()) {
             return@LaunchedEffect
         }
 
         // Step 1: Fast local extraction (embedded ID3 / MediaStore thumbnail / companion file)
+        // Never mutate Room DB or PlaybackManager from a scrolling UI composable!
         val localResolved = withContext(Dispatchers.IO) {
             if (!isActive || currentSongSnapshot.id != songId) return@withContext null
             val authoritative = ArtworkResolutionCache.getAuthoritativeArtwork(context, currentSongSnapshot, isHighResPreferred)
             if (!authoritative.isNullOrBlank()) {
                 ArtworkResolutionCache.cache[songId] = authoritative
-                if (!currentSongSnapshot.isManuallyEdited && currentSongSnapshot.artworkUri != authoritative) {
-                    try {
-                        com.example.data.local.AppDatabase.getInstance(context).songDao().updateSongArtwork(currentSongSnapshot.id, authoritative)
-                    } catch (_: Exception) {}
-                }
                 return@withContext authoritative
             }
             null
@@ -499,17 +497,17 @@ fun AlbumArtView(
 
         if (!localResolved.isNullOrBlank()) {
             resolvedArtworkUri = localResolved
-            val activeSong = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.currentSong
-            if (activeSong != null && activeSong.id == songId) {
-                com.example.service.PlaybackManager.activeInstance?.updateCurrentSongArtwork(songId, localResolved)
-            }
-            if (!forceHighResOnline) {
-                return@LaunchedEffect
-            }
+            return@LaunchedEffect
         }
 
-        // Step 2: Online artwork fallback on a dedicated low-concurrency dispatcher so network calls
-        // NEVER block local artwork extraction for other songs in the list!
+        // Step 2: Online artwork fallback ONLY when local artwork is missing AND either high-res online
+        // is requested (Now Playing) or this is the active track—never spam HTTP requests while scrolling 1,300 rows.
+        val isActiveTrack = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == songId
+        if (!forceHighResOnline && !isActiveTrack) {
+            ArtworkResolutionCache.cache[songId] = ""
+            return@LaunchedEffect
+        }
+
         val onlineResolved = withContext(ArtworkResolutionCache.onlineArtworkDispatcher) {
             if (!isActive || currentSongSnapshot.id != songId) return@withContext null
             val online = OnlineArtistImageFetcher.getSongArtworkUrl(
@@ -544,10 +542,6 @@ fun AlbumArtView(
 
         if (!onlineResolved.isNullOrBlank()) {
             resolvedArtworkUri = onlineResolved
-            val activeSong = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.currentSong
-            if (activeSong != null && activeSong.id == songId) {
-                com.example.service.PlaybackManager.activeInstance?.updateCurrentSongArtwork(songId, onlineResolved)
-            }
         }
     }
 
@@ -560,13 +554,13 @@ fun AlbumArtView(
         contentAlignment = Alignment.Center
     ) {
         val uri = resolvedArtworkUri
-        val cachedBmp = remember(songId, artworkVersion) {
+        val cachedBmp = remember(songId, artworkVersion, uri) {
             ArtworkManager.getCachedNotificationBitmap(songId)
         }
 
         if (!uri.isNullOrBlank()) {
             val isThumbnail = cornerRadius <= 14
-            val imageReq = remember(uri, cornerRadius, context, artworkVersion) {
+            val imageReq = remember(uri, cornerRadius, context, artworkVersion, cachedBmp) {
                 val cacheKey = "art_${songId}_${uri.hashCode()}_$artworkVersion"
                 ImageRequest.Builder(context)
                     .data(uri)
@@ -595,7 +589,6 @@ fun AlbumArtView(
                 contentScale = ContentScale.Crop,
                 onError = {
                     coroutineScope.launch(Dispatchers.IO) {
-                        ArtworkManager.invalidateSongArtwork(context, songId, deleteFiles = true)
                         val reExtracted = ArtworkManager.getOrExtractArtworkUri(
                             context,
                             songId,
@@ -604,17 +597,20 @@ fun AlbumArtView(
                             song?.displayAlbum ?: ""
                         )
                         withContext(Dispatchers.Main) {
-                            if (!reExtracted.isNullOrBlank()) {
+                            if (!reExtracted.isNullOrBlank() && reExtracted != uri) {
                                 ArtworkResolutionCache.cache[songId] = reExtracted
                                 resolvedArtworkUri = reExtracted
-                                val activeSong = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.currentSong
-                                if (activeSong != null && activeSong.id == songId) {
-                                    com.example.service.PlaybackManager.activeInstance?.updateCurrentSongArtwork(songId, reExtracted)
-                                }
                             }
                         }
                     }
                 }
+            )
+        } else if (cachedBmp != null && !cachedBmp.isRecycled) {
+            Image(
+                bitmap = cachedBmp.asImageBitmap(),
+                contentDescription = "Album Artwork",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Column(

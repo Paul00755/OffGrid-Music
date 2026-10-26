@@ -24,7 +24,7 @@ import org.robolectric.annotation.Config
 class WidgetAndReliabilityFixesTest {
 
     @Test
-    fun testFullArtworkAndSmallWidgetsHaveNoSeekBarWhileMediumAndSecondaryHaveSeekSegments() {
+    fun testWidgetLayoutsHaveCorrectProgressViewsAndNoTapSeekSegments() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val inflater = LayoutInflater.from(context)
 
@@ -44,13 +44,15 @@ class WidgetAndReliabilityFixesTest {
 
         val mediumView = inflater.inflate(R.layout.widget_medium, null)
         assertNotNull(mediumView.findViewById<View>(R.id.widget_medium_progress))
-        assertNotNull(mediumView.findViewById<View>(R.id.widget_medium_seek_0))
-        assertNotNull(mediumView.findViewById<View>(R.id.widget_medium_seek_9))
+        assertNotNull(mediumView.findViewById<View>(R.id.widget_medium_time_current))
+        assertNotNull(mediumView.findViewById<View>(R.id.widget_medium_time_total))
+        assertEquals(0, context.resources.getIdentifier("widget_medium_seek_0", "id", context.packageName))
 
         val secondaryView = inflater.inflate(R.layout.widget_secondary, null)
         assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_progress))
-        assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_seek_0))
-        assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_seek_9))
+        assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_time_current))
+        assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_time_total))
+        assertEquals(0, context.resources.getIdentifier("widget_secondary_seek_0", "id", context.packageName))
     }
 
     @Test

@@ -1570,6 +1570,7 @@ class PlaybackManager(
                     stopProgressTracker()
                 }
                 updateNotificationLayout()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -1709,7 +1710,14 @@ class PlaybackManager(
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
                     val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
                     if (fadeInMs > 0 && willBePlaying) {
-                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
+                        val safeStartVol = if (isNaturalTransition) {
+                            // If track-end fade-out or pre-boundary attenuation brought volume down, start from that
+                            // low level (~0.0f). Never slam a track that is already playing at 1.0f down to 0.0f mid-syllable!
+                            if (player.volume <= 0.35f) player.volume.coerceAtLeast(0.0f) else 0.35f
+                        } else {
+                            0.0f
+                        }
+                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = safeStartVol, targetVolume = 1.0f)
                     } else {
                         fadeJob?.cancel()
                         fadeJob = null
@@ -2573,7 +2581,14 @@ class PlaybackManager(
                         val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
                         inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
                         val trackEndFadeOutMs = fadeOutMs.coerceIn(0, 10000).toLong()
-                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && trackEndFadeOutMs > 0L && reliableDur > (trackEndFadeOutMs + 2000L) && currentPos >= 1500L && (reliableDur - currentPos) in 60L..trackEndFadeOutMs
+                        val effectiveEndFadeWindowMs = when {
+                            trackEndFadeOutMs > 0L -> trackEndFadeOutMs
+                            fadeInMs > 0 -> 140L
+                            else -> 0L
+                        }
+                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
+                            reliableDur > (effectiveEndFadeWindowMs + 2000L) && currentPos >= 1500L &&
+                            (reliableDur - currentPos) <= effectiveEndFadeWindowMs
 
                         if (inCrossfadeZone && !hasTriggeredCrossfadeTransition && !isCrossfadeTransitioning) {
                             val nextIdx = if (player.hasNextMediaItem()) {
@@ -2596,8 +2611,8 @@ class PlaybackManager(
                         } else if (crossfadeMs <= 0L) {
                             hasTriggeredCrossfadeTransition = false
                             if (inTrackEndFadeOut && (fadeJob == null || !fadeJob!!.isActive)) {
-                                val rem = (reliableDur - currentPos).coerceAtLeast(0L)
-                                val targetVol = (rem.toFloat() / trackEndFadeOutMs.toFloat()).coerceIn(0.05f, 1.0f)
+                                val rem = (reliableDur - currentPos - 80L).coerceAtLeast(0L)
+                                val targetVol = (rem.toFloat() / effectiveEndFadeWindowMs.toFloat()).coerceIn(0.0f, 1.0f)
                                 player.volume = targetVol
                             } else if (!inTrackEndFadeOut && !isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
@@ -2619,6 +2634,10 @@ class PlaybackManager(
                                 lastPrewarmedSongId = nextSong.id
                                 prewarmJob = scope.launch(Dispatchers.IO) {
                                     try {
+                                        val authUri = com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, nextSong, false)
+                                        if (!authUri.isNullOrBlank()) {
+                                            com.example.ui.components.ArtworkResolutionCache.cache[nextSong.id] = authUri
+                                        }
                                         val cached = ArtworkManager.getCachedNotificationBitmap(nextSong.id)
                                         if (cached == null || cached.isRecycled) {
                                             val artBytes = ArtworkManager.getNotificationArtworkBytes(
@@ -2626,7 +2645,7 @@ class PlaybackManager(
                                                 songId = nextSong.id,
                                                 filePath = nextSong.path,
                                                 albumId = nextSong.albumId,
-                                                artworkUriStr = nextSong.artworkUri
+                                                artworkUriStr = authUri ?: nextSong.artworkUri
                                             )
                                             if (artBytes != null && artBytes.isNotEmpty()) {
                                                 val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
@@ -2856,15 +2875,33 @@ class PlaybackManager(
     private fun launchSongArtworkRefresh(song: Song) {
         notificationArtworkJob?.cancel()
         notificationArtworkJob = scope.launch(Dispatchers.IO) {
+            val authUri = try {
+                com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song, false)?.also {
+                    if (it.isNotBlank()) {
+                        com.example.ui.components.ArtworkResolutionCache.cache[song.id] = it
+                    }
+                }
+            } catch (_: Throwable) { null }
+
             val artBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
                 context = context,
                 songId = song.id,
                 filePath = song.path,
                 albumId = song.albumId,
-                artworkUriStr = song.artworkUri
+                artworkUriStr = authUri ?: song.artworkUri
             )
             if (artBytes != null && artBytes.isNotEmpty()) {
+                val cached = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id)
+                if (cached == null || cached.isRecycled) {
+                    try {
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                        if (bmp != null) {
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp)
+                        }
+                    } catch (_: Throwable) {}
+                }
                 withContext(Dispatchers.Main) {
+                    com.example.ui.components.ArtworkResolutionCache.artworkUpdateSignal.longValue++
                     if (_playbackState.value.currentSong?.id == song.id) {
                         updateNotificationLayout()
                         MusicPlaybackService.instance?.triggerNotificationUpdate()

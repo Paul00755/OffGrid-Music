@@ -37,6 +37,10 @@ object WidgetBitmapRenderer {
     private val artworkBitmapCache = mutableMapOf<String, Bitmap>()
     private val progressBitmapCache = mutableMapOf<String, Bitmap>()
 
+    fun getRenderDensity(context: Context): Float {
+        return context.resources.displayMetrics.density.coerceIn(1.25f, 1.85f)
+    }
+
     @Synchronized
     fun getOrLoadSongBitmap(context: Context, song: Song?): Bitmap? {
         if (song == null) {
@@ -309,8 +313,8 @@ object WidgetBitmapRenderer {
         val key = "bg_${widthPx}_${heightPx}_${cornerRadiusDp}_${bgColor}_${borderColor}"
         backgroundBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
-        val density = context.resources.displayMetrics.density
-        val radiusPx = cornerRadiusDp * density
+        val density = getRenderDensity(context)
+        val radiusPx = (cornerRadiusDp * density).coerceAtMost(minOf(widthPx, heightPx) * 0.45f)
 
         val bitmap = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -345,8 +349,8 @@ object WidgetBitmapRenderer {
         val key = "full_art_bg_${source?.hashCode()}_${widthPx}_${heightPx}_${cornerRadiusDp}_${accentColor}"
         backgroundBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
-        val density = context.resources.displayMetrics.density
-        val radiusPx = cornerRadiusDp * density
+        val density = getRenderDensity(context)
+        val radiusPx = (cornerRadiusDp * density).coerceAtMost(minOf(widthPx, heightPx) * 0.45f)
 
         val output = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
@@ -383,12 +387,12 @@ object WidgetBitmapRenderer {
         val vignetteShader = LinearGradient(
             0f, 0f, 0f, heightPx.toFloat(),
             intArrayOf(
-                Color.argb(35, 8, 10, 16),
-                Color.argb(110, 10, 12, 20),
-                Color.argb(225, 10, 12, 18),
-                Color.argb(245, 8, 10, 16)
+                Color.argb(30, 8, 10, 16),
+                Color.argb(95, 10, 12, 20),
+                Color.argb(220, 8, 10, 18),
+                Color.argb(248, 6, 8, 14)
             ),
-            floatArrayOf(0f, 0.38f, 0.72f, 1f),
+            floatArrayOf(0f, 0.36f, 0.65f, 1f),
             Shader.TileMode.CLAMP
         )
         paint.shader = vignetteShader
@@ -419,8 +423,8 @@ object WidgetBitmapRenderer {
         val key = "art_${source?.hashCode()}_${widthPx}_${heightPx}_${cornerRadiusDp}"
         artworkBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
-        val density = context.resources.displayMetrics.density
-        val radiusPx = cornerRadiusDp * density
+        val density = getRenderDensity(context)
+        val radiusPx = (cornerRadiusDp * density).coerceAtMost(minOf(widthPx, heightPx) * 0.45f)
 
         val output = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
@@ -476,8 +480,8 @@ object WidgetBitmapRenderer {
         val key = "left_bleed_art_${source?.hashCode()}_${widthPx}_${heightPx}_${leftCornerRadiusDp}"
         artworkBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
-        val density = context.resources.displayMetrics.density
-        val radiusPx = leftCornerRadiusDp * density
+        val density = getRenderDensity(context)
+        val radiusPx = (leftCornerRadiusDp * density).coerceAtMost(minOf(widthPx, heightPx) * 0.45f)
 
         val output = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
@@ -549,14 +553,14 @@ object WidgetBitmapRenderer {
             progressBitmapCache.clear()
         }
 
-        val density = context.resources.displayMetrics.density
+        val density = getRenderDensity(context)
         val bmp = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         val centerY = heightPx / 2f
-        val barHeight = (3.2f * density).coerceAtMost(heightPx * 0.35f)
-        val thumbRadius = (4.8f * density).coerceAtMost(heightPx * 0.44f)
+        val barHeight = (3.0f * density).coerceAtMost(heightPx * 0.32f)
+        val thumbRadius = (4.6f * density).coerceAtMost(heightPx * 0.42f)
         val startX = thumbRadius + 2f
         val endX = (widthPx - thumbRadius - 2f).coerceAtLeast(startX + 1f)
         val thumbX = startX + (endX - startX) * quantizedRatio
@@ -575,7 +579,7 @@ object WidgetBitmapRenderer {
         // Subtle outer glow on thumb
         paint.style = Paint.Style.FILL
         paint.color = Color.argb(75, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
-        canvas.drawCircle(thumbX, centerY, thumbRadius * 1.35f, paint)
+        canvas.drawCircle(thumbX, centerY, thumbRadius * 1.32f, paint)
 
         // Solid circular thumb
         paint.color = accentColor
@@ -602,20 +606,21 @@ object WidgetBitmapRenderer {
             progressBitmapCache.clear()
         }
 
-        val density = context.resources.displayMetrics.density
+        val density = getRenderDensity(context)
         val bmp = Bitmap.createBitmap(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         val centerY = heightPx / 2f
-        val strokeW = (2.5f * density).coerceAtLeast(2f)
-        val thumbRadius = (5.0f * density).coerceAtMost(heightPx * 0.40f)
+        val strokeW = (2.3f * density).coerceAtLeast(1.8f)
+        val thumbRadius = (4.6f * density).coerceAtMost(heightPx * 0.38f)
         val startX = thumbRadius + 2f
         val endX = (widthPx - thumbRadius - 2f).coerceAtLeast(startX + 1f)
         val thumbX = startX + (endX - startX) * quantizedRatio
 
-        val amplitude = (heightPx * 0.28f).coerceAtLeast(3.2f)
-        val wavelength = (16f * density).coerceAtLeast(11f)
+        val amplitude = (heightPx * 0.27f).coerceAtLeast(3.0f)
+        val wavelength = (15f * density).coerceAtLeast(10f)
+        val phaseShift = quantizedRatio * 14.0
 
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
@@ -625,15 +630,15 @@ object WidgetBitmapRenderer {
         if (thumbX < endX) {
             val inactiveWavePath = Path()
             var ix = thumbX
-            val startPhase = ((ix - startX) / wavelength) * (2.0 * Math.PI)
-            inactiveWavePath.moveTo(ix, centerY + (sin(startPhase) * (amplitude * 0.72f)).toFloat())
+            val startPhase = (((ix - startX) / wavelength) * (2.0 * Math.PI)) - phaseShift
+            inactiveWavePath.moveTo(ix, centerY + (sin(startPhase) * (amplitude * 0.68f)).toFloat())
             while (ix <= endX) {
-                val phase = ((ix - startX) / wavelength) * (2.0 * Math.PI)
-                val y = centerY + (sin(phase) * (amplitude * 0.72f)).toFloat()
+                val phase = (((ix - startX) / wavelength) * (2.0 * Math.PI)) - phaseShift
+                val y = centerY + (sin(phase) * (amplitude * 0.68f)).toFloat()
                 inactiveWavePath.lineTo(ix, y)
                 ix += 2f
             }
-            paint.strokeWidth = strokeW * 0.88f
+            paint.strokeWidth = strokeW * 0.85f
             paint.color = trackColor
             canvas.drawPath(inactiveWavePath, paint)
         }
@@ -641,14 +646,15 @@ object WidgetBitmapRenderer {
         // 2. Draw active squiggly sine-wave path from startX to thumbX
         val wavePath = Path()
         var x = startX
-        wavePath.moveTo(startX, centerY)
+        val zeroPhase = -phaseShift
+        wavePath.moveTo(startX, centerY + (sin(zeroPhase) * amplitude).toFloat())
         while (x <= thumbX) {
-            val phase = ((x - startX) / wavelength) * (2.0 * Math.PI)
+            val phase = (((x - startX) / wavelength) * (2.0 * Math.PI)) - phaseShift
             val y = centerY + (sin(phase) * amplitude).toFloat()
             wavePath.lineTo(x, y)
             x += 2f
         }
-        val thumbPhase = ((thumbX - startX) / wavelength) * (2.0 * Math.PI)
+        val thumbPhase = (((thumbX - startX) / wavelength) * (2.0 * Math.PI)) - phaseShift
         val thumbY = if (quantizedRatio > 0.005f) {
             centerY + (sin(thumbPhase) * amplitude).toFloat()
         } else {
@@ -658,7 +664,7 @@ object WidgetBitmapRenderer {
         if (thumbX > startX + 1f) {
             // Outer neon glow on active wave
             paint.color = Color.argb(75, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
-            paint.strokeWidth = strokeW * 2.3f
+            paint.strokeWidth = strokeW * 2.2f
             canvas.drawPath(wavePath, paint)
 
             // Crisp active wave stroke
@@ -670,7 +676,7 @@ object WidgetBitmapRenderer {
         // Glowing orb thumb at wave tip
         paint.style = Paint.Style.FILL
         paint.color = Color.argb(95, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
-        canvas.drawCircle(thumbX, thumbY, thumbRadius * 1.45f, paint)
+        canvas.drawCircle(thumbX, thumbY, thumbRadius * 1.40f, paint)
 
         paint.color = accentColor
         canvas.drawCircle(thumbX, thumbY, thumbRadius, paint)

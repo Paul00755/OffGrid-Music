@@ -60,10 +60,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private var mediaStoreObserver: android.database.ContentObserver? = null
+    private val openNowPlayingRequest = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleWidgetLaunchIntent(intent)
 
         setContent {
             val viewModel: MusicViewModel = viewModel()
@@ -112,6 +114,15 @@ class MainActivity : ComponentActivity() {
 
                     val selectedTab by viewModel.selectedTab.collectAsState()
                     val showNowPlaying by viewModel.showNowPlaying.collectAsState()
+                    val nowPlayingIntentReq by openNowPlayingRequest.collectAsState()
+
+                    LaunchedEffect(nowPlayingIntentReq) {
+                        if (nowPlayingIntentReq > 0L) {
+                            viewModel.dismissSplash()
+                            viewModel.showNowPlaying.value = true
+                            openNowPlayingRequest.value = 0L
+                        }
+                    }
                     val searchTabQuery by viewModel.searchTabQuery.collectAsState()
                     val librarySearchQuery by viewModel.librarySearchQuery.collectAsState()
                     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -944,6 +955,24 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWidgetLaunchIntent(intent)
+    }
+
+    private fun handleWidgetLaunchIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(com.example.widget.WidgetUpdateManager.EXTRA_OPEN_NOW_PLAYING, false) == true) {
+            intent.removeExtra(com.example.widget.WidgetUpdateManager.EXTRA_OPEN_NOW_PLAYING)
+            openNowPlayingRequest.value = System.currentTimeMillis()
+            try {
+                val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
+                vm.dismissSplash()
+                vm.showNowPlaying.value = true
+            } catch (_: Exception) {}
         }
     }
 

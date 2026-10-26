@@ -12,38 +12,26 @@
         android:scaleType="fitXY"
         android:contentDescription="Album Artwork Background" />
 
-    <!-- Foreground layout separating top-right Favorite button and bottom metadata + controls -->
-    <LinearLayout
+    <!-- RelativeLayout ensures top-right Favorite and bottom Metadata+Controls never overlap or clip on compact 2x2 grids -->
+    <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:padding="14dp">
+        android:padding="10dp">
 
-        <!-- Top row: Favorite Heart button anchored top-right -->
+        <ImageView
+            android:id="@+id/widget_full_btn_favorite"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_alignParentTop="true"
+            android:layout_alignParentEnd="true"
+            android:scaleType="centerInside"
+            android:contentDescription="Favorite Track" />
+
         <LinearLayout
+            android:id="@+id/widget_full_bottom_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="end|top">
-
-            <ImageView
-                android:id="@+id/widget_full_btn_favorite"
-                android:layout_width="34dp"
-                android:layout_height="34dp"
-                android:scaleType="centerInside"
-                android:contentDescription="Favorite Track" />
-        </LinearLayout>
-
-        <!-- Flexible middle space so artwork breathes -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
-
-        <!-- Bottom metadata and transport controls -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
             android:orientation="vertical">
 
             <TextView
@@ -52,8 +40,12 @@
                 android:layout_height="wrap_content"
                 android:text="OffGrid Music"
                 android:textColor="#FFFFFF"
-                android:textSize="15sp"
+                android:textSize="13.5sp"
                 android:textStyle="bold"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3"
                 android:singleLine="true"
                 android:ellipsize="end"
                 android:includeFontPadding="false" />
@@ -62,10 +54,14 @@
                 android:id="@+id/widget_full_subtitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:layout_marginTop="1dp"
                 android:text="Offline Audio"
-                android:textColor="#D0D4DC"
-                android:textSize="12sp"
+                android:textColor="#DDE2EC"
+                android:textSize="11sp"
+                android:shadowColor="#CC000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3"
                 android:singleLine="true"
                 android:ellipsize="end"
                 android:includeFontPadding="false" />
@@ -76,33 +72,33 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center"
-                android:layout_marginTop="10dp">
+                android:layout_marginTop="6dp">
 
                 <ImageView
                     android:id="@+id/widget_full_btn_prev"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:scaleType="centerInside"
                     android:contentDescription="Previous Track" />
 
                 <ImageView
                     android:id="@+id/widget_full_btn_play_pause"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="18dp"
-                    android:layout_marginEnd="18dp"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:layout_marginStart="14dp"
+                    android:layout_marginEnd="14dp"
                     android:scaleType="centerInside"
                     android:contentDescription="Play or Pause" />
 
                 <ImageView
                     android:id="@+id/widget_full_btn_next"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:scaleType="centerInside"
                     android:contentDescription="Next Track" />
             </LinearLayout>
         </LinearLayout>
 
-    </LinearLayout>
+    </RelativeLayout>
 
 </FrameLayout>
