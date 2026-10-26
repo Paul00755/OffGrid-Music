@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.Song
 import com.example.ui.components.FloatingPillNavBar
@@ -76,13 +77,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val viewModel: MusicViewModel = viewModel()
-            val themeMode by viewModel.themeMode.collectAsState()
-            val extraDarkMode by viewModel.amoledMode.collectAsState()
-            val uiTheme by viewModel.uiTheme.collectAsState()
-            val accentColorPreset by viewModel.accentColorPreset.collectAsState()
-            val customAccentColor by viewModel.customAccentColor.collectAsState()
-            val isDynamicArtworkTheme by viewModel.isDynamicArtworkTheme.collectAsState()
-            val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsState()
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val extraDarkMode by viewModel.amoledMode.collectAsStateWithLifecycle()
+            val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
+            val accentColorPreset by viewModel.accentColorPreset.collectAsStateWithLifecycle()
+            val customAccentColor by viewModel.customAccentColor.collectAsStateWithLifecycle()
+            val isDynamicArtworkTheme by viewModel.isDynamicArtworkTheme.collectAsStateWithLifecycle()
+            val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsStateWithLifecycle()
 
             val effectiveAccentColor: Color? = when {
                 isDynamicArtworkTheme && dynamicArtworkColor != null -> dynamicArtworkColor
@@ -90,7 +91,7 @@ class MainActivity : ComponentActivity() {
                 else -> null
             }
 
-            val displayScale by viewModel.displayScale.collectAsState()
+            val displayScale by viewModel.displayScale.collectAsStateWithLifecycle()
             val currentDensity = androidx.compose.ui.platform.LocalDensity.current
             val baseDensityFactor = remember(currentDensity.density, currentDensity.fontScale, displayScale) {
                 val scaleMultiplier = when (displayScale.uppercase()) {
@@ -116,13 +117,13 @@ class MainActivity : ComponentActivity() {
                     accentColorPreset = accentColorPreset,
                     accentColor = effectiveAccentColor
                 ) {
-                    val showSplash by viewModel.showSplash.collectAsState()
-                    val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsState()
+                    val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()
+                    val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()
 
-                    val selectedTab by viewModel.selectedTab.collectAsState()
-                    val showNowPlaying by viewModel.showNowPlaying.collectAsState()
-                    val nowPlayingIntentReq by openNowPlayingRequest.collectAsState()
-                    val widgetActionReq by pendingWidgetActionRequest.collectAsState()
+                    val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+                    val showNowPlaying by viewModel.showNowPlaying.collectAsStateWithLifecycle()
+                    val nowPlayingIntentReq by openNowPlayingRequest.collectAsStateWithLifecycle()
+                    val widgetActionReq by pendingWidgetActionRequest.collectAsStateWithLifecycle()
 
                     LaunchedEffect(nowPlayingIntentReq) {
                         if (nowPlayingIntentReq > 0L) {
@@ -140,40 +141,40 @@ class MainActivity : ComponentActivity() {
                             pendingWidgetActionRequest.value = null
                         }
                     }
-                    val searchTabQuery by viewModel.searchTabQuery.collectAsState()
-                    val librarySearchQuery by viewModel.librarySearchQuery.collectAsState()
-                    val searchQuery by viewModel.searchQuery.collectAsState()
+                    val searchTabQuery by viewModel.searchTabQuery.collectAsStateWithLifecycle()
+                    val librarySearchQuery by viewModel.librarySearchQuery.collectAsStateWithLifecycle()
+                    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
 
-                    val allSongs by viewModel.allSongs.collectAsState()
-                    val favoriteSongs by viewModel.favoriteSongs.collectAsState()
-                    val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
-                    val recentlyAdded by viewModel.recentlyAddedSongs.collectAsState()
-                    val allFolders by viewModel.allFolders.collectAsState()
-                    val ignoreAudioDuration by viewModel.ignoreAudioDuration.collectAsState()
-                    val allPlaylists by viewModel.allPlaylists.collectAsState()
-                    val mostPlayedPlaylists by viewModel.mostPlayedPlaylists.collectAsState()
-                    val scanProgress by viewModel.scanProgress.collectAsState()
-                    val playbackState by viewModel.playbackState.collectAsState()
-                    val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-                    val currentLyrics by viewModel.currentLyrics.collectAsState()
-                    val currentAudioRoute by viewModel.currentAudioRoute.collectAsState()
-                    val librarySortOption by viewModel.librarySortOption.collectAsState()
-                    val librarySortAscending by viewModel.librarySortAscending.collectAsState()
-                    val recentSearches by viewModel.recentSearches.collectAsState()
-                    val homeScreenLayout by viewModel.homeScreenLayout.collectAsState()
-                    val speedDialSongs by viewModel.speedDialSongs.collectAsState()
-                    val homeSections by viewModel.homeSections.collectAsState()
-                    val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsState()
-                    val playlistsLayout by viewModel.playlistsLayout.collectAsState()
+                    val allSongs by viewModel.allSongs.collectAsStateWithLifecycle()
+                    val favoriteSongs by viewModel.favoriteSongs.collectAsStateWithLifecycle()
+                    val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsStateWithLifecycle()
+                    val recentlyAdded by viewModel.recentlyAddedSongs.collectAsStateWithLifecycle()
+                    val allFolders by viewModel.allFolders.collectAsStateWithLifecycle()
+                    val ignoreAudioDuration by viewModel.ignoreAudioDuration.collectAsStateWithLifecycle()
+                    val allPlaylists by viewModel.allPlaylists.collectAsStateWithLifecycle()
+                    val mostPlayedPlaylists by viewModel.mostPlayedPlaylists.collectAsStateWithLifecycle()
+                    val scanProgress by viewModel.scanProgress.collectAsStateWithLifecycle()
+                    val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
+                    val sleepTimerState by viewModel.sleepTimerState.collectAsStateWithLifecycle()
+                    val currentLyrics by viewModel.currentLyrics.collectAsStateWithLifecycle()
+                    val currentAudioRoute by viewModel.currentAudioRoute.collectAsStateWithLifecycle()
+                    val librarySortOption by viewModel.librarySortOption.collectAsStateWithLifecycle()
+                    val librarySortAscending by viewModel.librarySortAscending.collectAsStateWithLifecycle()
+                    val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
+                    val homeScreenLayout by viewModel.homeScreenLayout.collectAsStateWithLifecycle()
+                    val speedDialSongs by viewModel.speedDialSongs.collectAsStateWithLifecycle()
+                    val homeSections by viewModel.homeSections.collectAsStateWithLifecycle()
+                    val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsStateWithLifecycle()
+                    val playlistsLayout by viewModel.playlistsLayout.collectAsStateWithLifecycle()
 
-                    val userAccount by viewModel.userAccount.collectAsState()
-                    val effectiveDisplayName by viewModel.effectiveDisplayName.collectAsState()
-                    val customAvatarUri by viewModel.customAvatarUri.collectAsState()
-                    val customDisplayName by viewModel.customDisplayName.collectAsState()
-                    val showAuthScreen by viewModel.showAuthScreen.collectAsState()
-                    val showAccountScreen by viewModel.showAccountScreen.collectAsState()
-                    val authUiState by viewModel.authUiState.collectAsState()
-                    val syncStatus by viewModel.syncStatus.collectAsState()
+                    val userAccount by viewModel.userAccount.collectAsStateWithLifecycle()
+                    val effectiveDisplayName by viewModel.effectiveDisplayName.collectAsStateWithLifecycle()
+                    val customAvatarUri by viewModel.customAvatarUri.collectAsStateWithLifecycle()
+                    val customDisplayName by viewModel.customDisplayName.collectAsStateWithLifecycle()
+                    val showAuthScreen by viewModel.showAuthScreen.collectAsStateWithLifecycle()
+                    val showAccountScreen by viewModel.showAccountScreen.collectAsStateWithLifecycle()
+                    val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
+                    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
 
                     // Onboarding state is resolved at startup via UserPreferences & AppDatabase upgrade detection.
 
@@ -296,14 +297,13 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .background(BentoBackground)
                         ) {
-                            val highRefreshRateSetting by viewModel.highRefreshRate.collectAsState()
+                            val highRefreshRateSetting by viewModel.highRefreshRate.collectAsStateWithLifecycle()
                             LaunchedEffect(highRefreshRateSetting) {
                                 applyHighRefreshRate(highRefreshRateSetting)
                             }
 
                             LaunchedEffect(Unit) {
                                 com.example.ui.components.ArtworkResolutionCache.ensureDiskIndexWarm(this@MainActivity)
-                                registerMediaStoreObserver()
                                 checkPermissions()
                                 kotlinx.coroutines.delay(1500)
                                 if (viewModel.allSongs.value.isEmpty()) {
@@ -311,9 +311,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            val selectedPlaylist by viewModel.selectedPlaylist.collectAsState()
-                            val selectedSmartPlaylist by viewModel.selectedSmartPlaylist.collectAsState()
-                            val smartPlaylists by viewModel.smartPlaylists.collectAsState()
+                            val selectedPlaylist by viewModel.selectedPlaylist.collectAsStateWithLifecycle()
+                            val selectedSmartPlaylist by viewModel.selectedSmartPlaylist.collectAsStateWithLifecycle()
+                            val smartPlaylists by viewModel.smartPlaylists.collectAsStateWithLifecycle()
                             val selectedPlaylistSongs by remember(selectedPlaylist) {
                                 val cur = selectedPlaylist
                                 if (cur != null) {
@@ -321,8 +321,8 @@ class MainActivity : ComponentActivity() {
                                 } else {
                                     kotlinx.coroutines.flow.flowOf(emptyList())
                                 }
-                            }.collectAsState(initial = emptyList())
-                            val dailyStats7Days by remember { viewModel.getDailyListeningStats(7) }.collectAsState(initial = emptyList())
+                            }.collectAsStateWithLifecycle(initialValue = emptyList())
+                            val dailyStats7Days by remember { viewModel.getDailyListeningStats(7) }.collectAsStateWithLifecycle(initialValue = emptyList())
 
                             Scaffold(
                                 modifier = Modifier.fillMaxSize(),
@@ -349,10 +349,10 @@ class MainActivity : ComponentActivity() {
                                             val shouldShowBottomNavBar = !showAuthScreen && !isSettingsOrAccountActive
 
                                             if (shouldShowMiniPlayer) {
-                                                val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsState()
-                                                val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
-                                                val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
-                                                val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsState()
+                                                val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsStateWithLifecycle()
+                                                val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsStateWithLifecycle()
+                                                val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsStateWithLifecycle()
+                                                val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsStateWithLifecycle()
 
                                                 MiniPlayer(
                                                     song = playbackState.currentSong,
@@ -775,18 +775,18 @@ class MainActivity : ComponentActivity() {
                                 enter = slideInVertically { it },
                                 exit = slideOutVertically { it }
                             ) {
-                                val waveformStyle by viewModel.waveformStyle.collectAsState()
-                                val availableAudioDevices by viewModel.availableAudioDevices.collectAsState()
-                                val keepScreenAwakeSetting by viewModel.keepScreenAwake.collectAsState()
-                                val gesturePlaybackEnabled by viewModel.gesturePlaybackEnabled.collectAsState()
-                                val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
-                                val isTranscribeTranslateEnabled by viewModel.isTranscribeTranslateEnabled.collectAsState()
-                                val audioTranscribeMode by viewModel.audioTranscribeMode.collectAsState()
-                                val audioTranscribeTargetLang by viewModel.audioTranscribeTargetLang.collectAsState()
-                                val isTranscribingLyrics by viewModel.isTranscribingLyrics.collectAsState()
-                                val transcribeStatusMessage by viewModel.transcribeStatusMessage.collectAsState()
-                                val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsState()
-                                val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsState()
+                                val waveformStyle by viewModel.waveformStyle.collectAsStateWithLifecycle()
+                                val availableAudioDevices by viewModel.availableAudioDevices.collectAsStateWithLifecycle()
+                                val keepScreenAwakeSetting by viewModel.keepScreenAwake.collectAsStateWithLifecycle()
+                                val gesturePlaybackEnabled by viewModel.gesturePlaybackEnabled.collectAsStateWithLifecycle()
+                                val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsStateWithLifecycle()
+                                val isTranscribeTranslateEnabled by viewModel.isTranscribeTranslateEnabled.collectAsStateWithLifecycle()
+                                val audioTranscribeMode by viewModel.audioTranscribeMode.collectAsStateWithLifecycle()
+                                val audioTranscribeTargetLang by viewModel.audioTranscribeTargetLang.collectAsStateWithLifecycle()
+                                val isTranscribingLyrics by viewModel.isTranscribingLyrics.collectAsStateWithLifecycle()
+                                val transcribeStatusMessage by viewModel.transcribeStatusMessage.collectAsStateWithLifecycle()
+                                val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsStateWithLifecycle()
+                                val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsStateWithLifecycle()
                                 NowPlayingScreen(
                                     playbackState = playbackState,
                                     currentLyrics = currentLyrics,
@@ -1016,6 +1016,7 @@ class MainActivity : ComponentActivity() {
         isActivityAlive = true
         try {
             com.example.service.PlaybackManager.activeInstance?.let { pm ->
+                pm.onAppForegroundStateChanged(true)
                 com.example.widget.WidgetUpdateManager.updateAllWidgets(applicationContext, pm.playbackState.value)
             }
         } catch (_: Throwable) {}
@@ -1024,6 +1025,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         isActivityAlive = true
+        try {
+            com.example.service.PlaybackManager.activeInstance?.onAppForegroundStateChanged(true)
+        } catch (_: Throwable) {}
         // No heavy scanning in onResume to prevent UI stutter and resource starvation
     }
 
@@ -1160,6 +1164,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        if (!isChangingConfigurations) {
+            isActivityAlive = false
+            try {
+                com.example.service.PlaybackManager.activeInstance?.onAppForegroundStateChanged(false)
+            } catch (_: Throwable) {}
+        }
         super.onStop()
         try {
             com.example.service.PlaybackManager.activeInstance?.ensureBackgroundNotification()
@@ -1167,7 +1177,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        isActivityAlive = false
+        if (!isChangingConfigurations) {
+            isActivityAlive = false
+            try {
+                com.example.service.PlaybackManager.activeInstance?.onAppForegroundStateChanged(false)
+            } catch (_: Throwable) {}
+        }
         try {
             val pmState = com.example.service.PlaybackManager.activeInstance?.playbackState?.value
                 ?: com.example.service.PlaybackState()

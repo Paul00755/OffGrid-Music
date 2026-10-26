@@ -10,8 +10,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -45,7 +45,7 @@ fun RealtimeTrackProgressBar(
     if (durationMs <= 0L) return
 
     val currentPos = if (isActive && playbackPositionFlow != null) {
-        val pos by playbackPositionFlow.collectAsState()
+        val pos by playbackPositionFlow.collectAsStateWithLifecycle()
         pos
     } else 0L
 

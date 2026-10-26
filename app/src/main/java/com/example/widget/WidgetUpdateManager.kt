@@ -102,9 +102,9 @@ object WidgetUpdateManager {
         val pm = PlaybackManager.activeInstance
         val livePmState = pm?.playbackState?.value
         val base = when {
-            livePmState?.currentSong != null && candidate?.currentSong != null && livePmState.currentSong.id != candidate.currentSong.id -> livePmState
+            candidate?.currentSong != null -> candidate
+            livePmState?.currentSong != null -> livePmState
             candidate != null -> candidate
-            livePmState != null -> livePmState
             else -> PlaybackState()
         }
         val song = base.currentSong ?: return base
@@ -121,9 +121,9 @@ object WidgetUpdateManager {
         } else 0L
 
         val livePos = when {
-            pm != null && pm.playbackState.value.currentSong?.id == song.id -> maxOf(pmPos, base.positionMs)
+            pm != null && pm.playbackState.value.currentSong?.id == song.id && maxOf(pmPos, base.positionMs) > 0L -> maxOf(pmPos, base.positionMs)
             base.positionMs > 0L -> base.positionMs
-            pm == null && snapPos > 0L -> snapPos
+            snapPos > 0L -> snapPos
             else -> 0L
         }.coerceAtLeast(0L)
 
@@ -590,14 +590,18 @@ object WidgetUpdateManager {
             val mediumIds = appWidgetManager.getAppWidgetIds(ComponentName(context, MediumMusicWidgetProvider::class.java))
             val secondaryIds = appWidgetManager.getAppWidgetIds(ComponentName(context, SecondaryMusicWidgetProvider::class.java))
 
+            val state = resolveEffectiveState(context, rawState)
+            val song = state.currentSong
+
             if (fullIds.isEmpty() && smallIds.isEmpty() && mediumIds.isEmpty() && secondaryIds.isEmpty()) {
+                lastRenderedSongId = song?.id ?: -1L
+                lastRenderedIsPlaying = state.isPlaying
+                lastRenderedHasArtwork = song != null && com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id) != null
                 return
             }
 
-            val state = resolveEffectiveState(context, rawState)
             refreshThemePrefsIfNeeded(context)
 
-            val song = state.currentSong
             val sourceBitmap = WidgetBitmapRenderer.getOrLoadSongBitmap(context, song)
             val themeColors = WidgetBitmapRenderer.getThemeColors(
                 songBitmap = sourceBitmap,
@@ -652,16 +656,15 @@ object WidgetUpdateManager {
 
     private fun performProgressOnlyWidgetUpdateInternal(context: Context, rawState: PlaybackState) {
         try {
-            val state = resolveEffectiveState(context, rawState)
-            val song = state.currentSong
-            val currentSongId = song?.id ?: -1L
-            val hasNewlyDecodedArt = !lastRenderedHasArtwork && song != null &&
-                com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id) != null
+            val rawSong = rawState.currentSong
+            val rawSongId = rawSong?.id ?: -1L
+            val hasNewlyDecodedArt = !lastRenderedHasArtwork && rawSong != null &&
+                com.example.util.ArtworkManager.getCachedNotificationBitmap(rawSong.id) != null
 
             // If track identity, play/pause state, or decoded artwork state changed since the last full render,
             // automatically promote this progress tick to a full update across all 4 widget variants!
-            if (currentSongId != lastRenderedSongId || state.isPlaying != lastRenderedIsPlaying || hasNewlyDecodedArt) {
-                performFullWidgetUpdateInternal(context, state)
+            if (rawSongId != lastRenderedSongId || rawState.isPlaying != lastRenderedIsPlaying || hasNewlyDecodedArt) {
+                performFullWidgetUpdateInternal(context, rawState)
                 return
             }
 
@@ -673,6 +676,8 @@ object WidgetUpdateManager {
                 return
             }
 
+            val state = resolveEffectiveState(context, rawState)
+            val song = state.currentSong
             val durationMs = if (state.durationMs > 0L) state.durationMs else (song?.durationMs ?: 0L)
             val posMs = state.positionMs.coerceAtLeast(0L)
             val progressRatio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
@@ -680,12 +685,7 @@ object WidgetUpdateManager {
             val currentText = formatTime(posMs)
             val totalText = formatTime(durationMs)
 
-            val sourceBitmap = WidgetBitmapRenderer.getOrLoadSongBitmap(context, song)
-            val themeColors = WidgetBitmapRenderer.getThemeColors(
-                songBitmap = sourceBitmap,
-                isDynamicTheme = cachedIsDynamicTheme,
-                manualAccentColor = cachedManualAccentArgb
-            )
+            val accentColor = cachedLastAccentColor
             val density = WidgetBitmapRenderer.getRenderDensity(context)
 
             if (mediumIds.isNotEmpty()) {
@@ -694,7 +694,7 @@ object WidgetUpdateManager {
                     widthPx = (220 * density).toInt(),
                     heightPx = (16 * density).toInt(),
                     progressRatio = progressRatio,
-                    accentColor = themeColors.accentColor
+                    accentColor = accentColor
                 )
                 for (id in mediumIds) {
                     try {
@@ -713,7 +713,7 @@ object WidgetUpdateManager {
                     widthPx = (220 * density).toInt(),
                     heightPx = (18 * density).toInt(),
                     progressRatio = progressRatio,
-                    accentColor = themeColors.accentColor
+                    accentColor = accentColor
                 )
                 for (id in secondaryIds) {
                     try {

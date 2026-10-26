@@ -93,22 +93,27 @@ fun HomeScreenStudioDashboard(
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
     var selectedEqProfile by remember { mutableStateOf("FLAT") }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "studio_bars")
-    val barAnim1 by infiniteTransition.animateFloat(
-        initialValue = 0.2f, targetValue = 0.95f,
-        animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse),
-        label = "b1"
-    )
-    val barAnim2 by infiniteTransition.animateFloat(
-        initialValue = 0.35f, targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
-        label = "b2"
-    )
-    val barAnim3 by infiniteTransition.animateFloat(
-        initialValue = 0.15f, targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), RepeatMode.Reverse),
-        label = "b3"
-    )
+    val (barAnim1, barAnim2, barAnim3) = if (playbackState.isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "studio_bars")
+        val b1 by infiniteTransition.animateFloat(
+            initialValue = 0.2f, targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b1"
+        )
+        val b2 by infiniteTransition.animateFloat(
+            initialValue = 0.35f, targetValue = 0.8f,
+            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b2"
+        )
+        val b3 by infiniteTransition.animateFloat(
+            initialValue = 0.15f, targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b3"
+        )
+        Triple(b1, b2, b3)
+    } else {
+        Triple(0.2f, 0.35f, 0.15f)
+    }
 
     LazyColumn(
         modifier = modifier

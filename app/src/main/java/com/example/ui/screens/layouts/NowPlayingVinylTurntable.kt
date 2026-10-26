@@ -62,19 +62,24 @@ fun NowPlayingVinylTurntable(
     val song = playbackState.currentSong ?: return
     val context = LocalContext.current
 
-    val infiniteTransition = rememberInfiniteTransition(label = "vinyl_spin")
-    val rotationAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (playbackState.isPlaying) 360f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = 4000,
-                easing = LinearEasing
+    val rotationAngle = if (playbackState.isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "vinyl_spin")
+        val angle by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = 4000,
+                    easing = LinearEasing
+                ),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Restart
             ),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
-        ),
-        label = "vinyl_angle"
-    )
+            label = "vinyl_angle"
+        )
+        angle
+    } else {
+        0f
+    }
 
     var isSeeking by remember(song.id) { mutableStateOf(false) }
     var seekPosition by remember(song.id) { mutableFloatStateOf(0f) }

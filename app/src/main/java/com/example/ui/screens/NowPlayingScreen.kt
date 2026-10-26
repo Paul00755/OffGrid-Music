@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.res.Configuration
 import androidx.compose.ui.platform.LocalConfiguration
 import com.example.data.model.Song
@@ -130,7 +131,7 @@ fun NowPlayingScreen(
     onClearTranscribeError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val rawPositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsState().value else playbackState.positionMs
+    val rawPositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsStateWithLifecycle().value else playbackState.positionMs
     val song = playbackState.currentSong
     val songDuration = if (playbackState.durationMs > 0L) playbackState.durationMs else (song?.durationMs ?: 0L)
     val livePositionMs: Long = if (songDuration > 0L) rawPositionMs.coerceIn(0L, songDuration) else rawPositionMs.coerceAtLeast(0L)

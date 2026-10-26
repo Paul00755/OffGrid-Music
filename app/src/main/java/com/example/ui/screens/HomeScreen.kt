@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -210,9 +211,9 @@ fun HomeScreen(
     val topArtistsFlow = remember(filterStartTimeMs) { getTopArtistsSince(filterStartTimeMs, 8) }
     val topAlbumsFlow = remember(filterStartTimeMs) { getTopAlbumsSince(filterStartTimeMs, 8) }
 
-    val mostPlayedFilteredSongs by mostPlayedFlow.collectAsState(initial = emptyList())
-    val topArtists by topArtistsFlow.collectAsState(initial = emptyList())
-    val topAlbums by topAlbumsFlow.collectAsState(initial = emptyList())
+    val mostPlayedFilteredSongs by mostPlayedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val topArtists by topArtistsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val topAlbums by topAlbumsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     // Current/Last Song for "Continue Listening"
     val continueSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
@@ -1124,9 +1125,9 @@ private fun StatsPeriodCard(
     val trackCountFlow = remember(periodStartMs, periodEndMs) { getTrackCountBetween(periodStartMs, periodEndMs) }
     val uniqueCountFlow = remember(periodStartMs, periodEndMs) { getUniqueTrackCountBetween(periodStartMs, periodEndMs) }
 
-    val durationMs by durationFlow.collectAsState(initial = 0L)
-    val trackCount by trackCountFlow.collectAsState(initial = 0)
-    val uniqueCount by uniqueCountFlow.collectAsState(initial = 0)
+    val durationMs by durationFlow.collectAsStateWithLifecycle(initialValue = 0L)
+    val trackCount by trackCountFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val uniqueCount by uniqueCountFlow.collectAsStateWithLifecycle(initialValue = 0)
 
     val formattedTime = remember(durationMs) {
         val totalMins = durationMs / 1000 / 60

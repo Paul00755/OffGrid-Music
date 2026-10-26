@@ -46,18 +46,21 @@ fun NowPlayingWaveformVisualizer(
 
     val displayProgress = if (isDragging) dragProgress else actualProgress
 
-    val infiniteTransition = rememberInfiniteTransition(label = "waveform")
-    val phase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (isPlaying && !isDragging) (2f * Math.PI).toFloat() else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase"
-    )
-
-    val activePhase = if (isPlaying && !isDragging) phase else 0f
+    val activePhase = if (isPlaying && !isDragging) {
+        val infiniteTransition = rememberInfiniteTransition(label = "waveform")
+        val phase by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2f * Math.PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(2200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "phase"
+        )
+        phase
+    } else {
+        0f
+    }
 
     Canvas(
         modifier = modifier

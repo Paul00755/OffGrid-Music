@@ -492,6 +492,61 @@ class PlaybackManager(
         }
     }
 
+    @Volatile
+    var isUiInForeground: Boolean = true
+        private set
+
+    fun onAppForegroundStateChanged(inForeground: Boolean) {
+        isUiInForeground = inForeground
+        if (inForeground) {
+            val syncBlock: () -> Unit = {
+                try {
+                    val queue = _playbackState.value.queue
+                    val mediaIdx = player.currentMediaItemIndex
+                    val resolvedIdx = if (mediaIdx in queue.indices) mediaIdx else _playbackState.value.queueIndex
+                    val resolvedSong = queue.getOrNull(resolvedIdx) ?: _playbackState.value.currentSong
+                    val rawPos = player.currentPosition
+                    val livePos = if (rawPos >= 0L && rawPos != C.TIME_UNSET) {
+                        rawPos
+                    } else {
+                        maxOf(currentPositionMs, _playbackPositionMs.value, _playbackState.value.positionMs)
+                    }
+                    val rawDur = player.duration
+                    val liveDur = when {
+                        rawDur > 0L && rawDur != C.TIME_UNSET -> rawDur
+                        _playbackState.value.durationMs > 0L -> _playbackState.value.durationMs
+                        resolvedSong != null && resolvedSong.durationMs > 0L -> resolvedSong.durationMs
+                        else -> 0L
+                    }
+                    val effectivelyPlaying = if (isFadingOutToPause) {
+                        false
+                    } else {
+                        player.isPlaying || (player.playWhenReady && player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE)
+                    }
+                    currentPositionMs = livePos
+                    _playbackPositionMs.value = livePos
+                    _playbackState.value = _playbackState.value.copy(
+                        currentSong = resolvedSong,
+                        queueIndex = if (resolvedIdx >= 0) resolvedIdx else _playbackState.value.queueIndex,
+                        positionMs = livePos,
+                        durationMs = liveDur,
+                        isPlaying = effectivelyPlaying
+                    )
+                    if (effectivelyPlaying && progressUpdateJob?.isActive != true) {
+                        startProgressTracker()
+                    }
+                } catch (_: Throwable) {}
+            }
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                syncBlock()
+            } else {
+                scope.launch(Dispatchers.Main.immediate) { syncBlock() }
+            }
+        } else {
+            ensureBackgroundNotification()
+        }
+    }
+
     fun ensureBackgroundNotification() {
         try {
             val isActivelyPlaying = _playbackState.value.isPlaying || player.isPlaying || player.playWhenReady
@@ -2712,11 +2767,16 @@ class PlaybackManager(
 
                         if (isMatchingTrack) {
                             currentPositionMs = currentPos
-                            _playbackPositionMs.value = currentPos
+                            if (isUiInForeground) {
+                                _playbackPositionMs.value = currentPos
+                            }
 
                             val curSec = currentPos / 1000
                             if (curSec != lastWidgetSec) {
                                 lastWidgetSec = curSec
+                                if (!isUiInForeground) {
+                                    _playbackPositionMs.value = currentPos
+                                }
                                 com.example.widget.WidgetUpdateManager.updateWidgetsProgress(context, currentPos, totalDur)
                             }
 
@@ -2738,7 +2798,11 @@ class PlaybackManager(
                     }
 
                     val inCrossfadeWindow = crossfadeDurationSec > 0 && inCrossfadeZone
-                    val loopDelay = if (inCrossfadeWindow || inTrackEndFadeOut) 60L else 220L
+                    val loopDelay = when {
+                        inCrossfadeWindow || inTrackEndFadeOut -> 60L
+                        !isUiInForeground -> 500L
+                        else -> 220L
+                    }
                     delay(loopDelay)
                 }
             } catch (_: Exception) {}

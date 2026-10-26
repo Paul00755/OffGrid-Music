@@ -134,4 +134,70 @@ class WidgetAndReliabilityFixesTest {
         assertTrue(prefs.automaticBackupEnabled.first())
         assertEquals(BackupFrequency.DAILY, prefs.backupFrequency.first())
     }
+
+    @Test
+    fun testRepeatedBackgroundToForegroundCyclesPreservePlaybackAndSyncPositionImmediately() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = UserPreferencesRepository.getInstance(context)
+        val prevInstance = com.example.service.PlaybackManager.activeInstance
+        val pm = com.example.service.PlaybackManager.getInstance(context)
+        try {
+            val songA = Song(
+                id = 901L,
+                title = "Background Smoothness A",
+                artist = "OffGrid Artist",
+                album = "OffGrid Album",
+                albumId = 21L,
+                durationMs = 210_000L,
+                path = "/storage/emulated/0/Music/bg_a.mp3",
+                contentUriString = "content://media/external/audio/media/901"
+            )
+            val songB = Song(
+                id = 902L,
+                title = "Background Smoothness B",
+                artist = "OffGrid Artist",
+                album = "OffGrid Album",
+                albumId = 21L,
+                durationMs = 195_000L,
+                path = "/storage/emulated/0/Music/bg_b.mp3",
+                contentUriString = "content://media/external/audio/media/902"
+            )
+
+            pm.restorePlaybackState(listOf(songA, songB), startIndex = 0, startPositionMs = 45_000L, fallbackDurationMs = 210_000L)
+            val initialPlayerRef = pm.player
+
+            // Test across both High Refresh Rate enabled (90Hz/120Hz) and disabled (60Hz)
+            for (highRefresh in listOf(true, false)) {
+                prefs.setHighRefreshRate(highRefresh)
+                assertEquals(highRefresh, prefs.highRefreshRate.first())
+
+                // Run 4 repeated background -> foreground cycles
+                for (cycle in 1..4) {
+                    // 1. App goes to background while music is active
+                    pm.onAppForegroundStateChanged(false)
+                    assertFalse("Expected isUiInForeground == false when backgrounded (cycle $cycle)", pm.isUiInForeground)
+
+                    // Simulate position advancing while backgrounded
+                    val simulatedBgPos = 45_000L + (cycle * 15_000L)
+                    pm.seekTo(simulatedBgPos)
+                    WidgetUpdateManager.updateWidgetsProgress(context, simulatedBgPos, 210_000L)
+
+                    // 2. App returns to foreground
+                    val resumeStartNs = System.nanoTime()
+                    pm.onAppForegroundStateChanged(true)
+                    val resumeElapsedMs = (System.nanoTime() - resumeStartNs) / 1_000_000.0
+
+                    assertTrue("Expected isUiInForeground == true on resume (cycle $cycle)", pm.isUiInForeground)
+                    assertSame("Media3 ExoPlayer instance must be reused across background/foreground cycles", initialPlayerRef, pm.player)
+                    assertEquals("Current song must be preserved on resume", songA.id, pm.playbackState.value.currentSong?.id)
+                    assertEquals("Position must be immediately synchronized on resume", simulatedBgPos, pm.playbackPositionMs.value)
+                    assertEquals("PlaybackState.positionMs must be immediately synchronized on resume", simulatedBgPos, pm.playbackState.value.positionMs)
+                    assertEquals("Duration must be preserved on resume", 210_000L, pm.playbackState.value.durationMs)
+                    assertTrue("Foreground sync latency should be under 50ms (was ${resumeElapsedMs}ms)", resumeElapsedMs < 50.0)
+                }
+            }
+        } finally {
+            com.example.service.PlaybackManager.activeInstance = prevInstance
+        }
+    }
 }

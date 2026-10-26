@@ -653,14 +653,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playbackManager.setPreferredAudioDevice(dev)
         }
         viewModelScope.launch {
+            var lastWarmedLibrarySignature = 0L
             allSongs.collect { songs ->
                 if (songs.isNotEmpty()) {
-                    com.example.ui.components.ArtworkResolutionCache.warmAllSongsArtworkInBackground(getApplication(), songs)
+                    val signature = songs.fold(songs.size.toLong()) { acc, s ->
+                        acc * 31L + s.id * 17L + (s.artworkUri?.hashCode()?.toLong() ?: 0L)
+                    }
+                    if (signature != lastWarmedLibrarySignature) {
+                        lastWarmedLibrarySignature = signature
+                        com.example.ui.components.ArtworkResolutionCache.warmAllSongsArtworkInBackground(getApplication(), songs)
+                    }
                     if (_speedDialSongs.value.isEmpty()) {
                         _speedDialSongs.value = songs.shuffled().take(9)
                     } else {
                         val byId = songs.associateBy { it.id }
-                        _speedDialSongs.value = _speedDialSongs.value.mapNotNull { byId[it.id] }
+                        val updatedSpeedDial = _speedDialSongs.value.mapNotNull { byId[it.id] }
+                        if (updatedSpeedDial != _speedDialSongs.value) {
+                            _speedDialSongs.value = updatedSpeedDial
+                        }
                     }
                 }
             }
@@ -786,7 +796,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
+            var lastWarmedPlaylistsSignature = 0L
             allPlaylists.collect { plList ->
+                val plSignature = plList.fold(plList.size.toLong()) { acc, pl ->
+                    acc * 31L + pl.id * 17L + pl.songCount.toLong() * 13L + (pl.artworkUri?.hashCode()?.toLong() ?: 0L)
+                }
+                if (plSignature == lastWarmedPlaylistsSignature) return@collect
+                lastWarmedPlaylistsSignature = plSignature
                 val app = getApplication<Application>()
                 val db = com.example.data.local.AppDatabase.getInstance(app)
                 for (pl in plList) {
