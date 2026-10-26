@@ -496,4 +496,49 @@ class CloudSyncTest {
         assertFalse(CloudUserSettings().playDuringCamera)
         assertFalse(CloudUserSettings.fromMap(emptyMap()).playDuringCamera)
     }
+
+    @Test
+    fun legacyExtraDarkPreferenceMigratesToAmoledAndBackupDefaultsAreWeeklyAndEnabled() {
+        val migrated = CloudUserSettings.fromMap(mapOf("themeMode" to "DARK", "amoledMode" to true))
+        assertEquals("AMOLED", migrated.themeMode)
+        val defaults = CloudUserSettings.fromMap(emptyMap())
+        assertTrue(defaults.automaticBackupEnabled)
+        assertEquals("WEEKLY", defaults.backupFrequency)
+    }
+
+    @Test
+    fun lyricsCloudRecordPreservesRawTimestampsAndUpdateTime() {
+        val source = CloudLyricsEntry(
+            songSignature = "stable-track-signature",
+            plainLyrics = "first line",
+            syncedLyricsJson = "[{\"timeMs\":1200,\"text\":\"first line\"}]",
+            isCached = false,
+            source = "manual",
+            updatedAt = 1_760_000_000_000L
+        )
+        val restored = CloudLyricsEntry.fromMap(source.toMap())
+        assertEquals(source, restored)
+        assertEquals(source.syncedLyricsJson, restored.syncedLyricsJson)
+    }
+
+    @Test
+    fun versionThreeSnapshotRequiresASeparateLyricsSnapshotReference() {
+        val uid = "firebase-user-v3"
+        val valid = UserBackupPayload(
+            version = 3,
+            ownerUid = uid,
+            snapshotComplete = true,
+            historyStoredSeparately = true,
+            playlistPlayEventsStoredSeparately = true,
+            lyricsStoredSeparately = true,
+            lyricsSnapshotId = "lyrics-content-hash",
+            lyricsCount = 1,
+            dataHash = "snapshot-hash",
+            profile = BackupProfileData(uid = uid)
+        ).toMap()
+
+        assertTrue(UserBackupPayload.isCompleteSnapshot(valid, uid))
+        assertFalse(UserBackupPayload.isCompleteSnapshot(valid - "lyricsSnapshotId", uid))
+        assertFalse(UserBackupPayload.isCompleteSnapshot(valid + ("lyricsCount" to -1), uid))
+    }
 }

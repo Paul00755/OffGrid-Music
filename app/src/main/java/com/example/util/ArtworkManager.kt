@@ -26,6 +26,8 @@ object ArtworkManager {
 
     private const val CACHE_DIR_NAME = "artworks"
     private const val SONG_ARTWORKS_DIR_NAME = "song_artworks"
+    private const val NOTIFICATION_ARTWORK_MISS_TTL_MS = 5 * 60 * 1000L
+    private const val MAX_NOTIFICATION_ARTWORK_MISSES = 1024
 
     // Per-song synchronization locks to prevent concurrent threads from corrupting or truncating JPEG files
     private val songLocks = ConcurrentHashMap<Long, Any>()
@@ -43,6 +45,8 @@ object ArtworkManager {
     private val notificationBitmapCache = object : android.util.LruCache<String, Bitmap>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount.coerceAtLeast(1)
     }
+    /** Avoid repeating expensive MediaMetadataRetriever work when a track has no artwork. */
+    private val notificationArtworkMisses = ConcurrentHashMap<String, Long>()
 
     private fun notificationArtworkKey(songId: Long, filePath: String?): String =
         ArtworkResolutionCache.trackIdentity(songId, filePath)
@@ -185,8 +189,10 @@ object ArtworkManager {
 
     fun putCachedNotificationBitmap(songId: Long, bitmap: Bitmap, filePath: String? = null) {
         if (songId <= 0L || bitmap.isRecycled) return
+        val key = notificationArtworkKey(songId, filePath)
+        notificationArtworkMisses.remove(key)
         synchronized(notificationBitmapCache) {
-            notificationBitmapCache.put(notificationArtworkKey(songId, filePath), bitmap)
+            notificationBitmapCache.put(key, bitmap)
         }
     }
 
@@ -196,6 +202,11 @@ object ArtworkManager {
                 synchronized(notificationArtCache) { notificationArtCache.snapshot().keys.filter { it.startsWith("id:$songId:") } }
         } else {
             listOf(notificationArtworkKey(songId, filePath), notificationArtworkKey(songId, null))
+        }
+        if (filePath.isNullOrBlank()) {
+            notificationArtworkMisses.keys.filter { it.startsWith("id:$songId:") }.forEach(notificationArtworkMisses::remove)
+        } else {
+            keys.forEach(notificationArtworkMisses::remove)
         }
         synchronized(notificationArtCache) {
             keys.forEach(notificationArtCache::remove)
@@ -207,6 +218,7 @@ object ArtworkManager {
 
     fun putCachedNotificationArtwork(songId: Long, bytes: ByteArray, filePath: String? = null) {
         if (songId <= 0L || bytes.isEmpty()) return
+        notificationArtworkMisses.remove(notificationArtworkKey(songId, filePath))
         synchronized(notificationArtCache) {
             notificationArtCache.put(notificationArtworkKey(songId, filePath), bytes)
         }
@@ -215,6 +227,7 @@ object ArtworkManager {
     fun putNotificationArtwork(songId: Long, bytes: ByteArray, bitmap: Bitmap, filePath: String? = null) {
         if (songId <= 0L) return
         val key = notificationArtworkKey(songId, filePath)
+        notificationArtworkMisses.remove(key)
         synchronized(notificationArtCache) {
             notificationArtCache.put(key, bytes)
         }
@@ -400,42 +413,59 @@ object ArtworkManager {
         albumId: Long,
         artworkUriStr: String? = null
     ): ByteArray? {
-        synchronized(notificationArtCache) {
-            val cached = notificationArtCache.get(notificationArtworkKey(songId, filePath))
-            if (cached != null && cached.isNotEmpty()) return cached
-        }
+        return synchronized(lockForSong(songId)) {
+            val key = notificationArtworkKey(songId, filePath)
+            val cached = synchronized(notificationArtCache) { notificationArtCache.get(key) }
+            if (cached != null && cached.isNotEmpty()) {
+                notificationArtworkMisses.remove(key)
+                return@synchronized cached
+            }
 
-        val effectiveUriStr = if (!artworkUriStr.isNullOrBlank()) {
-            artworkUriStr
-        } else {
-            ArtworkResolutionCache.getMemory(songId, filePath)
-                ?: ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)
-        }
+            val now = android.os.SystemClock.elapsedRealtime()
+            val previousMiss = notificationArtworkMisses[key]
+            if (previousMiss != null) {
+                if (now - previousMiss < NOTIFICATION_ARTWORK_MISS_TTL_MS) return@synchronized null
+                notificationArtworkMisses.remove(key, previousMiss)
+            }
 
-        val rawBytes = getOrExtractArtworkBytesSync(context, songId, filePath, albumId, effectiveUriStr) ?: return null
-
-        val finalBytes = try {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
-            options.inSampleSize = calculateInSampleSize(options, 320, 320)
-            options.inJustDecodeBounds = false
-            val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
-            if (bmp != null) {
-                putCachedNotificationBitmap(songId, bmp, filePath)
-                val stream = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream)
-                stream.toByteArray()
+            val effectiveUriStr = if (!artworkUriStr.isNullOrBlank()) {
+                artworkUriStr
             } else {
+                ArtworkResolutionCache.getMemory(songId, filePath)
+                    ?: ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)
+            }
+
+            val rawBytes = getOrExtractArtworkBytesSync(context, songId, filePath, albumId, effectiveUriStr)
+            if (rawBytes == null || rawBytes.isEmpty()) {
+                notificationArtworkMisses[key] = now
+                if (notificationArtworkMisses.size > MAX_NOTIFICATION_ARTWORK_MISSES) {
+                    notificationArtworkMisses.minByOrNull { it.value }?.let { notificationArtworkMisses.remove(it.key, it.value) }
+                }
+                return@synchronized null
+            }
+
+            val finalBytes = try {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
+                options.inSampleSize = calculateInSampleSize(options, 320, 320)
+                options.inJustDecodeBounds = false
+                val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
+                if (bmp != null) {
+                    putCachedNotificationBitmap(songId, bmp, filePath)
+                    val stream = ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream)
+                    stream.toByteArray()
+                } else {
+                    rawBytes
+                }
+            } catch (_: Throwable) {
                 rawBytes
             }
-        } catch (_: Throwable) {
-            rawBytes
-        }
 
-        synchronized(notificationArtCache) {
-            notificationArtCache.put(notificationArtworkKey(songId, filePath), finalBytes)
+            notificationArtworkMisses.remove(key)
+            synchronized(notificationArtCache) { notificationArtCache.put(key, finalBytes) }
+            finalBytes
         }
-        return finalBytes
     }
 
     fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String, filePath: String? = null): String? {

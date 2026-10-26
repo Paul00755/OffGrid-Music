@@ -80,7 +80,6 @@ class AuthManager(
             trySend(user?.toUserAccount())
         }
         auth.addAuthStateListener(listener)
-        trySend(auth.currentUser?.toUserAccount())
         awaitClose {
             auth.removeAuthStateListener(listener)
         }

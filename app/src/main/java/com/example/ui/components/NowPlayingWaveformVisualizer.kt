@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -19,7 +20,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.ui.theme.BentoPrimary
+import kotlinx.coroutines.flow.StateFlow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.util.Locale
 import kotlin.math.sin
 
 @Composable
@@ -31,15 +38,15 @@ fun NowPlayingWaveformVisualizer(
     style: String = "SNAKE",
     accentColor: Color = BentoPrimary,
     onSeekTo: (Long) -> Unit,
+    playbackPositionFlow: StateFlow<Long>? = null,
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val waveformColor = if (isDarkTheme) Color.White else Color.Black
     val inactiveTrackColor = waveformColor.copy(alpha = 0.22f)
 
-    val actualProgress = remember(trackId, progressMs, durationMs) {
-        if (durationMs > 0) (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
-    }
+    val livePosition = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = progressMs)?.value ?: progressMs
+    val actualProgress = if (durationMs > 0) (livePosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
     var isDragging by remember(trackId) { mutableStateOf(false) }
     var dragProgress by remember(trackId) { mutableFloatStateOf(0f) }
@@ -350,5 +357,27 @@ fun NowPlayingWaveformVisualizer(
             }
         }
     }
+}
+
+@Composable
+fun PlaybackPositionText(
+    playbackPositionFlow: StateFlow<Long>?,
+    positionMs: Long,
+    durationMs: Long,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 11.sp,
+    color: Color
+) {
+    val livePosition = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)?.value ?: positionMs
+    val safePosition = livePosition.coerceIn(0L, durationMs.coerceAtLeast(0L))
+    val totalSeconds = safePosition / 1000L
+    Text(
+        text = String.format(Locale.US, "%d:%02d", totalSeconds / 60L, totalSeconds % 60L),
+        modifier = modifier,
+        fontSize = fontSize,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Clip
+    )
 }
 

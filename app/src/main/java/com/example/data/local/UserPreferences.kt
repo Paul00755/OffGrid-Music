@@ -167,7 +167,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val automaticBackupEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: false
+        prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: true
     }
 
     val backupFrequency: Flow<com.example.data.sync.BackupFrequency> = safeData.map { prefs ->
@@ -227,12 +227,9 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun exportUserSettings(): com.example.data.sync.CloudUserSettings {
         val prefs = safeData.first()
-        val effectiveThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
-        val effectiveAmoled = if (effectiveThemeMode.equals("LIGHT", ignoreCase = true)) {
-            false
-        } else {
-            prefs[PreferenceKeys.AMOLED_MODE] ?: false
-        }
+        val storedThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        val effectiveThemeMode = if (!storedThemeMode.equals("LIGHT", ignoreCase = true) &&
+            prefs[PreferenceKeys.AMOLED_MODE] == true) "AMOLED" else storedThemeMode
         return com.example.data.sync.CloudUserSettings(
             themeMode = effectiveThemeMode,
             uiTheme = prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN",
@@ -242,7 +239,7 @@ class UserPreferencesRepository(private val context: Context) {
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE",
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0,
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true,
-            amoledMode = effectiveAmoled,
+            amoledMode = false,
             cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16,
             fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM",
             artworkSize = prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM",
@@ -304,7 +301,7 @@ class UserPreferencesRepository(private val context: Context) {
             transcribeTranslateEnabled = prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false,
             audioTranscribeMode = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF",
             audioTranscribeTargetLang = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta",
-            automaticBackupEnabled = prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: false,
+            automaticBackupEnabled = prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: true,
             backupFrequency = prefs[PreferenceKeys.BACKUP_FREQUENCY] ?: "WEEKLY",
             updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
         )
@@ -315,7 +312,8 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
             if (!checkTimestamp || localUpdated == 0L || cloud.updatedAt > localUpdated) {
-                prefs[PreferenceKeys.THEME_MODE] = cloud.themeMode
+                val migratedThemeMode = if (!cloud.themeMode.equals("LIGHT", ignoreCase = true) && cloud.amoledMode) "AMOLED" else cloud.themeMode
+                prefs[PreferenceKeys.THEME_MODE] = migratedThemeMode
                 prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
                 prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout
                 prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = cloud.nowPlayingLayout
@@ -323,8 +321,7 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
-                // Enforce Extra Dark Mode rule: cannot be ON when Light theme is active
-                prefs[PreferenceKeys.AMOLED_MODE] = if (cloud.themeMode.equals("LIGHT", ignoreCase = true)) false else cloud.amoledMode
+                prefs[PreferenceKeys.AMOLED_MODE] = false
                 prefs[PreferenceKeys.CORNER_RADIUS_DP] = cloud.cornerRadiusDp
                 prefs[PreferenceKeys.FONT_SIZE_SCALE] = cloud.fontSizeScale
                 prefs[PreferenceKeys.ARTWORK_SIZE] = cloud.artworkSize
@@ -612,7 +609,8 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val themeMode: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        val savedMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        if (!savedMode.equals("LIGHT", ignoreCase = true) && prefs[PreferenceKeys.AMOLED_MODE] == true) "AMOLED" else savedMode
     }
 
     val uiTheme: Flow<String> = safeData.map { prefs ->
@@ -702,18 +700,8 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE"
     }
 
-    /**
-     * Extra Dark Mode (`amoledMode`):
-     * Strictly gated by Dark Theme — if `themeMode` is `"LIGHT"`, it always evaluates to `false`.
-     */
-    val amoledMode: Flow<Boolean> = safeData.map { prefs ->
-        val mode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
-        if (mode.equals("LIGHT", ignoreCase = true)) {
-            false
-        } else {
-            prefs[PreferenceKeys.AMOLED_MODE] ?: false
-        }
-    }
+    /** Compatibility projection for old callers; the saved theme mode is the source of truth. */
+    val amoledMode: Flow<Boolean> = themeMode.map { it.equals("AMOLED", ignoreCase = true) }
 
     val accentColorPreset: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE"
@@ -942,19 +930,9 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.WAVEFORM_STYLE] = style }
     }
 
-    /**
-     * Enables/disables Extra Dark Mode (`amoled_mode`), strictly requiring Dark Theme.
-     * If the user is currently in Light Theme, Extra Dark Mode will not turn on.
-     */
+    /** Legacy compatibility entry point; AMOLED is now selected through the single theme mode. */
     suspend fun setAmoledMode(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            val currentThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
-            if (currentThemeMode.equals("LIGHT", ignoreCase = true)) {
-                prefs[PreferenceKeys.AMOLED_MODE] = false
-            } else {
-                prefs[PreferenceKeys.AMOLED_MODE] = enabled
-            }
-        }
+        setThemeMode(if (enabled) "AMOLED" else "DARK")
     }
 
     suspend fun setAccentColorPreset(preset: String) {
@@ -1061,17 +1039,25 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     /** Applies a batch of lyrics offsets with one disk commit; replace mode removes stale offsets. */
-    fun applyLyricsSyncOffsets(offsetsBySongId: Map<Long, Long>, replace: Boolean = false) {
+    fun applyLyricsSyncOffsets(
+        offsetsBySongId: Map<Long, Long>,
+        replace: Boolean = false,
+        clearSongIds: Set<Long> = emptySet(),
+        timestampsBySongId: Map<Long, Long> = emptyMap()
+    ) {
         try {
             val prefs = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
             val editor = prefs.edit()
             if (replace) {
                 prefs.all.keys.filter { it.startsWith("offset_") }.forEach(editor::remove)
+            } else {
+                clearSongIds.forEach { songId -> if (songId > 0L) editor.remove("offset_$songId") }
             }
             offsetsBySongId.forEach { (songId, offset) ->
                 if (songId <= 0L) return@forEach
                 val key = "offset_$songId"
                 if (offset == 0L) editor.remove(key) else editor.putLong(key, offset)
+                timestampsBySongId[songId]?.let { editor.putLong("offset_updated_$songId", it) }
             }
             editor.commit()
         } catch (_: Exception) {}
@@ -1081,13 +1067,16 @@ class UserPreferencesRepository(private val context: Context) {
         if (songId <= 0) return
         try {
             val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
-            if (offsetMs == 0L) {
-                sp.edit().remove("offset_$songId").commit()
-            } else {
-                sp.edit().putLong("offset_$songId", offsetMs).commit()
-            }
+            val editor = sp.edit().putLong("offset_updated_$songId", System.currentTimeMillis())
+            if (offsetMs == 0L) editor.remove("offset_$songId") else editor.putLong("offset_$songId", offsetMs)
+            editor.commit()
         } catch (_: Exception) {}
     }
+
+    fun getLyricsSyncOffsetUpdatedAt(songId: Long): Long = try {
+        if (songId <= 0) 0L else context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
+            .getLong("offset_updated_$songId", 0L)
+    } catch (_: Exception) { 0L }
 
     suspend fun setNotificationEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[PreferenceKeys.NOTIFICATION_ENABLED] = enabled }
@@ -1173,12 +1162,11 @@ class UserPreferencesRepository(private val context: Context) {
      * Sets the theme mode ("DARK", "LIGHT", "SYSTEM").
      * If "LIGHT" is selected, Extra Dark Mode (`amoled_mode`) is automatically turned off.
      */
-    suspend fun setThemeMode(mode: String) {
+    suspend fun setThemeMode(mode: String, compatibleUiThemeId: String? = null) {
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.THEME_MODE] = mode
-            if (mode.equals("LIGHT", ignoreCase = true)) {
-                prefs[PreferenceKeys.AMOLED_MODE] = false
-            }
+            prefs[PreferenceKeys.THEME_MODE] = mode.uppercase()
+            prefs[PreferenceKeys.AMOLED_MODE] = false
+            compatibleUiThemeId?.let { prefs[PreferenceKeys.UI_THEME] = it }
         }
     }
 

@@ -34,6 +34,7 @@ import com.example.ui.components.AlbumArtView
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
 import com.example.util.HapticUtils
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.sin
 
 @Composable
@@ -57,14 +58,13 @@ fun NowPlayingNeonWaveform(
     onOpenOptionsMenu: () -> Unit = {},
     waveformStyle: String = "BARS",
     gesturePlaybackEnabled: Boolean = true,
+    playbackPositionFlow: StateFlow<Long>? = null,
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
     val context = LocalContext.current
 
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
-    val safePos = positionMs.coerceIn(0L, duration)
-    val progress = (safePos.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
     fun formatTime(ms: Long): String {
         val totalSecs = (ms / 1000).coerceAtLeast(0)
@@ -181,12 +181,13 @@ fun NowPlayingNeonWaveform(
             ) {
                 com.example.ui.components.NowPlayingWaveformVisualizer(
                     trackId = song.id,
-                    progressMs = safePos,
+                    progressMs = positionMs,
                     durationMs = duration,
                     isPlaying = playbackState.isPlaying,
                     style = waveformStyle,
                     accentColor = neonAccent,
                     onSeekTo = onSeekTo,
+                    playbackPositionFlow = playbackPositionFlow,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp)
@@ -198,7 +199,7 @@ fun NowPlayingNeonWaveform(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatTime(safePos), fontSize = 11.sp, color = BentoTextSecondary)
+                    com.example.ui.components.PlaybackPositionText(playbackPositionFlow, positionMs, duration, fontSize = 11.sp, color = BentoTextSecondary)
                     Text(formatTime(duration), fontSize = 11.sp, color = BentoTextSecondary)
                 }
             }

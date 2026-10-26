@@ -73,7 +73,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val lastBackupTimestamp: StateFlow<Long> = cloudSyncRepository.lastBackupTimestamp
 
     val automaticBackupEnabled: StateFlow<Boolean> = preferences.automaticBackupEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val backupFrequency: StateFlow<com.example.data.sync.BackupFrequency> = preferences.backupFrequency
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.example.data.sync.BackupFrequency.WEEKLY)
@@ -91,7 +91,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             preferences.setAutomaticBackupEnabled(enabled)
             val freq = preferences.backupFrequency.first()
             com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
-            cloudSyncRepository.onSettingsChangedAsync()
         }
     }
 
@@ -100,7 +99,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             preferences.setBackupFrequency(frequency)
             val isEnabled = preferences.automaticBackupEnabled.first()
             com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, isEnabled)
-            cloudSyncRepository.onSettingsChangedAsync()
         }
     }
 
@@ -172,6 +170,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signInWithGoogle(activity: Activity) {
+        // Keep the existing auth surface visible so cancellation and sign-in errors are shown
+        // when Google sign-in is started from the signed-out Cloud & Sync overlay.
+        showAuthScreen.value = true
+        authUiState.value = AuthUiState.Idle
         viewModelScope.launch {
             authUiState.value = AuthUiState.Loading
             val result = authManager.signInWithGoogle(activity)
@@ -186,9 +188,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     preferences.setSkipAuthPrompt(true)
                     authUiState.value = AuthUiState.Success("Signed in successfully with Google")
                     showAuthScreen.value = false
-                    // Issue #2 Fix: Immediately trigger full cloud backup/sync upon Google sign-in
-                    cloudSyncRepository.onAuthStateChanged(account.uid)
-                    cloudSyncRepository.performSyncNow()
+                    cloudSyncRepository.onSuccessfulSignIn(account.uid)
                 },
                 onFailure = { error ->
                     if (error is GoogleSignInCancelledException ||
@@ -222,9 +222,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     preferences.setSkipAuthPrompt(true)
                     authUiState.value = AuthUiState.Success("Signed in successfully")
                     showAuthScreen.value = false
-                    // Issue #2 Fix: Immediately trigger full cloud backup/sync upon Email sign-in
-                    cloudSyncRepository.onAuthStateChanged(account.uid)
-                    cloudSyncRepository.performSyncNow()
+                    cloudSyncRepository.onSuccessfulSignIn(account.uid)
                 },
                 onFailure = { error ->
                     authUiState.value = AuthUiState.Error(error.message ?: "Sign in failed")
@@ -253,9 +251,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     preferences.setSkipAuthPrompt(true)
                     authUiState.value = AuthUiState.Success("Account created successfully")
                     showAuthScreen.value = false
-                    // Issue #2 Fix: Immediately trigger initial cloud sync upon account registration
-                    cloudSyncRepository.onAuthStateChanged(account.uid)
-                    cloudSyncRepository.performSyncNow()
+                    cloudSyncRepository.onSuccessfulSignIn(account.uid)
                 },
                 onFailure = { error ->
                     authUiState.value = AuthUiState.Error(error.message ?: "Sign up failed")
@@ -475,7 +471,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Lazily, true)
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Lazily, "GRID")
     val waveformStyle: StateFlow<String> = preferences.waveformStyle.stateIn(viewModelScope, SharingStarted.Lazily, "SNAKE")
-    val amoledMode: StateFlow<Boolean> = preferences.amoledMode.stateIn(viewModelScope, SharingStarted.Lazily, false)
     val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Lazily, "ORANGE")
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Lazily, 0)
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Lazily, true)
@@ -625,20 +620,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val equalizerManager get() = playbackManager.equalizerManager
 
     init {
-        repository.cloudSyncRepository = cloudSyncRepository
         scanner.onScanCompletedListener = {
             cloudSyncRepository.onLibraryScanCompleted()
         }
         viewModelScope.launch {
-            userAccount.collect { account ->
+            authManager.userAccountFlow.collect { account ->
                 cloudSyncRepository.onAuthStateChanged(account?.uid)
-            }
-        }
-        viewModelScope.launch {
-            val enabled = preferences.automaticBackupEnabled.first()
-            val freq = preferences.backupFrequency.first()
-            if (enabled) {
-                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, true)
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -795,61 +782,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            var lastWarmedPlaylistsSignature = 0L
-            allPlaylists.collect { plList ->
-                val plSignature = plList.fold(plList.size.toLong()) { acc, pl ->
-                    acc * 31L + pl.id * 17L + pl.songCount.toLong() * 13L + (pl.artworkUri?.hashCode()?.toLong() ?: 0L)
-                }
-                if (plSignature == lastWarmedPlaylistsSignature) return@collect
-                lastWarmedPlaylistsSignature = plSignature
-                val app = getApplication<Application>()
-                val db = com.example.data.local.AppDatabase.getInstance(app)
-                for (pl in plList) {
-                    val customUri = com.example.ui.components.PlaylistCoverCache.resolveCustomCoverSync(app, pl.id, pl.artworkUri)
-                    if (customUri != null) {
-                        com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, customUri, 320)
-                    } else {
-                        val cached = com.example.ui.components.PlaylistCoverCache.getCachedCollage(app, pl.id)
-                        if (!cached.isNullOrEmpty()) {
-                            cached.forEach { uri ->
-                                com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, uri, 180)
-                            }
-                        } else {
-                            try {
-                                val entities = db.playlistDao().getPlaylistSongs(pl.id).firstOrNull() ?: emptyList()
-                                val arts = entities.take(12).mapNotNull {
-                                    com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(app, it.id, it.path)
-                                        ?: it.artworkUri?.takeIf { u -> u.isNotBlank() && !u.contains("audio/albumart") }
-                                        ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(app, it.id, it.path, it.albumId)
-                                }.distinct().take(4)
-                                if (arts.isNotEmpty()) {
-                                    com.example.ui.components.PlaylistCoverCache.putCachedCollage(app, pl.id, arts)
-                                    arts.forEach { uri ->
-                                        com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, uri, 180)
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
-            }
-        }
     }
 
     fun setThemeMode(mode: String) = viewModelScope.launch {
         val targetMode = mode.uppercase()
-        preferences.setThemeMode(targetMode)
-        if (targetMode == "LIGHT") {
-            preferences.setAmoledMode(false)
-        } else if (targetMode == "AMOLED") {
-            preferences.setAmoledMode(true)
-        }
         val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
-        if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode)) {
-            val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode)
-            preferences.setUiTheme(fallback.id)
-        }
+        val fallbackId = if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode))
+            com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode).id else null
+        preferences.setThemeMode(targetMode, fallbackId)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
 
@@ -857,9 +797,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         preferences.setUiTheme(themeId)
         val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(themeId)
         val currentMode = themeMode.value.uppercase()
-        if (!selectedTheme.isDark) {
-            preferences.setAmoledMode(false)
-        }
         if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(selectedTheme, currentMode)) {
             val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
             preferences.setThemeMode(newMode)
@@ -880,17 +817,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch { preferences.setPlaylistsLayout(layoutId) }
     fun setWaveformStyle(style: String) = viewModelScope.launch { preferences.setWaveformStyle(style) }
-    fun setAmoledMode(enabled: Boolean) = viewModelScope.launch {
-        val currentMode = themeMode.value.uppercase()
-        if (currentMode == "LIGHT" && enabled) {
-            preferences.setAmoledMode(false)
-            return@launch
-        }
-        preferences.setAmoledMode(enabled)
-        if (!enabled && currentMode == "AMOLED") {
-            preferences.setThemeMode("DARK")
-        }
-    }
     fun setAccentColorPreset(preset: String) = viewModelScope.launch {
         preferences.setAccentColorPreset(preset)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)

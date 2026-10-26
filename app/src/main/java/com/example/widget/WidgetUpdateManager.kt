@@ -16,6 +16,7 @@ import com.example.service.PlaybackState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -47,6 +48,23 @@ object WidgetUpdateManager {
 
     private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val updateMutex = Mutex()
+    private data class WidgetProgress(val context: Context, val positionMs: Long, val durationMs: Long)
+    private val progressUpdates = Channel<WidgetProgress>(Channel.CONFLATED)
+
+    init {
+        widgetScope.launch {
+            for (progress in progressUpdates) {
+                val appContext = progress.context.applicationContext
+                saveProgressSnapshotOnly(appContext, progress.positionMs, progress.durationMs)
+                val baseState = PlaybackManager.activeInstance?.playbackState?.value ?: PlaybackState()
+                val updatedState = baseState.copy(
+                    positionMs = progress.positionMs,
+                    durationMs = progress.durationMs.takeIf { it > 0L } ?: baseState.durationMs
+                )
+                updateMutex.withLock { performProgressOnlyWidgetUpdateInternal(appContext, updatedState) }
+            }
+        }
+    }
 
     @Volatile
     private var cachedIsDynamicTheme: Boolean = true
@@ -436,12 +454,6 @@ object WidgetUpdateManager {
     fun handleWidgetAction(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val appContext = context.applicationContext
-        val isAppClosed = !MainActivity.isActivityAlive
-
-        // If the app is closed, open MainActivity immediately and restore queue + execute action
-        if (isAppClosed) {
-            launchAppIfClosed(appContext, action)
-        }
 
         val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(appContext)
 
@@ -631,14 +643,7 @@ object WidgetUpdateManager {
     }
 
     fun updateWidgetsProgress(context: Context, positionMs: Long, durationMs: Long) {
-        val appContext = context.applicationContext
-        saveProgressSnapshotOnly(appContext, positionMs, durationMs)
-        val baseState = PlaybackManager.activeInstance?.playbackState?.value ?: PlaybackState()
-        val updatedState = baseState.copy(
-            positionMs = positionMs,
-            durationMs = if (durationMs > 0L) durationMs else baseState.durationMs
-        )
-        updateWidgetProgressOnly(appContext, updatedState)
+        progressUpdates.trySend(WidgetProgress(context.applicationContext, positionMs, durationMs))
     }
 
     fun updateWidgetsProgress(context: Context, state: PlaybackState) {
@@ -1148,21 +1153,8 @@ object WidgetUpdateManager {
         action: String,
         requestCode: Int
     ): PendingIntent {
-        // When the app is closed, bind widget controls directly to MainActivity via PendingIntent.getActivity
-        // so tapping ANY widget button opens the app reliably on Android 10-17 and executes the action!
-        if (!MainActivity.isActivityAlive) {
-            val activityIntent = Intent(context, MainActivity::class.java).apply {
-                this.action = action
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(EXTRA_WIDGET_ACTION, action)
-            }
-            return PendingIntent.getActivity(
-                context,
-                requestCode,
-                activityIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        }
+        // Playback controls always target the existing AppWidgetProvider/MediaSession path.
+        // Only the dedicated surface PendingIntent is allowed to launch MainActivity.
         val intent = Intent(context, providerClass).apply {
             this.action = action
         }

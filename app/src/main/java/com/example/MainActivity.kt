@@ -78,7 +78,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: MusicViewModel = viewModel()
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-            val extraDarkMode by viewModel.amoledMode.collectAsStateWithLifecycle()
             val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
             val accentColorPreset by viewModel.accentColorPreset.collectAsStateWithLifecycle()
             val customAccentColor by viewModel.customAccentColor.collectAsStateWithLifecycle()
@@ -113,7 +112,6 @@ class MainActivity : ComponentActivity() {
                 MyApplicationTheme(
                     uiTheme = uiTheme,
                     themeMode = themeMode,
-                    extraDarkMode = extraDarkMode,
                     accentColorPreset = accentColorPreset,
                     accentColor = effectiveAccentColor
                 ) {
@@ -760,6 +758,7 @@ class MainActivity : ComponentActivity() {
                                             onSyncNow = { viewModel.triggerCloudSync() },
                                             onBackupNow = { viewModel.triggerBackupNow() },
                                             onOpenAuth = { viewModel.openAuthScreen() },
+                                            onSignInGoogle = { viewModel.signInWithGoogle(this@MainActivity) },
                                             onUpdateDisplayName = { viewModel.updateUserDisplayName(it) },
                                             onUpdateAvatar = { viewModel.updateProfileAvatar(it) },
                                             onSignOut = { viewModel.signOut() },

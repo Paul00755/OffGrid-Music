@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.LruCache
 import androidx.compose.foundation.Image
@@ -44,31 +45,11 @@ object PlaylistCoverCache {
     private const val PREFS_NAME = "playlist_cover_collage_cache"
     private val customCoverMemoryCache = ConcurrentHashMap<Long, String>()
     private val collageMemoryCache = ConcurrentHashMap<Long, List<String>>()
+    private val collageSignatureCache = ConcurrentHashMap<Long, String>()
+    private val artworkFingerprintCache = ConcurrentHashMap<String, String>()
 
     private val decodedBitmapCache = object : LruCache<String, ImageBitmap>(64) {
         override fun sizeOf(key: String, value: ImageBitmap): Int = 1
-    }
-
-    @Volatile
-    private var prefsLoaded = false
-
-    private fun ensurePrefsLoaded(context: Context) {
-        if (prefsLoaded) return
-        synchronized(this) {
-            if (prefsLoaded) return
-            try {
-                val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                for ((k, v) in prefs.all) {
-                    val id = k.removePrefix("collage_").toLongOrNull() ?: continue
-                    val raw = v as? String ?: continue
-                    val list = raw.split("|").filter { it.isNotBlank() }
-                    if (list.isNotEmpty() && !collageMemoryCache.containsKey(id)) {
-                        collageMemoryCache[id] = list
-                    }
-                }
-            } catch (_: Exception) {}
-            prefsLoaded = true
-        }
     }
 
     fun getDecodedBitmap(uriStr: String): ImageBitmap? = synchronized(decodedBitmapCache) {
@@ -158,25 +139,80 @@ object PlaylistCoverCache {
         return null
     }
 
-    fun getCachedCollage(context: Context, playlistId: Long): List<String>? {
-        ensurePrefsLoaded(context)
-        return collageMemoryCache[playlistId]
+    fun getCachedCollage(playlistId: Long, signature: String): List<String>? =
+        collageMemoryCache[playlistId]?.takeIf { collageSignatureCache[playlistId] == signature }
+
+    suspend fun loadCachedCollage(context: Context, playlistId: Long, signature: String): List<String>? =
+        withContext(Dispatchers.IO) {
+            getCachedCollage(playlistId, signature)?.let { return@withContext it }
+            try {
+                val raw = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString("collage_$playlistId", null) ?: return@withContext null
+                val lines = raw.split('\n')
+                if (lines.firstOrNull() != signature) return@withContext null
+                val uris = lines.drop(1).filter(String::isNotBlank)
+                collageSignatureCache[playlistId] = signature
+                collageMemoryCache[playlistId] = uris
+                uris
+            } catch (_: Exception) { null }
+        }
+
+    fun putCachedCollage(context: Context, playlistId: Long, signature: String, uris: List<String>) {
+        if (playlistId <= 0L || signature.isBlank()) return
+        collageSignatureCache[playlistId] = signature
+        collageMemoryCache[playlistId] = uris
+        try {
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString("collage_$playlistId", (listOf(signature) + uris).joinToString("\n")).apply()
+        } catch (_: Exception) {}
     }
 
-    fun putCachedCollage(context: Context, playlistId: Long, uris: List<String>) {
-        if (playlistId > 0L && uris.isNotEmpty()) {
-            val prev = collageMemoryCache.put(playlistId, uris)
-            if (prev != uris) {
-                try {
-                    context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        .edit()
-                        .putString("collage_$playlistId", uris.joinToString("|"))
-                        .apply()
-                } catch (_: Exception) {}
+    suspend fun artworkFingerprint(context: Context, uriString: String): String? = withContext(Dispatchers.IO) {
+        if (uriString.isBlank()) return@withContext null
+        val uri = Uri.parse(uriString)
+        val file = if (uri.scheme == "file") uri.path?.let(::File) else null
+        val cacheKey = "$uriString|${file?.length() ?: 0L}|${file?.lastModified() ?: 0L}"
+        artworkFingerprintCache[cacheKey]?.let { return@withContext it }
+        try {
+            fun decode(options: BitmapFactory.Options): Bitmap? = if (file != null) {
+                if (!file.exists() || file.length() <= 0L) null else BitmapFactory.decodeFile(file.absolutePath, options)
+            } else {
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
             }
-        }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            decode(bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+            var sample = 1
+            while (bounds.outWidth / sample > 64 || bounds.outHeight / sample > 64) sample *= 2
+            val bitmap = decode(BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                ?: return@withContext null
+            try {
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                for (y in 0 until 12) for (x in 0 until 12) {
+                    val px = bitmap.getPixel(((x + 0.5f) * bitmap.width / 12).toInt().coerceIn(0, bitmap.width - 1),
+                        ((y + 0.5f) * bitmap.height / 12).toInt().coerceIn(0, bitmap.height - 1))
+                    digest.update((android.graphics.Color.red(px) shr 4).toByte())
+                    digest.update((android.graphics.Color.green(px) shr 4).toByte())
+                    digest.update((android.graphics.Color.blue(px) shr 4).toByte())
+                }
+                digest.digest().joinToString("") { "%02x".format(it) }.also {
+                    artworkFingerprintCache[cacheKey] = it
+                    if (artworkFingerprintCache.size > 2048) {
+                        artworkFingerprintCache.keys.firstOrNull()?.let(artworkFingerprintCache::remove)
+                    }
+                }
+            } finally { bitmap.recycle() }
+        } catch (_: Exception) { null }
     }
 }
+
+private data class PlaylistArtCandidate(
+    val id: Long,
+    val path: String,
+    val artworkUri: String?,
+    val contentUri: String,
+    val albumId: Long
+)
 
 @Composable
 private fun StableArtworkImage(
@@ -189,9 +225,6 @@ private fun StableArtworkImage(
     val context = LocalContext.current
     val initialBitmap = remember(uriStr) {
         PlaylistCoverCache.getDecodedBitmap(uriStr)
-            ?: if (uriStr.startsWith("file://")) {
-                PlaylistCoverCache.decodeAndCacheBitmapSync(context, uriStr, targetPx)
-            } else null
     }
     var loadedBitmap by remember(uriStr) { mutableStateOf(initialBitmap) }
 
@@ -245,79 +278,59 @@ fun PlaylistCover(
     cornerRadius: Int = 12
 ) {
     val context = LocalContext.current
-    val customArtUri = remember(playlist.id, playlist.artworkUri) {
-        PlaylistCoverCache.resolveCustomCoverSync(context, playlist.id, playlist.artworkUri)
+    var customArtUri by remember(playlist.id, playlist.artworkUri) {
+        mutableStateOf(playlist.artworkUri?.takeIf(String::isNotBlank))
     }
+    var fetchedSongs by remember(playlist.id, playlistSongs) { mutableStateOf(emptyList<String>()) }
 
-    // Synchronous initial song artworks from memory/SharedPreferences/disk cache so playlists never flash
-    val initialSongArtworks = remember(playlist.id, playlistSongs) {
-        if (playlistSongs.isNotEmpty()) {
-            val resolved = playlistSongs.take(12).mapNotNull { song ->
-                ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
-                    ?: song.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
-                    ?: song.contentUriString.takeIf { it.startsWith("http") }
-            }.distinct().take(4)
-            if (resolved.isNotEmpty()) {
-                PlaylistCoverCache.putCachedCollage(context, playlist.id, resolved)
-            }
-            resolved
-        } else {
-            PlaylistCoverCache.getCachedCollage(context, playlist.id) ?: emptyList()
+    LaunchedEffect(playlist.id, playlist.artworkUri) {
+        customArtUri = withContext(Dispatchers.IO) {
+            PlaylistCoverCache.resolveCustomCoverSync(context, playlist.id, playlist.artworkUri)
         }
     }
 
-    var fetchedSongs by remember(playlist.id) {
-        mutableStateOf(initialSongArtworks)
-    }
+    LaunchedEffect(playlist.id, playlistSongs, customArtUri) {
+        if (customArtUri != null) return@LaunchedEffect
+        val resolved = withContext(Dispatchers.IO) {
+            try {
+                val candidates = if (playlistSongs.isNotEmpty()) {
+                    playlistSongs.map { song -> PlaylistArtCandidate(song.id, song.path, song.artworkUri, song.contentUriString, song.albumId) }
+                } else {
+                    val entities = AppDatabase.getInstance(context).playlistDao().getPlaylistSongs(playlist.id).firstOrNull().orEmpty()
+                    entities.map { song -> PlaylistArtCandidate(song.id, song.path, song.artworkUri, song.contentUriString, song.albumId) }
+                }
+                val signatureInput = candidates.joinToString("\u001f") { candidate ->
+                    val sourceFile = File(candidate.path)
+                    val artFile = candidate.artworkUri?.let { raw -> Uri.parse(raw).path?.let(::File) }
+                    "${candidate.id}|${candidate.path}|${sourceFile.length()}|${sourceFile.lastModified()}|${candidate.artworkUri}|${artFile?.length() ?: 0}|${artFile?.lastModified() ?: 0}|${candidate.contentUri}|${ArtworkResolutionCache.getSongArtworkVersion(candidate.id, candidate.path)}"
+                }
+                val signature = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(signatureInput.toByteArray()).joinToString("") { "%02x".format(it) }
+                val cached = PlaylistCoverCache.loadCachedCollage(context, playlist.id, signature)
+                if (cached != null) return@withContext cached
 
-    LaunchedEffect(playlist.id, customArtUri, playlistSongs) {
-        if (customArtUri == null) {
-            if (playlistSongs.isNotEmpty()) {
-                val resolved = withContext(Dispatchers.IO) {
-                    val list = playlistSongs.take(12).mapNotNull { song ->
-                        ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
-                            ?: song.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
-                            ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, song.id, song.path, song.albumId)
-                    }.distinct().take(4)
-                    list.forEach { uri -> PlaylistCoverCache.decodeAndCacheBitmapSync(context, uri, 180) }
-                    list
+                val uniqueArt = LinkedHashMap<String, String>()
+                for (candidate in candidates) {
+                    val uri = ArtworkResolutionCache.getMemory(candidate.id, candidate.path)
+                        ?: ArtworkResolutionCache.getOrCheckDisk(context, candidate.id, candidate.path)
+                        ?: candidate.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
+                        ?: candidate.contentUri.takeIf { it.startsWith("http") }
+                        ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, candidate.id, candidate.path, candidate.albumId)
+                        ?: continue
+                    val fingerprint = PlaylistCoverCache.artworkFingerprint(context, uri) ?: "uri:${uri.trim().lowercase()}"
+                    uniqueArt.putIfAbsent(fingerprint, uri)
+                    if (uniqueArt.size == 4) break
                 }
-                if (resolved.isNotEmpty()) {
-                    PlaylistCoverCache.putCachedCollage(context, playlist.id, resolved)
-                    if (fetchedSongs != resolved) {
-                        fetchedSongs = resolved
-                    }
-                }
-            } else {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val db = AppDatabase.getInstance(context)
-                        val entities = db.playlistDao().getPlaylistSongs(playlist.id).firstOrNull() ?: emptyList()
-                        val arts = entities.take(12).mapNotNull {
-                            ArtworkResolutionCache.getOrCheckDisk(context, it.id, it.path)
-                                ?: it.artworkUri?.takeIf { u -> u.isNotBlank() && !u.contains("audio/albumart") }
-                                ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, it.id, it.path, it.albumId)
-                        }.distinct().take(4)
-                        arts.forEach { uri -> PlaylistCoverCache.decodeAndCacheBitmapSync(context, uri, 180) }
-                        if (arts.isNotEmpty()) {
-                            PlaylistCoverCache.putCachedCollage(context, playlist.id, arts)
-                            withContext(Dispatchers.Main) {
-                                if (fetchedSongs != arts) {
-                                    fetchedSongs = arts
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
+                val selected = uniqueArt.values.toList()
+                selected.forEach { uri -> PlaylistCoverCache.decodeAndCacheBitmapSync(context, uri, 180) }
+                PlaylistCoverCache.putCachedCollage(context, playlist.id, signature, selected)
+                selected
+            } catch (_: Exception) { emptyList() }
         }
     }
 
-    val songArtworks = if (fetchedSongs.size >= initialSongArtworks.size && fetchedSongs.isNotEmpty()) {
-        fetchedSongs
-    } else {
-        initialSongArtworks
-    }
+    val songArtworks = fetchedSongs
+    val displayedCustomArtUri = customArtUri
 
     val shape = RoundedCornerShape(cornerRadius.dp)
 
@@ -345,9 +358,9 @@ fun PlaylistCover(
     ) {
         when {
             // 1. User-selected custom playlist artwork (instant synchronous decoded bitmap, zero flicker)
-            customArtUri != null -> {
+            displayedCustomArtUri != null -> {
                 StableArtworkImage(
-                    uriStr = customArtUri,
+                    uriStr = displayedCustomArtUri,
                     contentDescription = playlist.name,
                     targetPx = 320,
                     cacheKeyPrefix = "pl_cover_${playlist.id}",

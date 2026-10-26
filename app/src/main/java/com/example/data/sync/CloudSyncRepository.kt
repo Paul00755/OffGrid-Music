@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -79,6 +81,7 @@ class CloudSyncRepository(
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val authStateMutex = Mutex()
     private var activeSyncJob: Job? = null
 
     private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
@@ -107,6 +110,7 @@ class CloudSyncRepository(
     private val playlistMetaPrefs by lazy {
         context.getSharedPreferences("playlist_sync_meta", Context.MODE_PRIVATE)
     }
+    private val lyricsDao by lazy { AppDatabase.getInstance(context).lyricsDao() }
 
     private fun getLocalPlaylistUpdatedAt(playlistId: Long): Long {
         return try {
@@ -191,8 +195,7 @@ class CloudSyncRepository(
     /**
      * Called when authentication state changes or user signs in/out.
      */
-    fun onAuthStateChanged(newUid: String?) {
-        scope.launch {
+    private suspend fun prepareAuthState(newUid: String?): Boolean = authStateMutex.withLock {
             val authUser = auth?.currentUser
             val authoritativeUid = authUser?.uid?.takeIf { it.isNotBlank() } ?: newUid?.takeIf { it.isNotBlank() }
             val lastUid = userPreferences.getLastActiveUid()
@@ -215,7 +218,7 @@ class CloudSyncRepository(
                     clearAccountOwnedLocalData()
                 }
                 Log.d(TAG, "Cloud sync stopped: guest/local state active")
-                return@launch
+                return@withLock false
             }
 
             if (!lastUid.isNullOrBlank() && lastUid != authoritativeUid) {
@@ -229,11 +232,21 @@ class CloudSyncRepository(
                 clearAccountOwnedLocalData()
             }
 
-            val shouldTriggerSync = activeUid != authoritativeUid || activeSyncJob?.isActive != true
             activeUid = authoritativeUid
             userPreferences.setLastActiveUid(authoritativeUid)
-            if (shouldTriggerSync) {
-                Log.d(TAG, "Cloud sync initialized for user: $authoritativeUid")
+            true
+    }
+
+    /** Observe account changes for isolation and cleanup only; app startup never downloads cloud state. */
+    fun onAuthStateChanged(newUid: String?) {
+        scope.launch { prepareAuthState(newUid) }
+    }
+
+    /** The single automatic sync path: a successful Google or email/password sign-in. */
+    fun onSuccessfulSignIn(uid: String) {
+        if (uid.isBlank()) return
+        scope.launch {
+            if (prepareAuthState(uid) && getCurrentUid() == uid) {
                 triggerFullSync(isInitialLogin = true)
             }
         }
@@ -288,12 +301,14 @@ class CloudSyncRepository(
                     if (payload.version >= 2 && cloudPlaylistHistory.size < payload.playlistPlayEventCount) {
                         throw IllegalStateException("Cloud playlist history is incomplete; local data was left unchanged")
                     }
+                    val cloudLyrics = if (payload.version >= 3) fetchCloudLyrics(uid, payload, fs) else emptyList()
                     Log.d(TAG, "Restoring authoritative backup snapshot for user $uid")
                     restoreFromBackupSnapshot(
                         uid,
                         latestBackupData,
                         cloudHistory = cloudHistory,
-                        cloudPlaylistHistory = cloudPlaylistHistory
+                        cloudPlaylistHistory = cloudPlaylistHistory,
+                        cloudLyrics = cloudLyrics
                     )
                 } else {
                     // The first-login migration policy remains in place for accounts without a snapshot.
@@ -1007,6 +1022,73 @@ class CloudSyncRepository(
         }
     }
 
+    private fun cloudLyricsItemsRef(uid: String, snapshotId: String, fs: FirebaseFirestore) =
+        fs.collection(USERS_COLLECTION).document(uid)
+            .collection("lyrics_snapshots").document(snapshotId).collection("items")
+
+    private suspend fun writeCloudLyricsSnapshot(
+        uid: String,
+        snapshotId: String,
+        entries: List<CloudLyricsEntry>,
+        fs: FirebaseFirestore
+    ) {
+        val ref = cloudLyricsItemsRef(uid, snapshotId, fs)
+        var batch = fs.batch()
+        var count = 0
+        for (entry in entries) {
+            if (entry.songSignature.isBlank()) throw IllegalStateException("Lyrics snapshot contains an unidentified track")
+            val data = entry.toMap()
+            if (data.toString().toByteArray(Charsets.UTF_8).size > 850 * 1024) {
+                throw IllegalStateException("A lyrics record exceeds Firestore's safe document size")
+            }
+            batch.set(ref.document(sha256(entry.songSignature)), data)
+            count++
+            if (count >= 400) {
+                batch.commit().await()
+                batch = fs.batch()
+                count = 0
+            }
+        }
+        if (count > 0) batch.commit().await()
+
+        val verified = ref.get(Source.SERVER).await().documents
+        val expectedIds = entries.map { sha256(it.songSignature) }.toSet()
+        if (verified.size != entries.size || verified.map { it.id }.toSet() != expectedIds ||
+            verified.any { it.getString("songSignature").isNullOrBlank() }) {
+            throw IllegalStateException("Lyrics snapshot could not be verified; the previous cloud snapshot was kept")
+        }
+    }
+
+    private suspend fun fetchCloudLyrics(
+        uid: String,
+        payload: UserBackupPayload,
+        fs: FirebaseFirestore
+    ): List<CloudLyricsEntry> {
+        if (payload.version < 3 || !payload.lyricsStoredSeparately || payload.lyricsSnapshotId.isBlank()) return emptyList()
+        val docs = cloudLyricsItemsRef(uid, payload.lyricsSnapshotId, fs).get(Source.SERVER).await().documents
+        if (docs.size != payload.lyricsCount) {
+            throw IllegalStateException("Cloud lyrics snapshot is incomplete; local lyrics were left unchanged")
+        }
+        val entries = docs.map { doc ->
+            val data = doc.data ?: throw IllegalStateException("Cloud lyrics record ${doc.id} is unreadable")
+            val entry = CloudLyricsEntry.fromMap(data)
+            if (entry.songSignature.isBlank() || doc.id != sha256(entry.songSignature) ||
+                (entry.plainLyrics.isNullOrBlank() && entry.syncedLyricsJson.isNullOrBlank())) {
+                throw IllegalStateException("Cloud lyrics record ${doc.id} is incomplete")
+            }
+            entry
+        }
+        if (entries.map { it.songSignature }.distinct().size != entries.size) {
+            throw IllegalStateException("Cloud lyrics snapshot contains duplicate track identities")
+        }
+        val lyricsHash = sha256(entries.map { it.toMap().toSortedMap() }
+            .sortedBy { it["songSignature"].toString() }.toString())
+        if (lyricsHash != payload.lyricsSnapshotId) {
+            throw IllegalStateException("Cloud lyrics snapshot failed its integrity check")
+        }
+        return entries
+    }
+
     private fun stableHistorySessionId(history: PlaybackHistoryEntity, songSignature: String): String {
         if (history.sessionId.isNotBlank()) return history.sessionId
         val eventIdentity = listOf(
@@ -1299,7 +1381,8 @@ class CloudSyncRepository(
         uid: String,
         data: Map<String, Any?>,
         cloudHistory: List<CloudPlaybackEvent>,
-        cloudPlaylistHistory: List<CloudPlaylistPlayEvent>
+        cloudPlaylistHistory: List<CloudPlaylistPlayEvent>,
+        cloudLyrics: List<CloudLyricsEntry>
     ) = withContext(Dispatchers.IO) {
         if (getCurrentUid() != uid) throw CancellationException("Account changed before snapshot restore")
         val payload = UserBackupPayload.fromMap(data)
@@ -1318,6 +1401,8 @@ class CloudSyncRepository(
 
         val allSongs = songDao.getAllSongsOnce()
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
+        val uniqueSongsBySig = allSongs.groupBy { SongIdentityHelper.computeSignature(it) }
+            .filterValues { it.size == 1 }.mapValues { it.value.single() }
         val songsByNormKey = allSongs.groupBy {
             "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
         }
@@ -1460,11 +1545,38 @@ class CloudSyncRepository(
             if (searches.isNotEmpty()) dao.insertSearchesBatch(searches)
         }
 
-        val offsetsBySignature = payload.lyricsOffsets.associateBy { it.songSignature }
-        val offsetsBySongId = allSongs.mapNotNull { song ->
-            offsetsBySignature[SongIdentityHelper.computeSignature(song)]?.let { song.id to it.offsetMs }
+        val matchedOffsetSongIds = payload.lyricsOffsets.mapNotNull { offset ->
+            uniqueSongsBySig[offset.songSignature]?.id
+        }.toSet()
+        val offsetsBySongId = payload.lyricsOffsets.mapNotNull { offset ->
+            uniqueSongsBySig[offset.songSignature]?.let { it.id to offset.offsetMs }
         }.toMap()
-        userPreferences.applyLyricsSyncOffsets(offsetsBySongId, replace = true)
+        val offsetTimestampsBySongId = payload.lyricsOffsets.mapNotNull { offset ->
+            uniqueSongsBySig[offset.songSignature]?.let { it.id to offset.updatedAt }
+        }.toMap()
+        userPreferences.applyLyricsSyncOffsets(
+            offsetsBySongId,
+            clearSongIds = matchedOffsetSongIds,
+            timestampsBySongId = offsetTimestampsBySongId
+        )
+
+        val localLyricsBySongId = lyricsDao.getAllLyricsOnce().associateBy { it.songId }
+        for (entry in cloudLyrics) {
+            val song = uniqueSongsBySig[entry.songSignature] ?: continue
+            val local = localLyricsBySongId[song.id]
+            // Keep locally edited lyrics if they are newer than the last explicit cloud snapshot.
+            if (local != null && local.updatedAt > entry.updatedAt) continue
+            lyricsDao.insertLyrics(
+                LyricsEntity(
+                    songId = song.id,
+                    plainLyrics = entry.plainLyrics,
+                    syncedLyricsJson = entry.syncedLyricsJson,
+                    isCached = entry.isCached,
+                    source = entry.source,
+                    updatedAt = entry.updatedAt
+                )
+            )
+        }
         Log.i(TAG, "Restored authoritative snapshot successfully")
     }
 
@@ -1790,14 +1902,31 @@ class CloudSyncRepository(
                 storyHighlights = topArtists.take(3)
             )
 
+            val uniqueSongSignatures = allSongs.groupBy { SongIdentityHelper.computeSignature(it) }
+                .filterValues { it.size == 1 }.keys
             val localLyricsOffsets = userPreferences.getAllLyricsSyncOffsets()
             val lyricsOffsets = allSongs.mapNotNull { song ->
+                val signature = SongIdentityHelper.computeSignature(song)
+                if (signature !in uniqueSongSignatures) return@mapNotNull null
                 val offset = localLyricsOffsets[song.id] ?: 0L
-                if (offset == 0L) null else CloudLyricsOffset(
-                    songSignature = SongIdentityHelper.computeSignature(song),
-                    offsetMs = offset
-                )
+                val updatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                if (offset == 0L && updatedAt == 0L) null else CloudLyricsOffset(signature, offset, updatedAt)
             }
+            val songsById = allSongs.associateBy { it.id }
+            val cloudLyrics = lyricsDao.getAllLyricsOnce().mapNotNull { lyrics ->
+                val song = songsById[lyrics.songId] ?: return@mapNotNull null
+                val signature = SongIdentityHelper.computeSignature(song)
+                if (signature !in uniqueSongSignatures ||
+                    (lyrics.plainLyrics.isNullOrBlank() && lyrics.syncedLyricsJson.isNullOrBlank())) return@mapNotNull null
+                CloudLyricsEntry(
+                    songSignature = signature,
+                    plainLyrics = lyrics.plainLyrics,
+                    syncedLyricsJson = lyrics.syncedLyricsJson,
+                    isCached = lyrics.isCached,
+                    source = lyrics.source,
+                    updatedAt = lyrics.updatedAt
+                )
+            }.associateBy { it.songSignature }.values.toList()
 
             val rawHashSource = listOf(
                 currentSettings.toMap().toSortedMap(),
@@ -1807,10 +1936,13 @@ class CloudSyncRepository(
                 recentSearchesList.map { it.toMap().toSortedMap() }.sortedBy { it["query"].toString() },
                 smartPlaylistsList.map { it.toMap().toSortedMap() }.sortedBy { it["name"].toString() },
                 lyricsOffsets.map { it.toMap().toSortedMap() }.sortedBy { it["songSignature"].toString() },
+                cloudLyrics.map { it.toMap().toSortedMap() }.sortedBy { it["songSignature"].toString() },
                 fullHistory.map { it.toMap().toSortedMap() }.sortedBy { it["sessionId"].toString() },
                 fullPlaylistHistory.map { it.toMap().toSortedMap() }.sortedBy { it["eventId"].toString() }
             ).toString()
             val dataHash = sha256(rawHashSource)
+            val lyricsSnapshotId = sha256(cloudLyrics.map { it.toMap().toSortedMap() }
+                .sortedBy { it["songSignature"].toString() }.toString())
 
             val lastHash = userPreferences.lastBackupDataHash.firstOrNull()
             val now = System.currentTimeMillis()
@@ -1828,7 +1960,7 @@ class CloudSyncRepository(
             }
 
             val payload = UserBackupPayload(
-                version = 2,
+                version = 3,
                 ownerUid = uid,
                 snapshotComplete = true,
                 historyStoredSeparately = true,
@@ -1848,6 +1980,9 @@ class CloudSyncRepository(
                 smartPlaylists = smartPlaylistsList,
                 lyricsOffsetsCount = lyricsOffsets.size,
                 lyricsOffsets = lyricsOffsets,
+                lyricsStoredSeparately = true,
+                lyricsSnapshotId = lyricsSnapshotId,
+                lyricsCount = cloudLyrics.size,
                 playlistPlayEventCount = fullPlaylistHistory.size,
                 playlistPlayEventsStoredSeparately = true,
                 historyCount = fullHistory.size,
@@ -1906,6 +2041,9 @@ class CloudSyncRepository(
             if (!verifiedPlaylistHistoryIds.containsAll(fullPlaylistHistory.map { it.eventId })) {
                 throw IllegalStateException("Playlist history could not be fully verified; the previous snapshot was kept")
             }
+
+            if (getCurrentUid() != uid) throw CancellationException("Account changed before lyrics snapshot publication")
+            writeCloudLyricsSnapshot(uid, lyricsSnapshotId, cloudLyrics, fs)
 
             if (getCurrentUid() != uid) throw CancellationException("Account changed before snapshot publication")
             stagingDoc.set(payloadMap).await()
@@ -2011,20 +2149,6 @@ class CloudSyncRepository(
         scope.launch {
             try {
                 matchAndApplyCloudFavoritesToRoom()
-                val uid = getCurrentUid()
-                val fs = firestore
-                if (uid != null && fs != null) {
-                    val latest = fs.collection(USERS_COLLECTION).document(uid).collection("backup")
-                        .document("latest").get(Source.SERVER).await()
-                    if (latest.exists()) {
-                        val data = latest.data
-                            ?: throw IllegalStateException("Cloud snapshot is unreadable; local playlists were left unchanged")
-                        refreshPlaylistSongsFromSnapshot(uid, data)
-                    } else {
-                        syncPlaylists(uid, fs)
-                    }
-                    syncCloudPlaylistPlayEvents(uid, fs)
-                }
                 relinkHistoryAndRecomputePlayStats()
             } catch (e: Exception) {
                 Log.w(TAG, "Error in post-scan sync hook: ${e.message}")

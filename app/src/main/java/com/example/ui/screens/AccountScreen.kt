@@ -50,13 +50,14 @@ fun AccountScreen(
     backupStatus: com.example.data.sync.BackupStatus = com.example.data.sync.BackupStatus.Idle,
     lastSyncedTimestamp: Long = 0L,
     lastBackupTimestamp: Long = 0L,
-    automaticBackupEnabled: Boolean = false,
+    automaticBackupEnabled: Boolean = true,
     backupFrequency: com.example.data.sync.BackupFrequency = com.example.data.sync.BackupFrequency.WEEKLY,
     onToggleAutomaticBackup: (Boolean) -> Unit = {},
     onSelectFrequency: (com.example.data.sync.BackupFrequency) -> Unit = {},
     onSyncNow: () -> Unit = {},
     onBackupNow: () -> Unit = {},
     onOpenAuth: () -> Unit = {},
+    onSignInGoogle: () -> Unit = onOpenAuth,
     onUpdateDisplayName: (String) -> Unit,
     onUpdateAvatar: (String?) -> Unit,
     onSignOut: () -> Unit,
@@ -337,7 +338,8 @@ fun AccountScreen(
                 onSyncNow = onSyncNow,
                 onBackupNow = onBackupNow,
                 isUserSignedIn = userAccount != null,
-                onOpenAuth = onOpenAuth
+                onOpenAuth = onOpenAuth,
+                onSignInGoogle = onSignInGoogle
             )
 
             Spacer(modifier = Modifier.height(20.dp))

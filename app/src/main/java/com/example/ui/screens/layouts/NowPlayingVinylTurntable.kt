@@ -34,6 +34,7 @@ import com.example.ui.components.AlbumArtView
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
 import com.example.util.HapticUtils
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +58,7 @@ fun NowPlayingVinylTurntable(
     onOpenOptionsMenu: () -> Unit = {},
     waveformStyle: String = "SNAKE",
     gesturePlaybackEnabled: Boolean = true,
+    playbackPositionFlow: StateFlow<Long>? = null,
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -81,13 +83,7 @@ fun NowPlayingVinylTurntable(
         0f
     }
 
-    var isSeeking by remember(song.id) { mutableStateOf(false) }
-    var seekPosition by remember(song.id) { mutableFloatStateOf(0f) }
-
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
-    val safePos = positionMs.coerceIn(0L, duration)
-    val currentPos = if (isSeeking) seekPosition.toLong() else safePos
-    val sliderValue = (currentPos.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
     fun formatTime(ms: Long): String {
         val totalSecs = (ms / 1000).coerceAtLeast(0)
@@ -277,12 +273,13 @@ fun NowPlayingVinylTurntable(
             ) {
                 com.example.ui.components.NowPlayingWaveformVisualizer(
                     trackId = song.id,
-                    progressMs = currentPos,
+                    progressMs = positionMs,
                     durationMs = duration,
                     isPlaying = playbackState.isPlaying,
                     style = waveformStyle,
                     accentColor = BentoPrimary,
                     onSeekTo = onSeekTo,
+                    playbackPositionFlow = playbackPositionFlow,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp)
@@ -291,7 +288,7 @@ fun NowPlayingVinylTurntable(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatTime(currentPos), fontSize = 11.5.sp, color = BentoTextSecondary)
+                    com.example.ui.components.PlaybackPositionText(playbackPositionFlow, positionMs, duration, fontSize = 11.5.sp, color = BentoTextSecondary)
                     Text(formatTime(duration), fontSize = 11.5.sp, color = BentoTextSecondary)
                 }
             }

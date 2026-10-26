@@ -40,7 +40,6 @@ fun SettingsTabRoute(
     val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
     val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
-    val extraDarkMode by viewModel.amoledMode.collectAsState()
     val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
     val normalizeAudio by viewModel.normalizeAudio.collectAsState()
     val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
@@ -109,8 +108,6 @@ fun SettingsTabRoute(
         onSetWaveformStyle = { viewModel.setWaveformStyle(it) },
         themeMode = themeMode,
         onSetThemeMode = { viewModel.setThemeMode(it) },
-        extraDarkMode = extraDarkMode,
-        onSetExtraDarkMode = { viewModel.setAmoledMode(it) },
         uiTheme = uiTheme,
         onSetUiTheme = { viewModel.setUiTheme(it) },
         displayScale = viewModel.displayScale.collectAsState().value,
@@ -259,6 +256,7 @@ fun SettingsTabRoute(
         onSignOut = { viewModel.signOut() },
         onOpenAccount = { viewModel.openAccountScreen() },
         onOpenAuth = { viewModel.openAuthScreen() },
+        onSignInGoogle = { activity?.let { viewModel.signInWithGoogle(it) } ?: viewModel.openAuthScreen() },
         initialTargetSection = viewModel.settingsTargetSection.collectAsState().value
     )
 }

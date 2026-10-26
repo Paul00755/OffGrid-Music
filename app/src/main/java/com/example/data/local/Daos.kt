@@ -462,6 +462,9 @@ data class SongPlayStatAggregation(
 
 @Dao
 interface LyricsDao {
+    @Query("SELECT * FROM lyrics")
+    suspend fun getAllLyricsOnce(): List<LyricsEntity>
+
     @Query("SELECT * FROM lyrics WHERE songId = :songId")
     suspend fun getLyricsForSong(songId: Long): LyricsEntity?
 

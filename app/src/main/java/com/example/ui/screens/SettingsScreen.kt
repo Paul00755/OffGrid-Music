@@ -496,8 +496,6 @@ fun SettingsScreen(
     onSetWaveformStyle: (String) -> Unit = {},
     themeMode: String = "DARK",
     onSetThemeMode: (String) -> Unit = {},
-    extraDarkMode: Boolean = false,
-    onSetExtraDarkMode: (Boolean) -> Unit = {},
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     onSetUiTheme: (String) -> Unit = {},
     displayScale: String = "DEFAULT",
@@ -636,7 +634,7 @@ fun SettingsScreen(
     backupStatus: com.example.data.sync.BackupStatus = com.example.data.sync.BackupStatus.Idle,
     lastSyncedTimestamp: Long = 0L,
     lastBackupTimestamp: Long = 0L,
-    automaticBackupEnabled: Boolean = false,
+    automaticBackupEnabled: Boolean = true,
     backupFrequency: com.example.data.sync.BackupFrequency = com.example.data.sync.BackupFrequency.WEEKLY,
     onToggleAutomaticBackup: (Boolean) -> Unit = {},
     onSelectFrequency: (com.example.data.sync.BackupFrequency) -> Unit = {},
@@ -645,6 +643,7 @@ fun SettingsScreen(
     onSignOut: () -> Unit = {},
     onOpenAccount: () -> Unit = {},
     onOpenAuth: () -> Unit = {},
+    onSignInGoogle: () -> Unit = onOpenAuth,
     onBackClick: () -> Unit = {},
     initialTargetSection: String? = null,
     modifier: Modifier = Modifier
@@ -2483,9 +2482,6 @@ fun SettingsScreen(
                                         isSelected = isSelected,
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
-                                            if (!theme.isDark) {
-                                                onSetExtraDarkMode(false)
-                                            }
                                             onSetUiTheme(theme.id)
                                         }
                                     )
@@ -2602,14 +2598,7 @@ fun SettingsScreen(
 
                         SettingsDivider()
 
-                        // 3. Display Mode Selection (Dark / Light / AMOLED / System) & Extra Dark Mode
-                        val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
-                        val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme)
-                        val isDarkThemeActive = !themeMode.equals("LIGHT", ignoreCase = true) &&
-                            !(themeMode.equals("SYSTEM", ignoreCase = true) && !isSystemDark) &&
-                            currentTheme.isDark
-                        val isExtraDarkActive = (extraDarkMode || themeMode.equals("AMOLED", ignoreCase = true)) && isDarkThemeActive
-
+                        // 3. Display Mode Selection (Dark / Light / AMOLED / System)
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                             SettingsSegmentedSelector(
@@ -2622,158 +2611,11 @@ fun SettingsScreen(
                                 selectedOption = themeMode.uppercase(),
                                 onSelectOption = { newMode ->
                                     HapticUtils.performClickHaptic(context)
-                                    if (newMode.equals("LIGHT", ignoreCase = true)) {
-                                        onSetExtraDarkMode(false)
-                                    } else if (newMode.equals("AMOLED", ignoreCase = true)) {
-                                        onSetExtraDarkMode(true)
-                                    }
-                                    if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, newMode, isSystemDark)) {
-                                        val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(newMode, isSystemDark)
-                                        onSetUiTheme(fallback.id)
-                                    }
                                     onSetThemeMode(newMode)
                                 },
                                 accentColor = Color(0xFFBB86FC)
                             )
 
-                            // Issue #7 Requirement: "Extra Dark Mode" option under UI & Theme
-                            // Turns on only when Dark Theme is selected; automatically turns off when Light Theme is selected;
-                            // ensures all UI cards, borders, and texts remain crisp and visible across the entire app.
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.14f) else BentoCardPurple.copy(alpha = 0.65f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.5f)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        HapticUtils.performClickHaptic(context)
-                                        if (!isDarkThemeActive) {
-                                            onSetExtraDarkMode(false)
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "Extra Dark Mode requires Dark Theme. Switch from Light to Dark Theme first.",
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
-                                        } else {
-                                            val nextVal = !isExtraDarkActive
-                                            onSetExtraDarkMode(nextVal)
-                                            if (!nextVal && themeMode.equals("AMOLED", ignoreCase = true)) {
-                                                onSetThemeMode("DARK")
-                                            }
-                                        }
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(38.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(
-                                                    if (isExtraDarkActive) Color(0xFFBB86FC).copy(alpha = 0.22f)
-                                                    else BentoCardSurface
-                                                )
-                                                .border(
-                                                    1.dp,
-                                                    if (isExtraDarkActive) Color(0xFFBB86FC) else BentoBorder,
-                                                    RoundedCornerShape(10.dp)
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.DarkMode,
-                                                contentDescription = "Extra Dark Mode",
-                                                tint = if (isExtraDarkActive) Color(0xFFBB86FC) else BentoTextSecondary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Extra Dark Mode",
-                                                    fontSize = 14.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BentoTextPrimary
-                                                )
-                                                Surface(
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    color = if (!isDarkThemeActive) {
-                                                        BentoBorder.copy(alpha = 0.4f)
-                                                    } else if (isExtraDarkActive) {
-                                                        Color(0xFFBB86FC).copy(alpha = 0.22f)
-                                                    } else {
-                                                        BentoCardSurface
-                                                    }
-                                                ) {
-                                                    Text(
-                                                        text = when {
-                                                            !isDarkThemeActive -> "Dark Theme Only"
-                                                            isExtraDarkActive -> "Active"
-                                                            else -> "OLED Ready"
-                                                        },
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = if (isExtraDarkActive) Color(0xFFBB86FC) else BentoTextSecondary,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                            Text(
-                                                text = if (!isDarkThemeActive) {
-                                                    "Disabled while Light Theme is selected • Automatically turns off in Light Theme"
-                                                } else if (isExtraDarkActive) {
-                                                    "True pitch-black #000000 canvas with high-contrast borders & legible text across all screens"
-                                                } else {
-                                                    "Apply pitch-black surfaces with luminous borders across the app when Dark Theme is active"
-                                                },
-                                                fontSize = 11.5.sp,
-                                                color = BentoTextSecondary,
-                                                lineHeight = 15.sp
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    Switch(
-                                        checked = isExtraDarkActive,
-                                        enabled = isDarkThemeActive,
-                                        onCheckedChange = { checked ->
-                                            HapticUtils.performClickHaptic(context)
-                                            if (!isDarkThemeActive) {
-                                                onSetExtraDarkMode(false)
-                                            } else {
-                                                onSetExtraDarkMode(checked)
-                                                if (!checked && themeMode.equals("AMOLED", ignoreCase = true)) {
-                                                    onSetThemeMode("DARK")
-                                                }
-                                            }
-                                        },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = Color.Black,
-                                            checkedTrackColor = Color(0xFFBB86FC),
-                                            uncheckedThumbColor = BentoTextSecondary,
-                                            uncheckedTrackColor = BentoCardSurface
-                                        )
-                                    )
-                                }
-                            }
                         }
 
                         SettingsDivider()
@@ -4383,14 +4225,15 @@ fun SettingsScreen(
                             onSyncNow = onTriggerSync,
                             onBackupNow = onTriggerBackup,
                             isUserSignedIn = userAccount != null,
-                            onOpenAuth = onOpenAuth
+                            onOpenAuth = onOpenAuth,
+                            onSignInGoogle = onSignInGoogle
                         )
 
                         SettingsDivider()
 
                         // What gets synced summary tiles
                         Text(
-                            text = "AUTOMATICALLY SYNCHRONIZED",
+                            text = "INCLUDED IN CLOUD BACKUP & SYNC",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextSubtle,

@@ -217,7 +217,8 @@ data class LyricsEntity(
     val plainLyrics: String? = null,
     val syncedLyricsJson: String? = null,
     val isCached: Boolean = true,
-    val source: String = "local"
+    val source: String = "local",
+    val updatedAt: Long = System.currentTimeMillis()
 ) {
     fun toDomainModel(): Lyrics = Lyrics(
         songId = songId,

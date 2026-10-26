@@ -26,7 +26,6 @@ class MusicRepository(
     private val smartPlaylistDao: SmartPlaylistDao,
     private val libraryScanner: LibraryScanner
 ) {
-    var cloudSyncRepository: com.example.data.sync.CloudSyncRepository? = null
 
     val allSongs: Flow<List<Song>> = songDao.getAllSongs()
         .distinctUntilChanged()
@@ -170,7 +169,6 @@ class MusicRepository(
         try {
             val song = if (songId > 0) songDao.getSongById(songId)?.toDomainModel() else if (path.isNotBlank()) songDao.getSongByPath(path)?.toDomainModel() else null
             if (song != null) {
-                cloudSyncRepository?.onFavoriteChangedAsync(song, isFavorite)
             }
         } catch (_: Exception) {}
     }
@@ -226,20 +224,6 @@ class MusicRepository(
             songDao.recordPlay(trackId, startedAt)
         }
 
-        try {
-            val song = songDao.getSongById(trackId)?.toDomainModel()
-            cloudSyncRepository?.onPlaybackSessionRecordedAsync(
-                sessionId = sessionId,
-                trackId = trackId,
-                startedAt = startedAt,
-                endedAt = endedAt,
-                listenedDurationMs = listenedDurationMs,
-                sourceContext = sourceContext,
-                completionPercentage = completionPercentage,
-                isQualified = isNowQualified,
-                song = song
-            )
-        } catch (_: Exception) {}
     }
 
     suspend fun clearRecentlyPlayedHistory() {
@@ -530,21 +514,8 @@ class MusicRepository(
         libraryScanner.refreshDirectoryObservers()
     }
 
-    private fun notifyPlaylistUpdated(playlistId: Long) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val pl = playlistDao.getPlaylistById(playlistId)
-                if (pl != null) {
-                    val songs = playlistDao.getPlaylistSongsOnce(playlistId).map { it.toDomainModel() }
-                    cloudSyncRepository?.onPlaylistUpdatedAsync(playlistId, pl.name, pl.isPinned, songs)
-                }
-            } catch (_: Exception) {}
-        }
-    }
-
     suspend fun createPlaylist(name: String): Long {
         val id = playlistDao.insertPlaylist(PlaylistEntity(name = name))
-        notifyPlaylistUpdated(id)
         return id
     }
 
@@ -593,7 +564,6 @@ class MusicRepository(
             if (crossRefs.isNotEmpty()) {
                 playlistDao.updatePlaylistOrder(playlistId, crossRefs)
             }
-            notifyPlaylistUpdated(playlistId)
             results.add(playlistId to combinedUniqueIds.size)
         }
         results
@@ -601,7 +571,6 @@ class MusicRepository(
 
     suspend fun renamePlaylist(playlistId: Long, newName: String) {
         playlistDao.renamePlaylist(playlistId, newName)
-        notifyPlaylistUpdated(playlistId)
     }
 
     suspend fun deletePlaylist(playlistId: Long) {
@@ -625,13 +594,11 @@ class MusicRepository(
             val count = playlistDao.getPlaylistSongCount(playlistId)
             playlistDao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, songId, count))
         }
-        notifyPlaylistUpdated(playlistId)
         return true
     }
 
     suspend fun removeSongFromPlaylist(playlistId: Long, songId: Long) {
         playlistDao.deletePlaylistSong(playlistId, songId)
-        notifyPlaylistUpdated(playlistId)
     }
 
     suspend fun getPlaylistsContainingSong(songId: Long): List<Playlist> {
@@ -665,7 +632,6 @@ class MusicRepository(
                 PlaylistSongCrossRef(playlistId, songId, index)
             }
             playlistDao.insertPlaylistSongs(crossRefs)
-            notifyPlaylistUpdated(playlistId)
         }
 
         return removedCount
@@ -685,7 +651,6 @@ class MusicRepository(
             }
         }
         playlistDao.updatePlaylistOrder(playlistId, crossRefs)
-        notifyPlaylistUpdated(playlistId)
     }
 
     fun searchSongs(query: String): Flow<List<Song>> {

@@ -172,6 +172,9 @@ data class UserBackupPayload(
     val smartPlaylists: List<CloudSmartPlaylist> = emptyList(),
     val lyricsOffsetsCount: Int = 0,
     val lyricsOffsets: List<CloudLyricsOffset> = emptyList(),
+    val lyricsStoredSeparately: Boolean = false,
+    val lyricsSnapshotId: String = "",
+    val lyricsCount: Int = 0,
     val playlistPlayEventCount: Int = 0,
     val playlistPlayEventsStoredSeparately: Boolean = false,
     val historyCount: Int = 0,
@@ -201,6 +204,9 @@ data class UserBackupPayload(
         "smartPlaylists" to smartPlaylists.map { it.toMap() },
         "lyricsOffsetsCount" to lyricsOffsetsCount,
         "lyricsOffsets" to lyricsOffsets.map { it.toMap() },
+        "lyricsStoredSeparately" to lyricsStoredSeparately,
+        "lyricsSnapshotId" to lyricsSnapshotId,
+        "lyricsCount" to lyricsCount,
         "playlistPlayEventCount" to playlistPlayEventCount,
         "playlistPlayEventsStoredSeparately" to playlistPlayEventsStoredSeparately,
         "historyCount" to historyCount,
@@ -233,6 +239,9 @@ data class UserBackupPayload(
             smartPlaylists = (map["smartPlaylists"] as? List<Map<String, Any?>>)?.map { CloudSmartPlaylist.fromMap(it) } ?: emptyList(),
             lyricsOffsetsCount = (map["lyricsOffsetsCount"] as? Number)?.toInt() ?: 0,
             lyricsOffsets = (map["lyricsOffsets"] as? List<Map<String, Any?>>)?.map { CloudLyricsOffset.fromMap(it) } ?: emptyList(),
+            lyricsStoredSeparately = map["lyricsStoredSeparately"] as? Boolean ?: false,
+            lyricsSnapshotId = map["lyricsSnapshotId"] as? String ?: "",
+            lyricsCount = (map["lyricsCount"] as? Number)?.toInt() ?: 0,
             playlistPlayEventCount = (map["playlistPlayEventCount"] as? Number)?.toInt() ?: 0,
             playlistPlayEventsStoredSeparately = map["playlistPlayEventsStoredSeparately"] as? Boolean ?: false,
             historyCount = (map["historyCount"] as? Number)?.toInt() ?: 0,
@@ -244,7 +253,7 @@ data class UserBackupPayload(
         /** Reject incomplete, malformed, or cross-account snapshots before applying any local state. */
         fun isCompleteSnapshot(map: Map<String, Any?>, expectedUid: String): Boolean {
             val version = (map["version"] as? Number)?.toInt() ?: return false
-            if (version !in 1..2 || expectedUid.isBlank()) return false
+            if (version !in 1..3 || expectedUid.isBlank()) return false
             val profile = map["profile"] as? Map<*, *> ?: return false
             val payloadUid = (map["ownerUid"] as? String)
                 ?.takeIf { it.isNotBlank() }
@@ -270,6 +279,9 @@ data class UserBackupPayload(
             if (version >= 2 && !listCountMatches("lyricsOffsets", "lyricsOffsetsCount")) return false
             if (version >= 2 && ((map["playlistPlayEventCount"] as? Number)?.toInt()?.let { it >= 0 } != true ||
                     (map["playlistPlayEventsStoredSeparately"] as? Boolean) != true)) return false
+            if (version >= 3 && ((map["lyricsStoredSeparately"] as? Boolean) != true ||
+                    (map["lyricsSnapshotId"] as? String).isNullOrBlank() ||
+                    (map["lyricsCount"] as? Number)?.toInt()?.let { it >= 0 } != true)) return false
 
             fun maps(field: String): List<Map<*, *>>? =
                 (map[field] as? List<*>)?.map { it as? Map<*, *> ?: return null }

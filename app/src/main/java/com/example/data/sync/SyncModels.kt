@@ -74,7 +74,7 @@ data class CloudUserSettings(
     val transcribeTranslateEnabled: Boolean = false,
     val audioTranscribeMode: String = "OFF",
     val audioTranscribeTargetLang: String = "ta",
-    val automaticBackupEnabled: Boolean = false,
+    val automaticBackupEnabled: Boolean = true,
     val backupFrequency: String = "WEEKLY",
     val updatedAt: Long = 0L,
     val clientVersion: Int = 1
@@ -160,7 +160,9 @@ data class CloudUserSettings(
 
     companion object {
         fun fromMap(map: Map<String, Any?>): CloudUserSettings = CloudUserSettings(
-            themeMode = map["themeMode"] as? String ?: "DARK",
+            themeMode = (map["themeMode"] as? String ?: "DARK").let { savedMode ->
+                if (!savedMode.equals("LIGHT", ignoreCase = true) && map["amoledMode"] as? Boolean == true) "AMOLED" else savedMode
+            },
             uiTheme = map["uiTheme"] as? String ?: "MIDNIGHT_OBSIDIAN",
             homeScreenLayout = map["homeScreenLayout"] as? String ?: "BENTO_DYNAMIC",
             nowPlayingLayout = map["nowPlayingLayout"] as? String ?: "MINIMAL_GLASS",
@@ -232,7 +234,7 @@ data class CloudUserSettings(
             transcribeTranslateEnabled = map["transcribeTranslateEnabled"] as? Boolean ?: false,
             audioTranscribeMode = map["audioTranscribeMode"] as? String ?: "OFF",
             audioTranscribeTargetLang = map["audioTranscribeTargetLang"] as? String ?: "ta",
-            automaticBackupEnabled = map["automaticBackupEnabled"] as? Boolean ?: false,
+            automaticBackupEnabled = map["automaticBackupEnabled"] as? Boolean ?: true,
             backupFrequency = map["backupFrequency"] as? String ?: "WEEKLY",
             updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
             clientVersion = (map["clientVersion"] as? Number)?.toInt() ?: 1
@@ -409,6 +411,36 @@ data class CloudLyricsOffset(
         fun fromMap(map: Map<String, Any?>): CloudLyricsOffset = CloudLyricsOffset(
             songSignature = map["songSignature"] as? String ?: "",
             offsetMs = (map["offsetMs"] as? Number)?.toLong() ?: 0L,
+            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
+        )
+    }
+}
+
+/** Lyrics are stored separately from the Firestore snapshot document to avoid its 1 MiB limit. */
+data class CloudLyricsEntry(
+    val songSignature: String = "",
+    val plainLyrics: String? = null,
+    val syncedLyricsJson: String? = null,
+    val isCached: Boolean = true,
+    val source: String = "local",
+    val updatedAt: Long = 0L
+) {
+    fun toMap(): Map<String, Any?> = mapOf(
+        "songSignature" to songSignature,
+        "plainLyrics" to plainLyrics,
+        "syncedLyricsJson" to syncedLyricsJson,
+        "isCached" to isCached,
+        "source" to source,
+        "updatedAt" to updatedAt
+    )
+
+    companion object {
+        fun fromMap(map: Map<String, Any?>) = CloudLyricsEntry(
+            songSignature = map["songSignature"] as? String ?: "",
+            plainLyrics = map["plainLyrics"] as? String,
+            syncedLyricsJson = map["syncedLyricsJson"] as? String,
+            isCached = map["isCached"] as? Boolean ?: true,
+            source = map["source"] as? String ?: "local",
             updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
         )
     }

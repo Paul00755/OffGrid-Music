@@ -196,7 +196,6 @@ enum class AppUiTheme(
 fun MyApplicationTheme(
     uiTheme: String = "MIDNIGHT_OBSIDIAN",
     themeMode: String = "DARK",
-    extraDarkMode: Boolean = false,
     accentColorPreset: String = "ORANGE",
     accentColor: Color? = null,
     content: @Composable () -> Unit
@@ -216,8 +215,8 @@ fun MyApplicationTheme(
         else -> activeTheme.isDark
     }
 
-    // Extra Dark Mode is strictly active ONLY when Dark Theme is active (never in Light Theme)
-    val isExtraDark = isDark && (extraDarkMode || effectiveMode == "AMOLED")
+    // AMOLED is the single mode that selects true-black surfaces.
+    val isExtraDark = isDark && effectiveMode == "AMOLED"
 
     val primaryColor = accentColor ?: when (accentColorPreset.uppercase()) {
         "PINK" -> if (isDark) Color(0xFFFF4081) else Color(0xFFD81B60)

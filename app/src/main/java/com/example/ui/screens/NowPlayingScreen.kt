@@ -131,10 +131,12 @@ fun NowPlayingScreen(
     onClearTranscribeError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val rawPositionMs: Long = if (playbackPositionFlow != null) playbackPositionFlow.collectAsStateWithLifecycle().value else playbackState.positionMs
     val song = playbackState.currentSong
     val songDuration = if (playbackState.durationMs > 0L) playbackState.durationMs else (song?.durationMs ?: 0L)
-    val livePositionMs: Long = if (songDuration > 0L) rawPositionMs.coerceIn(0L, songDuration) else rawPositionMs.coerceAtLeast(0L)
+    // Position is collected by the active layout and lyrics leaves so the whole screen shell
+    // does not recompose on every playback tick.
+    val livePositionMs: Long = if (songDuration > 0L) playbackState.positionMs.coerceIn(0L, songDuration)
+        else playbackState.positionMs.coerceAtLeast(0L)
     val context = LocalContext.current
     val activity = context as? android.app.Activity
     if (song == null) {
@@ -512,13 +514,6 @@ fun NowPlayingScreen(
         }
     }
 
-    val formattedElapsed = remember(livePositionMs) {
-        val totalSec = livePositionMs / 1000
-        val min = totalSec / 60
-        val sec = totalSec % 60
-        String.format("%d:%02d", min, sec)
-    }
-
     val effectiveDurationMs = if (playbackState.durationMs > 0L) playbackState.durationMs else (playbackState.currentSong?.durationMs ?: 0L)
     val formattedDuration = remember(effectiveDurationMs) {
         val totalSec = effectiveDurationMs / 1000
@@ -695,6 +690,7 @@ fun NowPlayingScreen(
                             style = waveformStyle,
                             accentColor = BentoPrimary,
                             onSeekTo = onSeekTo,
+                            playbackPositionFlow = playbackPositionFlow,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(38.dp)
@@ -704,7 +700,7 @@ fun NowPlayingScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(text = formattedElapsed, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSecondary)
+                            com.example.ui.components.PlaybackPositionText(playbackPositionFlow, livePositionMs, effectiveDurationMs, fontSize = 11.sp, color = BentoTextSecondary)
                             Text(text = formattedDuration, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSecondary)
                         }
                     }
@@ -830,7 +826,8 @@ fun NowPlayingScreen(
                         onTranslateLyrics = onTranslateLyrics,
                         onTranscribeAudio = onTranscribeAudio,
                         onUndoLyricsChanges = onUndoLyricsChanges,
-                        onClearTranscribeError = onClearTranscribeError
+                        onClearTranscribeError = onClearTranscribeError,
+                        playbackPositionFlow = playbackPositionFlow
                     )
                 }
             }
@@ -857,6 +854,7 @@ fun NowPlayingScreen(
                         onOpenOptionsMenu = { showOptionsMenu = true },
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
+                        playbackPositionFlow = playbackPositionFlow,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -881,6 +879,7 @@ fun NowPlayingScreen(
                         onOpenOptionsMenu = { showOptionsMenu = true },
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
+                        playbackPositionFlow = playbackPositionFlow,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -905,6 +904,7 @@ fun NowPlayingScreen(
                         onOpenOptionsMenu = { showOptionsMenu = true },
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
+                        playbackPositionFlow = playbackPositionFlow,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1046,6 +1046,7 @@ fun NowPlayingScreen(
                         style = waveformStyle,
                         accentColor = BentoPrimary,
                         onSeekTo = onSeekTo,
+                        playbackPositionFlow = playbackPositionFlow,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
@@ -1059,7 +1060,7 @@ fun NowPlayingScreen(
                             .padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(text = formattedElapsed, fontSize = 12.sp, color = BentoTextSecondary)
+                        com.example.ui.components.PlaybackPositionText(playbackPositionFlow, livePositionMs, effectiveDurationMs, fontSize = 12.sp, color = BentoTextSecondary)
                         Text(text = formattedDuration, fontSize = 12.sp, color = BentoTextSecondary)
                     }
                 }
@@ -1376,7 +1377,8 @@ fun NowPlayingScreen(
                 onTranslateLyrics = onTranslateLyrics,
                 onTranscribeAudio = onTranscribeAudio,
                 onUndoLyricsChanges = onUndoLyricsChanges,
-                onClearTranscribeError = onClearTranscribeError
+                onClearTranscribeError = onClearTranscribeError,
+                playbackPositionFlow = playbackPositionFlow
             )
         }
     }
@@ -1509,6 +1511,7 @@ private fun LyricsPanelContent(
     currentLyrics: Lyrics?,
     playbackState: PlaybackState,
     positionMs: Long = playbackState.positionMs,
+    playbackPositionFlow: kotlinx.coroutines.flow.StateFlow<Long>? = null,
     showLyricsView: Boolean,
     userIsScrollingLyrics: Boolean,
     isLandscape: Boolean = false,
@@ -1538,6 +1541,7 @@ private fun LyricsPanelContent(
     onUndoLyricsChanges: (Long) -> Unit = {},
     onClearTranscribeError: () -> Unit = {}
 ) {
+    val livePositionMs = playbackPositionFlow?.collectAsStateWithLifecycle()?.value ?: positionMs
     val context = LocalContext.current
     var syncOffsetMs by remember(song.id) {
         mutableLongStateOf(onGetLyricsOffset?.invoke(song.id) ?: 0L)
@@ -1546,7 +1550,7 @@ private fun LyricsPanelContent(
     var showTranscribeDialog by remember { mutableStateOf(false) }
     var transcribeDialogInitialMode by remember { mutableStateOf(AudioTranscribeMode.TRANSLATE) }
 
-    val effectivePositionMs = (positionMs + syncOffsetMs).coerceAtLeast(0L)
+    val effectivePositionMs = (livePositionMs + syncOffsetMs).coerceAtLeast(0L)
     val syncedLines = remember(currentLyrics) {
         try {
             currentLyrics?.parseSyncedLines() ?: emptyList()

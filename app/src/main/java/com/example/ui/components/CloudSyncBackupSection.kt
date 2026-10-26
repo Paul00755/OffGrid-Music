@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,7 @@ fun CloudSyncBackupSection(
     onBackupNow: () -> Unit,
     isUserSignedIn: Boolean,
     onOpenAuth: () -> Unit,
+    onSignInGoogle: () -> Unit = onOpenAuth,
     modifier: Modifier = Modifier
 ) {
     var pendingAction by remember { mutableStateOf<PendingCloudAction?>(null) }
@@ -104,7 +106,7 @@ fun CloudSyncBackupSection(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Real-time sync and scheduled cloud backups",
+                        text = "Manual cloud sync and scheduled backups",
                         fontSize = 12.sp,
                         color = BentoTextSecondary
                     )
@@ -116,62 +118,55 @@ fun CloudSyncBackupSection(
             Spacer(modifier = Modifier.height(18.dp))
 
             if (!isUserSignedIn) {
-                // Not signed in state
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = BentoCardPurple.copy(alpha = 0.6f),
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Box {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().blur(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Automatic Backup", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
+                            Switch(checked = automaticBackupEnabled, onCheckedChange = {}, enabled = false)
+                        }
+                        Text("FREQUENCY     Daily       Weekly       Monthly", color = BentoTextSecondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("Sync Now") }
+                            Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("Backup Now") }
+                        }
+                        Text("Last Synced        Last Backup", color = BentoTextSecondary)
+                    }
+                    Box(
+                        modifier = Modifier.matchParentSize().clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) {}
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = BentoCardSurface.copy(alpha = 0.97f),
+                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.5f)),
+                        modifier = Modifier.align(Alignment.Center).fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = BentoPrimary)
+                            Text("Sign in to use Cloud & Sync", fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                             Text(
-                                text = "Sign in to activate Cloud Sync",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BentoTextPrimary
+                                "Your backup and sync settings stay protected until you connect a Google or email account.",
+                                color = BentoTextSecondary,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
                             )
-                            Text(
-                                text = "Connect an account to automatically back up your playlists, favorites, and listening stats.",
-                                fontSize = 11.5.sp,
-                                color = BentoTextSecondary
-                            )
+                            Button(onClick = onSignInGoogle, modifier = Modifier.fillMaxWidth()) {
+                                Text("Sign in with Google")
+                            }
+                            OutlinedButton(onClick = onOpenAuth, modifier = Modifier.fillMaxWidth()) {
+                                Text("Sign in with Email / Password")
+                            }
                         }
                     }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Button(
-                    onClick = onOpenAuth,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BentoPrimary,
-                        contentColor = BentoOnPrimary
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Login,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Sign In / Register Account",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp
-                    )
                 }
             } else {
                 // Signed In: Full Cloud Synchronization & Backup Controls

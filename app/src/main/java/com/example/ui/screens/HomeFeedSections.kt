@@ -859,11 +859,13 @@ fun HomeStatsPeriodCard(
     val trackCountFlow = remember(periodStartMs, periodEndMs) { getTrackCountBetween(periodStartMs, periodEndMs) }
     val uniqueCountFlow = remember(periodStartMs, periodEndMs) { getUniqueTrackCountBetween(periodStartMs, periodEndMs) }
 
-    val durationMs by durationFlow.collectAsStateWithLifecycle(initialValue = 0L)
-    val trackCount by trackCountFlow.collectAsStateWithLifecycle(initialValue = 0)
-    val uniqueCount by uniqueCountFlow.collectAsStateWithLifecycle(initialValue = 0)
+    // Negative values are a loading sentinel; Room emits the persisted aggregate asynchronously.
+    val durationMs by durationFlow.collectAsStateWithLifecycle(initialValue = -1L)
+    val trackCount by trackCountFlow.collectAsStateWithLifecycle(initialValue = -1)
+    val uniqueCount by uniqueCountFlow.collectAsStateWithLifecycle(initialValue = -1)
 
     val formattedTime = remember(durationMs) {
+        if (durationMs < 0L) return@remember "…"
         val totalMins = durationMs / 1000 / 60
         val hrs = totalMins / 60
         val mins = totalMins % 60
@@ -880,7 +882,7 @@ fun HomeStatsPeriodCard(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
             Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-            Text(text = "$trackCount plays • $uniqueCount tracks", fontSize = 11.sp, color = BentoTextSecondary)
+            Text(text = if (trackCount < 0 || uniqueCount < 0) "Loading stats" else "$trackCount plays • $uniqueCount tracks", fontSize = 11.sp, color = BentoTextSecondary)
         }
     }
 }

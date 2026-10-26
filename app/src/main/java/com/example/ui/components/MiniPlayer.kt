@@ -55,8 +55,6 @@ fun MiniPlayer(
     if (song == null) return
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle()
-    val progressFraction = if (durationMs > 0) (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val isBottomBar = style.equals("BOTTOM_BAR", ignoreCase = true)
     val cardShape = if (isBottomBar) {
         RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
@@ -205,25 +203,39 @@ fun MiniPlayer(
                 }
             }
 
-            // Progress Bar Line at bottom of mini player
-            LinearProgressIndicator(
-                progress = {
-                    val effectiveDuration = if (durationMs > 0L) durationMs else song.durationMs
-                    if (livePositionState != null) {
-                        val curPos = livePositionState.value
-                        if (effectiveDuration > 0L) (curPos.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) else 0f
-                    } else if (progressFractionProvider != null) {
-                        progressFractionProvider()
-                    } else {
-                        if (effectiveDuration > 0L) (progressMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) else 0f
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
-                color = BentoPrimary,
-                trackColor = BentoCardBorder
+            MiniPlayerProgress(
+                songDurationMs = song.durationMs,
+                durationMs = durationMs,
+                progressMs = progressMs,
+                progressFractionProvider = progressFractionProvider,
+                playbackPositionFlow = playbackPositionFlow
             )
         }
     }
+}
+
+@Composable
+private fun MiniPlayerProgress(
+    songDurationMs: Long,
+    durationMs: Long,
+    progressMs: Long,
+    progressFractionProvider: (() -> Float)?,
+    playbackPositionFlow: StateFlow<Long>?
+) {
+    val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle()
+    val effectiveDuration = if (durationMs > 0L) durationMs else songDurationMs
+    LinearProgressIndicator(
+        progress = {
+            when {
+                livePositionState != null && effectiveDuration > 0L ->
+                    (livePositionState.value.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f)
+                progressFractionProvider != null -> progressFractionProvider().coerceIn(0f, 1f)
+                effectiveDuration > 0L -> (progressMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f)
+                else -> 0f
+            }
+        },
+        modifier = Modifier.fillMaxWidth().height(3.dp),
+        color = BentoPrimary,
+        trackColor = BentoCardBorder
+    )
 }
