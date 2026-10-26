@@ -189,12 +189,14 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setAutomaticBackupEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = System.currentTimeMillis()
         }
     }
 
     suspend fun setBackupFrequency(frequency: com.example.data.sync.BackupFrequency) {
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.BACKUP_FREQUENCY] = frequency.name
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = System.currentTimeMillis()
         }
     }
 
@@ -312,7 +314,7 @@ class UserPreferencesRepository(private val context: Context) {
         var applied = false
         context.dataStore.edit { prefs ->
             val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
-            if (!checkTimestamp || localUpdated == 0L || cloud.updatedAt >= localUpdated) {
+            if (!checkTimestamp || localUpdated == 0L || cloud.updatedAt > localUpdated) {
                 prefs[PreferenceKeys.THEME_MODE] = cloud.themeMode
                 prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
                 prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout

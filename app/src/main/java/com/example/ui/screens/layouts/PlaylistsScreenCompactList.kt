@@ -159,7 +159,7 @@ fun PlaylistsScreenCompactList(
         }
 
         // Normal Playlists
-        items(playlists) { playlist ->
+        items(playlists, key = { it.id }) { playlist ->
             var menuExpanded by remember { mutableStateOf(false) }
             Surface(
                 shape = RoundedCornerShape(12.dp),

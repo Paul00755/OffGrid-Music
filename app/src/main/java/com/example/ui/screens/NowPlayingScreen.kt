@@ -430,8 +430,8 @@ fun NowPlayingScreen(
         )
     }
 
-    // Intercept back button when lyrics, queue, or dialogs are open
-    androidx.activity.compose.BackHandler(enabled = showLyricsView || showQueueSheet || showTimerDialog || showOptionsMenu || showSearchLyricsDialog || showRemoveFromPlaylistDialog) {
+    // Intercept back button when Now Playing is open: close any active sub-sheet/dialog first, otherwise dismiss Now Playing
+    androidx.activity.compose.BackHandler(enabled = true) {
         when {
             showRemoveFromPlaylistDialog -> showRemoveFromPlaylistDialog = false
             showSearchLyricsDialog -> showSearchLyricsDialog = false
@@ -439,6 +439,7 @@ fun NowPlayingScreen(
             showQueueSheet -> showQueueSheet = false
             showTimerDialog -> showTimerDialog = false
             showOptionsMenu -> showOptionsMenu = false
+            else -> onDismiss()
         }
     }
 

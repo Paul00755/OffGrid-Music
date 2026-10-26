@@ -253,7 +253,7 @@ fun PlaylistsScreenMagazineHero(
             item {
                 Text("All Collections", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
             }
-            items(otherPlaylists) { playlist ->
+            items(otherPlaylists, key = { it.id }) { playlist ->
                 var menuExpanded by remember { mutableStateOf(false) }
                 Surface(
                     shape = RoundedCornerShape(16.dp),

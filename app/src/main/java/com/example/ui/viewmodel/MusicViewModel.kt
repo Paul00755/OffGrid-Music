@@ -91,6 +91,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             preferences.setAutomaticBackupEnabled(enabled)
             val freq = preferences.backupFrequency.first()
             com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
+            cloudSyncRepository.onSettingsChangedAsync()
         }
     }
 
@@ -98,9 +99,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             preferences.setBackupFrequency(frequency)
             val isEnabled = preferences.automaticBackupEnabled.first()
-            if (isEnabled) {
-                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, true)
-            }
+            com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, isEnabled)
+            cloudSyncRepository.onSettingsChangedAsync()
         }
     }
 
@@ -775,6 +775,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, currentMode)) {
                 val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(currentMode)
                 preferences.setUiTheme(fallback.id)
+            }
+        }
+        viewModelScope.launch {
+            combine(preferences.automaticBackupEnabled, preferences.backupFrequency) { enabled, freq ->
+                enabled to freq
+            }.collect { (enabled, freq) ->
+                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            allPlaylists.collect { plList ->
+                val app = getApplication<Application>()
+                val db = com.example.data.local.AppDatabase.getInstance(app)
+                for (pl in plList) {
+                    val customUri = com.example.ui.components.PlaylistCoverCache.resolveCustomCoverSync(app, pl.id, pl.artworkUri)
+                    if (customUri != null) {
+                        com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, customUri, 320)
+                    } else {
+                        val cached = com.example.ui.components.PlaylistCoverCache.getCachedCollage(app, pl.id)
+                        if (!cached.isNullOrEmpty()) {
+                            cached.forEach { uri ->
+                                com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, uri, 180)
+                            }
+                        } else {
+                            try {
+                                val entities = db.playlistDao().getPlaylistSongs(pl.id).firstOrNull() ?: emptyList()
+                                val arts = entities.take(12).mapNotNull {
+                                    com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(app, it.id, it.path)
+                                        ?: it.artworkUri?.takeIf { u -> u.isNotBlank() && !u.contains("audio/albumart") }
+                                        ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(app, it.id, it.path, it.albumId)
+                                }.distinct().take(4)
+                                if (arts.isNotEmpty()) {
+                                    com.example.ui.components.PlaylistCoverCache.putCachedCollage(app, pl.id, arts)
+                                    arts.forEach { uri ->
+                                        com.example.ui.components.PlaylistCoverCache.decodeAndCacheBitmapSync(app, uri, 180)
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
             }
         }
     }

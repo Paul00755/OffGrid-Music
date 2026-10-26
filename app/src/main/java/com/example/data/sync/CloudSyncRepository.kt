@@ -564,10 +564,10 @@ class CloudSyncRepository(
         val localSettings = userPreferences.exportUserSettings()
         if (docSnap.exists() && docSnap.data != null) {
             val cloudSettings = CloudUserSettings.fromMap(docSnap.data!!)
-            if (forceRestoreIfInitial || localSettings.updatedAt == 0L || cloudSettings.updatedAt >= localSettings.updatedAt) {
+            if (forceRestoreIfInitial || localSettings.updatedAt == 0L || cloudSettings.updatedAt > localSettings.updatedAt) {
                 userPreferences.importUserSettings(cloudSettings, checkTimestamp = false)
                 Log.d(TAG, "Restored settings from cloud (updatedAt: ${cloudSettings.updatedAt})")
-            } else {
+            } else if (localSettings.updatedAt > cloudSettings.updatedAt) {
                 userRef.collection(SETTINGS_COLLECTION).document(SETTINGS_DOC_PREFERENCES)
                     .set(localSettings.toMap(), SetOptions.merge()).await()
                 Log.d(TAG, "Uploaded newer local settings to cloud (updatedAt: ${localSettings.updatedAt})")
@@ -1825,6 +1825,11 @@ class CloudSyncRepository(
 
             fs.collection(USERS_COLLECTION).document(uid)
                 .set(mapOf("lastBackupAt" to now), SetOptions.merge()).await()
+            try {
+                fs.collection(USERS_COLLECTION).document(uid)
+                    .collection(SETTINGS_COLLECTION).document(SETTINGS_DOC_PREFERENCES)
+                    .set(currentSettings.toMap(), SetOptions.merge()).await()
+            } catch (_: Exception) {}
 
             userPreferences.setLastBackupTimestamp(now, dataHash)
             _lastBackupTimestamp.value = now

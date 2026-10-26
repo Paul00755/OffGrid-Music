@@ -1041,7 +1041,12 @@ class PlaybackManager(
                 player.seekTo(index, 0L)
             }
             player.prepare()
-            play()
+            if (fadeInMs > 0) {
+                playWithFade(fadeInMs)
+            } else {
+                play()
+            }
+            launchSongArtworkRefresh(targetSong)
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
@@ -1129,6 +1134,7 @@ class PlaybackManager(
                 play()
             }
         }
+        launchSongArtworkRefresh(selectedSongFromQueue)
         updateNotificationLayout()
         MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
@@ -1701,8 +1707,9 @@ class PlaybackManager(
                 val isNaturalTransition = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
 
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
-                    if (!isNaturalTransition && fadeInMs > 0) {
-                        performVolumeRampUp(fadeInMs, startVolume = 0.0f, targetVolume = 1.0f)
+                    val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
+                    if (fadeInMs > 0 && willBePlaying) {
+                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
                     } else {
                         fadeJob?.cancel()
                         fadeJob = null
@@ -1788,27 +1795,11 @@ class PlaybackManager(
                         } catch (_: Exception) {}
                     }
 
-                    notificationArtworkJob?.cancel()
-                    notificationArtworkJob = scope.launch(Dispatchers.IO) {
-                        val artBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
-                            context = context,
-                            songId = song.id,
-                            filePath = song.path,
-                            albumId = song.albumId,
-                            artworkUriStr = song.artworkUri
-                        )
-                        if (artBytes != null && artBytes.isNotEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                if (_playbackState.value.currentSong?.id == song.id) {
-                                    updateNotificationLayout()
-                                    MusicPlaybackService.instance?.triggerNotificationUpdate()
-                                }
-                            }
-                        }
-                    }
+                    launchSongArtworkRefresh(song)
                 }
                 updateNotificationLayout()
                 MusicPlaybackService.instance?.triggerNotificationUpdate()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -2223,7 +2214,7 @@ class PlaybackManager(
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
         wasPausedByZeroVolume = fromZeroVolume
-        val duration = (customFadeOutMs ?: fadeOutMs).coerceAtMost(180)
+        val duration = (customFadeOutMs ?: fadeOutMs).coerceIn(0, 10000)
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
         currentPositionMs = curPos
         _playbackPositionMs.value = curPos
@@ -2234,8 +2225,9 @@ class PlaybackManager(
                 player.playWhenReady = false
                 player.pause()
                 player.volume = 1.0f
-                _playbackState.value = _playbackState.value.copy(isPlaying = false)
+                _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = currentPositionMs)
                 updateNotificationLayout()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
             }
         } else {
             pause()
@@ -2270,13 +2262,14 @@ class PlaybackManager(
         startProgressTracker()
         startMusicPlaybackService()
         updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun playWithFade(customFadeInMs: Int? = null) {
         audioFocusManager.requestAudioFocus()
         fadeJob?.cancel()
         fadeJob = null
-        val duration = (customFadeInMs ?: fadeInMs).coerceAtMost(220)
+        val duration = (customFadeInMs ?: fadeInMs).coerceIn(0, 10000)
 
         val queue = _playbackState.value.queue
         if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
@@ -2294,12 +2287,12 @@ class PlaybackManager(
         }
 
         if (duration > 0) {
-            player.volume = 0.6f
+            player.volume = 0.0f
             player.playWhenReady = true
             player.play()
             _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
             startProgressTracker()
-            performVolumeRampUp(duration, startVolume = 0.6f, targetVolume = 1.0f)
+            performVolumeRampUp(duration, startVolume = 0.0f, targetVolume = 1.0f)
         } else {
             player.volume = 1.0f
             player.playWhenReady = true
@@ -2309,12 +2302,17 @@ class PlaybackManager(
         }
         startMusicPlaybackService()
         updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
     fun togglePlayPause() {
         val currentlyPlaying = _playbackState.value.isPlaying || player.isPlaying
         if (currentlyPlaying) {
-            pause()
+            if (fadeOutMs > 0) {
+                pauseWithFade()
+            } else {
+                pause()
+            }
         } else {
             if (fadeInMs > 0) {
                 playWithFade()
@@ -2554,8 +2552,10 @@ class PlaybackManager(
             try {
                 var lastWidgetSec = -1L
                 var inCrossfadeZone = false
+                var inTrackEndFadeOut = false
                 while (player.isPlaying || (player.playWhenReady && player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE)) {
                     inCrossfadeZone = false
+                    inTrackEndFadeOut = false
                     if (player.isPlaying) {
                         val currentPos = player.currentPosition.coerceAtLeast(0L)
                         val rawDur = player.duration
@@ -2572,6 +2572,8 @@ class PlaybackManager(
                         val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
                         val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
                         inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
+                        val trackEndFadeOutMs = fadeOutMs.coerceIn(0, 10000).toLong()
+                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && trackEndFadeOutMs > 0L && reliableDur > (trackEndFadeOutMs + 2000L) && currentPos >= 1500L && (reliableDur - currentPos) in 60L..trackEndFadeOutMs
 
                         if (inCrossfadeZone && !hasTriggeredCrossfadeTransition && !isCrossfadeTransitioning) {
                             val nextIdx = if (player.hasNextMediaItem()) {
@@ -2593,7 +2595,11 @@ class PlaybackManager(
                             }
                         } else if (crossfadeMs <= 0L) {
                             hasTriggeredCrossfadeTransition = false
-                            if (!isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
+                            if (inTrackEndFadeOut && (fadeJob == null || !fadeJob!!.isActive)) {
+                                val rem = (reliableDur - currentPos).coerceAtLeast(0L)
+                                val targetVol = (rem.toFloat() / trackEndFadeOutMs.toFloat()).coerceIn(0.05f, 1.0f)
+                                player.volume = targetVol
+                            } else if (!inTrackEndFadeOut && !isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
                             }
                         }
@@ -2670,7 +2676,7 @@ class PlaybackManager(
                     }
 
                     val inCrossfadeWindow = crossfadeDurationSec > 0 && inCrossfadeZone
-                    val loopDelay = if (inCrossfadeWindow) 80L else 220L
+                    val loopDelay = if (inCrossfadeWindow || inTrackEndFadeOut) 60L else 220L
                     delay(loopDelay)
                 }
             } catch (_: Exception) {}
@@ -2847,17 +2853,77 @@ class PlaybackManager(
         }
     }
 
-    fun updateSongFavoriteStatus(songId: Long, isFavorite: Boolean) {
+    private fun launchSongArtworkRefresh(song: Song) {
+        notificationArtworkJob?.cancel()
+        notificationArtworkJob = scope.launch(Dispatchers.IO) {
+            val artBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                context = context,
+                songId = song.id,
+                filePath = song.path,
+                albumId = song.albumId,
+                artworkUriStr = song.artworkUri
+            )
+            if (artBytes != null && artBytes.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    if (_playbackState.value.currentSong?.id == song.id) {
+                        updateNotificationLayout()
+                        MusicPlaybackService.instance?.triggerNotificationUpdate()
+                        com.example.widget.WidgetBitmapRenderer.invalidateSong(song.id)
+                        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                    }
+                }
+            }
+        }
+    }
+
+    fun syncFavoriteStateInMemory(songId: Long, isFavorite: Boolean) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) {
+                syncFavoriteStateInMemory(songId, isFavorite)
+            }
+            return
+        }
         val currentSong = _playbackState.value.currentSong
         val newCurrentSong = if (currentSong?.id == songId) currentSong.copy(isFavorite = isFavorite) else currentSong
         val newQueue = _playbackState.value.queue.map {
             if (it.id == songId) it.copy(isFavorite = isFavorite) else it
         }
+        if (originalQueue.isNotEmpty()) {
+            originalQueue = originalQueue.map {
+                if (it.id == songId) it.copy(isFavorite = isFavorite) else it
+            }
+        }
+        val livePos = try {
+            val p = player.currentPosition
+            if (p > 0L && p != C.TIME_UNSET) p else maxOf(currentPositionMs, _playbackPositionMs.value, _playbackState.value.positionMs)
+        } catch (_: Exception) {
+            maxOf(currentPositionMs, _playbackPositionMs.value, _playbackState.value.positionMs)
+        }
+        val liveDur = try {
+            val d = player.duration
+            if (d > 0L && d != C.TIME_UNSET) d else maxOf(_playbackState.value.durationMs, newCurrentSong?.durationMs ?: 0L)
+        } catch (_: Exception) {
+            maxOf(_playbackState.value.durationMs, newCurrentSong?.durationMs ?: 0L)
+        }
+        currentPositionMs = livePos
+        _playbackPositionMs.value = livePos
         _playbackState.value = _playbackState.value.copy(
             currentSong = newCurrentSong,
-            queue = newQueue
+            queue = newQueue,
+            positionMs = livePos,
+            durationMs = liveDur
         )
         updateNotificationLayout()
+    }
+
+    fun updateSongFavoriteStatus(songId: Long, isFavorite: Boolean) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) {
+                updateSongFavoriteStatus(songId, isFavorite)
+            }
+            return
+        }
+        syncFavoriteStateInMemory(songId, isFavorite)
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 

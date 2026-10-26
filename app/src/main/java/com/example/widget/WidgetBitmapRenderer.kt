@@ -608,25 +608,37 @@ object WidgetBitmapRenderer {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         val centerY = heightPx / 2f
-        val strokeW = (2.6f * density).coerceAtLeast(2f)
-        val thumbRadius = (5.2f * density).coerceAtMost(heightPx * 0.42f)
+        val strokeW = (2.5f * density).coerceAtLeast(2f)
+        val thumbRadius = (5.0f * density).coerceAtMost(heightPx * 0.40f)
         val startX = thumbRadius + 2f
         val endX = (widthPx - thumbRadius - 2f).coerceAtLeast(startX + 1f)
         val thumbX = startX + (endX - startX) * quantizedRatio
 
-        // Draw flat inactive line from thumbX to endX
+        val amplitude = (heightPx * 0.28f).coerceAtLeast(3.2f)
+        val wavelength = (16f * density).coerceAtLeast(11f)
+
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
-        paint.strokeWidth = strokeW
-        paint.color = trackColor
+
+        // 1. Draw subtle unplayed waveform path from thumbX to endX so waveform is always visible even at 0:00
         if (thumbX < endX) {
-            canvas.drawLine(thumbX, centerY, endX, centerY, paint)
+            val inactiveWavePath = Path()
+            var ix = thumbX
+            val startPhase = ((ix - startX) / wavelength) * (2.0 * Math.PI)
+            inactiveWavePath.moveTo(ix, centerY + (sin(startPhase) * (amplitude * 0.72f)).toFloat())
+            while (ix <= endX) {
+                val phase = ((ix - startX) / wavelength) * (2.0 * Math.PI)
+                val y = centerY + (sin(phase) * (amplitude * 0.72f)).toFloat()
+                inactiveWavePath.lineTo(ix, y)
+                ix += 2f
+            }
+            paint.strokeWidth = strokeW * 0.88f
+            paint.color = trackColor
+            canvas.drawPath(inactiveWavePath, paint)
         }
 
-        // Draw squiggly sine-wave path from startX to thumbX
-        val amplitude = (heightPx * 0.27f).coerceAtLeast(3f)
-        val wavelength = (18f * density).coerceAtLeast(12f)
+        // 2. Draw active squiggly sine-wave path from startX to thumbX
         val wavePath = Path()
         var x = startX
         wavePath.moveTo(startX, centerY)
@@ -637,21 +649,23 @@ object WidgetBitmapRenderer {
             x += 2f
         }
         val thumbPhase = ((thumbX - startX) / wavelength) * (2.0 * Math.PI)
-        val thumbY = if (quantizedRatio > 0.01f) {
+        val thumbY = if (quantizedRatio > 0.005f) {
             centerY + (sin(thumbPhase) * amplitude).toFloat()
         } else {
             centerY
         }
 
-        // Outer neon glow on active wave
-        paint.color = Color.argb(70, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
-        paint.strokeWidth = strokeW * 2.4f
-        canvas.drawPath(wavePath, paint)
+        if (thumbX > startX + 1f) {
+            // Outer neon glow on active wave
+            paint.color = Color.argb(75, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+            paint.strokeWidth = strokeW * 2.3f
+            canvas.drawPath(wavePath, paint)
 
-        // Crisp active wave stroke
-        paint.color = accentColor
-        paint.strokeWidth = strokeW
-        canvas.drawPath(wavePath, paint)
+            // Crisp active wave stroke
+            paint.color = accentColor
+            paint.strokeWidth = strokeW
+            canvas.drawPath(wavePath, paint)
+        }
 
         // Glowing orb thumb at wave tip
         paint.style = Paint.Style.FILL
@@ -683,7 +697,7 @@ object WidgetBitmapRenderer {
 
         // Translucent dark circular pill backdrop matching the 4-widget reference
         paint.style = Paint.Style.FILL
-        paint.color = Color.argb(125, 36, 40, 52)
+        paint.color = Color.argb(140, 32, 36, 48)
         canvas.drawCircle(center, center, radius, paint)
 
         val heartScale = sizePx * 0.42f
@@ -704,7 +718,7 @@ object WidgetBitmapRenderer {
             canvas.drawPath(path, paint)
         } else {
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = (sizePx * 0.065f).coerceAtLeast(1.8f)
+            paint.strokeWidth = (sizePx * 0.068f).coerceAtLeast(1.8f)
             paint.strokeJoin = Paint.Join.ROUND
             paint.strokeCap = Paint.Cap.ROUND
             paint.color = Color.WHITE
@@ -749,7 +763,7 @@ object WidgetBitmapRenderer {
                 // Crisp white Play/Pause glyph inside
                 paint.color = Color.WHITE
                 if (isPlaying) {
-                    val barWidth = sizePx * 0.085f
+                    val barWidth = sizePx * 0.088f
                     val barHeight = sizePx * 0.32f
                     val gap = sizePx * 0.065f
                     val corner = barWidth / 2f
@@ -777,50 +791,56 @@ object WidgetBitmapRenderer {
                         lineTo(center - (triSize * 0.42f) + offsetX, center + (triSize * 0.55f))
                         close()
                     }
+                    paint.pathEffect = CornerPathEffect(sizePx * 0.04f)
                     canvas.drawPath(path, paint)
+                    paint.pathEffect = null
                 }
             }
             ButtonIconType.NEXT -> {
-                // Clean white skip-next icon (▷|) matching the 4-widget reference
+                // Crisp balanced skip-next icon (▶|) with rounded joins
                 paint.color = Color.WHITE
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = (sizePx * 0.065f).coerceAtLeast(2f)
-                paint.strokeJoin = Paint.Join.ROUND
-                paint.strokeCap = Paint.Cap.ROUND
+                paint.style = Paint.Style.FILL
+                paint.pathEffect = CornerPathEffect(sizePx * 0.035f)
 
-                val triW = sizePx * 0.24f
-                val halfH = sizePx * 0.20f
+                val halfH = sizePx * 0.21f
+                val triLeft = center - sizePx * 0.17f
+                val triRight = center + sizePx * 0.08f
                 val path = Path().apply {
-                    moveTo(center - triW * 0.65f, center - halfH)
-                    lineTo(center + triW * 0.35f, center)
-                    lineTo(center - triW * 0.65f, center + halfH)
+                    moveTo(triLeft, center - halfH)
+                    lineTo(triRight, center)
+                    lineTo(triLeft, center + halfH)
                     close()
                 }
                 canvas.drawPath(path, paint)
+                paint.pathEffect = null
 
-                val barX = center + triW * 0.58f
-                canvas.drawLine(barX, center - halfH, barX, center + halfH, paint)
+                val barW = (sizePx * 0.07f).coerceAtLeast(2.2f)
+                val barLeft = center + sizePx * 0.11f
+                val barRect = RectF(barLeft, center - halfH, barLeft + barW, center + halfH)
+                canvas.drawRoundRect(barRect, barW / 2f, barW / 2f, paint)
             }
             ButtonIconType.PREV -> {
-                // Clean white skip-previous icon (|◁) matching the 4-widget reference
+                // Crisp balanced skip-previous icon (|◀) with rounded joins
                 paint.color = Color.WHITE
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = (sizePx * 0.065f).coerceAtLeast(2f)
-                paint.strokeJoin = Paint.Join.ROUND
-                paint.strokeCap = Paint.Cap.ROUND
+                paint.style = Paint.Style.FILL
 
-                val triW = sizePx * 0.24f
-                val halfH = sizePx * 0.20f
-                val barX = center - triW * 0.58f
-                canvas.drawLine(barX, center - halfH, barX, center + halfH, paint)
+                val halfH = sizePx * 0.21f
+                val barW = (sizePx * 0.07f).coerceAtLeast(2.2f)
+                val barRight = center - sizePx * 0.11f
+                val barRect = RectF(barRight - barW, center - halfH, barRight, center + halfH)
+                canvas.drawRoundRect(barRect, barW / 2f, barW / 2f, paint)
 
+                paint.pathEffect = CornerPathEffect(sizePx * 0.035f)
+                val triLeft = center - sizePx * 0.08f
+                val triRight = center + sizePx * 0.17f
                 val path = Path().apply {
-                    moveTo(center + triW * 0.65f, center - halfH)
-                    lineTo(center - triW * 0.35f, center)
-                    lineTo(center + triW * 0.65f, center + halfH)
+                    moveTo(triRight, center - halfH)
+                    lineTo(triLeft, center)
+                    lineTo(triRight, center + halfH)
                     close()
                 }
                 canvas.drawPath(path, paint)
+                paint.pathEffect = null
             }
             ButtonIconType.FAVORITE -> {
                 return renderFavoriteChipButton(sizePx, isFavorite, buttonColor)

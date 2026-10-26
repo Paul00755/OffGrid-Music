@@ -163,7 +163,7 @@ fun PlaylistsScreenGlowCards(
         }
 
         // Regular Playlists Glowing Cards
-        items(playlists) { playlist ->
+        items(playlists, key = { it.id }) { playlist ->
             var menuExpanded by remember { mutableStateOf(false) }
             Surface(
                 shape = RoundedCornerShape(20.dp),

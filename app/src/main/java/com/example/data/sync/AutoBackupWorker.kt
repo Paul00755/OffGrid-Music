@@ -98,7 +98,7 @@ class AutoBackupWorker(
             }
 
             val db = AppDatabase.getInstance(applicationContext)
-            val userPrefs = UserPreferencesRepository(applicationContext)
+            val userPrefs = UserPreferencesRepository.getInstance(applicationContext)
 
             val isEnabled = userPrefs.automaticBackupEnabled.first()
             if (!isEnabled) {

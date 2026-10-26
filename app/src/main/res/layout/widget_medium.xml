@@ -22,12 +22,12 @@
         <!-- Left inset rounded-square artwork -->
         <ImageView
             android:id="@+id/widget_medium_artwork"
-            android:layout_width="108dp"
+            android:layout_width="106dp"
             android:layout_height="match_parent"
-            android:scaleType="centerCrop"
+            android:scaleType="fitCenter"
             android:contentDescription="Album Artwork" />
 
-        <!-- Right column: Metadata + Favorite, Straight Progress Bar, Controls -->
+        <!-- Right column: Metadata + Favorite, Interactive Seek Bar, Controls -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -44,6 +44,7 @@
                 android:gravity="top">
 
                 <LinearLayout
+                    android:id="@+id/widget_medium_header_click"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
@@ -76,21 +77,103 @@
 
                 <ImageView
                     android:id="@+id/widget_medium_btn_favorite"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:layout_marginStart="6dp"
                     android:scaleType="centerInside"
                     android:contentDescription="Favorite Track" />
             </LinearLayout>
 
-            <!-- Straight Progress Bar with thumb dot -->
-            <ImageView
-                android:id="@+id/widget_medium_progress"
+            <!-- Straight Progress Bar with interactive 10-segment tap-to-seek overlay -->
+            <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="14dp"
-                android:layout_marginTop="6dp"
-                android:scaleType="fitXY"
-                android:contentDescription="Playback Progress" />
+                android:layout_height="20dp"
+                android:layout_marginTop="4dp">
+
+                <ImageView
+                    android:id="@+id/widget_medium_progress"
+                    android:layout_width="match_parent"
+                    android:layout_height="14dp"
+                    android:layout_gravity="center_vertical"
+                    android:scaleType="fitXY"
+                    android:contentDescription="Playback Progress" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_0"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 5%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_1"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 15%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_2"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 25%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_3"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 35%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_4"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 45%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_5"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 55%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_6"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 65%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_7"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 75%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_8"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 85%" />
+
+                    <TextView
+                        android:id="@+id/widget_medium_seek_9"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:contentDescription="Seek 95%" />
+                </LinearLayout>
+            </FrameLayout>
 
             <!-- Timestamps row (left current / right total) -->
             <LinearLayout
