@@ -69,13 +69,16 @@ class PlaybackManager(
         context = context,
         isPlayingProvider = {
             try {
-                player.isPlaying || player.playWhenReady
+                if (isFadingOutToPause) false else (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying)
             } catch (_: Throwable) {
                 false
             }
         },
+        isSleepTimerStoppedProvider = {
+            isSleepTimerFinalStopping || (sleepTimerManager.state.value.phase == TrackSleepTimerPhase.STOPPED)
+        },
         onPauseRequested = { pauseFromAudioFocus() },
-        onResumeRequested = { play() },
+        onResumeRequested = { resumeFromInterruption() },
         onDuckRequested = { duckVol -> try { player.volume = duckVol } catch (_: Throwable) {} },
         onRestoreVolumeRequested = { try { player.volume = 1.0f } catch (_: Throwable) {} }
     )
@@ -1545,6 +1548,18 @@ class PlaybackManager(
             audioFocusManager.reduceVolumeOnNotification = value
         }
 
+    var autoPauseCamera: Boolean
+        get() = audioFocusManager.autoPauseCamera
+        set(value) {
+            audioFocusManager.autoPauseCamera = value
+        }
+
+    var autoPauseSystemAudio: Boolean
+        get() = audioFocusManager.autoPauseSystemAudio
+        set(value) {
+            audioFocusManager.autoPauseSystemAudio = value
+        }
+
     var ignoreTransientFocusLoss: Boolean
         get() = audioFocusManager.ignoreTransientFocusLoss
         set(value) {
@@ -1567,9 +1582,98 @@ class PlaybackManager(
     init {
         MusicPlaybackService.activeMediaSession = mediaSession
 
+        // Synchronously restore persisted audio engine settings before any playback or ViewModel collection
+        try {
+            addToQueuePosition = userPreferences.getAddToQueuePositionSync()
+            autoPauseCamera = userPreferences.getAutoPauseCameraSync()
+            autoPauseSystemAudio = userPreferences.getAutoPauseSystemAudioSync()
+            reduceVolumeOnNotification = userPreferences.getReduceVolumeOnNotificationSync()
+            pauseOnZeroVolume = userPreferences.getPauseOnZeroVolumeSync()
+            autoResumeOnVolumeIncrease = userPreferences.getAutoResumeOnVolumeIncreaseSync()
+            autoPlayOnHeadphoneConnection = userPreferences.getAutoPlayOnHeadphoneConnectionSync()
+            fadeInMs = userPreferences.getFadeInMsSync()
+            fadeOutMs = userPreferences.getFadeOutMsSync()
+            crossfadeDurationSec = userPreferences.getCrossfadeDurationSecSync()
+            gaplessPlayback = userPreferences.getGaplessPlaybackSync()
+            isNormalizeAudioEnabled = userPreferences.getNormalizeAudioSync()
+            setAudioBalance(userPreferences.getAudioBalanceSync())
+            alwaysShuffleMode = userPreferences.getAlwaysShuffleModeSync()
+            scrobbleThresholdType = userPreferences.getScrobbleThresholdTypeSync()
+            scrobbleThresholdValue = userPreferences.getScrobbleThresholdValueSync()
+            sleepTimerManager.setFinishLastSong(userPreferences.getSleepTimerFinishLastSongSync())
+        } catch (_: Throwable) {}
+
         scope.launch {
             userPreferences.addToQueuePosition.collect { pos ->
                 addToQueuePosition = pos
+            }
+        }
+        scope.launch {
+            userPreferences.autoPauseCamera.collect { enabled ->
+                autoPauseCamera = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.autoPauseSystemAudio.collect { enabled ->
+                autoPauseSystemAudio = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.reduceVolumeOnNotification.collect { enabled ->
+                reduceVolumeOnNotification = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.pauseOnZeroVolume.collect { enabled ->
+                pauseOnZeroVolume = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.autoResumeOnVolumeIncrease.collect { enabled ->
+                autoResumeOnVolumeIncrease = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.autoPlayOnHeadphoneConnection.collect { enabled ->
+                autoPlayOnHeadphoneConnection = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.fadeInMs.collect { ms ->
+                fadeInMs = ms
+            }
+        }
+        scope.launch {
+            userPreferences.fadeOutMs.collect { ms ->
+                fadeOutMs = ms
+            }
+        }
+        scope.launch {
+            userPreferences.crossfadeDurationSec.collect { sec ->
+                crossfadeDurationSec = sec
+                if (sec == 0 && isCrossfadeTransitioning) {
+                    cancelCrossfade(resetVolume = true)
+                }
+            }
+        }
+        scope.launch {
+            userPreferences.gaplessPlayback.collect { enabled ->
+                gaplessPlayback = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.normalizeAudio.collect { enabled ->
+                isNormalizeAudioEnabled = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.audioBalance.collect { bal ->
+                setAudioBalance(bal)
+            }
+        }
+        scope.launch {
+            userPreferences.sleepTimerFinishLastSong.collect { enabled ->
+                sleepTimerManager.setFinishLastSong(enabled)
             }
         }
 
@@ -1770,11 +1874,15 @@ class PlaybackManager(
 
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
                     val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
-                    if (fadeInMs > 0 && willBePlaying) {
+                    if (isNaturalTransition && gaplessPlayback && crossfadeDurationSec <= 0) {
+                        // True gapless transition: maintain unity volume across track boundary with zero dip
+                        fadeJob?.cancel()
+                        fadeJob = null
+                        player.volume = 1.0f
+                    } else if (fadeInMs > 0 && willBePlaying) {
                         val safeStartVol = if (isNaturalTransition) {
-                            // If track-end fade-out or pre-boundary attenuation brought volume down, start from that
-                            // low level (~0.0f). Never slam a track that is already playing at 1.0f down to 0.0f mid-syllable!
-                            if (player.volume <= 0.35f) player.volume.coerceAtLeast(0.0f) else 0.35f
+                            // Non-gapless natural transition: start from 0.0f (or current attenuated level after fadeOutMs)
+                            if (player.volume < 0.25f) player.volume.coerceAtLeast(0.0f) else 0.0f
                         } else {
                             0.0f
                         }
@@ -2226,11 +2334,12 @@ class PlaybackManager(
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Error during crossfadeJob execution", e)
             } finally {
+                val wasCancelled = coroutineContext[Job]?.isCancelled == true
                 try {
                     crossfadePlayer.stop()
                     crossfadePlayer.clearMediaItems()
                 } catch (_: Exception) {}
-                if (player.playWhenReady) {
+                if (!wasCancelled && player.playWhenReady && !isFadingOutToPause) {
                     player.volume = 1.0f
                 }
                 isCrossfadeTransitioning = false
@@ -2268,6 +2377,17 @@ class PlaybackManager(
 
     private fun pauseFromAudioFocus() {
         pauseInternal()
+    }
+
+    private fun resumeFromInterruption() {
+        if (isSleepTimerFinalStopping) return
+        val alreadyPlaying = !isFadingOutToPause && (player.isPlaying || _playbackState.value.isPlaying)
+        if (alreadyPlaying) return
+        if (fadeInMs > 0) {
+            playWithFade(fadeInMs)
+        } else {
+            play()
+        }
     }
 
     fun pause() {
@@ -2478,6 +2598,11 @@ class PlaybackManager(
         if (wasPlaying && !isSleepTimerFinalStopping) {
             player.playWhenReady = true
             player.play()
+            if (fadeInMs > 0) {
+                performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
+            } else {
+                player.volume = 1.0f
+            }
             startProgressTracker()
         } else {
             player.playWhenReady = false
@@ -2503,6 +2628,11 @@ class PlaybackManager(
             if (wasPlaying) {
                 player.playWhenReady = true
                 player.play()
+                if (fadeInMs > 0) {
+                    performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
+                } else {
+                    player.volume = 1.0f
+                }
                 startProgressTracker()
             } else {
                 player.playWhenReady = false
@@ -2549,6 +2679,11 @@ class PlaybackManager(
             if (wasPlaying) {
                 player.playWhenReady = true
                 player.play()
+                if (fadeInMs > 0) {
+                    performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
+                } else {
+                    player.volume = 1.0f
+                }
                 startProgressTracker()
             } else {
                 player.playWhenReady = false
@@ -2692,11 +2827,12 @@ class PlaybackManager(
                         inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
                         val trackEndFadeOutMs = fadeOutMs.coerceIn(0, 10000).toLong()
                         val effectiveEndFadeWindowMs = when {
+                            gaplessPlayback -> 0L
                             trackEndFadeOutMs > 0L -> trackEndFadeOutMs
                             fadeInMs > 0 -> 140L
                             else -> 0L
                         }
-                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
+                        inTrackEndFadeOut = !gaplessPlayback && crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
                             reliableDur > (effectiveEndFadeWindowMs + 2000L) && currentPos >= 1500L &&
                             (reliableDur - currentPos) <= effectiveEndFadeWindowMs
 
@@ -2882,7 +3018,9 @@ class PlaybackManager(
         notificationArtworkJob = null
         stopProgressTracker()
         cancelCrossfade(resetVolume = true)
+        audioFocusManager.unregisterCameraCallback()
         audioFocusManager.abandonAudioFocus()
+        equalizerManager.release()
         try { _crossfadePlayer?.release(); _crossfadePlayer = null } catch (e: Exception) {}
         try { mediaSession.release() } catch (e: Exception) {}
         player.release()

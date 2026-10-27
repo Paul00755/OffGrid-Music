@@ -43,7 +43,9 @@ fun SettingsTabRoute(
     val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
     val normalizeAudio by viewModel.normalizeAudio.collectAsState()
     val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
-    val playDuringCamera by viewModel.playDuringCamera.collectAsState()
+    val autoPauseCamera by viewModel.autoPauseCamera.collectAsState()
+    val autoPauseSystemAudio by viewModel.autoPauseSystemAudio.collectAsState()
+    val sleepTimerMode by viewModel.sleepTimerMode.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.refreshCacheSizes()
@@ -208,8 +210,12 @@ fun SettingsTabRoute(
         onSetLyricsAutoScroll = { viewModel.setLyricsAutoScroll(it) },
         reduceVolumeOnNotification = reduceVolumeOnNotification,
         onSetReduceVolumeOnNotification = { viewModel.setReduceVolumeOnNotification(it) },
-        pauseDuringCamera = !playDuringCamera,
-        onSetPauseDuringCamera = { viewModel.setPlayDuringCamera(!it) },
+        autoPauseCamera = autoPauseCamera,
+        onSetAutoPauseCamera = { viewModel.setAutoPauseCamera(it) },
+        autoPauseSystemAudio = autoPauseSystemAudio,
+        onSetAutoPauseSystemAudio = { viewModel.setAutoPauseSystemAudio(it) },
+        pauseDuringCamera = autoPauseSystemAudio,
+        onSetPauseDuringCamera = { viewModel.setAutoPauseSystemAudio(it) },
         onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
         onRemoveFolder = { viewModel.removeFolder(it) },
         scrobbleThresholdType = viewModel.scrobbleThresholdType.collectAsState().value,
@@ -219,6 +225,8 @@ fun SettingsTabRoute(
         recentSearches = recentSearches,
         onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
         onClearRecentSearches = { viewModel.clearRecentSearches() },
+        sleepTimerMode = sleepTimerMode,
+        onSetSleepTimerMode = { viewModel.setSleepTimerMode(it) },
         onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
         onStartSongCountTimer = { viewModel.startSleepTimerSongs(it) },
         onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
@@ -257,6 +265,7 @@ fun SettingsTabRoute(
         onOpenAccount = { viewModel.openAccountScreen() },
         onOpenAuth = { viewModel.openAuthScreen() },
         onSignInGoogle = { activity?.let { viewModel.signInWithGoogle(it) } ?: viewModel.openAuthScreen() },
-        initialTargetSection = viewModel.settingsTargetSection.collectAsState().value
+        initialTargetSection = viewModel.settingsTargetSection.collectAsState().value,
+        onTargetSectionConsumed = { viewModel.settingsTargetSection.value = null }
     )
 }

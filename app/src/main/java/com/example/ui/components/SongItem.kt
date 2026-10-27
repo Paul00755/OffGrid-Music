@@ -1,8 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,15 +15,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Song
 import com.example.ui.theme.*
+
+private val SongItemRowShape = RoundedCornerShape(10.dp)
+private val SongItemArtShape = RoundedCornerShape(9.dp)
 
 @Composable
 fun SongItem(
@@ -41,9 +38,9 @@ fun SongItem(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(SongItemRowShape)
             .background(if (isPlaying) BentoCardDarkPurple else BentoCardSurface)
-            .clickable { onClick() }
+            .clickable(onClick = onClick)
             .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -51,7 +48,7 @@ fun SongItem(
         Box(
             modifier = Modifier
                 .size(42.dp)
-                .clip(RoundedCornerShape(9.dp))
+                .clip(SongItemArtShape)
         ) {
             AlbumArtView(
                 song = song,

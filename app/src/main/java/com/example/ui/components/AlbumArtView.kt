@@ -707,11 +707,12 @@ fun AlbumArtView(
     val isThumbnail = cornerRadius <= 18 && !forceHighResOnline
 
     val songId = song?.id ?: 0L
-    val trackKey = ArtworkResolutionCache.trackIdentity(songId, song?.path)
+    val songPath = song?.path
+    val trackKey = remember(songId, songPath) { ArtworkResolutionCache.trackIdentity(songId, songPath) }
     val gradientIndex = (songId.toInt() % PRECOMPUTED_ARTWORK_BRUSHES.size).let { if (it < 0) -it else it }
     val backgroundBrush = PRECOMPUTED_ARTWORK_BRUSHES[gradientIndex]
 
-    val artworkVersion = ArtworkResolutionCache.getArtworkUpdateVersion(songId, song?.path)
+    val artworkVersion = ArtworkResolutionCache.getArtworkUpdateVersion(songId, songPath)
     val songArtwork = song?.artworkUri?.takeIf { it.isNotBlank() }
 
     // 0ms synchronous lookup of pre-decoded ImageBitmap for thumbnails

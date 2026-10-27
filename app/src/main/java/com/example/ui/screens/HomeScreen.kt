@@ -219,29 +219,42 @@ fun HomeScreen(
     val continueSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
     val context = LocalContext.current
-    val drawerState = remember { DrawerState(initialValue = DrawerValue.Closed) }
-    var isSidebarOpen by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
 
+    androidx.activity.compose.BackHandler(enabled = drawerState.isOpen) {
+        coroutineScope.launch { drawerState.close() }
+    }
+
     val openSidebar: () -> Unit = {
-        isSidebarOpen = true
+        com.example.util.HapticUtils.performClickHaptic(context)
         coroutineScope.launch { drawerState.open() }
     }
     val closeSidebarAndRun: (() -> Unit) -> Unit = { action ->
-        isSidebarOpen = false
+        com.example.util.HapticUtils.performClickHaptic(context)
         coroutineScope.launch { drawerState.snapTo(DrawerValue.Closed) }
         action()
     }
 
-    LaunchedEffect(drawerState.currentValue, drawerState.targetValue, drawerState.isAnimationRunning) {
-        if (drawerState.isClosed && !drawerState.isAnimationRunning && drawerState.targetValue == DrawerValue.Closed) {
-            isSidebarOpen = false
-        } else if (drawerState.isOpen) {
-            isSidebarOpen = true
+    // Pre-decode thumbnails for visible Home feed songs so scrolling has zero frame drops
+    LaunchedEffect(speedDialSongs, recentlyPlayed, recentlyAdded, mostPlayedFilteredSongs) {
+        val homeVisibleSongs = buildList {
+            continueSong?.let { add(it) }
+            addAll(speedDialSongs.take(12))
+            addAll(mostPlayedFilteredSongs.take(10))
+            addAll(recentlyPlayed.take(12))
+            addAll(recentlyAdded.take(12))
+        }.distinctBy { it.id }
+        if (homeVisibleSongs.isNotEmpty()) {
+            com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                context = context,
+                songs = homeVisibleSongs,
+                firstVisibleIndex = 0,
+                windowAhead = homeVisibleSongs.size,
+                windowBehind = 0
+            )
         }
     }
-
-    val isDrawerVisible = isSidebarOpen || drawerState.isOpen || drawerState.isAnimationRunning || drawerState.targetValue == DrawerValue.Open
 
     val greeting = remember {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
@@ -255,19 +268,17 @@ fun HomeScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = isDrawerVisible,
+        gesturesEnabled = true,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = BentoCardSurface,
                 drawerContentColor = BentoTextPrimary,
                 modifier = Modifier
-                    .graphicsLayer { alpha = if (isDrawerVisible) 1f else 0f }
-                    .widthIn(min = 280.dp, max = 340.dp)
+                    .widthIn(min = 280.dp, max = 320.dp)
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {
-                if (isDrawerVisible) {
                 // Sidebar Header with Account Section
                 Column(
                     modifier = Modifier
@@ -493,7 +504,7 @@ fun HomeScreen(
                     label = "Equalizer & Sound Effects",
                     badge = "Graph EQ",
                     onClick = {
-                        closeSidebarAndRun { onOpenSettings("AUDIO") }
+                        closeSidebarAndRun { onOpenSettings("EQUALIZER") }
                     }
                 )
                 DottedDivider()
@@ -583,7 +594,6 @@ fun HomeScreen(
                     }
                 )
                 DottedDivider()
-                }
             }
         }
     ) {
@@ -747,7 +757,9 @@ fun HomeScreen(
                 )
             }
             com.example.ui.theme.HomeScreenLayout.BENTO_DYNAMIC -> {
+                val bentoListState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
+                    state = bentoListState,
                     modifier = modifier
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
@@ -755,7 +767,7 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
                 // Header Row with Time-Based Greeting, Sidebar Drawer Toggle, and Top Nav Search Option
-                item {
+                item(key = "home_bento_header", contentType = "home_bento_header") {
                     val isTopLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
                     Row(
                         modifier = Modifier

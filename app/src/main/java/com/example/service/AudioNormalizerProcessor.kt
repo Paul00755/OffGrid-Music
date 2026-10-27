@@ -89,8 +89,9 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
     var currentGain = 1.0f
         private set
 
-    // Allowable gain range: never crush normal songs below 0.96x (-0.35 dB), gently lift quiet tracks up to +2.9 dB
-    private val minGain = 0.96f
+
+    // Allowable gain range: attenuate hot masters down to 0.72x (-2.85 dB), gently lift quiet tracks up to 1.40x (+2.9 dB)
+    private val minGain = 0.72f
     private val maxGain = 1.40f
 
     // Biquad filter state for K-weighting detection sidechain (left & right channels)
@@ -124,14 +125,26 @@ class AudioNormalizerProcessor : BaseAudioProcessor() {
 
     /**
      * Associates a stable track identity with this processor.
-     * Instantly sets cached gain if previously analyzed; otherwise starts transparently with 1.0f.
+     * Uses ReplayGain dB metadata or cached gain if previously analyzed; smoothly transitions gain across track boundaries.
      */
-    fun setTrack(trackId: Long, trackPath: String? = null) {
+    fun setTrack(trackId: Long, trackPath: String? = null, replayGainDb: Float? = null) {
         val key = if (trackId > 0) "id_$trackId" else (trackPath?.trim() ?: "")
         currentTrackKey = key
+        val rgGain = replayGainDb?.let { db ->
+            Math.pow(10.0, (db / 20.0)).toFloat().coerceIn(minGain, maxGain)
+        }
         val cachedGain = if (key.isNotBlank()) NormalizationCache.getGain(key) else null
-        val target = if (cachedGain != null && cachedGain in minGain..maxGain) cachedGain else 1.0f
-        currentGain = target
+        val target = when {
+            rgGain != null -> {
+                if (key.isNotBlank()) NormalizationCache.putGain(key, rgGain)
+                rgGain
+            }
+            cachedGain != null && cachedGain in minGain..maxGain -> cachedGain
+            else -> 1.0f
+        }
+        if (rgGain == null && cachedGain != null) {
+            currentGain = target
+        }
         integratedLoudness = (targetLoudness / target).coerceIn(minSilenceLoudness, 20000f)
         resetFilterState()
         processedBlocksCount = 0

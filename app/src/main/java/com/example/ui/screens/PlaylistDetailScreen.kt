@@ -235,23 +235,44 @@ fun PlaylistDetailScreen(
         }
     }
 
-    val displayEntries = remember(localEntries.toList(), selectedSortOrder, isAscending) {
-        val sorted = when (selectedSortOrder) {
-            PlaylistSortOrder.CUSTOM -> localEntries.toList()
-            PlaylistSortOrder.LATEST -> localEntries.sortedByDescending { it.song.dateAdded }
-            PlaylistSortOrder.TITLE -> localEntries.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayTitle })
-            PlaylistSortOrder.ARTIST -> localEntries.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayArtist })
-            PlaylistSortOrder.ALBUM -> localEntries.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayAlbum })
-            PlaylistSortOrder.DURATION -> localEntries.sortedBy { it.song.durationMs }
-        }
-        if (!isAscending && selectedSortOrder != PlaylistSortOrder.CUSTOM) {
-            sorted.reversed()
-        } else {
-            sorted
+    val displayEntries by remember(selectedSortOrder, isAscending) {
+        derivedStateOf {
+            val snapshot = localEntries.toList()
+            val sorted = when (selectedSortOrder) {
+                PlaylistSortOrder.CUSTOM -> snapshot
+                PlaylistSortOrder.LATEST -> snapshot.sortedByDescending { it.song.dateAdded }
+                PlaylistSortOrder.TITLE -> snapshot.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayTitle })
+                PlaylistSortOrder.ARTIST -> snapshot.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayArtist })
+                PlaylistSortOrder.ALBUM -> snapshot.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.song.displayAlbum })
+                PlaylistSortOrder.DURATION -> snapshot.sortedBy { it.song.durationMs }
+            }
+            if (!isAscending && selectedSortOrder != PlaylistSortOrder.CUSTOM) {
+                sorted.reversed()
+            } else {
+                sorted
+            }
         }
     }
 
-    val displaySongs = remember(displayEntries) { displayEntries.map { it.song } }
+    val displaySongs by remember {
+        derivedStateOf { displayEntries.map { it.song } }
+    }
+
+    // Proactively pre-decode thumbnails ahead of the scroll viewport for 120fps scrolling
+    LaunchedEffect(displaySongs) {
+        if (displaySongs.isNotEmpty()) {
+            snapshotFlow { (listState.firstVisibleItemIndex - 3).coerceAtLeast(0) }
+                .collect { firstSongIdx ->
+                    com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                        context = context,
+                        songs = displaySongs,
+                        firstVisibleIndex = firstSongIdx,
+                        windowAhead = 36,
+                        windowBehind = 10
+                    )
+                }
+        }
+    }
 
     val fastScrollAlphabetProvider: ((Int) -> String?)? = remember(selectedSortOrder, displaySongs) {
         when (selectedSortOrder) {
@@ -307,7 +328,7 @@ fun PlaylistDetailScreen(
         }
     }
 
-    val totalDurationMs = playlistSongs.sumOf { it.durationMs }
+    val totalDurationMs = remember(playlistSongs) { playlistSongs.sumOf { it.durationMs } }
     val totalMinutes = totalDurationMs / 1000 / 60
 
     Box(
@@ -466,7 +487,7 @@ fun PlaylistDetailScreen(
                         ) {
                             com.example.ui.components.PlaylistCover(
                                 playlist = playlist,
-                                playlistSongs = localEntries.map { it.song }.ifEmpty { playlistSongs },
+                                playlistSongs = displaySongs.ifEmpty { playlistSongs },
                                 modifier = Modifier.size(80.dp),
                                 cornerRadius = 16
                             )
@@ -821,10 +842,10 @@ fun PlaylistDetailScreen(
             FastScrollbar(
                 listState = listState,
                 totalItems = displaySongs.size + 3,
-                itemLabelProvider = fastScrollAlphabetProvider,
+                itemIndexToLabel = fastScrollAlphabetProvider,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 16.dp, top = 8.dp, bottom = 120.dp)
+                    .padding(end = 2.dp)
             )
         }
     }

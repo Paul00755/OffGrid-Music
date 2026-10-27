@@ -25,6 +25,76 @@ class UserPreferencesRepository(private val context: Context) {
         emit(emptyPreferences())
     }
 
+    private val bootCachePrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+
+    private fun readBoolCached(key: String, default: Boolean): Boolean {
+        return try {
+            if (bootCachePrefs.contains("pref_$key")) bootCachePrefs.getBoolean("pref_$key", default) else default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun writeBoolCached(key: String, value: Boolean, now: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit()
+                .putBoolean("pref_$key", value)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun readIntCached(key: String, default: Int): Int {
+        return try {
+            if (bootCachePrefs.contains("pref_$key")) bootCachePrefs.getInt("pref_$key", default) else default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun writeIntCached(key: String, value: Int, now: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit()
+                .putInt("pref_$key", value)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun readFloatCached(key: String, default: Float): Float {
+        return try {
+            if (bootCachePrefs.contains("pref_$key")) bootCachePrefs.getFloat("pref_$key", default) else default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun writeFloatCached(key: String, value: Float, now: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit()
+                .putFloat("pref_$key", value)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun readStringCached(key: String, default: String): String {
+        return try {
+            if (bootCachePrefs.contains("pref_$key")) (bootCachePrefs.getString("pref_$key", default) ?: default) else default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun writeStringCached(key: String, value: String, now: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit()
+                .putString("pref_$key", value)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
     private object PreferenceKeys {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val THEME_MODE = stringPreferencesKey("theme_mode") // "DARK", "LIGHT", "SYSTEM"
@@ -37,7 +107,8 @@ class UserPreferencesRepository(private val context: Context) {
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
         val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
         val LYRICS_FETCH_MODE = stringPreferencesKey("lyrics_fetch_mode") // "ALWAYS", "WIFI_ONLY", "OFF"
-        val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "COUNT", "BOTH"
+        val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "SONGS"
+        val SLEEP_TIMER_FINISH_LAST_SONG = booleanPreferencesKey("sleep_timer_finish_last_song")
         val RESUME_ON_BLUETOOTH = booleanPreferencesKey("resume_on_bluetooth")
         val PAUSE_ON_HEADSET_UNPLUG = booleanPreferencesKey("pause_on_headset_unplug")
         val REPEAT_MODE = intPreferencesKey("repeat_mode") // 0=OFF, 1=ALL, 2=ONE
@@ -50,6 +121,8 @@ class UserPreferencesRepository(private val context: Context) {
         val ADD_TO_QUEUE_POSITION = stringPreferencesKey("add_to_queue_position") // "BOTTOM" or "TOP_NEXT"
         val PLAYLIST_ADD_SONG_POSITION = stringPreferencesKey("playlist_add_song_position") // "BOTTOM" or "TOP"
         val PLAYLIST_VIEW_MODE = stringPreferencesKey("playlist_view_mode") // "GRID" or "LIST"
+        val LIBRARY_SORT_OPTION = stringPreferencesKey("library_sort_option")
+        val LIBRARY_SORT_ASCENDING = booleanPreferencesKey("library_sort_ascending")
 
         // Expanded Customization Settings
         val WAVEFORM_STYLE = stringPreferencesKey("waveform_style") // "SNAKE", "CLASSIC", "SMOOTH_WAVE", "BARS", "DOTS", "MINIMAL"
@@ -85,7 +158,9 @@ class UserPreferencesRepository(private val context: Context) {
         val AUDIO_BALANCE = floatPreferencesKey("audio_balance") // -1.0f .. 1.0f
         val EQUALIZER_PRESET = stringPreferencesKey("equalizer_preset") // "NORMAL", "BASS_BOOST", "TREBLE_BOOST", "VOCAL", "ROCK", "POP"
         val REDUCE_VOLUME_ON_NOTIFICATION = booleanPreferencesKey("reduce_volume_on_notification")
-        val PLAY_DURING_CAMERA = booleanPreferencesKey("play_during_camera")
+        val PLAY_DURING_CAMERA = booleanPreferencesKey("play_during_camera") // Legacy combined key
+        val AUTO_PAUSE_CAMERA = booleanPreferencesKey("auto_pause_camera") // Default: false (OFF)
+        val AUTO_PAUSE_SYSTEM_AUDIO = booleanPreferencesKey("auto_pause_system_audio") // Default: true (ON)
         val SCROBBLE_THRESHOLD_TYPE = stringPreferencesKey("scrobble_threshold_type") // "SECONDS" or "PERCENTAGE"
         val SCROBBLE_THRESHOLD_VALUE = intPreferencesKey("scrobble_threshold_value") // e.g. 30 (sec or %)
         val HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
@@ -136,42 +211,123 @@ class UserPreferencesRepository(private val context: Context) {
         val AUDIO_TRANSCRIBE_TARGET_LANG = stringPreferencesKey("audio_transcribe_target_lang") // "en", "ta", "hi", "ml"
     }
 
+    private fun resolveAutoPauseCamera(prefs: Preferences): Boolean {
+        prefs[PreferenceKeys.AUTO_PAUSE_CAMERA]?.let { return it }
+        if (bootCachePrefs.contains("pref_auto_pause_camera")) {
+            return bootCachePrefs.getBoolean("pref_auto_pause_camera", false)
+        }
+        // Safe migration rule: never unexpectedly enable camera auto-pause for existing or new users.
+        return false
+    }
+
+    private fun resolveAutoPauseSystemAudio(prefs: Preferences): Boolean {
+        prefs[PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO]?.let { return it }
+        if (bootCachePrefs.contains("pref_auto_pause_system_audio")) {
+            return bootCachePrefs.getBoolean("pref_auto_pause_system_audio", true)
+        }
+        // Safe migration rule: if legacy PLAY_DURING_CAMERA was explicitly saved,
+        // play_during_camera == true meant "do not auto-pause on transient focus loss" -> autoPauseSystemAudio = false;
+        // play_during_camera == false meant "auto-pause on transient focus loss" -> autoPauseSystemAudio = true.
+        prefs[PreferenceKeys.PLAY_DURING_CAMERA]?.let { legacyPlayDuring ->
+            return !legacyPlayDuring
+        }
+        if (bootCachePrefs.contains("pref_play_during_camera")) {
+            return !bootCachePrefs.getBoolean("pref_play_during_camera", false)
+        }
+        return true
+    }
+
+    fun getAutoPauseCameraSync(): Boolean {
+        if (bootCachePrefs.contains("pref_auto_pause_camera")) {
+            return bootCachePrefs.getBoolean("pref_auto_pause_camera", false)
+        }
+        return false
+    }
+
+    fun getAutoPauseSystemAudioSync(): Boolean {
+        if (bootCachePrefs.contains("pref_auto_pause_system_audio")) {
+            return bootCachePrefs.getBoolean("pref_auto_pause_system_audio", true)
+        }
+        if (bootCachePrefs.contains("pref_play_during_camera")) {
+            return !bootCachePrefs.getBoolean("pref_play_during_camera", false)
+        }
+        return true
+    }
+
+    /**
+     * Performs a safe, one-time migration from the legacy combined `play_during_camera` preference
+     * to the two independent `auto_pause_camera` and `auto_pause_system_audio` preferences without
+     * overwriting any existing explicit user choice.
+     */
+    suspend fun migrateLegacyInterruptionSettingsIfNeeded() {
+        context.dataStore.edit { prefs ->
+            val hasCameraPref = prefs.contains(PreferenceKeys.AUTO_PAUSE_CAMERA) || bootCachePrefs.contains("pref_auto_pause_camera")
+            val hasSystemAudioPref = prefs.contains(PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO) || bootCachePrefs.contains("pref_auto_pause_system_audio")
+            val hasLegacyPref = prefs.contains(PreferenceKeys.PLAY_DURING_CAMERA) || bootCachePrefs.contains("pref_play_during_camera")
+
+            if (hasLegacyPref && (!hasCameraPref || !hasSystemAudioPref)) {
+                val legacyPlayDuring = prefs[PreferenceKeys.PLAY_DURING_CAMERA]
+                    ?: bootCachePrefs.getBoolean("pref_play_during_camera", false)
+                if (!hasCameraPref) {
+                    prefs[PreferenceKeys.AUTO_PAUSE_CAMERA] = false
+                    bootCachePrefs.edit().putBoolean("pref_auto_pause_camera", false).apply()
+                }
+                if (!hasSystemAudioPref) {
+                    val migratedSystemAudio = !legacyPlayDuring
+                    prefs[PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO] = migratedSystemAudio
+                    bootCachePrefs.edit().putBoolean("pref_auto_pause_system_audio", migratedSystemAudio).apply()
+                }
+            }
+        }
+    }
+
     val isTranscribeTranslateEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false
+        prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: readBoolCached("transcribe_translate_enabled", false)
     }
 
     val audioTranscribeMode: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF"
+        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: readStringCached("audio_transcribe_mode", "OFF")
     }
 
     val audioTranscribeTargetLang: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta"
+        prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: readStringCached("audio_transcribe_target_lang", "ta")
     }
 
     suspend fun setTranscribeTranslateEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("transcribe_translate_enabled", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setAudioTranscribeMode(mode: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("audio_transcribe_mode", mode, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] = mode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setAudioTranscribeTargetLang(langCode: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("audio_transcribe_target_lang", langCode, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = langCode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     val automaticBackupEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: true
+        prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: readBoolCached("automatic_backup_enabled", true)
     }
 
     val backupFrequency: Flow<com.example.data.sync.BackupFrequency> = safeData.map { prefs ->
-        com.example.data.sync.BackupFrequency.fromString(prefs[PreferenceKeys.BACKUP_FREQUENCY])
+        com.example.data.sync.BackupFrequency.fromString(
+            prefs[PreferenceKeys.BACKUP_FREQUENCY] ?: readStringCached("backup_frequency", "WEEKLY")
+        )
     }
 
     val lastSyncedTimestamp: Flow<Long> = safeData.map { prefs ->
@@ -187,16 +343,20 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setAutomaticBackupEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("automatic_backup_enabled", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = enabled
-            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = System.currentTimeMillis()
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setBackupFrequency(frequency: com.example.data.sync.BackupFrequency) {
+        val now = System.currentTimeMillis()
+        writeStringCached("backup_frequency", frequency.name, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.BACKUP_FREQUENCY] = frequency.name
-            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = System.currentTimeMillis()
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -216,10 +376,14 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val settingsLastUpdatedAt: Flow<Long> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
+        prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT]
+            ?: bootCachePrefs.getLong("pref_settings_last_updated_at", 0L)
     }
 
     suspend fun touchSettingsUpdatedAt(timestamp: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit().putLong("pref_settings_last_updated_at", timestamp).apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = timestamp
         }
@@ -227,92 +391,99 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun exportUserSettings(): com.example.data.sync.CloudUserSettings {
         val prefs = safeData.first()
-        val storedThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        val storedThemeMode = prefs[PreferenceKeys.THEME_MODE] ?: readStringCached("theme_mode", "DARK")
         val effectiveThemeMode = if (!storedThemeMode.equals("LIGHT", ignoreCase = true) &&
-            prefs[PreferenceKeys.AMOLED_MODE] == true) "AMOLED" else storedThemeMode
+            (prefs[PreferenceKeys.AMOLED_MODE] == true || storedThemeMode.equals("AMOLED", ignoreCase = true))) "AMOLED" else storedThemeMode
+        val resolvedCameraPause = resolveAutoPauseCamera(prefs)
+        val resolvedSystemAudioPause = resolveAutoPauseSystemAudio(prefs)
         return com.example.data.sync.CloudUserSettings(
             themeMode = effectiveThemeMode,
-            uiTheme = prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN",
-            homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC",
-            nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS",
-            playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "GLOW_CARDS",
-            accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE",
-            customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0,
-            dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true,
+            uiTheme = prefs[PreferenceKeys.UI_THEME] ?: readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN"),
+            homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "BENTO_DYNAMIC"),
+            nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS"),
+            playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "GLOW_CARDS"),
+            accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
+            customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0),
+            dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true),
             amoledMode = false,
-            cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16,
-            fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM",
-            artworkSize = prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM",
-            showArtist = prefs[PreferenceKeys.SHOW_ARTIST] ?: true,
-            showAlbum = prefs[PreferenceKeys.SHOW_ALBUM] ?: true,
-            showAudioOutput = prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: true,
-            miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: "FLOATING",
-            miniPlayerShowPrevious = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: true,
-            miniPlayerShowNext = prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: true,
-            miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: true,
-            waveformStyle = prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE",
-            lyricsFetchMode = prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: "WIFI_ONLY",
-            lyricsAutoScroll = prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: true,
-            lyricsFontSize = prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: "MEDIUM",
-            gaplessPlayback = prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: true,
-            crossfadeDurationSec = prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: 0,
-            normalizeAudio = prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: false,
-            autoPlayOnHeadphoneConnection = prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false,
-            pauseOnZeroVolume = prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: true,
-            autoResumeOnVolumeIncrease = prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: true,
-            fadeInOutMs = prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000,
-            fadeInMs = prefs[PreferenceKeys.FADE_IN_MS] ?: 1000,
-            fadeOutMs = prefs[PreferenceKeys.FADE_OUT_MS] ?: 1000,
-            shakeToSkip = prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: false,
-            keepScreenAwake = prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: false,
-            audioBalance = prefs[PreferenceKeys.AUDIO_BALANCE] ?: 0f,
-            equalizerPreset = prefs[PreferenceKeys.EQUALIZER_PRESET] ?: "NORMAL",
-            customEqBands = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0",
-            customBassBoost = prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0,
-            customVirtualizer = prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0,
-            reduceVolumeOnNotification = prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true,
-            playDuringCamera = prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: false,
-            scrobbleThresholdType = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS",
-            scrobbleThresholdValue = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30,
-            repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: 0,
-            shuffleMode = prefs[PreferenceKeys.SHUFFLE_MODE] ?: false,
-            alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: false,
-            gesturePlaybackEnabled = prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: true,
-            highRefreshRate = prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true,
-            addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM",
-            playlistAddSongPosition = prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM",
-            playlistViewMode = prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID",
-            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums",
-            databaseStorageTier = prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED",
+            cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: readIntCached("corner_radius_dp", 16),
+            fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: readStringCached("font_size_scale", "MEDIUM"),
+            artworkSize = prefs[PreferenceKeys.ARTWORK_SIZE] ?: readStringCached("artwork_size", "MEDIUM"),
+            showArtist = prefs[PreferenceKeys.SHOW_ARTIST] ?: readBoolCached("show_artist", true),
+            showAlbum = prefs[PreferenceKeys.SHOW_ALBUM] ?: readBoolCached("show_album", true),
+            showAudioOutput = prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: readBoolCached("show_audio_output", true),
+            miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING"),
+            miniPlayerShowPrevious = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: readBoolCached("mini_player_show_previous", true),
+            miniPlayerShowNext = prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: readBoolCached("mini_player_show_next", true),
+            miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true),
+            waveformStyle = prefs[PreferenceKeys.WAVEFORM_STYLE] ?: readStringCached("waveform_style", "SNAKE"),
+            lyricsFetchMode = prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: readStringCached("lyrics_fetch_mode", "WIFI_ONLY"),
+            lyricsAutoScroll = prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: readBoolCached("lyrics_auto_scroll", true),
+            lyricsFontSize = prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: readStringCached("lyrics_font_size", "MEDIUM"),
+            gaplessPlayback = prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: readBoolCached("gapless_playback", true),
+            crossfadeDurationSec = prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: readIntCached("crossfade_duration_sec", 0),
+            normalizeAudio = prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: readBoolCached("normalize_audio", false),
+            autoPlayOnHeadphoneConnection = prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: readBoolCached("auto_play_on_headphone_connection", false),
+            pauseOnZeroVolume = prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: readBoolCached("pause_on_zero_volume", true),
+            autoResumeOnVolumeIncrease = prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: readBoolCached("auto_resume_on_volume_increase", true),
+            fadeInOutMs = prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_in_out_ms", 1000),
+            fadeInMs = prefs[PreferenceKeys.FADE_IN_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_in_ms", 1000),
+            fadeOutMs = prefs[PreferenceKeys.FADE_OUT_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_out_ms", 1000),
+            shakeToSkip = prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: readBoolCached("shake_to_skip", false),
+            keepScreenAwake = prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: readBoolCached("keep_screen_awake", false),
+            audioBalance = prefs[PreferenceKeys.AUDIO_BALANCE] ?: readFloatCached("audio_balance", 0f),
+            equalizerPreset = prefs[PreferenceKeys.EQUALIZER_PRESET] ?: readStringCached("equalizer_preset", "NORMAL"),
+            customEqBands = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: readStringCached("custom_eq_bands", "0.0,0.0,0.0,0.0,0.0"),
+            customBassBoost = prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: readIntCached("custom_bass_boost", 0),
+            customVirtualizer = prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: readIntCached("custom_virtualizer", 0),
+            reduceVolumeOnNotification = prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: readBoolCached("reduce_volume_on_notification", true),
+            playDuringCamera = !resolvedSystemAudioPause,
+            autoPauseCamera = resolvedCameraPause,
+            autoPauseSystemAudio = resolvedSystemAudioPause,
+            sleepTimerFinishLastSong = prefs[PreferenceKeys.SLEEP_TIMER_FINISH_LAST_SONG] ?: readBoolCached("sleep_timer_finish_last_song", false),
+            scrobbleThresholdType = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: readStringCached("scrobble_threshold_type", "SECONDS"),
+            scrobbleThresholdValue = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: readIntCached("scrobble_threshold_value", 30),
+            repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: readIntCached("repeat_mode", 0),
+            shuffleMode = prefs[PreferenceKeys.SHUFFLE_MODE] ?: readBoolCached("shuffle_mode", false),
+            alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", false),
+            gesturePlaybackEnabled = prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true),
+            highRefreshRate = prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: readBoolCached("high_refresh_rate", true),
+            addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM"),
+            playlistAddSongPosition = prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM"),
+            playlistViewMode = prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: readStringCached("playlist_view_mode", "GRID"),
+            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"),
+            databaseStorageTier = prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: readStringCached("database_storage_tier", "EXPANDED"),
             customDisplayName = prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME],
             customAvatarUri = prefs[PreferenceKeys.CUSTOM_AVATAR_URI],
-            ignoreAudioDuration = prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0,
-            librarySortOption = prefs[stringPreferencesKey("library_sort_option")] ?: "RECENTLY_ADDED",
-            librarySortAscending = prefs[booleanPreferencesKey("library_sort_ascending")] ?: true,
-            sleepTimerMode = prefs[PreferenceKeys.SLEEP_TIMER_MODE] ?: "TIME",
-            resumeOnBluetooth = prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: false,
-            pauseOnHeadsetUnplug = prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: true,
-            notificationEnabled = prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: true,
-            autoplayOnAppStartup = prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: false,
-            fetchOnlineArtworkHighRes = prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: true,
-            cacheLyricsEnabled = prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: true,
-            cacheAlbumArtEnabled = prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: true,
-            cacheSongArtWorkEnabled = prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: true,
-            transcribeTranslateEnabled = prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: false,
-            audioTranscribeMode = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: "OFF",
-            audioTranscribeTargetLang = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: "ta",
-            automaticBackupEnabled = prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: true,
-            backupFrequency = prefs[PreferenceKeys.BACKUP_FREQUENCY] ?: "WEEKLY",
-            updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
+            ignoreAudioDuration = prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: readIntCached("ignore_audio_duration", 0),
+            librarySortOption = prefs[PreferenceKeys.LIBRARY_SORT_OPTION] ?: readStringCached("library_sort_option", "RECENTLY_ADDED"),
+            librarySortAscending = prefs[PreferenceKeys.LIBRARY_SORT_ASCENDING] ?: readBoolCached("library_sort_ascending", true),
+            sleepTimerMode = prefs[PreferenceKeys.SLEEP_TIMER_MODE] ?: readStringCached("sleep_timer_mode", "TIME"),
+            resumeOnBluetooth = prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: readBoolCached("resume_on_bluetooth", false),
+            pauseOnHeadsetUnplug = prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: readBoolCached("pause_on_headset_unplug", true),
+            notificationEnabled = prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: readBoolCached("notification_enabled", true),
+            autoplayOnAppStartup = prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: readBoolCached("autoplay_on_app_startup", false),
+            fetchOnlineArtworkHighRes = prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: readBoolCached("fetch_online_artwork_high_res", true),
+            cacheLyricsEnabled = prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: readBoolCached("cache_lyrics_enabled", true),
+            cacheAlbumArtEnabled = prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: readBoolCached("cache_album_art_enabled", true),
+            cacheSongArtWorkEnabled = prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: readBoolCached("cache_song_art_work_enabled", true),
+            transcribeTranslateEnabled = prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] ?: readBoolCached("transcribe_translate_enabled", false),
+            audioTranscribeMode = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] ?: readStringCached("audio_transcribe_mode", "OFF"),
+            audioTranscribeTargetLang = prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] ?: readStringCached("audio_transcribe_target_lang", "ta"),
+            automaticBackupEnabled = prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] ?: readBoolCached("automatic_backup_enabled", true),
+            backupFrequency = prefs[PreferenceKeys.BACKUP_FREQUENCY] ?: readStringCached("backup_frequency", "WEEKLY"),
+            updatedAt = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: bootCachePrefs.getLong("pref_settings_last_updated_at", 0L)
         )
     }
 
     suspend fun importUserSettings(cloud: com.example.data.sync.CloudUserSettings, checkTimestamp: Boolean = true): Boolean {
         var applied = false
         context.dataStore.edit { prefs ->
-            val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] ?: 0L
+            val localUpdated = prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT]
+                ?: bootCachePrefs.getLong("pref_settings_last_updated_at", 0L)
             if (!checkTimestamp || localUpdated == 0L || cloud.updatedAt > localUpdated) {
                 val migratedThemeMode = if (!cloud.themeMode.equals("LIGHT", ignoreCase = true) && cloud.amoledMode) "AMOLED" else cloud.themeMode
+                val resolvedUpdated = if (cloud.updatedAt > 0L) cloud.updatedAt else System.currentTimeMillis()
                 prefs[PreferenceKeys.THEME_MODE] = migratedThemeMode
                 prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
                 prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout
@@ -354,6 +525,9 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = cloud.customVirtualizer
                 prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = cloud.reduceVolumeOnNotification
                 prefs[PreferenceKeys.PLAY_DURING_CAMERA] = cloud.playDuringCamera
+                prefs[PreferenceKeys.AUTO_PAUSE_CAMERA] = cloud.autoPauseCamera
+                prefs[PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO] = cloud.autoPauseSystemAudio
+                prefs[PreferenceKeys.SLEEP_TIMER_FINISH_LAST_SONG] = cloud.sleepTimerFinishLastSong
                 prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = cloud.scrobbleThresholdType
                 prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = cloud.scrobbleThresholdValue
                 prefs[PreferenceKeys.REPEAT_MODE] = cloud.repeatMode
@@ -373,8 +547,8 @@ class UserPreferencesRepository(private val context: Context) {
                     prefs[PreferenceKeys.CUSTOM_AVATAR_URI] = cloud.customAvatarUri
                 }
                 prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = cloud.ignoreAudioDuration
-                prefs[stringPreferencesKey("library_sort_option")] = cloud.librarySortOption
-                prefs[booleanPreferencesKey("library_sort_ascending")] = cloud.librarySortAscending
+                prefs[PreferenceKeys.LIBRARY_SORT_OPTION] = cloud.librarySortOption
+                prefs[PreferenceKeys.LIBRARY_SORT_ASCENDING] = cloud.librarySortAscending
                 prefs[PreferenceKeys.SLEEP_TIMER_MODE] = cloud.sleepTimerMode
                 prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] = cloud.resumeOnBluetooth
                 prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] = cloud.pauseOnHeadsetUnplug
@@ -389,7 +563,85 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = cloud.audioTranscribeTargetLang
                 prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = cloud.automaticBackupEnabled
                 prefs[PreferenceKeys.BACKUP_FREQUENCY] = cloud.backupFrequency
-                prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = if (cloud.updatedAt > 0L) cloud.updatedAt else System.currentTimeMillis()
+                prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = resolvedUpdated
+
+                try {
+                    bootCachePrefs.edit()
+                        .putString("pref_theme_mode", migratedThemeMode)
+                        .putString("pref_ui_theme", cloud.uiTheme)
+                        .putString("pref_home_screen_layout", cloud.homeScreenLayout)
+                        .putString("pref_now_playing_layout", cloud.nowPlayingLayout)
+                        .putString("pref_playlists_layout", cloud.playlistsLayout)
+                        .putString("pref_accent_color_preset", cloud.accentColorPreset)
+                        .putInt("pref_custom_accent_color", cloud.customAccentColor)
+                        .putBoolean("pref_dynamic_artwork_theme", cloud.dynamicArtworkTheme)
+                        .putInt("pref_corner_radius_dp", cloud.cornerRadiusDp)
+                        .putString("pref_font_size_scale", cloud.fontSizeScale)
+                        .putString("pref_artwork_size", cloud.artworkSize)
+                        .putBoolean("pref_show_artist", cloud.showArtist)
+                        .putBoolean("pref_show_album", cloud.showAlbum)
+                        .putBoolean("pref_show_audio_output", cloud.showAudioOutput)
+                        .putString("pref_mini_player_style", cloud.miniPlayerStyle)
+                        .putBoolean("pref_mini_player_show_previous", cloud.miniPlayerShowPrevious)
+                        .putBoolean("pref_mini_player_show_next", cloud.miniPlayerShowNext)
+                        .putBoolean("pref_mini_player_show_favorite", cloud.miniPlayerShowFavorite)
+                        .putString("pref_waveform_style", cloud.waveformStyle)
+                        .putString("pref_lyrics_fetch_mode", cloud.lyricsFetchMode)
+                        .putBoolean("pref_lyrics_auto_scroll", cloud.lyricsAutoScroll)
+                        .putString("pref_lyrics_font_size", cloud.lyricsFontSize)
+                        .putBoolean("pref_gapless_playback", cloud.gaplessPlayback)
+                        .putInt("pref_crossfade_duration_sec", cloud.crossfadeDurationSec)
+                        .putBoolean("pref_normalize_audio", cloud.normalizeAudio)
+                        .putBoolean("pref_auto_play_on_headphone_connection", cloud.autoPlayOnHeadphoneConnection)
+                        .putBoolean("pref_pause_on_zero_volume", cloud.pauseOnZeroVolume)
+                        .putBoolean("pref_auto_resume_on_volume_increase", cloud.autoResumeOnVolumeIncrease)
+                        .putInt("pref_fade_in_out_ms", cloud.fadeInOutMs)
+                        .putInt("pref_fade_in_ms", cloud.fadeInMs)
+                        .putInt("pref_fade_out_ms", cloud.fadeOutMs)
+                        .putBoolean("pref_shake_to_skip", cloud.shakeToSkip)
+                        .putBoolean("pref_keep_screen_awake", cloud.keepScreenAwake)
+                        .putFloat("pref_audio_balance", cloud.audioBalance)
+                        .putString("pref_equalizer_preset", cloud.equalizerPreset)
+                        .putString("pref_custom_eq_bands", cloud.customEqBands)
+                        .putInt("pref_custom_bass_boost", cloud.customBassBoost)
+                        .putInt("pref_custom_virtualizer", cloud.customVirtualizer)
+                        .putBoolean("pref_reduce_volume_on_notification", cloud.reduceVolumeOnNotification)
+                        .putBoolean("pref_play_during_camera", cloud.playDuringCamera)
+                        .putBoolean("pref_auto_pause_camera", cloud.autoPauseCamera)
+                        .putBoolean("pref_auto_pause_system_audio", cloud.autoPauseSystemAudio)
+                        .putBoolean("pref_sleep_timer_finish_last_song", cloud.sleepTimerFinishLastSong)
+                        .putString("pref_scrobble_threshold_type", cloud.scrobbleThresholdType)
+                        .putInt("pref_scrobble_threshold_value", cloud.scrobbleThresholdValue)
+                        .putInt("pref_repeat_mode", cloud.repeatMode)
+                        .putBoolean("pref_shuffle_mode", cloud.shuffleMode)
+                        .putBoolean("pref_always_shuffle_mode", cloud.alwaysShuffleMode)
+                        .putBoolean("pref_gesture_playback_enabled", cloud.gesturePlaybackEnabled)
+                        .putBoolean("pref_high_refresh_rate", cloud.highRefreshRate)
+                        .putString("pref_add_to_queue_position", cloud.addToQueuePosition)
+                        .putString("pref_playlist_add_song_position", cloud.playlistAddSongPosition)
+                        .putString("pref_playlist_view_mode", cloud.playlistViewMode)
+                        .putString("pref_home_sections", cloud.homeSections)
+                        .putString("pref_database_storage_tier", cloud.databaseStorageTier)
+                        .putInt("pref_ignore_audio_duration", cloud.ignoreAudioDuration)
+                        .putString("pref_library_sort_option", cloud.librarySortOption)
+                        .putBoolean("pref_library_sort_ascending", cloud.librarySortAscending)
+                        .putString("pref_sleep_timer_mode", cloud.sleepTimerMode)
+                        .putBoolean("pref_resume_on_bluetooth", cloud.resumeOnBluetooth)
+                        .putBoolean("pref_pause_on_headset_unplug", cloud.pauseOnHeadsetUnplug)
+                        .putBoolean("pref_notification_enabled", cloud.notificationEnabled)
+                        .putBoolean("pref_autoplay_on_app_startup", cloud.autoplayOnAppStartup)
+                        .putBoolean("pref_fetch_online_artwork_high_res", cloud.fetchOnlineArtworkHighRes)
+                        .putBoolean("pref_cache_lyrics_enabled", cloud.cacheLyricsEnabled)
+                        .putBoolean("pref_cache_album_art_enabled", cloud.cacheAlbumArtEnabled)
+                        .putBoolean("pref_cache_song_art_work_enabled", cloud.cacheSongArtWorkEnabled)
+                        .putBoolean("pref_transcribe_translate_enabled", cloud.transcribeTranslateEnabled)
+                        .putString("pref_audio_transcribe_mode", cloud.audioTranscribeMode)
+                        .putString("pref_audio_transcribe_target_lang", cloud.audioTranscribeTargetLang)
+                        .putBoolean("pref_automatic_backup_enabled", cloud.automaticBackupEnabled)
+                        .putString("pref_backup_frequency", cloud.backupFrequency)
+                        .putLong("pref_settings_last_updated_at", resolvedUpdated)
+                        .apply()
+                } catch (_: Exception) {}
                 applied = true
             }
         }
@@ -411,12 +663,14 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setCustomDisplayName(name: String?) {
+        val now = System.currentTimeMillis()
         context.dataStore.edit { prefs ->
             if (name != null) {
                 prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME] = name
             } else {
                 prefs.remove(PreferenceKeys.CUSTOM_DISPLAY_NAME)
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -425,12 +679,14 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setCustomAvatarUri(uri: String?) {
+        val now = System.currentTimeMillis()
         context.dataStore.edit { prefs ->
             if (uri != null) {
                 prefs[PreferenceKeys.CUSTOM_AVATAR_URI] = uri
             } else {
                 prefs.remove(PreferenceKeys.CUSTOM_AVATAR_URI)
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -464,39 +720,54 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val databaseStorageTier: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: "EXPANDED"
+        prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: readStringCached("database_storage_tier", "EXPANDED")
     }
+    fun getDatabaseStorageTierSync(): String = readStringCached("database_storage_tier", "EXPANDED")
 
     suspend fun setDatabaseStorageTier(tier: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("database_storage_tier", tier, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = tier
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     val cacheLyricsEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: true
+        prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: readBoolCached("cache_lyrics_enabled", true)
     }
+    fun getCacheLyricsEnabledSync(): Boolean = readBoolCached("cache_lyrics_enabled", true)
 
     val cacheAlbumArtEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: true
+        prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: readBoolCached("cache_album_art_enabled", true)
     }
+    fun getCacheAlbumArtEnabledSync(): Boolean = readBoolCached("cache_album_art_enabled", true)
 
     val cacheSongArtWorkEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: true
+        prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: readBoolCached("cache_song_art_work_enabled", true)
     }
+    fun getCacheSongArtWorkEnabledSync(): Boolean = readBoolCached("cache_song_art_work_enabled", true)
 
-    @Volatile var cachedFetchOnlineArtworkHighRes: Boolean = false
+    @Volatile var cachedFetchOnlineArtworkHighRes: Boolean = readBoolCached("fetch_online_artwork_high_res", false)
         private set
-    @Volatile var cachedCacheAlbumArtEnabled: Boolean = true
+    @Volatile var cachedCacheAlbumArtEnabled: Boolean = readBoolCached("cache_album_art_enabled", true)
         private set
-    @Volatile var cachedCacheSongArtWorkEnabled: Boolean = true
+    @Volatile var cachedCacheSongArtWorkEnabled: Boolean = readBoolCached("cache_song_art_work_enabled", true)
         private set
-    @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = false
-    @Volatile var cachedAutoPlayOnAppStartup: Boolean = false
+    @Volatile var cachedAutoPlayOnHeadphoneConnection: Boolean = readBoolCached("auto_play_on_headphone_connection", false)
+    @Volatile var cachedAutoPlayOnAppStartup: Boolean = readBoolCached("autoplay_on_app_startup", false)
 
     val customEqBands: Flow<List<Float>> = safeData.map { prefs ->
-        val raw = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: "0.0,0.0,0.0,0.0,0.0"
+        val raw = prefs[PreferenceKeys.CUSTOM_EQ_BANDS] ?: readStringCached("custom_eq_bands", "0.0,0.0,0.0,0.0,0.0")
         try {
+            raw.split(",").map { it.trim().toFloat() }
+        } catch (_: Exception) {
+            listOf(0f, 0f, 0f, 0f, 0f)
+        }
+    }
+    fun getCustomEqBandsSync(): List<Float> {
+        val raw = readStringCached("custom_eq_bands", "0.0,0.0,0.0,0.0,0.0")
+        return try {
             raw.split(",").map { it.trim().toFloat() }
         } catch (_: Exception) {
             listOf(0f, 0f, 0f, 0f, 0f)
@@ -504,41 +775,62 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val customBassBoost: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: 0
+        prefs[PreferenceKeys.CUSTOM_BASS_BOOST] ?: readIntCached("custom_bass_boost", 0)
     }
+    fun getCustomBassBoostSync(): Int = readIntCached("custom_bass_boost", 0)
 
     val customVirtualizer: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: 0
+        prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] ?: readIntCached("custom_virtualizer", 0)
     }
+    fun getCustomVirtualizerSync(): Int = readIntCached("custom_virtualizer", 0)
 
     val fetchOnlineArtworkHighRes: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: false
+        prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: readBoolCached("fetch_online_artwork_high_res", false)
     }
+    fun getFetchOnlineArtworkHighResSync(): Boolean = readBoolCached("fetch_online_artwork_high_res", false)
 
     val alwaysShuffleMode: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: false
+        prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", false)
     }
+    fun getAlwaysShuffleModeSync(): Boolean = readBoolCached("always_shuffle_mode", false)
 
     val gesturePlaybackEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: true
+        prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true)
     }
+    fun getGesturePlaybackEnabledSync(): Boolean = readBoolCached("gesture_playback_enabled", true)
+
+    private val defaultHomeSectionsRaw = "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
 
     val homeSections: Flow<List<String>> = safeData.map { prefs ->
-        val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
+        val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", defaultHomeSectionsRaw)
         raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+    fun getHomeSectionsSync(): List<String> {
+        val raw = readStringCached("home_sections", defaultHomeSectionsRaw)
+        return raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
 
     suspend fun setHomeSections(sections: List<String>) {
+        val now = System.currentTimeMillis()
+        val serialized = sections.joinToString(",")
+        writeStringCached("home_sections", serialized, now)
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.HOME_SECTIONS] = sections.joinToString(",")
+            prefs[PreferenceKeys.HOME_SECTIONS] = serialized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     val highRefreshRate: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: true
+        prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: readBoolCached("high_refresh_rate", true)
     }
+    fun getHighRefreshRateSync(): Boolean = readBoolCached("high_refresh_rate", true)
 
-    private val bootCachePrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+    fun getTranscribeTranslateEnabledSync(): Boolean = readBoolCached("transcribe_translate_enabled", false)
+    fun getAudioTranscribeModeSync(): String = readStringCached("audio_transcribe_mode", "OFF")
+    fun getAudioTranscribeTargetLangSync(): String = readStringCached("audio_transcribe_target_lang", "ta")
+    fun getAutomaticBackupEnabledSync(): Boolean = readBoolCached("automatic_backup_enabled", true)
+    fun getBackupFrequencySync(): com.example.data.sync.BackupFrequency =
+        com.example.data.sync.BackupFrequency.fromString(readStringCached("backup_frequency", "WEEKLY"))
 
     /**
      * Checks whether this installation is an existing user upgrading from a previous build:
@@ -609,57 +901,116 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val themeMode: Flow<String> = safeData.map { prefs ->
-        val savedMode = prefs[PreferenceKeys.THEME_MODE] ?: "DARK"
+        val savedMode = prefs[PreferenceKeys.THEME_MODE] ?: readStringCached("theme_mode", "DARK")
         if (!savedMode.equals("LIGHT", ignoreCase = true) && prefs[PreferenceKeys.AMOLED_MODE] == true) "AMOLED" else savedMode
     }
+    fun getThemeModeSync(): String = readStringCached("theme_mode", "DARK")
 
     val uiTheme: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.UI_THEME] ?: "MIDNIGHT_OBSIDIAN"
+        prefs[PreferenceKeys.UI_THEME] ?: readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN")
     }
+    fun getUiThemeSync(): String = readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN")
 
     val displayScale: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.DISPLAY_SCALE] ?: "DEFAULT"
+        prefs[PreferenceKeys.DISPLAY_SCALE] ?: readStringCached("display_scale", "DEFAULT")
     }
+    fun getDisplayScaleSync(): String = readStringCached("display_scale", "DEFAULT")
 
     val homeScreenLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: "BENTO_DYNAMIC"
+        prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "BENTO_DYNAMIC")
     }
+    fun getHomeScreenLayoutSync(): String = readStringCached("home_screen_layout", "BENTO_DYNAMIC")
 
     val nowPlayingLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: "MINIMAL_GLASS"
+        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS")
     }
+    fun getNowPlayingLayoutSync(): String = readStringCached("now_playing_layout", "MINIMAL_GLASS")
 
     val playlistsLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: "GLOW_CARDS"
+        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "GLOW_CARDS")
     }
+    fun getPlaylistsLayoutSync(): String = readStringCached("playlists_layout", "GLOW_CARDS")
 
     val isDynamicArtworkTheme: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: true
+        prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
     }
+    fun getDynamicArtworkThemeSync(): Boolean = readBoolCached("dynamic_artwork_theme", true)
 
     val customAccentColor: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: 0
+        prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0)
     }
+    fun getCustomAccentColorSync(): Int = readIntCached("custom_accent_color", 0)
 
     val lyricsFetchMode: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: "WIFI_ONLY"
+        prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: readStringCached("lyrics_fetch_mode", "WIFI_ONLY")
+    }
+    fun getLyricsFetchModeSync(): String = readStringCached("lyrics_fetch_mode", "WIFI_ONLY")
+
+    val sleepTimerMode: Flow<String> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SLEEP_TIMER_MODE] ?: readStringCached("sleep_timer_mode", "TIME")
+    }
+    fun getSleepTimerModeSync(): String = readStringCached("sleep_timer_mode", "TIME")
+
+    val sleepTimerFinishLastSong: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SLEEP_TIMER_FINISH_LAST_SONG] ?: readBoolCached("sleep_timer_finish_last_song", false)
+    }
+    fun getSleepTimerFinishLastSongSync(): Boolean = readBoolCached("sleep_timer_finish_last_song", false)
+
+    suspend fun setSleepTimerMode(mode: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("sleep_timer_mode", mode, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SLEEP_TIMER_MODE] = mode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setSleepTimerFinishLastSong(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("sleep_timer_finish_last_song", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SLEEP_TIMER_FINISH_LAST_SONG] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     val resumeOnBluetooth: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: false
+        prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] ?: readBoolCached("resume_on_bluetooth", false)
+    }
+    fun getResumeOnBluetoothSync(): Boolean = readBoolCached("resume_on_bluetooth", false)
+
+    suspend fun setResumeOnBluetooth(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("resume_on_bluetooth", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     val pauseOnHeadsetUnplug: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: true
+        prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: readBoolCached("pause_on_headset_unplug", true)
+    }
+    fun getPauseOnHeadsetUnplugSync(): Boolean = readBoolCached("pause_on_headset_unplug", true)
+
+    suspend fun setPauseOnHeadsetUnplug(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("pause_on_headset_unplug", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     val repeatMode: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.REPEAT_MODE] ?: 0
+        prefs[PreferenceKeys.REPEAT_MODE] ?: readIntCached("repeat_mode", 0)
     }
+    fun getRepeatModeSync(): Int = readIntCached("repeat_mode", 0)
 
     val shuffleMode: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SHUFFLE_MODE] ?: false
+        prefs[PreferenceKeys.SHUFFLE_MODE] ?: readBoolCached("shuffle_mode", false)
     }
+    fun getShuffleModeSync(): Boolean = readBoolCached("shuffle_mode", false)
 
     val lastSongId: Flow<Long> = safeData.map { prefs ->
         prefs[PreferenceKeys.LAST_SONG_ID] ?: bootCachePrefs.getLong("last_song_id", -1L)
@@ -685,249 +1036,420 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val addToQueuePosition: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: "BOTTOM"
+        prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM")
     }
+    fun getAddToQueuePositionSync(): String = readStringCached("add_to_queue_position", "BOTTOM")
 
     val playlistAddSongPosition: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: "BOTTOM"
+        prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM")
     }
+    fun getPlaylistAddSongPositionSync(): String = readStringCached("playlist_add_song_position", "BOTTOM")
 
     val playlistViewMode: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: "GRID"
+        prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: readStringCached("playlist_view_mode", "GRID")
     }
+    fun getPlaylistViewModeSync(): String = readStringCached("playlist_view_mode", "GRID")
 
     val waveformStyle: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.WAVEFORM_STYLE] ?: "SNAKE"
+        prefs[PreferenceKeys.WAVEFORM_STYLE] ?: readStringCached("waveform_style", "SNAKE")
     }
+    fun getWaveformStyleSync(): String = readStringCached("waveform_style", "SNAKE")
 
     /** Compatibility projection for old callers; the saved theme mode is the source of truth. */
     val amoledMode: Flow<Boolean> = themeMode.map { it.equals("AMOLED", ignoreCase = true) }
 
     val accentColorPreset: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: "ORANGE"
+        prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE")
     }
+    fun getAccentColorPresetSync(): String = readStringCached("accent_color_preset", "ORANGE")
 
     val cornerRadiusDp: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: 16
+        prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: readIntCached("corner_radius_dp", 16)
     }
+    fun getCornerRadiusDpSync(): Int = readIntCached("corner_radius_dp", 16)
 
     val fontSizeScale: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: "MEDIUM"
+        prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: readStringCached("font_size_scale", "MEDIUM")
     }
+    fun getFontSizeScaleSync(): String = readStringCached("font_size_scale", "MEDIUM")
 
     val artworkSize: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ARTWORK_SIZE] ?: "MEDIUM"
+        prefs[PreferenceKeys.ARTWORK_SIZE] ?: readStringCached("artwork_size", "MEDIUM")
     }
+    fun getArtworkSizeSync(): String = readStringCached("artwork_size", "MEDIUM")
 
     val showArtist: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SHOW_ARTIST] ?: true
+        prefs[PreferenceKeys.SHOW_ARTIST] ?: readBoolCached("show_artist", true)
     }
+    fun getShowArtistSync(): Boolean = readBoolCached("show_artist", true)
 
     val showAlbum: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SHOW_ALBUM] ?: true
+        prefs[PreferenceKeys.SHOW_ALBUM] ?: readBoolCached("show_album", true)
     }
+    fun getShowAlbumSync(): Boolean = readBoolCached("show_album", true)
 
     val showAudioOutput: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: true
+        prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: readBoolCached("show_audio_output", true)
     }
+    fun getShowAudioOutputSync(): Boolean = readBoolCached("show_audio_output", true)
 
     val miniPlayerStyle: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: "FLOATING"
+        prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING")
     }
+    fun getMiniPlayerStyleSync(): String = readStringCached("mini_player_style", "FLOATING")
 
     val miniPlayerShowPrevious: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: true
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: readBoolCached("mini_player_show_previous", true)
     }
+    fun getMiniPlayerShowPreviousSync(): Boolean = readBoolCached("mini_player_show_previous", true)
 
     val miniPlayerShowNext: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: true
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: readBoolCached("mini_player_show_next", true)
     }
+    fun getMiniPlayerShowNextSync(): Boolean = readBoolCached("mini_player_show_next", true)
 
     val miniPlayerShowFavorite: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: true
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true)
     }
+    fun getMiniPlayerShowFavoriteSync(): Boolean = readBoolCached("mini_player_show_favorite", true)
 
     val gaplessPlayback: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: true
+        prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: readBoolCached("gapless_playback", true)
     }
+    fun getGaplessPlaybackSync(): Boolean = readBoolCached("gapless_playback", true)
 
     val normalizeAudio: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: false
+        prefs[PreferenceKeys.NORMALIZE_AUDIO] ?: readBoolCached("normalize_audio", false)
     }
+    fun getNormalizeAudioSync(): Boolean = readBoolCached("normalize_audio", false)
 
     val autoPlayOnHeadphoneConnection: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: false
+        prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] ?: readBoolCached("auto_play_on_headphone_connection", false)
     }
+    fun getAutoPlayOnHeadphoneConnectionSync(): Boolean = readBoolCached("auto_play_on_headphone_connection", false)
 
     val autoPlayOnAppStartup: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: false
+        prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: readBoolCached("autoplay_on_app_startup", false)
     }
+    fun getAutoPlayOnAppStartupSync(): Boolean = readBoolCached("autoplay_on_app_startup", false)
 
     val crossfadeDurationSec: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: 0
+        prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] ?: readIntCached("crossfade_duration_sec", 0)
     }
+    fun getCrossfadeDurationSecSync(): Int = readIntCached("crossfade_duration_sec", 0)
 
     val lyricsAutoScroll: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: true
+        prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: readBoolCached("lyrics_auto_scroll", true)
     }
+    fun getLyricsAutoScrollSync(): Boolean = readBoolCached("lyrics_auto_scroll", true)
 
     val lyricsFontSize: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: "MEDIUM"
+        prefs[PreferenceKeys.LYRICS_FONT_SIZE] ?: readStringCached("lyrics_font_size", "MEDIUM")
     }
+    fun getLyricsFontSizeSync(): String = readStringCached("lyrics_font_size", "MEDIUM")
 
     val notificationEnabled: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: true
+        prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: readBoolCached("notification_enabled", true)
     }
+    fun getNotificationEnabledSync(): Boolean = readBoolCached("notification_enabled", true)
 
     val pauseOnZeroVolume: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: true
+        prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] ?: readBoolCached("pause_on_zero_volume", true)
     }
+    fun getPauseOnZeroVolumeSync(): Boolean = readBoolCached("pause_on_zero_volume", true)
 
     val autoResumeOnVolumeIncrease: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: true
+        prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] ?: readBoolCached("auto_resume_on_volume_increase", true)
     }
+    fun getAutoResumeOnVolumeIncreaseSync(): Boolean = readBoolCached("auto_resume_on_volume_increase", true)
 
     val ignoreAudioDuration: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: 0
+        prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] ?: readIntCached("ignore_audio_duration", 0)
     }
+    fun getIgnoreAudioDurationSync(): Int = readIntCached("ignore_audio_duration", 0)
 
     val maxSongDuration: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MAX_SONG_DURATION] ?: 300
+        prefs[PreferenceKeys.MAX_SONG_DURATION] ?: readIntCached("max_song_duration_sec", 300)
     }
+    fun getMaxSongDurationSync(): Int = readIntCached("max_song_duration_sec", 300)
 
     val fullDeviceScan: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FULL_DEVICE_SCAN] ?: false
+        prefs[PreferenceKeys.FULL_DEVICE_SCAN] ?: readBoolCached("full_device_scan", false)
     }
+    fun getFullDeviceScanSync(): Boolean = readBoolCached("full_device_scan", false)
 
     val fadeInOutMs: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+        prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_in_out_ms", 1000)
     }
+    fun getFadeInOutMsSync(): Int = readIntCached("fade_in_out_ms", 1000)
 
     val fadeInMs: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FADE_IN_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+        prefs[PreferenceKeys.FADE_IN_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_in_ms", readIntCached("fade_in_out_ms", 1000))
     }
+    fun getFadeInMsSync(): Int = readIntCached("fade_in_ms", readIntCached("fade_in_out_ms", 1000))
 
     val fadeOutMs: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.FADE_OUT_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: 1000
+        prefs[PreferenceKeys.FADE_OUT_MS] ?: prefs[PreferenceKeys.FADE_IN_OUT_MS] ?: readIntCached("fade_out_ms", readIntCached("fade_in_out_ms", 1000))
     }
+    fun getFadeOutMsSync(): Int = readIntCached("fade_out_ms", readIntCached("fade_in_out_ms", 1000))
 
     val shakeToSkip: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: false
+        prefs[PreferenceKeys.SHAKE_TO_SKIP] ?: readBoolCached("shake_to_skip", false)
     }
+    fun getShakeToSkipSync(): Boolean = readBoolCached("shake_to_skip", false)
 
     val keepScreenAwake: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: false
+        prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] ?: readBoolCached("keep_screen_awake", false)
     }
+    fun getKeepScreenAwakeSync(): Boolean = readBoolCached("keep_screen_awake", false)
 
     val audioBalance: Flow<Float> = safeData.map { prefs ->
-        prefs[PreferenceKeys.AUDIO_BALANCE] ?: 0f
+        prefs[PreferenceKeys.AUDIO_BALANCE] ?: readFloatCached("audio_balance", 0f)
     }
+    fun getAudioBalanceSync(): Float = readFloatCached("audio_balance", 0f)
 
     val equalizerPreset: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.EQUALIZER_PRESET] ?: "NORMAL"
+        prefs[PreferenceKeys.EQUALIZER_PRESET] ?: readStringCached("equalizer_preset", "NORMAL")
     }
+    fun getEqualizerPresetSync(): String = readStringCached("equalizer_preset", "NORMAL")
 
     val reduceVolumeOnNotification: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: true
+        prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] ?: readBoolCached("reduce_volume_on_notification", true)
     }
+    fun getReduceVolumeOnNotificationSync(): Boolean = readBoolCached("reduce_volume_on_notification", true)
 
     val playDuringCamera: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: false
+        prefs[PreferenceKeys.PLAY_DURING_CAMERA] ?: readBoolCached("play_during_camera", false)
+    }
+
+    val autoPauseCamera: Flow<Boolean> = safeData.map { prefs ->
+        resolveAutoPauseCamera(prefs)
+    }
+
+    val autoPauseSystemAudio: Flow<Boolean> = safeData.map { prefs ->
+        resolveAutoPauseSystemAudio(prefs)
     }
 
     val scrobbleThresholdType: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: "SECONDS"
+        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] ?: readStringCached("scrobble_threshold_type", "SECONDS")
     }
+    fun getScrobbleThresholdTypeSync(): String = readStringCached("scrobble_threshold_type", "SECONDS")
 
     val scrobbleThresholdValue: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: 30
+        prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: readIntCached("scrobble_threshold_value", 30)
     }
+    fun getScrobbleThresholdValueSync(): Int = readIntCached("scrobble_threshold_value", 30)
 
     suspend fun setScrobbleThresholdType(type: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = type }
+        val now = System.currentTimeMillis()
+        writeStringCached("scrobble_threshold_type", type, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = type
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setScrobbleThresholdValue(value: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = value }
+        val now = System.currentTimeMillis()
+        writeIntCached("scrobble_threshold_value", value, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = value
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setReduceVolumeOnNotification(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("reduce_volume_on_notification", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setPlayDuringCamera(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.PLAY_DURING_CAMERA] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("play_during_camera", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PLAY_DURING_CAMERA] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setAutoPauseCamera(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("auto_pause_camera", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTO_PAUSE_CAMERA] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setAutoPauseSystemAudio(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("auto_pause_system_audio", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setPauseOnZeroVolume(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("pause_on_zero_volume", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setAutoResumeOnVolumeIncrease(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("auto_resume_on_volume_increase", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setIgnoreAudioDuration(durationSec: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = durationSec }
+        val now = System.currentTimeMillis()
+        writeIntCached("ignore_audio_duration", durationSec, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = durationSec
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setMaxSongDuration(durationSec: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MAX_SONG_DURATION] = durationSec }
+        val now = System.currentTimeMillis()
+        writeIntCached("max_song_duration_sec", durationSec, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MAX_SONG_DURATION] = durationSec
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setFullDeviceScan(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FULL_DEVICE_SCAN] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("full_device_scan", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.FULL_DEVICE_SCAN] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setSongDurationRange(minSec: Int, maxSec: Int) {
+        val now = System.currentTimeMillis()
+        try {
+            bootCachePrefs.edit()
+                .putInt("pref_ignore_audio_duration", minSec)
+                .putInt("pref_max_song_duration_sec", maxSec)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = minSec
             prefs[PreferenceKeys.MAX_SONG_DURATION] = maxSec
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setFadeInOutMs(ms: Int) {
+        val now = System.currentTimeMillis()
+        try {
+            bootCachePrefs.edit()
+                .putInt("pref_fade_in_out_ms", ms)
+                .putInt("pref_fade_in_ms", ms)
+                .putInt("pref_fade_out_ms", ms)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.FADE_IN_OUT_MS] = ms
             prefs[PreferenceKeys.FADE_IN_MS] = ms
             prefs[PreferenceKeys.FADE_OUT_MS] = ms
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setFadeInMs(ms: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FADE_IN_MS] = ms }
+        val now = System.currentTimeMillis()
+        writeIntCached("fade_in_ms", ms, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.FADE_IN_MS] = ms
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setFadeOutMs(ms: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FADE_OUT_MS] = ms }
+        val now = System.currentTimeMillis()
+        writeIntCached("fade_out_ms", ms, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.FADE_OUT_MS] = ms
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setShakeToSkip(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHAKE_TO_SKIP] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("shake_to_skip", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHAKE_TO_SKIP] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setKeepScreenAwake(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("keep_screen_awake", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setAudioBalance(balance: Float) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUDIO_BALANCE] = balance }
+        val now = System.currentTimeMillis()
+        writeFloatCached("audio_balance", balance, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUDIO_BALANCE] = balance
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setEqualizerPreset(preset: String) {
+        val now = System.currentTimeMillis()
+        val eqPreset = com.example.ui.components.EQ_PRESETS.find { it.id.equals(preset, ignoreCase = true) }
+        try {
+            val editor = bootCachePrefs.edit()
+                .putString("pref_equalizer_preset", preset)
+                .putLong("pref_settings_last_updated_at", now)
+            if (eqPreset != null) {
+                editor.putString("pref_custom_eq_bands", eqPreset.bands.joinToString(","))
+                editor.putInt("pref_custom_bass_boost", eqPreset.bassBoost)
+                editor.putInt("pref_custom_virtualizer", eqPreset.virtualizer)
+            }
+            editor.apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.EQUALIZER_PRESET] = preset
-            val eqPreset = com.example.ui.components.EQ_PRESETS.find { it.id.equals(preset, ignoreCase = true) }
             if (eqPreset != null) {
                 prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = eqPreset.bands.joinToString(",")
                 prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = eqPreset.bassBoost
                 prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = eqPreset.virtualizer
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setWaveformStyle(style: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.WAVEFORM_STYLE] = style }
+        val now = System.currentTimeMillis()
+        writeStringCached("waveform_style", style, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.WAVEFORM_STYLE] = style
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     /** Legacy compatibility entry point; AMOLED is now selected through the single theme mode. */
@@ -936,84 +1458,185 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setAccentColorPreset(preset: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = preset }
+        val now = System.currentTimeMillis()
+        writeStringCached("accent_color_preset", preset, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = preset
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setCornerRadiusDp(radius: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.CORNER_RADIUS_DP] = radius }
+        val now = System.currentTimeMillis()
+        writeIntCached("corner_radius_dp", radius, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CORNER_RADIUS_DP] = radius
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setFontSizeScale(scale: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.FONT_SIZE_SCALE] = scale }
+        val now = System.currentTimeMillis()
+        writeStringCached("font_size_scale", scale, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.FONT_SIZE_SCALE] = scale
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setArtworkSize(size: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ARTWORK_SIZE] = size }
+        val now = System.currentTimeMillis()
+        writeStringCached("artwork_size", size, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.ARTWORK_SIZE] = size
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setShowArtist(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_ARTIST] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_artist", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_ARTIST] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setShowAlbum(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_ALBUM] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_album", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_ALBUM] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setShowAudioOutput(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_audio_output", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setMiniPlayerStyle(style: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_STYLE] = style }
+        val now = System.currentTimeMillis()
+        writeStringCached("mini_player_style", style, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_STYLE] = style
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setMiniPlayerShowPrevious(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_show_previous", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setMiniPlayerShowNext(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_show_next", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setMiniPlayerShowFavorite(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = show }
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_show_favorite", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setGaplessPlayback(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.GAPLESS_PLAYBACK] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("gapless_playback", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.GAPLESS_PLAYBACK] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setNormalizeAudio(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.NORMALIZE_AUDIO] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("normalize_audio", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NORMALIZE_AUDIO] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = enabled }
+        val now = System.currentTimeMillis()
+        cachedAutoPlayOnHeadphoneConnection = enabled
+        writeBoolCached("auto_play_on_headphone_connection", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setAutoPlayOnAppStartup(enabled: Boolean) {
+        val now = System.currentTimeMillis()
         cachedAutoPlayOnAppStartup = enabled
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] = enabled }
+        writeBoolCached("autoplay_on_app_startup", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setCrossfadeDurationSec(sec: Int) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = sec }
+        val now = System.currentTimeMillis()
+        writeIntCached("crossfade_duration_sec", sec, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = sec
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setLyricsAutoScroll(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("lyrics_auto_scroll", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setLyricsFontSize(size: String) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.LYRICS_FONT_SIZE] = size }
+        val now = System.currentTimeMillis()
+        writeStringCached("lyrics_font_size", size, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LYRICS_FONT_SIZE] = size
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setAlwaysShuffleMode(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("always_shuffle_mode", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setGesturePlaybackEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("gesture_playback_enabled", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     fun getLyricsSyncOffsetMs(songId: Long): Long {
@@ -1079,27 +1702,46 @@ class UserPreferencesRepository(private val context: Context) {
     } catch (_: Exception) { 0L }
 
     suspend fun setNotificationEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[PreferenceKeys.NOTIFICATION_ENABLED] = enabled }
+        val now = System.currentTimeMillis()
+        writeBoolCached("notification_enabled", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NOTIFICATION_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
     }
 
     suspend fun setPlaylistViewMode(mode: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("playlist_view_mode", mode, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = mode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     val librarySortOption: Flow<String> = safeData.map { prefs ->
-        prefs[stringPreferencesKey("library_sort_option")] ?: "RECENTLY_ADDED"
+        prefs[PreferenceKeys.LIBRARY_SORT_OPTION] ?: readStringCached("library_sort_option", "RECENTLY_ADDED")
     }
+    fun getLibrarySortOptionSync(): String = readStringCached("library_sort_option", "RECENTLY_ADDED")
 
     val librarySortAscending: Flow<Boolean> = safeData.map { prefs ->
-        prefs[booleanPreferencesKey("library_sort_ascending")] ?: true
+        prefs[PreferenceKeys.LIBRARY_SORT_ASCENDING] ?: readBoolCached("library_sort_ascending", true)
     }
+    fun getLibrarySortAscendingSync(): Boolean = readBoolCached("library_sort_ascending", true)
 
     suspend fun saveLibrarySortOption(option: String, ascending: Boolean) {
+        val now = System.currentTimeMillis()
+        try {
+            bootCachePrefs.edit()
+                .putString("pref_library_sort_option", option)
+                .putBoolean("pref_library_sort_ascending", ascending)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
-            prefs[stringPreferencesKey("library_sort_option")] = option
-            prefs[booleanPreferencesKey("library_sort_ascending")] = ascending
+            prefs[PreferenceKeys.LIBRARY_SORT_OPTION] = option
+            prefs[PreferenceKeys.LIBRARY_SORT_ASCENDING] = ascending
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -1135,14 +1777,20 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setAddToQueuePosition(position: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("add_to_queue_position", position, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = position
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setPlaylistAddSongPosition(position: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("playlist_add_song_position", position, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = position
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -1159,131 +1807,223 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     /**
-     * Sets the theme mode ("DARK", "LIGHT", "SYSTEM").
+     * Sets the theme mode ("DARK", "LIGHT", "SYSTEM", "AMOLED").
      * If "LIGHT" is selected, Extra Dark Mode (`amoled_mode`) is automatically turned off.
      */
     suspend fun setThemeMode(mode: String, compatibleUiThemeId: String? = null) {
+        val now = System.currentTimeMillis()
+        val normalized = mode.uppercase()
+        try {
+            val editor = bootCachePrefs.edit()
+                .putString("pref_theme_mode", normalized)
+                .putLong("pref_settings_last_updated_at", now)
+            compatibleUiThemeId?.let { editor.putString("pref_ui_theme", it) }
+            editor.apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.THEME_MODE] = mode.uppercase()
+            prefs[PreferenceKeys.THEME_MODE] = normalized
             prefs[PreferenceKeys.AMOLED_MODE] = false
             compatibleUiThemeId?.let { prefs[PreferenceKeys.UI_THEME] = it }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setUiTheme(themeId: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("ui_theme", themeId, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.UI_THEME] = themeId
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setDisplayScale(scale: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("display_scale", scale, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.DISPLAY_SCALE] = scale
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setHomeScreenLayout(layoutId: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("home_screen_layout", layoutId, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = layoutId
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setNowPlayingLayout(layoutId: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("now_playing_layout", layoutId, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = layoutId
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setPlaylistsLayout(layoutId: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("playlists_layout", layoutId, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = layoutId
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setDynamicArtworkTheme(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("dynamic_artwork_theme", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCustomAccentColor(colorInt: Int) {
+        val now = System.currentTimeMillis()
+        writeIntCached("custom_accent_color", colorInt, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = colorInt
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setLyricsFetchMode(mode: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("lyrics_fetch_mode", mode, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.LYRICS_FETCH_MODE] = mode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setRepeatMode(mode: Int) {
+        val now = System.currentTimeMillis()
+        writeIntCached("repeat_mode", mode, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.REPEAT_MODE] = mode
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setShuffleMode(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("shuffle_mode", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.SHUFFLE_MODE] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setHighRefreshRate(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("high_refresh_rate", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.HIGH_REFRESH_RATE] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setFetchOnlineArtworkHighRes(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        cachedFetchOnlineArtworkHighRes = enabled
+        writeBoolCached("fetch_online_artwork_high_res", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCacheLyricsEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("cache_lyrics_enabled", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCacheAlbumArtEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        cachedCacheAlbumArtEnabled = enabled
+        writeBoolCached("cache_album_art_enabled", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCacheSongArtWorkEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        cachedCacheSongArtWorkEnabled = enabled
+        writeBoolCached("cache_song_art_work_enabled", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCustomEqBands(bands: List<Float>, markAsCustom: Boolean = true) {
+        val now = System.currentTimeMillis()
+        val serialized = bands.joinToString(",")
+        try {
+            val editor = bootCachePrefs.edit()
+                .putString("pref_custom_eq_bands", serialized)
+                .putLong("pref_settings_last_updated_at", now)
+            if (markAsCustom) {
+                editor.putString("pref_equalizer_preset", "CUSTOM")
+            }
+            editor.apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = bands.joinToString(",")
+            prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = serialized
             if (markAsCustom) {
                 prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCustomBassBoost(strength: Int, markAsCustom: Boolean = true) {
+        val now = System.currentTimeMillis()
+        try {
+            val editor = bootCachePrefs.edit()
+                .putInt("pref_custom_bass_boost", strength)
+                .putLong("pref_settings_last_updated_at", now)
+            if (markAsCustom) {
+                editor.putString("pref_equalizer_preset", "CUSTOM")
+            }
+            editor.apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = strength
             if (markAsCustom) {
                 prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
     suspend fun setCustomVirtualizer(strength: Int, markAsCustom: Boolean = true) {
+        val now = System.currentTimeMillis()
+        try {
+            val editor = bootCachePrefs.edit()
+                .putInt("pref_custom_virtualizer", strength)
+                .putLong("pref_settings_last_updated_at", now)
+            if (markAsCustom) {
+                editor.putString("pref_equalizer_preset", "CUSTOM")
+            }
+            editor.apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = strength
             if (markAsCustom) {
                 prefs[PreferenceKeys.EQUALIZER_PRESET] = "CUSTOM"
             }
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
 
@@ -1372,6 +2112,11 @@ class UserPreferencesRepository(private val context: Context) {
     init {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
+                migrateLegacyInterruptionSettingsIfNeeded()
+            } catch (_: Exception) {}
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
                 fetchOnlineArtworkHighRes.collect { cachedFetchOnlineArtworkHighRes = it }
             } catch (_: Exception) {}
         }
@@ -1397,6 +2142,11 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun clearAllForTesting() {
+        bootCachePrefs.edit().clear().commit()
+        context.dataStore.edit { it.clear() }
+    }
+
     companion object {
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
@@ -1404,6 +2154,19 @@ class UserPreferencesRepository(private val context: Context) {
         fun getInstance(context: Context): UserPreferencesRepository {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: UserPreferencesRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
+        fun resetInstanceForTesting(context: Context? = null) {
+            synchronized(this) {
+                INSTANCE = null
+                if (context != null) {
+                    try {
+                        context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE).edit().clear().commit()
+                        val dsDir = context.filesDir.resolve("datastore")
+                        if (dsDir.exists()) dsDir.deleteRecursively()
+                    } catch (_: Throwable) {}
+                }
             }
         }
 

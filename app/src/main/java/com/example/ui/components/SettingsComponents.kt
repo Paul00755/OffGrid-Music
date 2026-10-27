@@ -11,12 +11,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -522,3 +525,56 @@ fun SettingsDivider(
         modifier = modifier
     )
 }
+
+/**
+ * Animated highlight wrapper that brings a target setting into view and highlights it for 1-1.5 seconds.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun SettingsHighlightWrap(
+    isHighlighted: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val bringIntoViewRequester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val bgAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isHighlighted) 0.16f else 0f,
+        animationSpec = tween(durationMillis = if (isHighlighted) 200 else 350),
+        label = "settings_highlight_bg"
+    )
+    val borderAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isHighlighted) 0.92f else 0f,
+        animationSpec = tween(durationMillis = if (isHighlighted) 200 else 350),
+        label = "settings_highlight_border"
+    )
+
+    LaunchedEffect(isHighlighted) {
+        if (isHighlighted) {
+            kotlinx.coroutines.delay(60L)
+            try {
+                bringIntoViewRequester.bringIntoView()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (bgAlpha > 0.005f || borderAlpha > 0.005f) {
+                    Modifier
+                        .clip(shape)
+                        .background(BentoPrimary.copy(alpha = bgAlpha), shape)
+                        .border(1.8.dp, BentoPrimary.copy(alpha = borderAlpha), shape)
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                } else {
+                    Modifier
+                }
+            )
+            .then(Modifier.bringIntoViewRequester(bringIntoViewRequester))
+    ) {
+        content()
+    }
+}
+

@@ -598,6 +598,12 @@ fun SettingsScreen(
     onSetReduceVolumeOnNotification: (Boolean) -> Unit = {},
     pauseDuringCamera: Boolean = true,
     onSetPauseDuringCamera: (Boolean) -> Unit = {},
+    autoPauseCamera: Boolean = false,
+    onSetAutoPauseCamera: (Boolean) -> Unit = {},
+    autoPauseSystemAudio: Boolean = true,
+    onSetAutoPauseSystemAudio: (Boolean) -> Unit = {},
+    sleepTimerMode: String = "TIME",
+    onSetSleepTimerMode: (String) -> Unit = {},
     scrobbleThresholdType: String = "PERCENTAGE",
     onSetScrobbleThresholdType: (String) -> Unit = {},
     scrobbleThresholdValue: Int = 50,
@@ -646,18 +652,20 @@ fun SettingsScreen(
     onSignInGoogle: () -> Unit = onOpenAuth,
     onBackClick: () -> Unit = {},
     initialTargetSection: String? = null,
+    onTargetSectionConsumed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var highlightedSettingKey by remember { mutableStateOf<String?>(null) }
     var selectedSection by remember {
         mutableStateOf(
             when (initialTargetSection?.uppercase()) {
-                "AUDIO" -> SettingsSection.AUDIO
-                "UI", "THEME" -> SettingsSection.UI
+                "AUDIO", "EQUALIZER", "EQ" -> SettingsSection.AUDIO
+                "UI", "THEME", "REFRESH_RATE" -> SettingsSection.UI
                 "HOME", "FEED" -> SettingsSection.HOME_FEED
                 "CACHE", "STORAGE" -> SettingsSection.CACHE
-                "PLAYBACK", "TIMER" -> SettingsSection.PLAYBACK
+                "PLAYBACK", "TIMER", "SLEEP_TIMER" -> SettingsSection.PLAYBACK
                 "LIBRARY", "FOLDERS" -> SettingsSection.LIBRARY
                 "OTHER", "PRIVACY" -> SettingsSection.OTHER
                 "CLOUD", "SYNC", "CLOUD_SYNC", "ACCOUNT" -> SettingsSection.CLOUD_SYNC
@@ -728,6 +736,47 @@ fun SettingsScreen(
     }
 
     val listState = rememberLazyListState()
+
+    LaunchedEffect(initialTargetSection) {
+        val rawTarget = initialTargetSection?.trim()?.uppercase()
+        if (!rawTarget.isNullOrEmpty()) {
+            searchQuery = ""
+            showAllInOneList = false
+            val targetSection = when (rawTarget) {
+                "AUDIO", "EQUALIZER", "EQ" -> SettingsSection.AUDIO
+                "UI", "THEME", "REFRESH_RATE" -> SettingsSection.UI
+                "HOME", "FEED" -> SettingsSection.HOME_FEED
+                "CACHE", "STORAGE" -> SettingsSection.CACHE
+                "PLAYBACK", "TIMER", "SLEEP_TIMER" -> SettingsSection.PLAYBACK
+                "LIBRARY", "FOLDERS" -> SettingsSection.LIBRARY
+                "OTHER", "PRIVACY" -> SettingsSection.OTHER
+                "CLOUD", "SYNC", "CLOUD_SYNC", "ACCOUNT" -> SettingsSection.CLOUD_SYNC
+                else -> SettingsSection.ALL
+            }
+            if (targetSection != SettingsSection.ALL && selectedSection != targetSection) {
+                selectedSection = targetSection
+            }
+            val highlightKey = when (rawTarget) {
+                "SLEEP_TIMER", "TIMER" -> "SLEEP_TIMER"
+                "EQUALIZER", "EQ" -> "EQUALIZER"
+                "REFRESH_RATE" -> "REFRESH_RATE"
+                else -> if (targetSection != SettingsSection.ALL) "SECTION_${targetSection.name}" else null
+            }
+            highlightedSettingKey = highlightKey
+            if (targetSection != SettingsSection.ALL) {
+                try {
+                    listState.scrollToItem(0)
+                } catch (_: Exception) {}
+            }
+            if (highlightKey != null) {
+                kotlinx.coroutines.delay(1350L)
+                if (highlightedSettingKey == highlightKey) {
+                    highlightedSettingKey = null
+                }
+            }
+            onTargetSectionConsumed()
+        }
+    }
 
     // Folder picker launcher
     val folderPickerLauncher = rememberLauncherForActivityResult(
@@ -1288,75 +1337,261 @@ fun SettingsScreen(
 
     val isSearching = searchQuery.isNotBlank()
 
-    val audioMatches = matchesSettingsSearch(
+    // Account tile matcher
+    val matchAccountTile = matchesSettingsSearch(
         searchQuery,
-        "audio", "sound", "normalize", "normalization", "normalize audio", "loudness", "crossfade", "fade", "fading", "gapless", "volume", "balance", "channel",
-        "stereo", "pan", "left", "right", "equalizer", "eq", "bands", "bass", "bassboost", "boost",
-        "transcribe", "translate", "tamil", "tanglish", "hindi", "malayalam", "vocal", "lyrics translation",
-        "virtualizer", "3d", "spatial", "preset", "normal", "rock", "pop", "classical", "jazz",
-        "dance", "electronic", "vocal", "acoustic", "flat", "notification", "duck", "ducking",
-        "earbud", "headphone", "speaker", "pause on zero", "auto resume", "decibel", "hz"
+        "account", "profile", "sign in", "sign out", "login", "avatar", "guest profile"
     )
 
-    val uiMatches = matchesSettingsSearch(
+    // Section 1: Audio & Sound granular matchers
+    val matchAudioCrossfade = matchesSettingsSearch(
         searchQuery,
-        "ui", "theme", "themes", "dark", "light", "extra dark", "extra dark mode", "pitch black", "amoled", "oled", "pure black", "color", "accent",
-        "palette", "custom color", "picker", "dynamic", "artwork theme", "layout", "now playing",
-        "playlist", "home layout", "bento", "mosaic", "grid", "compact", "cards", "high res",
-        "online artwork", "cover", "lyrics", "lyrics autoscroll", "autoscroll", "synced lyrics",
-        "waveform", "visualizer", "snake", "bars", "wave", "pulse", "refresh rate", "120hz", "60hz",
-        "fluid", "mini player", "floating", "docked", "pill", "visual", "appearance", "display",
-        "font", "size", "neon", "amber", "emerald", "indigo", "glassmorphism", "cyberpunk",
-        "retro", "synthwave", "material you", "aurora", "custom", "radius", "corner"
+        "crossfade", "crossfade audio duration", "blend tracks", "playback transitions"
+    )
+    val matchAudioFadeIn = matchesSettingsSearch(
+        searchQuery,
+        "play fade-in", "fade-in", "fade in", "ramp up track volume"
+    )
+    val matchAudioFadeOut = matchesSettingsSearch(
+        searchQuery,
+        "pause fade-out", "fade-out", "fade out", "abrupt audio cuts"
+    )
+    val matchAudioPauseZero = matchesSettingsSearch(
+        searchQuery,
+        "pause on zero volume", "zero volume", "0%", "mute"
+    )
+    val matchAudioAutoResume = matchesSettingsSearch(
+        searchQuery,
+        "auto resume on volume increase", "auto resume", "volume increase", "raising volume"
+    )
+    val matchAudioGapless = matchesSettingsSearch(
+        searchQuery,
+        "gapless", "gapless audio playback", "silent gaps", "concert"
+    )
+    val matchAudioNormalize = matchesSettingsSearch(
+        searchQuery,
+        "normalize", "normalization", "normalize audio", "loudness", "balance volume levels"
+    )
+    val matchAudioDucking = matchesSettingsSearch(
+        searchQuery,
+        "duck", "ducking", "duck volume for notifications", "notification chimes"
+    )
+    val matchAudioCameraPause = matchesSettingsSearch(
+        searchQuery,
+        "camera", "auto-pause for camera", "camera interruption", "shutter", "video recording"
+    )
+    val matchAudioSystemAudioPause = matchesSettingsSearch(
+        searchQuery,
+        "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption"
+    )
+    val matchAudioTranscribe = matchesSettingsSearch(
+        searchQuery,
+        "transcribe", "translate", "gemini", "api key", "tamil", "tanglish", "hindi", "malayalam", "lyrics translation"
+    )
+    val matchAudioBalance = matchesSettingsSearch(
+        searchQuery,
+        "stereo", "channel balance", "stereo channel balance", "left", "right", "pan"
+    )
+    val matchAudioEqualizer = matchesSettingsSearch(
+        searchQuery,
+        "equalizer", "eq", "5-band", "bands", "bass", "bassboost", "virtualizer", "3d", "spatial",
+        "preset", "rock", "pop", "classical", "jazz", "dance", "electronic", "acoustic", "flat", "decibel"
+    )
+    val anyAudioItemMatches = matchAudioCrossfade || matchAudioFadeIn || matchAudioFadeOut ||
+        matchAudioPauseZero || matchAudioAutoResume || matchAudioGapless || matchAudioNormalize ||
+        matchAudioDucking || matchAudioCameraPause || matchAudioSystemAudioPause ||
+        matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
+
+    // Section 2: UI & Themes granular matchers
+    val matchUiThemes = matchesSettingsSearch(
+        searchQuery,
+        "curated ui themes", "ui theme", "themes", "palette", "obsidian", "neon", "cyberpunk",
+        "emerald", "amber", "indigo", "aurora", "synthwave", "retro", "glassmorphism"
+    )
+    val matchUiScreenLayouts = matchesSettingsSearch(
+        searchQuery,
+        "screen layout", "screen layout architecture", "layout architecture", "wireframe",
+        "now playing layout", "home screen layout", "playlists layout", "bento", "vinyl",
+        "turntable", "minimal glass", "hero spotlight", "magazine"
+    )
+    val matchUiDisplayMode = matchesSettingsSearch(
+        searchQuery,
+        "display mode", "dark", "light", "extra dark", "pitch black", "amoled", "oled", "pure black"
+    )
+    val matchUiDisplayScale = matchesSettingsSearch(
+        searchQuery,
+        "display scale", "ui size", "font size", "compact", "comfort", "standard"
+    )
+    val matchUiAccentColor = matchesSettingsSearch(
+        searchQuery,
+        "accent color", "custom accent", "color picker", "rgb", "custom color"
+    )
+    val matchUiDynamicArtwork = matchesSettingsSearch(
+        searchQuery,
+        "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric"
+    )
+    val matchUiHighResArtwork = matchesSettingsSearch(
+        searchQuery,
+        "online high-res", "high-res", "high res", "online artwork", "1920px"
+    )
+    val matchUiLyricsAutoScroll = matchesSettingsSearch(
+        searchQuery,
+        "lyrics auto-scroll", "auto-scroll", "autoscroll", "synced lyrics"
+    )
+    val matchUiWaveform = matchesSettingsSearch(
+        searchQuery,
+        "waveform", "waveform visualizer", "visualizer style", "sleek line", "snake", "symmetric", "dotted", "bars", "wave"
+    )
+    val matchUiRefreshRate = matchesSettingsSearch(
+        searchQuery,
+        "refresh rate", "high refresh", "high refresh rate", "90", "120hz", "60hz", "hz", "fluid", "smooth animations"
+    )
+    val matchUiMiniPlayer = matchesSettingsSearch(
+        searchQuery,
+        "mini player", "mini player customization", "floating pill", "docked", "previous track button", "next track button", "favorite button"
+    )
+    val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
+        matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiHighResArtwork ||
+        matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
+
+    // Section 3: Home Feed granular matcher
+    val matchHomeFeedItem = matchesSettingsSearch(
+        searchQuery,
+        "home feed", "home screen feed", "section ordering", "reorder", "speed dial",
+        "continue listening", "most played", "recently added", "recently played", "top albums",
+        "top artists", "smart playlist", "recents first", "discovery"
     )
 
-    val homeFeedMatches = matchesSettingsSearch(
+    // Section 4: Playback granular matchers
+    val matchPlaybackSleepTimer = matchesSettingsSearch(
         searchQuery,
-        "home", "feed", "section", "sections", "category", "categories", "order", "reorder", "show",
-        "hide", "stats", "artist", "artists", "speed dial", "most played", "recently added",
-        "recently played", "top albums", "top artists", "smart playlist", "continue listening",
-        "quick action", "quick actions", "dashboard", "spotlight", "minimal", "minimalist", "preset",
-        "recents first", "discovery", "top"
+        "sleep timer", "sleep", "timer", "countdown", "stop timer", "minute", "minutes",
+        "finish last song", "finish playing", "track-based", "track count"
+    )
+    val matchPlaybackCompletion = matchesSettingsSearch(
+        searchQuery,
+        "track completion", "completion criteria", "scrobble", "threshold", "percentage", "count track as played"
+    )
+    val matchPlaybackShake = matchesSettingsSearch(
+        searchQuery,
+        "shake", "shake to skip", "sensor", "physically shake"
+    )
+    val matchPlaybackAlwaysShuffle = matchesSettingsSearch(
+        searchQuery,
+        "always shuffle", "shuffle mode", "shuffle order"
+    )
+    val matchPlaybackStartupAutoplay = matchesSettingsSearch(
+        searchQuery,
+        "autoplay on app startup", "autoplay", "app startup"
+    )
+    val matchPlaybackGestures = matchesSettingsSearch(
+        searchQuery,
+        "album art gestures", "gesture", "gestures", "swipe to skip", "tap to play", "album art gesture"
+    )
+    val matchPlaybackAddToQueuePos = matchesSettingsSearch(
+        searchQuery,
+        "add to queue position", "add to queue", "up-next queue", "queue position"
+    )
+    val matchPlaybackAddToPlaylistPos = matchesSettingsSearch(
+        searchQuery,
+        "add to playlist position", "add to playlist", "custom playlist arrangement"
+    )
+    val matchPlaybackHeadphones = matchesSettingsSearch(
+        searchQuery,
+        "headphone", "headphones", "headset", "earbud", "bluetooth", "wired", "wireless", "automatically play on headphone"
+    )
+    val matchPlaybackKeepAwake = matchesSettingsSearch(
+        searchQuery,
+        "keep screen awake", "screen awake", "awake", "prevent device display from sleeping"
+    )
+    val anyPlaybackItemMatches = matchPlaybackSleepTimer || matchPlaybackCompletion ||
+        matchPlaybackShake || matchPlaybackAlwaysShuffle || matchPlaybackStartupAutoplay ||
+        matchPlaybackGestures || matchPlaybackAddToQueuePos || matchPlaybackAddToPlaylistPos ||
+        matchPlaybackHeadphones || matchPlaybackKeepAwake
+
+    // Section 5: Cache & Database granular matchers
+    val matchCacheTotal = matchesSettingsSearch(
+        searchQuery,
+        "total cache", "clear all", "offline cache", "cache occupied", "cleanup", "clear cache"
+    )
+    val matchCacheLyrics = matchesSettingsSearch(
+        searchQuery,
+        "cache synced lyrics", "lyrics cache", "clear lyrics"
+    )
+    val matchCacheAlbumArt = matchesSettingsSearch(
+        searchQuery,
+        "cache album artwork", "album artwork", "album art", "clear album art"
+    )
+    val matchCacheSongArt = matchesSettingsSearch(
+        searchQuery,
+        "cache song artwork", "song artwork", "song art", "clear song art"
+    )
+    val matchCacheDatabase = matchesSettingsSearch(
+        searchQuery,
+        "database", "sqlite", "room", "storage tier", "capacity tier", "wal", "optimize", "quota"
+    )
+    val anyCacheCardMatches = matchCacheTotal || matchCacheLyrics || matchCacheAlbumArt || matchCacheSongArt
+    val anyCacheItemMatches = anyCacheCardMatches || matchCacheDatabase
+
+    // Section 6: Library & Folders granular matchers
+    val matchLibFullScan = matchesSettingsSearch(
+        searchQuery,
+        "full-device scan", "full device scan", "entire device"
+    )
+    val matchLibIgnoreShort = matchesSettingsSearch(
+        searchQuery,
+        "ignore short", "short audio", "audio duration filter", "ringtone", "voice note", "seconds"
+    )
+    val matchLibQuickScan = matchesSettingsSearch(
+        searchQuery,
+        "quick scan", "quick scan & clean", "prune", "rescan", "media scan", "clean"
+    )
+    val matchLibCustomFolders = matchesSettingsSearch(
+        searchQuery,
+        "custom music directories", "music directory", "folders", "folder", "directories", "directory", "exclude", "add folder", "remove folder"
+    )
+    val anyLibraryItemMatches = matchLibFullScan || matchLibIgnoreShort || matchLibQuickScan || matchLibCustomFolders
+
+    // Section 7: Other & Privacy granular matchers
+    val matchOtherSearchHistory = matchesSettingsSearch(
+        searchQuery,
+        "recent search", "recent searches", "search history", "clear history", "search queries"
+    )
+    val matchOtherDiagnostics = matchesSettingsSearch(
+        searchQuery,
+        "diagnostics", "crash", "crash report", "error report", "logs", "log", "system health"
+    )
+    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics
+
+    // Section 8: Cloud Sync granular matcher
+    val matchCloudSyncItem = matchesSettingsSearch(
+        searchQuery,
+        "cloud", "sync", "synchronize", "backup", "restore", "cross-device", "cross device", "firebase", "google"
     )
 
-    val playbackMatches = matchesSettingsSearch(
-        searchQuery,
-        "playback", "controls", "timer", "sleep", "sleep timer", "countdown", "stop timer", "minute",
-        "minutes", "finish last song", "track count", "song count", "shake", "shake to skip",
-        "sensor", "gesture", "gestures", "swipe", "swipe to skip", "tap to play", "album art gesture", "shuffle", "always shuffle", "screen", "awake", "keep screen awake",
-        "scrobble", "duration", "percentage", "completion", "threshold", "resume", "bluetooth",
-        "headset", "headphone", "earbud", "unplug", "loop", "repeat", "autoplay", "startup", "app startup", "track", "count", "queue", "add to queue", "add to queue position", "playlist", "add to playlist"
-    )
+    val anySpecificSettingMatched = anyAudioItemMatches || anyUiItemMatches || matchHomeFeedItem ||
+        anyPlaybackItemMatches || anyCacheItemMatches || anyLibraryItemMatches ||
+        anyOtherItemMatches || matchCloudSyncItem || matchAccountTile
 
-    val cacheMatches = matchesSettingsSearch(
-        searchQuery,
-        "cache", "offline", "storage", "lyrics", "lyrics cache", "artwork", "artwork cache", "album",
-        "album art", "image", "covers", "song artwork", "mb", "gb", "kb", "clear", "clear cache",
-        "clear all", "disk", "memory", "cleanup", "download", "high res", "database", "sqlite", "room", "storage tier", "wal", "optimize", "backup", "restore"
-    )
+    // Broad category fallback only when no specific setting matched (e.g., searching "audio" or "ui")
+    val broadAudioMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "audio", "sound")
+    val broadUiMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "ui", "visual", "appearance", "display")
+    val broadHomeFeedMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "home", "feed")
+    val broadPlaybackMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "playback", "controls")
+    val broadCacheMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "cache", "storage", "disk")
+    val broadLibraryMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "library", "scan")
+    val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsSearch(searchQuery, "privacy", "security", "other")
 
-    val libraryMatches = matchesSettingsSearch(
-        searchQuery,
-        "library", "folder", "folders", "directory", "directories", "music directory", "scan",
-        "rescan", "media scan", "clean", "cleaner", "tag cleaner", "prune", "exclude", "block",
-        "include", "path", "storage", "filter", "ignore", "duration", "ringtone", "short",
-        "short audio", "seconds", "add folder", "remove folder"
-    )
+    val audioMatches = anyAudioItemMatches || broadAudioMatch
+    val uiMatches = anyUiItemMatches || broadUiMatch
+    val homeFeedMatches = matchHomeFeedItem || broadHomeFeedMatch
+    val playbackMatches = anyPlaybackItemMatches || broadPlaybackMatch
+    val cacheMatches = anyCacheItemMatches || broadCacheMatch
+    val libraryMatches = anyLibraryItemMatches || broadLibraryMatch
+    val otherMatches = anyOtherItemMatches || broadOtherMatch
+    val cloudSyncMatches = matchCloudSyncItem
 
-    val otherMatches = matchesSettingsSearch(
-        searchQuery,
-        "search", "history", "recent", "recent searches", "privacy", "diagnostics", "crash", "log",
-        "logs", "crash report", "report", "clear history", "share", "security", "bug", "about",
-        "version", "system health", "build", "other"
-    )
-
-    val cloudSyncMatches = matchesSettingsSearch(
-        searchQuery,
-        "cloud", "sync", "synchronize", "backup", "restore", "account", "login", "sign in", "sign out",
-        "firebase", "google", "profile", "cross device", "favorites", "playlists", "history", "avatar"
-    )
-
-    val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches
+    val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches || (isSearching && matchAccountTile)
 
     val isTopLevelHub = selectedSection == SettingsSection.ALL && !isSearching && !showAllInOneList
 
@@ -1383,6 +1618,7 @@ fun SettingsScreen(
         ) {
             if (isTopLevelHub || showAllInOneList || isSearching) {
                 // User Account Tile / Card in Settings
+                if (!isSearching || matchAccountTile) {
                 item(key = "settings_account_tile") {
                 val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
                 Surface(
@@ -1473,6 +1709,7 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
             }
 
             // 1. Sleek Top Search Bar with Back Action
@@ -1861,125 +2098,149 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_audio_card") {
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_AUDIO") {
                     SettingsCardContainer(accentGlow = Color(0xFF00E5FF)) {
                         // Crossfade Duration Slider
-                        SettingsSliderRow(
-                            title = "Crossfade Audio Duration",
-                            subtitle = "Smoothly blend tracks into one another during playback transitions",
-                            value = crossfadeDurationSec.toFloat(),
-                            onValueChange = { onSetCrossfadeDurationSec(it.toInt()) },
-                            valueRange = 0f..12f,
-                            steps = 11,
-                            valueDisplay = if (crossfadeDurationSec == 0) "Off" else "${crossfadeDurationSec}s",
-                            icon = Icons.Default.Shuffle,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioCrossfade || broadAudioMatch) {
+                            SettingsSliderRow(
+                                title = "Crossfade Audio Duration",
+                                subtitle = "Smoothly blend tracks into one another during playback transitions",
+                                value = crossfadeDurationSec.toFloat(),
+                                onValueChange = { onSetCrossfadeDurationSec(it.toInt()) },
+                                valueRange = 0f..12f,
+                                steps = 11,
+                                valueDisplay = if (crossfadeDurationSec == 0) "Off" else "${crossfadeDurationSec}s",
+                                icon = Icons.Default.Shuffle,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Play Fade-In Duration
-                        SettingsSliderRow(
-                            title = "Play Fade-In Duration",
-                            subtitle = "Gradually ramp up track volume when starting or resuming playback",
-                            value = fadeInMs.toFloat(),
-                            onValueChange = { onSetFadeInMs(it.toInt()) },
-                            valueRange = 0f..5000f,
-                            steps = 9,
-                            valueDisplay = if (fadeInMs == 0) "Instant" else "${fadeInMs}ms",
-                            icon = Icons.Default.VolumeUp,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioFadeIn || broadAudioMatch) {
+                            SettingsSliderRow(
+                                title = "Play Fade-In Duration",
+                                subtitle = "Gradually ramp up track volume when starting or resuming playback",
+                                value = fadeInMs.toFloat(),
+                                onValueChange = { onSetFadeInMs(it.toInt()) },
+                                valueRange = 0f..5000f,
+                                steps = 9,
+                                valueDisplay = if (fadeInMs == 0) "Instant" else "${fadeInMs}ms",
+                                icon = Icons.Default.VolumeUp,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Pause Fade-Out Duration
-                        SettingsSliderRow(
-                            title = "Pause Fade-Out Duration",
-                            subtitle = "Softly lower volume when pausing to eliminate abrupt audio cuts",
-                            value = fadeOutMs.toFloat(),
-                            onValueChange = { onSetFadeOutMs(it.toInt()) },
-                            valueRange = 0f..5000f,
-                            steps = 9,
-                            valueDisplay = if (fadeOutMs == 0) "Instant" else "${fadeOutMs}ms",
-                            icon = Icons.Default.VolumeDown,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioFadeOut || broadAudioMatch) {
+                            SettingsSliderRow(
+                                title = "Pause Fade-Out Duration",
+                                subtitle = "Softly lower volume when pausing to eliminate abrupt audio cuts",
+                                value = fadeOutMs.toFloat(),
+                                onValueChange = { onSetFadeOutMs(it.toInt()) },
+                                valueRange = 0f..5000f,
+                                steps = 9,
+                                valueDisplay = if (fadeOutMs == 0) "Instant" else "${fadeOutMs}ms",
+                                icon = Icons.Default.VolumeDown,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Pause on Zero Volume
-                        SettingsToggleRow(
-                            title = "Pause on Zero Volume",
-                            subtitle = "Automatically pause media playback when device volume drops to 0%",
-                            checked = pauseOnZeroVolume,
-                            onCheckedChange = onSetPauseOnZeroVolume,
-                            icon = Icons.Default.VolumeMute,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioPauseZero || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Pause on Zero Volume",
+                                subtitle = "Automatically pause media playback when device volume drops to 0%",
+                                checked = pauseOnZeroVolume,
+                                onCheckedChange = onSetPauseOnZeroVolume,
+                                icon = Icons.Default.VolumeMute,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Auto Resume on Volume Increase
-                        SettingsToggleRow(
-                            title = "Auto Resume on Volume Increase",
-                            subtitle = "Automatically resume music when raising volume back above 0%",
-                            checked = autoResumeOnVolumeIncrease,
-                            onCheckedChange = onSetAutoResumeOnVolumeIncrease,
-                            icon = Icons.Default.PlayArrow,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioAutoResume || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Auto Resume on Volume Increase",
+                                subtitle = "Automatically resume music when raising volume back above 0%",
+                                checked = autoResumeOnVolumeIncrease,
+                                onCheckedChange = onSetAutoResumeOnVolumeIncrease,
+                                icon = Icons.Default.PlayArrow,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Gapless Playback
-                        SettingsToggleRow(
-                            title = "Gapless Audio Playback",
-                            subtitle = "Eliminate silent gaps between live concert albums and progressive tracks",
-                            checked = gaplessPlayback,
-                            onCheckedChange = onSetGaplessPlayback,
-                            icon = Icons.Default.MusicNote,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioGapless || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Gapless Audio Playback",
+                                subtitle = "Eliminate silent gaps between live concert albums and progressive tracks",
+                                checked = gaplessPlayback,
+                                onCheckedChange = onSetGaplessPlayback,
+                                icon = Icons.Default.MusicNote,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Normalize Audio
-                        SettingsToggleRow(
-                            title = "Normalize Audio",
-                            subtitle = "Balance volume levels across tracks to prevent sudden loudness differences",
-                            checked = normalizeAudio,
-                            onCheckedChange = onSetNormalizeAudio,
-                            icon = Icons.Default.GraphicEq,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchAudioNormalize || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Normalize Audio",
+                                subtitle = "Balance volume levels across tracks to prevent sudden loudness differences",
+                                checked = normalizeAudio,
+                                onCheckedChange = onSetNormalizeAudio,
+                                icon = Icons.Default.GraphicEq,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Duck Volume for Notifications
-                        SettingsToggleRow(
-                            title = "Duck Volume for Notifications",
-                            subtitle = "Briefly lower music volume when notification chimes or alerts play",
-                            checked = reduceVolumeOnNotification,
-                            onCheckedChange = onSetReduceVolumeOnNotification,
-                            icon = Icons.Default.NotificationsActive,
-                            accentColor = Color(0xFF00E5FF)
-                        )
+                        if (!isSearching || matchAudioDucking || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Duck Volume for Notifications",
+                                subtitle = "Briefly lower music volume when notification chimes or alerts play",
+                                checked = reduceVolumeOnNotification,
+                                onCheckedChange = onSetReduceVolumeOnNotification,
+                                icon = Icons.Default.NotificationsActive,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
-                        SettingsDivider()
+                        // Auto-pause for Camera
+                        if (!isSearching || matchAudioCameraPause || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Auto-pause for Camera",
+                                subtitle = "Pause music when the device camera opens and automatically resume when the camera closes",
+                                checked = autoPauseCamera,
+                                onCheckedChange = onSetAutoPauseCamera,
+                                icon = Icons.Default.PhotoCamera,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
-                        // Auto-Pause for Camera & System Audio
-                        SettingsToggleRow(
-                            title = "Auto-Pause for Camera & System Audio",
-                            subtitle = "Cleanly pauses playback when camera or other audio apps open, and immediately resumes when camera is closed to prevent stuttering",
-                            checked = pauseDuringCamera,
-                            onCheckedChange = onSetPauseDuringCamera,
-                            icon = Icons.Default.PhotoCamera,
-                            accentColor = Color(0xFF00E5FF)
-                        )
-
-                        SettingsDivider()
+                        // Auto-pause for System Audio
+                        if (!isSearching || matchAudioSystemAudioPause || broadAudioMatch) {
+                            SettingsToggleRow(
+                                title = "Auto-pause for System Audio",
+                                subtitle = "Pause music when another app plays audio and automatically resume when the interruption ends",
+                                checked = autoPauseSystemAudio,
+                                onCheckedChange = onSetAutoPauseSystemAudio,
+                                icon = Icons.Default.GraphicEq,
+                                accentColor = Color(0xFF00E5FF)
+                            )
+                            if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Transcribe / Translate Lyrics Feature
+                        if (!isSearching || matchAudioTranscribe || broadAudioMatch) {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -2270,10 +2531,11 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // L/R Audio Balance with Stereo Bar Indicator
+                        if (!isSearching || matchAudioBalance || broadAudioMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2398,20 +2660,25 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadAudioMatch) SettingsDivider()
+                        }
 
                         // Equalizer Visualizer & Bands & Presets
-                        EqualizerVisualizer(
-                            currentPreset = equalizerPreset,
-                            customBands = customEqBands,
-                            bassBoostStrength = customBassBoost,
-                            virtualizerStrength = customVirtualizer,
-                            onPresetChange = onSetEqualizerPreset,
-                            onBandsChange = onSetCustomEqBands,
-                            onBassBoostChange = onSetCustomBassBoost,
-                            onVirtualizerChange = onSetCustomVirtualizer
-                        )
+                        if (!isSearching || matchAudioEqualizer || broadAudioMatch) {
+                            SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "EQUALIZER") {
+                                EqualizerVisualizer(
+                                    currentPreset = equalizerPreset,
+                                    customBands = customEqBands,
+                                    bassBoostStrength = customBassBoost,
+                                    virtualizerStrength = customVirtualizer,
+                                    onPresetChange = onSetEqualizerPreset,
+                                    onBandsChange = onSetCustomEqBands,
+                                    onBassBoostChange = onSetCustomBassBoost,
+                                    onVirtualizerChange = onSetCustomVirtualizer
+                                )
+                            }
+                        }
+                    }
                     }
                 }
             }
@@ -2431,8 +2698,10 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_ui_card") {
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_UI") {
                     SettingsCardContainer(accentGlow = Color(0xFFBB86FC)) {
                         // 1. Curated UI Themes
+                        if (!isSearching || matchUiThemes || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2492,10 +2761,11 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 2. Screen Layout Architecture
+                        if (!isSearching || matchUiScreenLayouts || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Column {
                                 Text("Screen Layout Architecture", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
@@ -2599,10 +2869,11 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 3. Display Mode Selection (Dark / Light / AMOLED / System)
+                        if (!isSearching || matchUiDisplayMode || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                             SettingsSegmentedSelector(
@@ -2621,10 +2892,11 @@ fun SettingsScreen(
                             )
 
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // Display Scale (UI Size)
+                        if (!isSearching || matchUiDisplayScale || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2661,10 +2933,11 @@ fun SettingsScreen(
                                 accentColor = Color(0xFFBB86FC)
                             )
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 4. Accent Color Palette & Custom RGB Picker
+                        if (!isSearching || matchUiAccentColor || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2742,147 +3015,153 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 5. Dynamic Artwork Theming
-                        SettingsToggleRow(
-                            title = "Dynamic Artwork Theming",
-                            subtitle = "Adapt UI accents and background atmospheric glows to current song cover",
-                            checked = isDynamicArtworkTheme,
-                            onCheckedChange = onSetDynamicArtworkTheme,
-                            icon = Icons.Default.AutoAwesome,
-                            accentColor = Color(0xFFBB86FC)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchUiDynamicArtwork || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Dynamic Artwork Theming",
+                                subtitle = "Adapt UI accents and background atmospheric glows to current song cover",
+                                checked = isDynamicArtworkTheme,
+                                onCheckedChange = onSetDynamicArtworkTheme,
+                                icon = Icons.Default.AutoAwesome,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 6. Prefer High-Res Online Artwork
-                        SettingsToggleRow(
-                            title = "Prefer High-Res Online Artwork",
-                            subtitle = if (fetchOnlineArtworkHighRes) "High-res covers up to 1920px are fetched online & cached locally" else "Local embedded audio covers are prioritized for fast offline access",
-                            checked = fetchOnlineArtworkHighRes,
-                            onCheckedChange = onSetFetchOnlineArtworkHighRes,
-                            icon = Icons.Default.Image,
-                            accentColor = Color(0xFFBB86FC)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchUiHighResArtwork || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Prefer High-Res Online Artwork",
+                                subtitle = if (fetchOnlineArtworkHighRes) "High-res covers up to 1920px are fetched online & cached locally" else "Local embedded audio covers are prioritized for fast offline access",
+                                checked = fetchOnlineArtworkHighRes,
+                                onCheckedChange = onSetFetchOnlineArtworkHighRes,
+                                icon = Icons.Default.Image,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 7. Auto-Scroll Synced Lyrics
-                        SettingsToggleRow(
-                            title = "Auto-Scroll Synced Lyrics",
-                            subtitle = "Keep the active singing lyric timestamp smoothly centered",
-                            checked = lyricsAutoScroll,
-                            onCheckedChange = onSetLyricsAutoScroll,
-                            icon = Icons.Default.FormatQuote,
-                            accentColor = Color(0xFFBB86FC)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchUiLyricsAutoScroll || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Auto-Scroll Synced Lyrics",
+                                subtitle = "Keep the active singing lyric timestamp smoothly centered",
+                                checked = lyricsAutoScroll,
+                                onCheckedChange = onSetLyricsAutoScroll,
+                                icon = Icons.Default.FormatQuote,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 8. Waveform Visualizer Style Selection
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Waveform Visualizer Style", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(
-                                    "SLEEK_LINE" to "Sleek Line",
-                                    "SNAKE" to "Snake Sine",
-                                    "BARS" to "Symmetric",
-                                    "DOTS" to "Dotted"
-                                ).forEach { (style, label) ->
-                                    val isSelected = when (style) {
-                                        "SLEEK_LINE" -> waveformStyle.equals("SLEEK_LINE", true) || waveformStyle.equals("SLEEK", true) || waveformStyle.equals("MINIMAL", true) || waveformStyle.equals("LINE", true)
-                                        "DOTS" -> waveformStyle.equals("DOTS", true) || waveformStyle.equals("CIRCLE", true) || waveformStyle.equals("DOTTED_CURVES", true)
-                                        "BARS" -> waveformStyle.equals("BARS", true) || waveformStyle.equals("SYMMETRIC_CAPSULES", true) || waveformStyle.equals("CAPSULE", true) || waveformStyle.equals("SMOOTH_WAVE", true)
-                                        "SNAKE" -> waveformStyle.equals("SNAKE", true) || waveformStyle.equals("CURVED", true)
-                                        else -> waveformStyle.equals(style, ignoreCase = true)
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isSelected) Color(0xFFBB86FC) else BentoCardPurple,
-                                        border = BorderStroke(1.dp, if (isSelected) Color(0xFFBB86FC) else BentoBorder),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable {
-                                                HapticUtils.performClickHaptic(context)
-                                                onSetWaveformStyle(style)
-                                            }
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) BentoOnPrimary else BentoTextPrimary,
-                                            modifier = Modifier.padding(vertical = 10.dp),
-                                            textAlign = TextAlign.Center
-                                        )
+                        if (!isSearching || matchUiWaveform || broadUiMatch) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Waveform Visualizer Style", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    listOf(
+                                        "SLEEK_LINE" to "Sleek Line",
+                                        "SNAKE" to "Snake Sine",
+                                        "BARS" to "Symmetric",
+                                        "DOTS" to "Dotted"
+                                    ).forEach { (style, label) ->
+                                        val isSelected = when (style) {
+                                            "SLEEK_LINE" -> waveformStyle.equals("SLEEK_LINE", true) || waveformStyle.equals("SLEEK", true) || waveformStyle.equals("MINIMAL", true) || waveformStyle.equals("LINE", true)
+                                            "DOTS" -> waveformStyle.equals("DOTS", true) || waveformStyle.equals("CIRCLE", true) || waveformStyle.equals("DOTTED_CURVES", true)
+                                            "BARS" -> waveformStyle.equals("BARS", true) || waveformStyle.equals("SYMMETRIC_CAPSULES", true) || waveformStyle.equals("CAPSULE", true) || waveformStyle.equals("SMOOTH_WAVE", true)
+                                            "SNAKE" -> waveformStyle.equals("SNAKE", true) || waveformStyle.equals("CURVED", true)
+                                            else -> waveformStyle.equals(style, ignoreCase = true)
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (isSelected) Color(0xFFBB86FC) else BentoCardPurple,
+                                            border = BorderStroke(1.dp, if (isSelected) Color(0xFFBB86FC) else BentoBorder),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onSetWaveformStyle(style)
+                                                }
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) BentoOnPrimary else BentoTextPrimary,
+                                                modifier = Modifier.padding(vertical = 10.dp),
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
                                     }
                                 }
                             }
+                            if (!isSearching || broadUiMatch) SettingsDivider()
                         }
-
-                        SettingsDivider()
 
                         // 9. High Refresh Rate Toggle (90/120Hz)
-                        SettingsToggleRow(
-                            title = "High Refresh Rate (90/120Hz)",
-                            subtitle = "Enable ultra-smooth 120Hz display transitions & physics animations",
-                            checked = highRefreshRate,
-                            onCheckedChange = onSetHighRefreshRate,
-                            icon = Icons.Default.Speed,
-                            accentColor = Color(0xFFBB86FC)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchUiRefreshRate || broadUiMatch) {
+                            SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "REFRESH_RATE") {
+                                SettingsToggleRow(
+                                    title = "High Refresh Rate (90/120Hz)",
+                                    subtitle = "Enable ultra-smooth 120Hz display transitions & physics animations",
+                                    checked = highRefreshRate,
+                                    onCheckedChange = onSetHighRefreshRate,
+                                    icon = Icons.Default.Speed,
+                                    accentColor = Color(0xFFBB86FC)
+                                )
+                            }
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
 
                         // 10. Mini Player Customization
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Mini Player Customization", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-
-                            SettingsSegmentedSelector(
-                                options = listOf(
-                                    "FLOATING" to "Floating Pill",
-                                    "BOTTOM_BAR" to "Bottom Bar"
-                                ),
-                                selectedOption = miniPlayerStyle.uppercase(),
-                                onSelectOption = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onSetMiniPlayerStyle(it)
-                                },
-                                accentColor = Color(0xFFBB86FC)
-                            )
-
-                            SettingsToggleRow(
-                                title = "Show Previous Track Button",
-                                subtitle = "Quick previous button on the persistent mini player",
-                                checked = miniPlayerShowPrevious,
-                                onCheckedChange = onSetMiniPlayerShowPrevious,
-                                icon = Icons.Default.SkipPrevious,
-                                accentColor = Color(0xFFBB86FC)
-                            )
-
-                            SettingsToggleRow(
-                                title = "Show Next Track Button",
-                                subtitle = "Quick next track button on the persistent mini player",
-                                checked = miniPlayerShowNext,
-                                onCheckedChange = onSetMiniPlayerShowNext,
-                                icon = Icons.Default.SkipNext,
-                                accentColor = Color(0xFFBB86FC)
-                            )
-
-                            SettingsToggleRow(
-                                title = "Show Favorite Button",
-                                subtitle = "Instant heart/favorite action on the persistent mini player",
-                                checked = miniPlayerShowFavorite,
-                                onCheckedChange = onSetMiniPlayerShowFavorite,
-                                icon = Icons.Default.Favorite,
-                                accentColor = Color(0xFFBB86FC)
-                            )
+                        if (!isSearching || matchUiMiniPlayer || broadUiMatch) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Mini Player Customization", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                SettingsSegmentedSelector(
+                                    options = listOf(
+                                        "FLOATING" to "Floating Pill",
+                                        "BOTTOM_BAR" to "Bottom Bar"
+                                    ),
+                                    selectedOption = miniPlayerStyle.uppercase(),
+                                    onSelectOption = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onSetMiniPlayerStyle(it)
+                                    },
+                                    accentColor = Color(0xFFBB86FC)
+                                )
+                                SettingsToggleRow(
+                                    title = "Show Previous Track Button",
+                                    subtitle = "Quick previous button on the persistent mini player",
+                                    checked = miniPlayerShowPrevious,
+                                    onCheckedChange = onSetMiniPlayerShowPrevious,
+                                    icon = Icons.Default.SkipPrevious,
+                                    accentColor = Color(0xFFBB86FC)
+                                )
+                                SettingsToggleRow(
+                                    title = "Show Next Track Button",
+                                    subtitle = "Quick next track button on the persistent mini player",
+                                    checked = miniPlayerShowNext,
+                                    onCheckedChange = onSetMiniPlayerShowNext,
+                                    icon = Icons.Default.SkipNext,
+                                    accentColor = Color(0xFFBB86FC)
+                                )
+                                SettingsToggleRow(
+                                    title = "Show Favorite Button",
+                                    subtitle = "Instant heart/favorite action on the persistent mini player",
+                                    checked = miniPlayerShowFavorite,
+                                    onCheckedChange = onSetMiniPlayerShowFavorite,
+                                    icon = Icons.Default.Favorite,
+                                    accentColor = Color(0xFFBB86FC)
+                                )
+                            }
                         }
+                    }
                     }
                 }
             }
@@ -2902,10 +3181,12 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_home_feed_card") {
-                    HomeScreenSectionsManagerCard(
-                        currentSections = homeSections,
-                        onUpdateSections = onSetHomeSections
-                    )
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_HOME_FEED") {
+                        HomeScreenSectionsManagerCard(
+                            currentSections = homeSections,
+                            onUpdateSections = onSetHomeSections
+                        )
+                    }
                 }
             }
 
@@ -2924,8 +3205,12 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_playback_card") {
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_PLAYBACK") {
                     SettingsCardContainer(accentGlow = Color(0xFFFF9100)) {
                         // Sleep Timer Hero Status Card
+                        if (!isSearching || matchPlaybackSleepTimer || broadPlaybackMatch) {
+                        SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SLEEP_TIMER") {
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = if (sleepTimerState.isActive) Color(0xFFFF9100).copy(alpha = 0.12f) else BentoCardPurple,
@@ -3163,10 +3448,13 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        SettingsDivider()
+                        }
+                        }
+                        if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Song Completion Criteria
+                        if (!isSearching || matchPlaybackCompletion || broadPlaybackMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3239,182 +3527,192 @@ fun SettingsScreen(
                                 )
                             }
                         }
-
-                        SettingsDivider()
+                        if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Shake to Skip
-                        SettingsToggleRow(
-                            title = "Shake to Skip Track",
-                            subtitle = "Physically shake the device to advance to the next song in the queue",
-                            checked = shakeToSkip,
-                            onCheckedChange = onSetShakeToSkip,
-                            icon = Icons.Default.Vibration,
-                            accentColor = Color(0xFFFF9100)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchPlaybackShake || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Shake to Skip Track",
+                                subtitle = "Physically shake the device to advance to the next song in the queue",
+                                checked = shakeToSkip,
+                                onCheckedChange = onSetShakeToSkip,
+                                icon = Icons.Default.Vibration,
+                                accentColor = Color(0xFFFF9100)
+                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Always Shuffle Mode
-                        SettingsToggleRow(
-                            title = "Always Shuffle Mode",
-                            subtitle = "Automatically start playlist and album playback in shuffle order",
-                            checked = alwaysShuffleMode,
-                            onCheckedChange = onSetAlwaysShuffleMode,
-                            icon = Icons.Default.Shuffle,
-                            accentColor = Color(0xFFFF9100)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchPlaybackAlwaysShuffle || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Always Shuffle Mode",
+                                subtitle = "Automatically start playlist and album playback in shuffle order",
+                                checked = alwaysShuffleMode,
+                                onCheckedChange = onSetAlwaysShuffleMode,
+                                icon = Icons.Default.Shuffle,
+                                accentColor = Color(0xFFFF9100)
+                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Autoplay on App Startup
-                        SettingsToggleRow(
-                            title = "Autoplay music on app startup",
-                            subtitle = "Automatically begin music playback when the app is launched",
-                            checked = autoPlayOnAppStartup,
-                            onCheckedChange = onSetAutoPlayOnAppStartup,
-                            icon = Icons.Default.PlayCircle,
-                            accentColor = Color(0xFFFF9100)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchPlaybackStartupAutoplay || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Autoplay music on app startup",
+                                subtitle = "Automatically begin music playback when the app is launched",
+                                checked = autoPlayOnAppStartup,
+                                onCheckedChange = onSetAutoPlayOnAppStartup,
+                                icon = Icons.Default.PlayCircle,
+                                accentColor = Color(0xFFFF9100)
+                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Gesture-based Playback Control
-                        SettingsToggleRow(
-                            title = "Album Art Gestures",
-                            subtitle = "Swipe horizontally on album art to skip tracks (left: previous, right: next) or tap to play/pause",
-                            checked = gesturePlaybackEnabled,
-                            onCheckedChange = onSetGesturePlaybackEnabled,
-                            icon = Icons.Default.TouchApp,
-                            accentColor = Color(0xFFFF9100)
-                        )
-
-                        SettingsDivider()
+                        if (!isSearching || matchPlaybackGestures || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Album Art Gestures",
+                                subtitle = "Swipe horizontally on album art to skip tracks (left: previous, right: next) or tap to play/pause",
+                                checked = gesturePlaybackEnabled,
+                                onCheckedChange = onSetGesturePlaybackEnabled,
+                                icon = Icons.Default.TouchApp,
+                                accentColor = Color(0xFFFF9100)
+                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
 
                         // Add to Queue Position
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Add to Queue Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                    Text(
-                                        text = if (addToQueuePosition == "TOP_NEXT") "Top Next: insert immediately after currently playing track" else "Bottom: append to the end of Up-Next queue",
-                                        fontSize = 11.5.sp,
-                                        color = BentoTextSecondary
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFFF9100).copy(alpha = 0.18f),
-                                    border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = 0.4f))
+                        if (!isSearching || matchPlaybackAddToQueuePos || broadPlaybackMatch) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = if (addToQueuePosition == "TOP_NEXT") "Top Next" else "Bottom",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFF9100),
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Add to Queue Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                        Text(
+                                            text = if (addToQueuePosition == "TOP_NEXT") "Top Next: insert immediately after currently playing track" else "Bottom: append to the end of Up-Next queue",
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFFFF9100).copy(alpha = 0.18f),
+                                        border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = 0.4f))
+                                    ) {
+                                        Text(
+                                            text = if (addToQueuePosition == "TOP_NEXT") "Top Next" else "Bottom",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFFF9100),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                        )
+                                    }
                                 }
+
+                                SettingsSegmentedSelector(
+                                    options = listOf(
+                                        "TOP_NEXT" to "Top Next",
+                                        "BOTTOM" to "Bottom"
+                                    ),
+                                    selectedOption = addToQueuePosition,
+                                    onSelectOption = onSetAddToQueuePosition,
+                                    accentColor = Color(0xFFFF9100)
+                                )
                             }
-
-                            SettingsSegmentedSelector(
-                                options = listOf(
-                                    "TOP_NEXT" to "Top Next",
-                                    "BOTTOM" to "Bottom"
-                                ),
-                                selectedOption = addToQueuePosition,
-                                onSelectOption = onSetAddToQueuePosition,
-                                accentColor = Color(0xFFFF9100)
-                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
                         }
-
-                        SettingsDivider()
 
                         // Add to Playlist Position in Custom Ordering
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Add to Playlist Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                    Text(
-                                        text = if (playlistAddSongPosition == "TOP") "Top: insert at the beginning of custom playlist arrangement" else "Bottom: append to the end of custom playlist arrangement",
-                                        fontSize = 11.5.sp,
-                                        color = BentoTextSecondary
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFFF9100).copy(alpha = 0.18f),
-                                    border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = 0.4f))
+                        if (!isSearching || matchPlaybackAddToPlaylistPos || broadPlaybackMatch) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = if (playlistAddSongPosition == "TOP") "Top" else "Bottom",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFF9100),
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Add to Playlist Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                        Text(
+                                            text = if (playlistAddSongPosition == "TOP") "Top: insert at the beginning of custom playlist arrangement" else "Bottom: append to the end of custom playlist arrangement",
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFFFF9100).copy(alpha = 0.18f),
+                                        border = BorderStroke(1.dp, Color(0xFFFF9100).copy(alpha = 0.4f))
+                                    ) {
+                                        Text(
+                                            text = if (playlistAddSongPosition == "TOP") "Top" else "Bottom",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFFF9100),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                        )
+                                    }
                                 }
-                            }
 
-                            SettingsSegmentedSelector(
-                                options = listOf(
-                                    "BOTTOM" to "Bottom (End)",
-                                    "TOP" to "Top (Beginning)"
-                                ),
-                                selectedOption = playlistAddSongPosition,
-                                onSelectOption = onSetPlaylistAddSongPosition,
+                                SettingsSegmentedSelector(
+                                    options = listOf(
+                                        "BOTTOM" to "Bottom (End)",
+                                        "TOP" to "Top (Beginning)"
+                                    ),
+                                    selectedOption = playlistAddSongPosition,
+                                    onSelectOption = onSetPlaylistAddSongPosition,
+                                    accentColor = Color(0xFFFF9100)
+                                )
+                            }
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
+
+                        // Automatically Play on Headphone Connection
+                        if (!isSearching || matchPlaybackHeadphones || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Automatically Play on Headphone Connection",
+                                subtitle = "Automatically start or resume music when wired or wireless headphones are connected",
+                                checked = autoPlayOnHeadphoneConnection,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                            val isGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                                                context,
+                                                android.Manifest.permission.BLUETOOTH_CONNECT
+                                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                            if (isGranted) {
+                                                onSetAutoPlayOnHeadphoneConnection(true)
+                                            } else {
+                                                showHeadphonePermissionDialog = true
+                                            }
+                                        } else {
+                                            onSetAutoPlayOnHeadphoneConnection(true)
+                                        }
+                                    } else {
+                                        onSetAutoPlayOnHeadphoneConnection(false)
+                                    }
+                                },
+                                icon = Icons.Default.Headphones,
+                                accentColor = Color(0xFFFF9100)
+                            )
+                            if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                        }
+
+                        // Keep Screen Awake
+                        if (!isSearching || matchPlaybackKeepAwake || broadPlaybackMatch) {
+                            SettingsToggleRow(
+                                title = "Keep Screen Awake",
+                                subtitle = "Prevent device display from sleeping while lyrics or player is active",
+                                checked = keepScreenAwake,
+                                onCheckedChange = onSetKeepScreenAwake,
+                                icon = Icons.Default.WbSunny,
                                 accentColor = Color(0xFFFF9100)
                             )
                         }
-
-                        SettingsDivider()
-
-                        // Automatically Play on Headphone Connection
-                        SettingsToggleRow(
-                            title = "Automatically Play on Headphone Connection",
-                            subtitle = "Automatically start or resume music when wired or wireless headphones are connected",
-                            checked = autoPlayOnHeadphoneConnection,
-                            onCheckedChange = { checked ->
-                                if (checked) {
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                                        val isGranted = androidx.core.content.ContextCompat.checkSelfPermission(
-                                            context,
-                                            android.Manifest.permission.BLUETOOTH_CONNECT
-                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                                        if (isGranted) {
-                                            onSetAutoPlayOnHeadphoneConnection(true)
-                                        } else {
-                                            showHeadphonePermissionDialog = true
-                                        }
-                                    } else {
-                                        onSetAutoPlayOnHeadphoneConnection(true)
-                                    }
-                                } else {
-                                    onSetAutoPlayOnHeadphoneConnection(false)
-                                }
-                            },
-                            icon = Icons.Default.Headphones,
-                            accentColor = Color(0xFFFF9100)
-                        )
-
-                        SettingsDivider()
-
-                        // Keep Screen Awake
-                        SettingsToggleRow(
-                            title = "Keep Screen Awake",
-                            subtitle = "Prevent device display from sleeping while lyrics or player is active",
-                            checked = keepScreenAwake,
-                            onCheckedChange = onSetKeepScreenAwake,
-                            icon = Icons.Default.WbSunny,
-                            accentColor = Color(0xFFFF9100)
-                        )
+                    }
                     }
                 }
             }
@@ -3437,128 +3735,135 @@ fun SettingsScreen(
                     )
                 }
 
+                if (!isSearching || anyCacheCardMatches || broadCacheMatch) {
                 item(key = "settings_cache_card") {
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_CACHE") {
                     SettingsCardContainer(accentGlow = Color(0xFF00E676)) {
                         // Total Cache Summary Banner
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = BentoCardPurple,
-                            border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.4f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        if (!isSearching || matchCacheTotal || broadCacheMatch) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = BentoCardPurple,
+                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("Total Cache Occupied", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextSecondary)
-                                    Text(totalCacheSize, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF00E676))
-                                }
-                                Button(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        onClearAllCaches()
-                                        android.widget.Toast.makeText(context, "All media caches cleared", android.widget.Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Color.Black),
-                                    shape = RoundedCornerShape(10.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Clear All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Total Cache Occupied", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextSecondary)
+                                        Text(totalCacheSize, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF00E676))
+                                    }
+                                    Button(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onClearAllCaches()
+                                            android.widget.Toast.makeText(context, "All media caches cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Color.Black),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Clear All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
+                            if (!isSearching || broadCacheMatch) SettingsDivider()
                         }
-
-                        SettingsDivider()
 
                         // Cache Synced Lyrics
-                        SettingsToggleRow(
-                            title = "Cache Synced Lyrics",
-                            subtitle = "Store time-synchronized lyrics locally for offline display ($lyricsCacheSize)",
-                            checked = cacheLyricsEnabled,
-                            onCheckedChange = onSetCacheLyricsEnabled,
-                            icon = Icons.Default.FormatQuote,
-                            accentColor = Color(0xFF00E676)
-                        )
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            OutlinedButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onClearLyricsCache()
-                                    android.widget.Toast.makeText(context, "Lyrics cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
-                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
-                            ) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Clear Lyrics ($lyricsCacheSize)", fontSize = 11.5.sp)
+                        if (!isSearching || matchCacheLyrics || broadCacheMatch) {
+                            SettingsToggleRow(
+                                title = "Cache Synced Lyrics",
+                                subtitle = "Store time-synchronized lyrics locally for offline display ($lyricsCacheSize)",
+                                checked = cacheLyricsEnabled,
+                                onCheckedChange = onSetCacheLyricsEnabled,
+                                icon = Icons.Default.FormatQuote,
+                                accentColor = Color(0xFF00E676)
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onClearLyricsCache()
+                                        android.widget.Toast.makeText(context, "Lyrics cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Clear Lyrics ($lyricsCacheSize)", fontSize = 11.5.sp)
+                                }
                             }
+                            if (!isSearching || broadCacheMatch) SettingsDivider()
                         }
-
-                        SettingsDivider()
 
                         // Cache Album Artwork
-                        SettingsToggleRow(
-                            title = "Cache Album Artwork",
-                            subtitle = if (cacheAlbumArtEnabled) "High-res covers are stored on disk for instant offline loading ($albumArtCacheSize)" else "Artwork is fetched live from network on every song change",
-                            checked = cacheAlbumArtEnabled,
-                            onCheckedChange = onSetCacheAlbumArtEnabled,
-                            icon = Icons.Default.Album,
-                            accentColor = Color(0xFF00E676)
-                        )
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            OutlinedButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onClearAlbumArtCache()
-                                    android.widget.Toast.makeText(context, "Album artwork cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
-                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
-                            ) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Clear Album Art ($albumArtCacheSize)", fontSize = 11.5.sp)
+                        if (!isSearching || matchCacheAlbumArt || broadCacheMatch) {
+                            SettingsToggleRow(
+                                title = "Cache Album Artwork",
+                                subtitle = if (cacheAlbumArtEnabled) "High-res covers are stored on disk for instant offline loading ($albumArtCacheSize)" else "Artwork is fetched live from network on every song change",
+                                checked = cacheAlbumArtEnabled,
+                                onCheckedChange = onSetCacheAlbumArtEnabled,
+                                icon = Icons.Default.Album,
+                                accentColor = Color(0xFF00E676)
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onClearAlbumArtCache()
+                                        android.widget.Toast.makeText(context, "Album artwork cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Clear Album Art ($albumArtCacheSize)", fontSize = 11.5.sp)
+                                }
                             }
+                            if (!isSearching || broadCacheMatch) SettingsDivider()
                         }
 
-                        SettingsDivider()
-
                         // Cache Song Artwork
-                        SettingsToggleRow(
-                            title = "Cache Song Artwork",
-                            subtitle = if (cacheSongArtWorkEnabled) "Track-specific custom covers are persisted locally ($songArtCacheSize)" else "Individual song artwork is fetched dynamically from the network",
-                            checked = cacheSongArtWorkEnabled,
-                            onCheckedChange = onSetCacheSongArtWorkEnabled,
-                            icon = Icons.Default.MusicNote,
-                            accentColor = Color(0xFF00E676)
-                        )
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            OutlinedButton(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onClearSongArtCache()
-                                    android.widget.Toast.makeText(context, "Song artwork cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
-                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
-                            ) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Clear Song Art ($songArtCacheSize)", fontSize = 11.5.sp)
+                        if (!isSearching || matchCacheSongArt || broadCacheMatch) {
+                            SettingsToggleRow(
+                                title = "Cache Song Artwork",
+                                subtitle = if (cacheSongArtWorkEnabled) "Track-specific custom covers are persisted locally ($songArtCacheSize)" else "Individual song artwork is fetched dynamically from the network",
+                                checked = cacheSongArtWorkEnabled,
+                                onCheckedChange = onSetCacheSongArtWorkEnabled,
+                                icon = Icons.Default.MusicNote,
+                                accentColor = Color(0xFF00E676)
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onClearSongArtCache()
+                                        android.widget.Toast.makeText(context, "Song artwork cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E676)),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Clear Song Art ($songArtCacheSize)", fontSize = 11.5.sp)
+                                }
                             }
                         }
                     }
+                    }
+                }
                 }
 
+                if (!isSearching || matchCacheDatabase || broadCacheMatch) {
                 item(key = "settings_database_storage_card") {
                     SettingsCardContainer(accentGlow = Color(0xFF00E5FF)) {
                         // Header with icon and badge
@@ -3744,6 +4049,7 @@ fun SettingsScreen(
                         }
                     }
                 }
+                }
             }
 
             // ==========================================
@@ -3761,234 +4067,246 @@ fun SettingsScreen(
                 }
 
                 item(key = "settings_library_card") {
+                    SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_LIBRARY") {
                     SettingsCardContainer(accentGlow = Color(0xFF2979FF)) {
                         // Authoritative Scan Progress & Status Banner (Shared State)
-                        if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = BentoPrimary.copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!isSearching || matchLibQuickScan || matchLibFullScan || broadLibraryMatch) {
+                            if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = BentoPrimary.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = BentoPrimary)
+                                                Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoPrimary)
+                                            }
+                                            Text("Scanning in progress...", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                        }
+                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape), color = BentoPrimary)
+                                    }
+                                }
+                                if (!isSearching || broadLibraryMatch) SettingsDivider()
+                            } else if (scanProgress.status == com.example.scanner.ScanStatus.COMPLETED && scanProgress.isFinished) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF00E676).copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                                ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = BentoPrimary)
-                                            Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoPrimary)
-                                        }
-                                        Text("Scanning in progress...", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                        Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                                        Text("Scan completed", fontSize = 11.5.sp, color = BentoTextSecondary)
                                     }
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape), color = BentoPrimary)
                                 }
-                            }
-                            SettingsDivider()
-                        } else if (scanProgress.status == com.example.scanner.ScanStatus.COMPLETED && scanProgress.isFinished) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFF00E676).copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f)),
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                if (!isSearching || broadLibraryMatch) SettingsDivider()
+                            } else if (scanProgress.status == com.example.scanner.ScanStatus.ERROR) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFFFF5252).copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
                                 ) {
-                                    Text("${scanProgress.displayTracksCount} tracks found", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
-                                    Text("Scan completed", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(scanProgress.errorMessage ?: "Scan error", fontSize = 12.5.sp, color = Color(0xFFFF5252))
+                                        Text("Error", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                    }
                                 }
+                                if (!isSearching || broadLibraryMatch) SettingsDivider()
                             }
-                            SettingsDivider()
-                        } else if (scanProgress.status == com.example.scanner.ScanStatus.ERROR) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFFFF5252).copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.35f)),
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(scanProgress.errorMessage ?: "Scan error", fontSize = 12.5.sp, color = Color(0xFFFF5252))
-                                    Text("Error", fontSize = 11.5.sp, color = BentoTextSecondary)
-                                }
-                            }
-                            SettingsDivider()
                         }
 
                         var showFullDeviceScanConfirmDialog by remember { mutableStateOf(false) }
 
                         // Full-Device Scan Toggle
-                        SettingsToggleRow(
-                            title = "Full-Device Scan",
-                            subtitle = if (fullDeviceScan) "Search the entire device file system for audio tracks" else "Restricted strictly to configured music directories",
-                            checked = fullDeviceScan,
-                            onCheckedChange = { checked ->
-                                if (checked && folders.isNotEmpty()) {
-                                    showFullDeviceScanConfirmDialog = true
-                                } else {
-                                    onSetFullDeviceScan(checked)
-                                    onScanLibrary()
-                                }
-                            },
-                            icon = Icons.Default.Devices,
-                            accentColor = Color(0xFF2979FF)
-                        )
-
-                        if (showFullDeviceScanConfirmDialog) {
-                            val incCount = folders.count { !it.isExcluded }
-                            val excCount = folders.count { it.isExcluded }
-                            AlertDialog(
-                                onDismissRequest = { showFullDeviceScanConfirmDialog = false },
-                                title = {
-                                    Text(
-                                        text = "Confirm Full-Device Scan",
-                                        fontWeight = FontWeight.Bold,
-                                        color = BentoTextPrimary
-                                    )
-                                },
-                                text = {
-                                    Text(
-                                        text = "You have $incCount included and $excCount excluded folder(s) configured.\n\nFull-Device Scan may also include folders that you added in the exclude list and perform a scan to fetch tracks from all folders on your device. Do you want to confirm?",
-                                        fontSize = 13.5.sp,
-                                        color = BentoTextSecondary,
-                                        lineHeight = 19.sp
-                                    )
-                                },
-                                confirmButton = {
-                                    Button(
-                                        onClick = {
-                                            showFullDeviceScanConfirmDialog = false
-                                            onSetFullDeviceScan(true)
-                                            onScanLibrary()
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White)
-                                    ) {
-                                        Text("Confirm & Scan All", fontWeight = FontWeight.Bold)
+                        if (!isSearching || matchLibFullScan || broadLibraryMatch) {
+                            SettingsToggleRow(
+                                title = "Full-Device Scan",
+                                subtitle = if (fullDeviceScan) "Search the entire device file system for audio tracks" else "Restricted strictly to configured music directories",
+                                checked = fullDeviceScan,
+                                onCheckedChange = { checked ->
+                                    if (checked && folders.isNotEmpty()) {
+                                        showFullDeviceScanConfirmDialog = true
+                                    } else {
+                                        onSetFullDeviceScan(checked)
+                                        onScanLibrary()
                                     }
                                 },
-                                dismissButton = {
-                                    TextButton(onClick = { showFullDeviceScanConfirmDialog = false }) {
-                                        Text("Cancel", color = BentoTextSecondary)
-                                    }
-                                },
-                                containerColor = BentoCardSurface,
-                                shape = RoundedCornerShape(20.dp)
+                                icon = Icons.Default.Devices,
+                                accentColor = Color(0xFF2979FF)
                             )
+
+                            if (showFullDeviceScanConfirmDialog) {
+                                val incCount = folders.count { !it.isExcluded }
+                                val excCount = folders.count { it.isExcluded }
+                                AlertDialog(
+                                    onDismissRequest = { showFullDeviceScanConfirmDialog = false },
+                                    title = {
+                                        Text(
+                                            text = "Confirm Full-Device Scan",
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            text = "You have $incCount included and $excCount excluded folder(s) configured.\n\nFull-Device Scan may also include folders that you added in the exclude list and perform a scan to fetch tracks from all folders on your device. Do you want to confirm?",
+                                            fontSize = 13.5.sp,
+                                            color = BentoTextSecondary,
+                                            lineHeight = 19.sp
+                                        )
+                                    },
+                                    confirmButton = {
+                                        Button(
+                                            onClick = {
+                                                showFullDeviceScanConfirmDialog = false
+                                                onSetFullDeviceScan(true)
+                                                onScanLibrary()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White)
+                                        ) {
+                                            Text("Confirm & Scan All", fontWeight = FontWeight.Bold)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showFullDeviceScanConfirmDialog = false }) {
+                                            Text("Cancel", color = BentoTextSecondary)
+                                        }
+                                    },
+                                    containerColor = BentoCardSurface,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                            }
+
+                            if (!isSearching || broadLibraryMatch) SettingsDivider()
                         }
 
-                        SettingsDivider()
-
                         // Ignore Short Audio Tracks Filter with quick presets (15s, 30s, 45s, 1m, 2m) and slider
-                        AudioDurationFilterSetting(
-                            ignoreAudioDuration = ignoreAudioDuration,
-                            onSetIgnoreAudioDuration = onSetIgnoreAudioDuration
-                        )
+                        if (!isSearching || matchLibIgnoreShort || broadLibraryMatch) {
+                            AudioDurationFilterSetting(
+                                ignoreAudioDuration = ignoreAudioDuration,
+                                onSetIgnoreAudioDuration = onSetIgnoreAudioDuration
+                            )
 
-                        SettingsDivider()
+                            if (!isSearching || broadLibraryMatch) SettingsDivider()
+                        }
 
                         val isCurrentlyScanning = scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING
 
                         // Quick Scan & Clean
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Quick Scan & Clean", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                Text("Quickly prune missing audio files and index newly downloaded tracks without disturbing edits", fontSize = 11.5.sp, color = BentoTextSecondary)
-                            }
-                            Button(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onQuickScanAndCleanLibrary()
-                                    android.widget.Toast.makeText(context, "Quick scan & clean started", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                enabled = !isCurrentlyScanning,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White),
-                                shape = RoundedCornerShape(10.dp)
+                        if (!isSearching || matchLibQuickScan || broadLibraryMatch) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Quick Scan", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Quick Scan & Clean", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                    Text("Quickly prune missing audio files and index newly downloaded tracks without disturbing edits", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                }
+                                Button(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onQuickScanAndCleanLibrary()
+                                        android.widget.Toast.makeText(context, "Quick scan & clean started", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    enabled = !isCurrentlyScanning,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("Quick Scan", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
                             }
-                        }
 
-                        SettingsDivider()
+                            if (!isSearching || broadLibraryMatch) SettingsDivider()
+                        }
 
                         // Custom Music Folders
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Custom Music Directories", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                Text("Select explicit directories to include or exclude from indexing", fontSize = 11.5.sp, color = BentoTextSecondary)
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IconButton(
-                                    onClick = {
-                                        isPickingForExclusion = false
-                                        folderPickerLauncher.launch(null)
-                                    },
-                                    modifier = Modifier.clip(CircleShape).background(BentoCardPurple)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Add Folder", tint = Color(0xFF2979FF))
+                        if (!isSearching || matchLibCustomFolders || broadLibraryMatch) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Custom Music Directories", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                    Text("Select explicit directories to include or exclude from indexing", fontSize = 11.5.sp, color = BentoTextSecondary)
                                 }
-                                IconButton(
-                                    onClick = {
-                                        isPickingForExclusion = true
-                                        folderPickerLauncher.launch(null)
-                                    },
-                                    modifier = Modifier.clip(CircleShape).background(BentoCardPurple)
-                                ) {
-                                    Icon(Icons.Default.Block, contentDescription = "Exclude Folder", tint = Color.Red)
-                                }
-                            }
-                        }
-
-                        if (folders.isNotEmpty()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                folders.forEach { folder ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(BentoCardPurple.copy(alpha = 0.6f))
-                                            .border(BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)), RoundedCornerShape(10.dp))
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    IconButton(
+                                        onClick = {
+                                            isPickingForExclusion = false
+                                            folderPickerLauncher.launch(null)
+                                        },
+                                        modifier = Modifier.clip(CircleShape).background(BentoCardPurple)
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                            Icon(
-                                                imageVector = if (folder.isExcluded) Icons.Default.Block else Icons.Default.Folder,
-                                                contentDescription = null,
-                                                tint = if (folder.isExcluded) Color.Red else Color(0xFF2979FF),
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Column {
-                                                Text(folder.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                                                Text(folder.path, fontSize = 11.sp, color = BentoTextSubtle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            }
-                                        }
-                                        IconButton(
-                                            onClick = { onRemoveFolder(folder.path) },
-                                            modifier = Modifier.size(28.dp)
+                                        Icon(Icons.Default.Add, contentDescription = "Add Folder", tint = Color(0xFF2979FF))
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            isPickingForExclusion = true
+                                            folderPickerLauncher.launch(null)
+                                        },
+                                        modifier = Modifier.clip(CircleShape).background(BentoCardPurple)
+                                    ) {
+                                        Icon(Icons.Default.Block, contentDescription = "Exclude Folder", tint = Color.Red)
+                                    }
+                                }
+                            }
+
+                            if (folders.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    folders.forEach { folder ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(BentoCardPurple.copy(alpha = 0.6f))
+                                                .border(BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)), RoundedCornerShape(10.dp))
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(Icons.Default.Close, contentDescription = "Remove", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                Icon(
+                                                    imageVector = if (folder.isExcluded) Icons.Default.Block else Icons.Default.Folder,
+                                                    contentDescription = null,
+                                                    tint = if (folder.isExcluded) Color.Red else Color(0xFF2979FF),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(folder.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                                    Text(folder.path, fontSize = 11.sp, color = BentoTextSubtle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                            }
+                                            IconButton(
+                                                onClick = { onRemoveFolder(folder.path) },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(Icons.Default.Close, contentDescription = "Remove", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

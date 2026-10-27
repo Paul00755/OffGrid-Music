@@ -66,7 +66,11 @@ class SleepTimerManager(
     private val processedSessionIds = mutableSetOf<String>()
     private val countedOccurrences = mutableSetOf<String>()
 
-    fun startTimerMinutes(minutes: Int, finishLastSong: Boolean = false) {
+    @Volatile
+    private var defaultFinishLastSong: Boolean = false
+
+    fun startTimerMinutes(minutes: Int, finishLastSong: Boolean = defaultFinishLastSong) {
+        defaultFinishLastSong = finishLastSong
         cancelTimer()
         val validMinutes = minutes.coerceAtLeast(1)
         val durationSec = validMinutes * 60L
@@ -101,7 +105,7 @@ class SleepTimerManager(
             if (!shouldFinishLastSong || !playing) {
                 // Scenario 1: Normal sleep timer (without finish last track) -> stop immediately
                 android.util.Log.d(TAG, "Stopping playback immediately (Scenario 1)")
-                _state.value = SleepTimerState()
+                _state.value = SleepTimerState(finishLastSong = defaultFinishLastSong)
                 timerJob = null
                 onTimerExpired()
             } else {
@@ -414,10 +418,11 @@ class SleepTimerManager(
     }
 
     fun setFinishLastSong(enabled: Boolean) {
+        defaultFinishLastSong = enabled
         val curr = _state.value
         _state.value = curr.copy(finishLastSong = enabled)
         if (curr.isActive && curr.mode == "TIME" && !enabled && (curr.isWaitingForCurrentTrackToEnd || curr.remainingSeconds <= 0L)) {
-            _state.value = SleepTimerState()
+            _state.value = SleepTimerState(finishLastSong = defaultFinishLastSong)
             timerJob?.cancel()
             timerJob = null
             onTimerExpired()
@@ -437,7 +442,7 @@ class SleepTimerManager(
         completedEligibleTracks = 0
         processedSessionIds.clear()
         countedOccurrences.clear()
-        _state.value = SleepTimerState()
+        _state.value = SleepTimerState(finishLastSong = defaultFinishLastSong)
         android.util.Log.d(TAG, "Timer cancelled/reset")
     }
 }

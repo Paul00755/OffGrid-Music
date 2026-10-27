@@ -35,9 +35,20 @@ class EqualizerManager(private val context: Context) {
             }
         }
 
+    fun getBoundAudioSessionId(): Int = currentSessionId
+
+    @Synchronized
     fun initAudioSession(audioSessionId: Int, preset: String = currentPreset) {
         if (audioSessionId <= 0 || audioSessionId == androidx.media3.common.C.AUDIO_SESSION_ID_UNSET) return
-        if (currentSessionId == audioSessionId && equalizer != null && currentPreset.equals(preset, ignoreCase = true)) {
+        if (currentSessionId == audioSessionId && equalizer != null) {
+            if (!currentPreset.equals(preset, ignoreCase = true)) {
+                currentPreset = preset
+                if (preset.equals("CUSTOM", ignoreCase = true)) {
+                    setCustomBands(lastCustomBands, lastBassBoostStrength, lastVirtualizerStrength)
+                } else {
+                    applyPreset(preset)
+                }
+            }
             return
         }
         currentPreset = preset
@@ -105,7 +116,6 @@ class EqualizerManager(private val context: Context) {
         val eq = equalizer ?: return lastCustomBands
         return try {
             val numBands = eq.numberOfBands.toInt().coerceAtLeast(5)
-            val minLevel = eq.bandLevelRange?.getOrNull(0)?.toFloat() ?: -1500f
             val maxLevel = eq.bandLevelRange?.getOrNull(1)?.toFloat() ?: 1500f
             val range = if (maxLevel > 0f) maxLevel else 1500f
 
@@ -246,18 +256,22 @@ class EqualizerManager(private val context: Context) {
         applyCurrentState()
     }
 
+    @Synchronized
     fun release() {
         try {
+            equalizer?.enabled = false
             equalizer?.release()
         } catch (_: Exception) {}
         equalizer = null
 
         try {
+            bassBoost?.enabled = false
             bassBoost?.release()
         } catch (_: Exception) {}
         bassBoost = null
 
         try {
+            virtualizer?.enabled = false
             virtualizer?.release()
         } catch (_: Exception) {}
         virtualizer = null

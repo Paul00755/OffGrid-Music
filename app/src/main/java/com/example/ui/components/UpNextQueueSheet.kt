@@ -709,9 +709,10 @@ fun UpNextQueueSheet(
                     FastScrollbar(
                         listState = listState,
                         totalItems = localQueue.size,
+                        bottomPadding = 24.dp,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .offset(x = 16.dp)
+                            .offset(x = 12.dp)
                     )
                 }
             }

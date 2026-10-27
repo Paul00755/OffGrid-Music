@@ -1,24 +1,27 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.UnfoldMore
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -26,250 +29,317 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.*
+import com.example.ui.theme.BentoPrimary
 import com.example.util.HapticUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * High-performance VSYNC-locked fast-scroll thumb indicator for LazyLists.
- * - Synchronizes `effectiveTotalItems` with `listState.layoutInfo.totalItemsCount` so sticky headers
- *   and top control rows never cause index out-of-bounds or thumb drift.
- * - Uses `withFrameNanos` during active thumb dragging so scrolling is locked to native 60Hz/90Hz/120Hz VSYNC.
+ * High-responsiveness, zero-lag FastScrollbar for LazyColumn lists.
+ *
+ * Features:
+ * - Instant 1:1 finger tracking with zero coordinate distortion (only the thumb scales, never the touch container).
+ * - Sub-item pixel scroll interpolation so both short lists and 10,000-item libraries glide at 120fps.
+ * - Direct track tap/drag support when visible so grabbing slightly outside the thumb still responds immediately.
+ * - Conflated Main.immediate scroll dispatch for zero input latency.
  */
 @Composable
 fun FastScrollbar(
     listState: LazyListState,
     totalItems: Int,
     modifier: Modifier = Modifier,
-    topPadding: androidx.compose.ui.unit.Dp = 8.dp,
-    bottomPadding: androidx.compose.ui.unit.Dp = 16.dp,
-    itemLabelProvider: ((Int) -> String?)? = null
+    itemIndexToLabel: ((Int) -> String?)? = null,
+    itemLabelProvider: ((Int) -> String?)? = null,
+    topPadding: Dp = 8.dp,
+    bottomPadding: Dp = 100.dp,
+    thumbColor: Color = BentoPrimary
 ) {
-    if (totalItems <= 3) return
+    val resolvedLabelProvider = itemIndexToLabel ?: itemLabelProvider
+    val layoutTotalItems by remember {
+        derivedStateOf { listState.layoutInfo.totalItemsCount }
+    }
+    val effectiveTotalItems = if (layoutTotalItems > 0) layoutTotalItems else totalItems
+    if (effectiveTotalItems <= 8) return
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    var isVisible by remember { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
+    var isVisible by remember { mutableStateOf(false) }
+    var containerHeightPx by remember { mutableFloatStateOf(0f) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
-    var lastScrolledIndex by remember { mutableIntStateOf(-1) }
-    var containerHeightPx by remember { mutableIntStateOf(0) }
-    var lastLabel by remember { mutableStateOf<String?>(null) }
+    var activeLabel by remember { mutableStateOf<String?>(null) }
+    var lastHapticLabel by remember { mutableStateOf<String?>(null) }
 
-    val thumbHeightDp = 36.dp
-    val thumbWidthDp = 12.dp
-    val thumbHeightPx = with(density) { thumbHeightDp.toPx() }
-    val topPaddingPx = with(density) { topPadding.toPx() }
-    val bottomPaddingPx = with(density) { bottomPadding.toPx() }
+    val topPaddingPx = remember(density, topPadding) { with(density) { topPadding.toPx() } }
+    val bottomPaddingPx = remember(density, bottomPadding) { with(density) { bottomPadding.toPx() } }
+    val thumbHeightPx = remember(density) { with(density) { 46.dp.toPx() } }
 
-    val stateScrollFraction by remember(totalItems) {
+    // Continuous sub-item scroll fraction so the thumb glides smoothly pixel-by-pixel
+    val stateScrollFraction by remember(listState, totalItems) {
         derivedStateOf {
-            val layoutTotal = listState.layoutInfo.totalItemsCount
-            val count = if (layoutTotal > 0) layoutTotal else totalItems
-            if (count <= 1) 0f
-            else {
-                val firstVisible = listState.firstVisibleItemIndex.toFloat()
-                val visibleItems = listState.layoutInfo.visibleItemsInfo
-                val offsetFraction = if (visibleItems.isNotEmpty()) {
-                    val itemSize = visibleItems.first().size.toFloat().coerceAtLeast(1f)
-                    (listState.firstVisibleItemScrollOffset.toFloat() / itemSize).coerceIn(0f, 1f)
-                } else 0f
-                val visibleCount = visibleItems.size.coerceAtLeast(1)
-                val totalScrollable = (count - visibleCount).coerceAtLeast(1).toFloat()
-                ((firstVisible + offsetFraction) / totalScrollable).coerceIn(0f, 1f)
+            val layoutInfo = listState.layoutInfo
+            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
+            val visibleItems = layoutInfo.visibleItemsInfo
+            val visibleCount = visibleItems.size
+            val scrollableItems = (totalCount - visibleCount).coerceAtLeast(1)
+            val firstItemSize = visibleItems.firstOrNull()?.size ?: 0
+            val subItemFraction = if (firstItemSize > 0) {
+                (listState.firstVisibleItemScrollOffset.toFloat() / firstItemSize.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+            val exactIndex = listState.firstVisibleItemIndex.toFloat() + subItemFraction
+            (exactIndex / scrollableItems.toFloat()).coerceIn(0f, 1f)
+        }
+    }
+
+    val currentItemIndex by remember(listState, totalItems, isDragging, dragFraction) {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
+            if (isDragging) {
+                (dragFraction * (totalCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+            } else {
+                listState.firstVisibleItemIndex.coerceIn(0, (totalCount - 1).coerceAtLeast(0))
             }
         }
     }
 
-    LaunchedEffect(listState.isScrollInProgress, isDragging) {
-        if (listState.isScrollInProgress || isDragging) {
+    val latestItemIndexToLabel by rememberUpdatedState(resolvedLabelProvider)
+    val latestTotalItems by rememberUpdatedState(totalItems)
+
+    // Helper that immediately scrolls the LazyListState to an exact fractional position (item + pixel offset)
+    var activeScrollJob by remember { mutableStateOf<Job?>(null) }
+    val scrollToFractionImmediate: (Float) -> Unit = remember(listState, coroutineScope) {
+        { targetFraction: Float ->
+            val clamped = targetFraction.coerceIn(0f, 1f)
+            dragFraction = clamped
+
+            val layoutInfo = listState.layoutInfo
+            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else latestTotalItems
+            val visibleItems = layoutInfo.visibleItemsInfo
+            val visibleCount = visibleItems.size.coerceAtLeast(1)
+            val maxScrollableIndex = (totalCount - visibleCount).coerceAtLeast(0)
+            val maxItemIndex = (totalCount - 1).coerceAtLeast(0)
+
+            val exactScrollPos = clamped * maxScrollableIndex.toFloat()
+            val targetIndex = exactScrollPos.toInt().coerceIn(0, maxItemIndex)
+            val remainder = (exactScrollPos - targetIndex).coerceIn(0f, 0.999f)
+
+            val avgItemSizePx = if (visibleItems.isNotEmpty()) {
+                var sum = 0
+                for (i in visibleItems.indices) sum += visibleItems[i].size
+                (sum.toFloat() / visibleItems.size.toFloat()).coerceAtLeast(1f)
+            } else {
+                160f
+            }
+            val targetOffsetPx = if (clamped >= 0.998f) {
+                0
+            } else {
+                (remainder * avgItemSizePx).roundToInt().coerceAtLeast(0)
+            }
+
+            val labelIdx = (clamped * maxItemIndex.toFloat()).roundToInt().coerceIn(0, maxItemIndex)
+            val newLabel = latestItemIndexToLabel?.invoke(labelIdx)
+            activeLabel = newLabel
+            if (newLabel != null && newLabel != lastHapticLabel) {
+                lastHapticLabel = newLabel
+                HapticUtils.performTickHaptic(context)
+            }
+
+            activeScrollJob?.cancel()
+            activeScrollJob = coroutineScope.launch(Dispatchers.Main.immediate) {
+                val finalIndex = if (clamped >= 0.998f) maxItemIndex else targetIndex
+                listState.scrollToItem(finalIndex, targetOffsetPx)
+            }
+        }
+    }
+
+    // Show/hide visibility based on scroll activity or drag state
+    val isScrollInProgress = listState.isScrollInProgress
+    LaunchedEffect(isScrollInProgress, isDragging) {
+        if (isScrollInProgress || isDragging) {
             isVisible = true
         } else {
             delay(1400L)
             if (!listState.isScrollInProgress && !isDragging) {
                 isVisible = false
+                activeLabel = null
             }
+        }
+    }
+
+    // Update label if itemIndexToLabel is provided during drag
+    LaunchedEffect(currentItemIndex, isDragging) {
+        if (isDragging && latestItemIndexToLabel != null) {
+            activeLabel = latestItemIndexToLabel?.invoke(currentItemIndex)
         }
     }
 
     val alphaAnim by animateFloatAsState(
-        targetValue = if (isVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 160),
-        label = "fast_scroll_alpha"
+        targetValue = if (isVisible || isDragging) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (isVisible || isDragging) 90 else 280,
+            easing = FastOutSlowInEasing
+        ),
+        label = "scrollbar_alpha"
     )
 
-    val scaleAnim by animateFloatAsState(
-        targetValue = if (isDragging) 1.15f else if (isVisible) 1f else 0.85f,
-        animationSpec = spring(dampingRatio = 0.85f),
-        label = "fast_scroll_scale"
+    val thumbWidthDp by animateDpAsState(
+        targetValue = if (isDragging) 8.dp else 5.dp,
+        animationSpec = tween(durationMillis = 100),
+        label = "scrollbar_thumb_width"
     )
 
-    if (!isVisible && alphaAnim <= 0.01f) return
-
-    val activeLabel by remember(isDragging, totalItems, itemLabelProvider) {
-        derivedStateOf {
-            if (isDragging) {
-                val layoutTotal = listState.layoutInfo.totalItemsCount
-                val count = if (layoutTotal > 0) layoutTotal else totalItems
-                val maxIndex = (count - 1).coerceAtLeast(0)
-                val currentItemIndex = (dragFraction * maxIndex).roundToInt().coerceIn(0, maxIndex)
-                itemLabelProvider?.invoke(currentItemIndex)?.takeIf { it.isNotBlank() }
-            } else null
-        }
-    }
-
-    var pendingTargetIndex by remember { mutableIntStateOf(-1) }
-
-    // VSYNC-locked scroll dispatcher for 60Hz / 90Hz / 120Hz displays
-    LaunchedEffect(isDragging) {
-        if (isDragging) {
-            while (isDragging) {
-                val target = pendingTargetIndex
-                val safeMax = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                val boundedTarget = target.coerceIn(0, safeMax)
-                if (target >= 0 && boundedTarget != listState.firstVisibleItemIndex) {
-                    try {
-                        listState.scrollToItem(boundedTarget)
-                    } catch (_: Throwable) {}
-                }
-                try {
-                    withFrameNanos { /* wait for next VSYNC frame */ }
-                } catch (_: Exception) {
-                    delay(8L)
-                }
-            }
-        }
-    }
-
-    fun scrollToFraction(fraction: Float) {
-        val clamped = fraction.coerceIn(0f, 1f)
-        dragFraction = clamped
-        val layoutTotal = listState.layoutInfo.totalItemsCount
-        val count = if (layoutTotal > 0) layoutTotal else totalItems
-        val currentMax = (count - 1).coerceAtLeast(0)
-        val targetIndex = (clamped * currentMax).roundToInt().coerceIn(0, currentMax)
-        if (targetIndex != lastScrolledIndex) {
-            lastScrolledIndex = targetIndex
-            val newLabel = try { itemLabelProvider?.invoke(targetIndex) } catch (_: Exception) { null }
-            if (newLabel != null && newLabel != lastLabel) {
-                lastLabel = newLabel
-                HapticUtils.performTickHaptic(context)
-            }
-            pendingTargetIndex = targetIndex
-        }
-    }
-
-    val touchWidthDp = 24.dp
-    val usableHeightPx = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(0f)
+    // Track finger grab offset relative to thumb top so the thumb never jumps on initial grab
+    var grabOffsetOnThumbPx by remember { mutableFloatStateOf(thumbHeightPx / 2f) }
 
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(touchWidthDp)
-            .onSizeChanged { containerHeightPx = it.height }
+            .width(30.dp)
+            .onSizeChanged { containerHeightPx = it.height.toFloat() }
             .graphicsLayer {
                 alpha = alphaAnim
-                scaleX = scaleAnim
-                scaleY = scaleAnim
             }
-            .pointerInput(Unit) {
-                val touchSlopPx = 32.dp.toPx()
-                detectDragGestures(
+            .pointerInput(topPaddingPx, bottomPaddingPx, thumbHeightPx) {
+                detectTapGestures(
+                    onPress = { offset ->
+                        if (!isVisible && !isDragging) return@detectTapGestures
+                        val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                        val currentThumbTop = topPaddingPx + (stateScrollFraction.coerceIn(0f, 1f) * usableHeight)
+                        val currentThumbBottom = currentThumbTop + thumbHeightPx
+                        // Allow tapping directly on the thumb or along the active scrollbar track
+                        if (offset.y in (topPaddingPx - 12f)..(containerHeightPx - bottomPaddingPx + 12f)) {
+                            if (offset.y !in (currentThumbTop - 16f)..(currentThumbBottom + 16f)) {
+                                HapticUtils.performTickHaptic(context)
+                                val tappedFraction = ((offset.y - topPaddingPx - thumbHeightPx / 2f) / usableHeight).coerceIn(0f, 1f)
+                                scrollToFractionImmediate(tappedFraction)
+                            }
+                        }
+                    }
+                )
+            }
+            .pointerInput(topPaddingPx, bottomPaddingPx, thumbHeightPx) {
+                detectVerticalDragGestures(
                     onDragStart = { offset ->
                         val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                        val currentThumbY = topPaddingPx + (usableHeight * (if (isDragging) dragFraction else stateScrollFraction))
-                        val thumbTop = currentThumbY - touchSlopPx
-                        val thumbBottom = currentThumbY + thumbHeightPx + touchSlopPx
-                        if (offset.y in thumbTop..thumbBottom) {
+                        val currentFraction = stateScrollFraction.coerceIn(0f, 1f)
+                        val thumbTop = topPaddingPx + (currentFraction * usableHeight)
+                        val thumbBottom = thumbTop + thumbHeightPx
+
+                        val hitPadding = 32f
+                        val isDirectThumbHit = offset.y in (thumbTop - hitPadding)..(thumbBottom + hitPadding)
+                        val isTrackHitWhenVisible = isVisible && offset.y in (topPaddingPx - 16f)..(containerHeightPx - bottomPaddingPx + 16f)
+
+                        if (isDirectThumbHit || isTrackHitWhenVisible) {
                             isDragging = true
                             isVisible = true
-                            dragFraction = stateScrollFraction.coerceIn(0f, 1f)
+                            HapticUtils.performClickHaptic(context)
+                            if (isDirectThumbHit) {
+                                grabOffsetOnThumbPx = (offset.y - thumbTop).coerceIn(0f, thumbHeightPx)
+                                dragFraction = currentFraction
+                            } else {
+                                grabOffsetOnThumbPx = thumbHeightPx / 2f
+                                val initialFraction = ((offset.y - topPaddingPx - grabOffsetOnThumbPx) / usableHeight).coerceIn(0f, 1f)
+                                scrollToFractionImmediate(initialFraction)
+                            }
                         } else {
                             isDragging = false
                         }
                     },
                     onDragEnd = {
                         isDragging = false
-                        val target = pendingTargetIndex
-                        val safeMax = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                        if (target >= 0) {
-                            coroutineScope.launch {
-                                try { listState.scrollToItem(target.coerceIn(0, safeMax)) } catch (_: Throwable) {}
-                            }
-                        }
+                        lastHapticLabel = null
                     },
                     onDragCancel = {
                         isDragging = false
+                        lastHapticLabel = null
                     },
-                    onDrag = { change, dragAmount ->
-                        if (isDragging) {
-                            change.consume()
-                            val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                            val deltaFraction = dragAmount.y / usableHeight
-                            val fraction = (dragFraction + deltaFraction).coerceIn(0f, 1f)
-                            scrollToFraction(fraction)
-                        }
+                    onVerticalDrag = { change, _ ->
+                        if (!isDragging) return@detectVerticalDragGestures
+                        change.consume()
+                        val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                        // Direct 1:1 finger-to-thumb coordinate lock (zero cumulative delta drift)
+                        val targetThumbTop = change.position.y - grabOffsetOnThumbPx - topPaddingPx
+                        val fraction = (targetThumbTop / usableHeight).coerceIn(0f, 1f)
+                        scrollToFractionImmediate(fraction)
                     }
                 )
-            },
-        contentAlignment = Alignment.TopEnd
-    ) {
-        Row(
-            modifier = Modifier
-                .graphicsLayer {
-                    translationY = topPaddingPx + (usableHeightPx * if (isDragging) dragFraction else stateScrollFraction)
-                }
-                .padding(end = 0.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            val currentLabel = activeLabel
-            if (isDragging && currentLabel != null) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = BentoCardDarkPurple,
-                    shadowElevation = 6.dp,
-                    modifier = Modifier.border(1.5.dp, BentoPrimary.copy(alpha = 0.9f), RoundedCornerShape(10.dp))
-                ) {
-                    Box(
-                        modifier = Modifier.size(width = 36.dp, height = 36.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = currentLabel,
-                            color = BentoTextPrimary,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                }
             }
-
+    ) {
+        // Track subtle guide line while actively dragging
+        if (isDragging) {
             Box(
                 modifier = Modifier
-                    .size(width = thumbWidthDp, height = thumbHeightDp)
-                    .shadow(elevation = if (isDragging) 6.dp else 2.dp, shape = RoundedCornerShape(6.dp))
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (isDragging) BentoPrimary else BentoCardDarkPurple.copy(alpha = 0.95f))
-                    .border(
-                        width = 1.dp,
-                        color = if (isDragging) Color.White.copy(alpha = 0.8f) else BentoPrimary.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(6.dp)
-                    ),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.TopEnd)
+                    .padding(end = 7.dp)
+                    .width(2.dp)
+                    .height(with(density) { (containerHeightPx - topPaddingPx - bottomPaddingPx).coerceAtLeast(0f).toDp() })
+                    .offset { IntOffset(x = 0, y = topPaddingPx.roundToInt()) }
+                    .clip(CircleShape)
+                    .background(thumbColor.copy(alpha = 0.18f))
+            )
+        }
+
+        // Thumb Pill — uses IntOffset for immediate layout-consistent positioning with 0 lag
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 4.dp)
+                .width(thumbWidthDp)
+                .height(46.dp)
+                .offset {
+                    val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                    val displayFraction = if (isDragging) dragFraction else stateScrollFraction
+                    val yPx = topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight)
+                    IntOffset(x = 0, y = yPx.roundToInt())
+                }
+                .clip(CircleShape)
+                .background(if (isDragging) thumbColor else thumbColor.copy(alpha = 0.82f))
+        )
+
+        // Floating section / letter bubble while dragging
+        AnimatedVisibility(
+            visible = isDragging && !activeLabel.isNullOrBlank(),
+            enter = fadeIn(tween(80)) + scaleIn(tween(100), initialScale = 0.8f),
+            exit = fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.8f),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset {
+                    val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                    val displayFraction = if (isDragging) dragFraction else stateScrollFraction
+                    val yOffset = (topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight) - 6f).roundToInt()
+                    IntOffset(x = with(density) { (-44).dp.roundToPx() }, y = yOffset)
+                }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = thumbColor,
+                shadowElevation = 8.dp,
+                modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.UnfoldMore,
-                    contentDescription = "Scroll list quickly",
-                    tint = if (isDragging) BentoOnPrimary else BentoPrimary,
-                    modifier = Modifier.size(10.dp)
-                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = activeLabel ?: "",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.Black,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }

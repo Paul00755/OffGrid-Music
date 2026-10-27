@@ -810,6 +810,8 @@ fun LazyListScope.renderHomeFeedSections(
     }
 }
 
+private val cachedPeriodStats = java.util.concurrent.ConcurrentHashMap<StatsPeriod, Triple<Long, Int, Int>>()
+
 @Composable
 fun HomeStatsPeriodCard(
     period: StatsPeriod,
@@ -855,17 +857,24 @@ fun HomeStatsPeriodCard(
     val periodStartMs = pair.first
     val periodEndMs = pair.second
 
+    val cached = remember(period) { cachedPeriodStats[period] }
+
     val durationFlow = remember(periodStartMs, periodEndMs) { getDurationPlayedBetween(periodStartMs, periodEndMs) }
     val trackCountFlow = remember(periodStartMs, periodEndMs) { getTrackCountBetween(periodStartMs, periodEndMs) }
     val uniqueCountFlow = remember(periodStartMs, periodEndMs) { getUniqueTrackCountBetween(periodStartMs, periodEndMs) }
 
-    // Negative values are a loading sentinel; Room emits the persisted aggregate asynchronously.
-    val durationMs by durationFlow.collectAsStateWithLifecycle(initialValue = -1L)
-    val trackCount by trackCountFlow.collectAsStateWithLifecycle(initialValue = -1)
-    val uniqueCount by uniqueCountFlow.collectAsStateWithLifecycle(initialValue = -1)
+    val durationMs by durationFlow.collectAsStateWithLifecycle(initialValue = cached?.first ?: -1L)
+    val trackCount by trackCountFlow.collectAsStateWithLifecycle(initialValue = cached?.second ?: -1)
+    val uniqueCount by uniqueCountFlow.collectAsStateWithLifecycle(initialValue = cached?.third ?: -1)
+
+    LaunchedEffect(period, durationMs, trackCount, uniqueCount) {
+        if (durationMs >= 0L && trackCount >= 0 && uniqueCount >= 0) {
+            cachedPeriodStats[period] = Triple(durationMs, trackCount, uniqueCount)
+        }
+    }
 
     val formattedTime = remember(durationMs) {
-        if (durationMs < 0L) return@remember "…"
+        if (durationMs < 0L) return@remember "0m"
         val totalMins = durationMs / 1000 / 60
         val hrs = totalMins / 60
         val mins = totalMins % 60
@@ -876,13 +885,13 @@ fun HomeStatsPeriodCard(
         modifier = Modifier
             .width(146.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable { onClick() },
+            .clickable(onClick = onClick),
         backgroundColor = BentoCardSurface
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
             Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-            Text(text = if (trackCount < 0 || uniqueCount < 0) "Loading stats" else "$trackCount plays • $uniqueCount tracks", fontSize = 11.sp, color = BentoTextSecondary)
+            Text(text = if (trackCount < 0 || uniqueCount < 0) "0 plays • 0 tracks" else "$trackCount plays • $uniqueCount tracks", fontSize = 11.sp, color = BentoTextSecondary)
         }
     }
 }

@@ -73,10 +73,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val lastBackupTimestamp: StateFlow<Long> = cloudSyncRepository.lastBackupTimestamp
 
     val automaticBackupEnabled: StateFlow<Boolean> = preferences.automaticBackupEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutomaticBackupEnabledSync())
 
     val backupFrequency: StateFlow<com.example.data.sync.BackupFrequency> = preferences.backupFrequency
-        .stateIn(viewModelScope, SharingStarted.Eagerly, com.example.data.sync.BackupFrequency.WEEKLY)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getBackupFrequencySync())
 
     fun triggerCloudSync() {
         cloudSyncRepository.performSyncNow()
@@ -88,17 +88,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAutomaticBackupEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            preferences.setAutomaticBackupEnabled(enabled)
-            val freq = preferences.backupFrequency.first()
-            com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setAutomaticBackupEnabled(enabled)
+                val freq = preferences.getBackupFrequencySync()
+                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), freq, enabled)
+            }
         }
     }
 
     fun setBackupFrequency(frequency: com.example.data.sync.BackupFrequency) {
         viewModelScope.launch {
-            preferences.setBackupFrequency(frequency)
-            val isEnabled = preferences.automaticBackupEnabled.first()
-            com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, isEnabled)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setBackupFrequency(frequency)
+                val isEnabled = preferences.getAutomaticBackupEnabledSync()
+                com.example.data.sync.AutoBackupWorker.scheduleOrUpdate(getApplication(), frequency, isEnabled)
+            }
         }
     }
 
@@ -396,15 +400,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Data Flows
     val ignoreAudioDuration: StateFlow<Int> = preferences.ignoreAudioDuration
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Lazily, 0)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getIgnoreAudioDurationSync())
 
     val maxSongDuration: StateFlow<Int> = preferences.maxSongDuration
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Lazily, 300)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMaxSongDurationSync())
 
     val fullDeviceScan: StateFlow<Boolean> = preferences.fullDeviceScan
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Lazily, false)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFullDeviceScanSync())
 
     val allSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.allSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
@@ -467,71 +471,75 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val sleepTimerState: StateFlow<SleepTimerState> = sleepTimerManager.state
     private val _isOnboardingCompleted = MutableStateFlow(preferences.isOnboardingCompletedSync())
     val isOnboardingCompleted: StateFlow<Boolean> = _isOnboardingCompleted.asStateFlow()
-    val themeMode: StateFlow<String> = preferences.themeMode.stateIn(viewModelScope, SharingStarted.Lazily, "DARK")
-    val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Lazily, "MIDNIGHT_OBSIDIAN")
-    val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Lazily, "BENTO_DYNAMIC")
-    val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Lazily, "MINIMAL_GLASS")
-    val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Lazily, "GLOW_CARDS")
-    val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Lazily, "RECENTLY_ADDED")
-    val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Lazily, "GRID")
-    val waveformStyle: StateFlow<String> = preferences.waveformStyle.stateIn(viewModelScope, SharingStarted.Lazily, "SNAKE")
-    val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Lazily, "ORANGE")
-    val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Lazily, 0)
-    val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Lazily, true)
+    val themeMode: StateFlow<String> = preferences.themeMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getThemeModeSync())
+    val uiTheme: StateFlow<String> = preferences.uiTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getUiThemeSync())
+    val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getHomeScreenLayoutSync())
+    val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNowPlayingLayoutSync())
+    val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistsLayoutSync())
+    val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortOptionSync())
+    val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortAscendingSync())
+    val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistViewModeSync())
+    val waveformStyle: StateFlow<String> = preferences.waveformStyle.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getWaveformStyleSync())
+    val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAccentColorPresetSync())
+    val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomAccentColorSync())
+    val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDynamicArtworkThemeSync())
 
     private val _dynamicArtworkColor = MutableStateFlow<androidx.compose.ui.graphics.Color?>(null)
     val dynamicArtworkColor: StateFlow<androidx.compose.ui.graphics.Color?> = _dynamicArtworkColor.asStateFlow()
 
-    val cornerRadiusDp: StateFlow<Int> = preferences.cornerRadiusDp.stateIn(viewModelScope, SharingStarted.Lazily, 16)
-    val fontSizeScale: StateFlow<String> = preferences.fontSizeScale.stateIn(viewModelScope, SharingStarted.Lazily, "MEDIUM")
-    val artworkSize: StateFlow<String> = preferences.artworkSize.stateIn(viewModelScope, SharingStarted.Lazily, "MEDIUM")
-    val showArtist: StateFlow<Boolean> = preferences.showArtist.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val showAlbum: StateFlow<Boolean> = preferences.showAlbum.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val showAudioOutput: StateFlow<Boolean> = preferences.showAudioOutput.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val miniPlayerStyle: StateFlow<String> = preferences.miniPlayerStyle.stateIn(viewModelScope, SharingStarted.Lazily, "FLOATING")
-    val miniPlayerShowPrevious: StateFlow<Boolean> = preferences.miniPlayerShowPrevious.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val miniPlayerShowNext: StateFlow<Boolean> = preferences.miniPlayerShowNext.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val miniPlayerShowFavorite: StateFlow<Boolean> = preferences.miniPlayerShowFavorite.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val gaplessPlayback: StateFlow<Boolean> = preferences.gaplessPlayback.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val normalizeAudio: StateFlow<Boolean> = preferences.normalizeAudio.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val autoPlayOnHeadphoneConnection: StateFlow<Boolean> = preferences.autoPlayOnHeadphoneConnection.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val autoPlayOnAppStartup: StateFlow<Boolean> = preferences.autoPlayOnAppStartup.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val addToQueuePosition: StateFlow<String> = preferences.addToQueuePosition.stateIn(viewModelScope, SharingStarted.Lazily, "BOTTOM")
-    val playlistAddSongPosition: StateFlow<String> = preferences.playlistAddSongPosition.stateIn(viewModelScope, SharingStarted.Lazily, "BOTTOM")
-    val crossfadeDurationSec: StateFlow<Int> = preferences.crossfadeDurationSec.stateIn(viewModelScope, SharingStarted.Lazily, 0)
-    val lyricsAutoScroll: StateFlow<Boolean> = preferences.lyricsAutoScroll.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val lyricsFontSize: StateFlow<String> = preferences.lyricsFontSize.stateIn(viewModelScope, SharingStarted.Lazily, "MEDIUM")
-    val notificationEnabled: StateFlow<Boolean> = preferences.notificationEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val pauseOnZeroVolume: StateFlow<Boolean> = preferences.pauseOnZeroVolume.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val autoResumeOnVolumeIncrease: StateFlow<Boolean> = preferences.autoResumeOnVolumeIncrease.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val fadeInOutMs: StateFlow<Int> = preferences.fadeInOutMs.stateIn(viewModelScope, SharingStarted.Lazily, 1000)
-    val fadeInMs: StateFlow<Int> = preferences.fadeInMs.stateIn(viewModelScope, SharingStarted.Lazily, 1000)
-    val fadeOutMs: StateFlow<Int> = preferences.fadeOutMs.stateIn(viewModelScope, SharingStarted.Lazily, 1000)
-    val shakeToSkip: StateFlow<Boolean> = preferences.shakeToSkip.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val keepScreenAwake: StateFlow<Boolean> = preferences.keepScreenAwake.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val audioBalance: StateFlow<Float> = preferences.audioBalance.stateIn(viewModelScope, SharingStarted.Lazily, 0f)
-    val equalizerPreset: StateFlow<String> = preferences.equalizerPreset.stateIn(viewModelScope, SharingStarted.Lazily, "NORMAL")
-    val reduceVolumeOnNotification: StateFlow<Boolean> = preferences.reduceVolumeOnNotification.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val playDuringCamera: StateFlow<Boolean> = preferences.playDuringCamera.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val scrobbleThresholdType: StateFlow<String> = preferences.scrobbleThresholdType.stateIn(viewModelScope, SharingStarted.Lazily, "SECONDS")
-    val scrobbleThresholdValue: StateFlow<Int> = preferences.scrobbleThresholdValue.stateIn(viewModelScope, SharingStarted.Lazily, 30)
-    val highRefreshRate: StateFlow<Boolean> = preferences.highRefreshRate.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val alwaysShuffleMode: StateFlow<Boolean> = preferences.alwaysShuffleMode.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val gesturePlaybackEnabled: StateFlow<Boolean> = preferences.gesturePlaybackEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val fetchOnlineArtworkHighRes: StateFlow<Boolean> = preferences.fetchOnlineArtworkHighRes.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val cacheLyricsEnabled: StateFlow<Boolean> = preferences.cacheLyricsEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val cacheAlbumArtEnabled: StateFlow<Boolean> = preferences.cacheAlbumArtEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val cacheSongArtWorkEnabled: StateFlow<Boolean> = preferences.cacheSongArtWorkEnabled.stateIn(viewModelScope, SharingStarted.Lazily, true)
-    val customEqBands: StateFlow<List<Float>> = preferences.customEqBands.stateIn(viewModelScope, SharingStarted.Lazily, listOf(0f, 0f, 0f, 0f, 0f))
-    val customBassBoost: StateFlow<Int> = preferences.customBassBoost.stateIn(viewModelScope, SharingStarted.Lazily, 0)
-    val customVirtualizer: StateFlow<Int> = preferences.customVirtualizer.stateIn(viewModelScope, SharingStarted.Lazily, 0)
+    val cornerRadiusDp: StateFlow<Int> = preferences.cornerRadiusDp.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCornerRadiusDpSync())
+    val fontSizeScale: StateFlow<String> = preferences.fontSizeScale.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFontSizeScaleSync())
+    val artworkSize: StateFlow<String> = preferences.artworkSize.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getArtworkSizeSync())
+    val showArtist: StateFlow<Boolean> = preferences.showArtist.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowArtistSync())
+    val showAlbum: StateFlow<Boolean> = preferences.showAlbum.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAlbumSync())
+    val showAudioOutput: StateFlow<Boolean> = preferences.showAudioOutput.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAudioOutputSync())
+    val miniPlayerStyle: StateFlow<String> = preferences.miniPlayerStyle.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerStyleSync())
+    val miniPlayerShowPrevious: StateFlow<Boolean> = preferences.miniPlayerShowPrevious.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowPreviousSync())
+    val miniPlayerShowNext: StateFlow<Boolean> = preferences.miniPlayerShowNext.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowNextSync())
+    val miniPlayerShowFavorite: StateFlow<Boolean> = preferences.miniPlayerShowFavorite.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowFavoriteSync())
+    val gaplessPlayback: StateFlow<Boolean> = preferences.gaplessPlayback.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGaplessPlaybackSync())
+    val normalizeAudio: StateFlow<Boolean> = preferences.normalizeAudio.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNormalizeAudioSync())
+    val autoPlayOnHeadphoneConnection: StateFlow<Boolean> = preferences.autoPlayOnHeadphoneConnection.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPlayOnHeadphoneConnectionSync())
+    val autoPlayOnAppStartup: StateFlow<Boolean> = preferences.autoPlayOnAppStartup.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPlayOnAppStartupSync())
+    val addToQueuePosition: StateFlow<String> = preferences.addToQueuePosition.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAddToQueuePositionSync())
+    val playlistAddSongPosition: StateFlow<String> = preferences.playlistAddSongPosition.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistAddSongPositionSync())
+    val crossfadeDurationSec: StateFlow<Int> = preferences.crossfadeDurationSec.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCrossfadeDurationSecSync())
+    val lyricsAutoScroll: StateFlow<Boolean> = preferences.lyricsAutoScroll.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLyricsAutoScrollSync())
+    val lyricsFontSize: StateFlow<String> = preferences.lyricsFontSize.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLyricsFontSizeSync())
+    val notificationEnabled: StateFlow<Boolean> = preferences.notificationEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNotificationEnabledSync())
+    val pauseOnZeroVolume: StateFlow<Boolean> = preferences.pauseOnZeroVolume.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPauseOnZeroVolumeSync())
+    val autoResumeOnVolumeIncrease: StateFlow<Boolean> = preferences.autoResumeOnVolumeIncrease.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoResumeOnVolumeIncreaseSync())
+    val fadeInOutMs: StateFlow<Int> = preferences.fadeInOutMs.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFadeInMsSync())
+    val fadeInMs: StateFlow<Int> = preferences.fadeInMs.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFadeInMsSync())
+    val fadeOutMs: StateFlow<Int> = preferences.fadeOutMs.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFadeOutMsSync())
+    val shakeToSkip: StateFlow<Boolean> = preferences.shakeToSkip.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShakeToSkipSync())
+    val keepScreenAwake: StateFlow<Boolean> = preferences.keepScreenAwake.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getKeepScreenAwakeSync())
+    val audioBalance: StateFlow<Float> = preferences.audioBalance.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAudioBalanceSync())
+    val equalizerPreset: StateFlow<String> = preferences.equalizerPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getEqualizerPresetSync())
+    val reduceVolumeOnNotification: StateFlow<Boolean> = preferences.reduceVolumeOnNotification.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getReduceVolumeOnNotificationSync())
+    val autoPauseCamera: StateFlow<Boolean> = preferences.autoPauseCamera.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPauseCameraSync())
+    val autoPauseSystemAudio: StateFlow<Boolean> = preferences.autoPauseSystemAudio.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPauseSystemAudioSync())
+    val playDuringCamera: StateFlow<Boolean> = preferences.playDuringCamera.stateIn(viewModelScope, SharingStarted.Eagerly, !preferences.getAutoPauseSystemAudioSync())
+    val sleepTimerMode: StateFlow<String> = preferences.sleepTimerMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getSleepTimerModeSync())
+    val sleepTimerFinishLastSong: StateFlow<Boolean> = preferences.sleepTimerFinishLastSong.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getSleepTimerFinishLastSongSync())
+    val scrobbleThresholdType: StateFlow<String> = preferences.scrobbleThresholdType.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getScrobbleThresholdTypeSync())
+    val scrobbleThresholdValue: StateFlow<Int> = preferences.scrobbleThresholdValue.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getScrobbleThresholdValueSync())
+    val highRefreshRate: StateFlow<Boolean> = preferences.highRefreshRate.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getHighRefreshRateSync())
+    val alwaysShuffleMode: StateFlow<Boolean> = preferences.alwaysShuffleMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAlwaysShuffleModeSync())
+    val gesturePlaybackEnabled: StateFlow<Boolean> = preferences.gesturePlaybackEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGesturePlaybackEnabledSync())
+    val fetchOnlineArtworkHighRes: StateFlow<Boolean> = preferences.fetchOnlineArtworkHighRes.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFetchOnlineArtworkHighResSync())
+    val cacheLyricsEnabled: StateFlow<Boolean> = preferences.cacheLyricsEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCacheLyricsEnabledSync())
+    val cacheAlbumArtEnabled: StateFlow<Boolean> = preferences.cacheAlbumArtEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCacheAlbumArtEnabledSync())
+    val cacheSongArtWorkEnabled: StateFlow<Boolean> = preferences.cacheSongArtWorkEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCacheSongArtWorkEnabledSync())
+    val customEqBands: StateFlow<List<Float>> = preferences.customEqBands.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomEqBandsSync())
+    val customBassBoost: StateFlow<Int> = preferences.customBassBoost.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomBassBoostSync())
+    val customVirtualizer: StateFlow<Int> = preferences.customVirtualizer.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomVirtualizerSync())
     val homeSections: StateFlow<List<String>> = preferences.homeSections.stateIn(
         viewModelScope,
-        SharingStarted.Lazily,
-        listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums")
+        SharingStarted.Eagerly,
+        preferences.getHomeSectionsSync()
     )
-    val displayScale: StateFlow<String> = preferences.displayScale.stateIn(viewModelScope, SharingStarted.Lazily, "DEFAULT")
+    val displayScale: StateFlow<String> = preferences.displayScale.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDisplayScaleSync())
 
     private val _speedDialSongs = MutableStateFlow<List<Song>>(emptyList())
     val speedDialSongs: StateFlow<List<Song>> = _speedDialSongs.asStateFlow()
@@ -544,7 +552,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setHomeSections(sections: List<String>) = viewModelScope.launch {
-        preferences.setHomeSections(sections)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setHomeSections(sections)
+        }
     }
 
     private val _lyricsCacheSize = MutableStateFlow("0.0 KB")
@@ -561,8 +571,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     val databaseStorageTier: StateFlow<String> = preferences.databaseStorageTier.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = "EXPANDED"
+        started = SharingStarted.Eagerly,
+        initialValue = preferences.getDatabaseStorageTierSync()
     )
 
     private val _databaseStorageStats = MutableStateFlow<com.example.data.local.DatabaseStorageStats?>(null)
@@ -583,9 +593,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // Audio & Lyrics Transcription / Translation State
     val secureApiKeyStore = SecureApiKeyStore(getApplication())
-    val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Lazily, false)
-    val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Lazily, "TRANSCRIBE")
-    val audioTranscribeTargetLang = preferences.audioTranscribeTargetLang.stateIn(viewModelScope, SharingStarted.Lazily, "ta")
+    val isTranscribeTranslateEnabled = preferences.isTranscribeTranslateEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getTranscribeTranslateEnabledSync())
+    val audioTranscribeMode = preferences.audioTranscribeMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAudioTranscribeModeSync())
+    val audioTranscribeTargetLang = preferences.audioTranscribeTargetLang.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAudioTranscribeTargetLangSync())
 
     private val _hasUserApiKey = MutableStateFlow(false)
     val hasUserApiKey: StateFlow<Boolean> = _hasUserApiKey.asStateFlow()
@@ -760,8 +770,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            playDuringCamera.collect { enabled ->
-                playbackManager.ignoreTransientFocusLoss = enabled
+            autoPauseCamera.collect { enabled ->
+                playbackManager.autoPauseCamera = enabled
+            }
+        }
+        viewModelScope.launch {
+            autoPauseSystemAudio.collect { enabled ->
+                playbackManager.autoPauseSystemAudio = enabled
+            }
+        }
+        viewModelScope.launch {
+            sleepTimerFinishLastSong.collect { enabled ->
+                sleepTimerManager.setFinishLastSong(enabled)
             }
         }
         viewModelScope.launch {
@@ -772,9 +792,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             equalizerPreset.collect { preset ->
                 if (preset.equals("CUSTOM", ignoreCase = true)) {
-                    val bands = preferences.customEqBands.first()
-                    val bass = preferences.customBassBoost.first()
-                    val virt = preferences.customVirtualizer.first()
+                    val bands = preferences.getCustomEqBandsSync()
+                    val bass = preferences.getCustomBassBoostSync()
+                    val virt = preferences.getCustomVirtualizerSync()
                     playbackManager.equalizerManager.setCustomBands(bands, bass, virt)
                 } else {
                     playbackManager.equalizerManager.applyPreset(preset)
@@ -792,9 +812,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            val currentUiTheme = preferences.uiTheme.firstOrNull() ?: "MIDNIGHT_OBSIDIAN"
+            val currentUiTheme = preferences.uiTheme.firstOrNull() ?: preferences.getUiThemeSync()
             val currentTheme = com.example.ui.theme.AppUiTheme.fromId(currentUiTheme)
-            val currentMode = (preferences.themeMode.firstOrNull() ?: "DARK").uppercase()
+            val currentMode = (preferences.themeMode.firstOrNull() ?: preferences.getThemeModeSync()).uppercase()
             if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, currentMode)) {
                 val fallback = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(currentMode)
                 preferences.setUiTheme(fallback.id)
@@ -810,85 +830,178 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setThemeMode(mode: String) = viewModelScope.launch {
-        val targetMode = mode.uppercase()
-        val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
-        val fallbackId = if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode))
-            com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode).id else null
-        preferences.setThemeMode(targetMode, fallbackId)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            val targetMode = mode.uppercase()
+            val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme.value)
+            val fallbackId = if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode))
+                com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode).id else null
+            preferences.setThemeMode(targetMode, fallbackId)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        }
     }
 
     fun setUiTheme(themeId: String) = viewModelScope.launch {
-        preferences.setUiTheme(themeId)
-        val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(themeId)
-        val currentMode = themeMode.value.uppercase()
-        if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(selectedTheme, currentMode)) {
-            val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
-            preferences.setThemeMode(newMode)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setUiTheme(themeId)
+            val selectedTheme = com.example.ui.theme.AppUiTheme.fromId(themeId)
+            val currentMode = themeMode.value.uppercase()
+            if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(selectedTheme, currentMode)) {
+                val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
+                preferences.setThemeMode(newMode)
+            }
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
         }
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
     }
 
-    fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch { preferences.setHomeScreenLayout(layoutId) }
-    fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch {
-        preferences.setNowPlayingLayout(layoutId)
-        val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
-            com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
-            com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "BARS"
-            com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
-            com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
-        }
-        preferences.setWaveformStyle(defaultWaveform)
+    fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setHomeScreenLayout(layoutId) }
     }
-    fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch { preferences.setPlaylistsLayout(layoutId) }
-    fun setWaveformStyle(style: String) = viewModelScope.launch { preferences.setWaveformStyle(style) }
+    fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setNowPlayingLayout(layoutId)
+            val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
+                com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
+                com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "BARS"
+                com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
+                com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
+            }
+            preferences.setWaveformStyle(defaultWaveform)
+        }
+    }
+    fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setPlaylistsLayout(layoutId) }
+    }
+    fun setWaveformStyle(style: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setWaveformStyle(style) }
+    }
     fun setAccentColorPreset(preset: String) = viewModelScope.launch {
-        preferences.setAccentColorPreset(preset)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setAccentColorPreset(preset)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        }
     }
     fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch {
-        preferences.setCustomAccentColor(colorInt)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setCustomAccentColor(colorInt)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        }
     }
     fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch {
-        preferences.setDynamicArtworkTheme(enabled)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setDynamicArtworkTheme(enabled)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        }
     }
-    fun setCornerRadiusDp(radius: Int) = viewModelScope.launch { preferences.setCornerRadiusDp(radius) }
-    fun setFontSizeScale(scale: String) = viewModelScope.launch { preferences.setFontSizeScale(scale) }
-    fun setArtworkSize(size: String) = viewModelScope.launch { preferences.setArtworkSize(size) }
-    fun setShowArtist(show: Boolean) = viewModelScope.launch { preferences.setShowArtist(show) }
-    fun setShowAlbum(show: Boolean) = viewModelScope.launch { preferences.setShowAlbum(show) }
-    fun setShowAudioOutput(show: Boolean) = viewModelScope.launch { preferences.setShowAudioOutput(show) }
-    fun setMiniPlayerStyle(style: String) = viewModelScope.launch { preferences.setMiniPlayerStyle(style) }
-    fun setMiniPlayerShowPrevious(show: Boolean) = viewModelScope.launch { preferences.setMiniPlayerShowPrevious(show) }
-    fun setMiniPlayerShowNext(show: Boolean) = viewModelScope.launch { preferences.setMiniPlayerShowNext(show) }
-    fun setMiniPlayerShowFavorite(show: Boolean) = viewModelScope.launch { preferences.setMiniPlayerShowFavorite(show) }
+    fun setCornerRadiusDp(radius: Int) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setCornerRadiusDp(radius) }
+    }
+    fun setFontSizeScale(scale: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setFontSizeScale(scale) }
+    }
+    fun setArtworkSize(size: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setArtworkSize(size) }
+    }
+    fun setShowArtist(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowArtist(show) }
+    }
+    fun setShowAlbum(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowAlbum(show) }
+    }
+    fun setShowAudioOutput(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowAudioOutput(show) }
+    }
+    fun setMiniPlayerStyle(style: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerStyle(style) }
+    }
+    fun setMiniPlayerShowPrevious(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowPrevious(show) }
+    }
+    fun setMiniPlayerShowNext(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowNext(show) }
+    }
+    fun setMiniPlayerShowFavorite(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowFavorite(show) }
+    }
     fun setAddToQueuePosition(position: String) {
-        viewModelScope.launch { preferences.setAddToQueuePosition(position) }
         playbackManager.addToQueuePosition = position
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAddToQueuePosition(position) }
+        }
     }
-    fun setPlaylistAddSongPosition(position: String) = viewModelScope.launch { preferences.setPlaylistAddSongPosition(position) }
-    fun setGaplessPlayback(enabled: Boolean) = viewModelScope.launch { preferences.setGaplessPlayback(enabled) }
-    fun setCrossfadeDurationSec(sec: Int) = viewModelScope.launch { preferences.setCrossfadeDurationSec(sec) }
-    fun setLyricsAutoScroll(enabled: Boolean) = viewModelScope.launch { preferences.setLyricsAutoScroll(enabled) }
-    fun setGesturePlaybackEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setGesturePlaybackEnabled(enabled) }
+    fun setPlaylistAddSongPosition(position: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setPlaylistAddSongPosition(position) }
+    }
+    fun setGaplessPlayback(enabled: Boolean) {
+        playbackManager.gaplessPlayback = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setGaplessPlayback(enabled) }
+        }
+    }
+    fun setCrossfadeDurationSec(sec: Int) {
+        playbackManager.crossfadeDurationSec = sec
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setCrossfadeDurationSec(sec) }
+        }
+    }
+    fun setLyricsAutoScroll(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setLyricsAutoScroll(enabled) }
+    }
+    fun setGesturePlaybackEnabled(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setGesturePlaybackEnabled(enabled) }
+    }
     fun getLyricsOffsetMs(songId: Long): Long = preferences.getLyricsSyncOffsetMs(songId)
     fun setLyricsOffsetMs(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
     }
-    fun setLyricsFontSize(size: String) = viewModelScope.launch { preferences.setLyricsFontSize(size) }
-    fun setNotificationEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setNotificationEnabled(enabled) }
-    fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnHeadphoneConnection(enabled) }
-    fun setAutoPlayOnAppStartup(enabled: Boolean) = viewModelScope.launch { preferences.setAutoPlayOnAppStartup(enabled) }
-    fun setPauseOnZeroVolume(enabled: Boolean) = viewModelScope.launch { preferences.setPauseOnZeroVolume(enabled) }
-    fun setPlayDuringCamera(enabled: Boolean) = viewModelScope.launch { preferences.setPlayDuringCamera(enabled) }
-    fun setAutoResumeOnVolumeIncrease(enabled: Boolean) = viewModelScope.launch { preferences.setAutoResumeOnVolumeIncrease(enabled) }
+    fun setLyricsFontSize(size: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setLyricsFontSize(size) }
+    }
+    fun setNotificationEnabled(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setNotificationEnabled(enabled) }
+    }
+    fun setAutoPlayOnHeadphoneConnection(enabled: Boolean) {
+        playbackManager.autoPlayOnHeadphoneConnection = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoPlayOnHeadphoneConnection(enabled) }
+        }
+    }
+    fun setAutoPlayOnAppStartup(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoPlayOnAppStartup(enabled) }
+    }
+    fun setPauseOnZeroVolume(enabled: Boolean) {
+        playbackManager.pauseOnZeroVolume = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setPauseOnZeroVolume(enabled) }
+        }
+    }
+    fun setAutoPauseCamera(enabled: Boolean) {
+        playbackManager.autoPauseCamera = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoPauseCamera(enabled) }
+        }
+    }
+    fun setAutoPauseSystemAudio(enabled: Boolean) {
+        playbackManager.autoPauseSystemAudio = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoPauseSystemAudio(enabled) }
+        }
+    }
+    fun setPlayDuringCamera(enabled: Boolean) {
+        setAutoPauseSystemAudio(!enabled)
+    }
+    fun setAutoResumeOnVolumeIncrease(enabled: Boolean) {
+        playbackManager.autoResumeOnVolumeIncrease = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoResumeOnVolumeIncrease(enabled) }
+        }
+    }
     fun setIgnoreAudioDuration(sec: Int) {
         val safeSec = sec.coerceIn(0, 300)
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
-            preferences.setIgnoreAudioDuration(safeSec)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setIgnoreAudioDuration(safeSec)
+            }
             if (preferences.isOnboardingCompleted.first()) {
                 kotlinx.coroutines.delay(500)
                 val isFull = preferences.fullDeviceScan.first()
@@ -902,7 +1015,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val safeSec = sec.coerceIn(0, 300)
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
-            preferences.setMaxSongDuration(safeSec)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setMaxSongDuration(safeSec)
+            }
             if (preferences.isOnboardingCompleted.first()) {
                 kotlinx.coroutines.delay(500)
                 val isFull = preferences.fullDeviceScan.first()
@@ -913,7 +1028,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setFullDeviceScan(enabled: Boolean) = viewModelScope.launch {
-        preferences.setFullDeviceScan(enabled)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setFullDeviceScan(enabled)
+        }
     }
 
     fun setSongDurationRange(minSec: Int, maxSec: Int) {
@@ -921,7 +1038,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val safeMax = maxSec.coerceIn(safeMin, 300)
         ignoreDurationJob?.cancel()
         ignoreDurationJob = viewModelScope.launch(Dispatchers.IO) {
-            preferences.setSongDurationRange(safeMin, safeMax)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setSongDurationRange(safeMin, safeMax)
+            }
             if (preferences.isOnboardingCompleted.first()) {
                 kotlinx.coroutines.delay(500)
                 val isFull = preferences.fullDeviceScan.first()
@@ -930,49 +1049,118 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun setFadeInOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeInOutMs(ms) }
-    fun setDisplayScale(scale: String) = viewModelScope.launch { preferences.setDisplayScale(scale) }
-    fun setNormalizeAudio(enabled: Boolean) = viewModelScope.launch { preferences.setNormalizeAudio(enabled) }
-    fun setFadeInMs(ms: Int) = viewModelScope.launch { preferences.setFadeInMs(ms) }
-    fun setFadeOutMs(ms: Int) = viewModelScope.launch { preferences.setFadeOutMs(ms) }
-    fun setShakeToSkip(enabled: Boolean) = viewModelScope.launch { preferences.setShakeToSkip(enabled) }
-    fun setKeepScreenAwake(enabled: Boolean) = viewModelScope.launch { preferences.setKeepScreenAwake(enabled) }
-    fun setAudioBalance(balance: Float) = viewModelScope.launch { preferences.setAudioBalance(balance) }
-    fun setEqualizerPreset(preset: String) = viewModelScope.launch {
-        preferences.setEqualizerPreset(preset)
-        val matchedPreset = com.example.ui.components.EQ_PRESETS.find { it.id.equals(preset, ignoreCase = true) }
-        if (matchedPreset != null && !preset.equals("CUSTOM", ignoreCase = true)) {
-            preferences.setCustomEqBands(matchedPreset.bands, markAsCustom = false)
-            preferences.setCustomBassBoost(matchedPreset.bassBoost, markAsCustom = false)
-            preferences.setCustomVirtualizer(matchedPreset.virtualizer, markAsCustom = false)
+    fun setFadeInOutMs(ms: Int) {
+        playbackManager.fadeInOutMs = ms
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setFadeInOutMs(ms) }
         }
-        playbackManager.equalizerManager.applyPreset(preset)
     }
-    fun setReduceVolumeOnNotification(enabled: Boolean) = viewModelScope.launch { preferences.setReduceVolumeOnNotification(enabled) }
-    fun setScrobbleThresholdType(type: String) = viewModelScope.launch { preferences.setScrobbleThresholdType(type) }
-    fun setScrobbleThresholdValue(value: Int) = viewModelScope.launch { preferences.setScrobbleThresholdValue(value) }
-    fun setHighRefreshRate(enabled: Boolean) = viewModelScope.launch { preferences.setHighRefreshRate(enabled) }
-    fun setAlwaysShuffleMode(enabled: Boolean) = viewModelScope.launch { preferences.setAlwaysShuffleMode(enabled) }
-    fun setFetchOnlineArtworkHighRes(enabled: Boolean) = viewModelScope.launch { preferences.setFetchOnlineArtworkHighRes(enabled) }
-    fun setCacheLyricsEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setCacheLyricsEnabled(enabled) }
-    fun setCacheAlbumArtEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setCacheAlbumArtEnabled(enabled) }
-    fun setCacheSongArtWorkEnabled(enabled: Boolean) = viewModelScope.launch { preferences.setCacheSongArtWorkEnabled(enabled) }
+    fun setDisplayScale(scale: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setDisplayScale(scale) }
+    }
+    fun setNormalizeAudio(enabled: Boolean) {
+        playbackManager.isNormalizeAudioEnabled = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setNormalizeAudio(enabled) }
+        }
+    }
+    fun setFadeInMs(ms: Int) {
+        playbackManager.fadeInMs = ms
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setFadeInMs(ms) }
+        }
+    }
+    fun setFadeOutMs(ms: Int) {
+        playbackManager.fadeOutMs = ms
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setFadeOutMs(ms) }
+        }
+    }
+    fun setShakeToSkip(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShakeToSkip(enabled) }
+    }
+    fun setKeepScreenAwake(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setKeepScreenAwake(enabled) }
+    }
+    fun setAudioBalance(balance: Float) {
+        playbackManager.setAudioBalance(balance)
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAudioBalance(balance) }
+        }
+    }
+    fun setEqualizerPreset(preset: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setEqualizerPreset(preset)
+            val matchedPreset = com.example.ui.components.EQ_PRESETS.find { it.id.equals(preset, ignoreCase = true) }
+            if (matchedPreset != null && !preset.equals("CUSTOM", ignoreCase = true)) {
+                preferences.setCustomEqBands(matchedPreset.bands, markAsCustom = false)
+                preferences.setCustomBassBoost(matchedPreset.bassBoost, markAsCustom = false)
+                preferences.setCustomVirtualizer(matchedPreset.virtualizer, markAsCustom = false)
+            }
+            playbackManager.equalizerManager.applyPreset(preset)
+        }
+    }
+    fun setReduceVolumeOnNotification(enabled: Boolean) {
+        playbackManager.reduceVolumeOnNotification = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setReduceVolumeOnNotification(enabled) }
+        }
+    }
+    fun setScrobbleThresholdType(type: String) {
+        playbackManager.scrobbleThresholdType = type
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setScrobbleThresholdType(type) }
+        }
+    }
+    fun setScrobbleThresholdValue(value: Int) {
+        playbackManager.scrobbleThresholdValue = value
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setScrobbleThresholdValue(value) }
+        }
+    }
+    fun setHighRefreshRate(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setHighRefreshRate(enabled) }
+    }
+    fun setAlwaysShuffleMode(enabled: Boolean) {
+        playbackManager.alwaysShuffleMode = enabled
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAlwaysShuffleMode(enabled) }
+        }
+    }
+    fun setFetchOnlineArtworkHighRes(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setFetchOnlineArtworkHighRes(enabled) }
+    }
+    fun setCacheLyricsEnabled(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setCacheLyricsEnabled(enabled) }
+    }
+    fun setCacheAlbumArtEnabled(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setCacheAlbumArtEnabled(enabled) }
+    }
+    fun setCacheSongArtWorkEnabled(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setCacheSongArtWorkEnabled(enabled) }
+    }
 
     fun setCustomEqualizerBands(bands: List<Float>) = viewModelScope.launch {
-        preferences.setCustomEqBands(bands)
-        playbackManager.equalizerManager.setCustomBands(bands, customBassBoost.value, customVirtualizer.value)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setCustomEqBands(bands)
+            playbackManager.equalizerManager.setCustomBands(bands, customBassBoost.value, customVirtualizer.value)
+        }
     }
 
     fun setCustomEqBands(bands: List<Float>) = setCustomEqualizerBands(bands)
 
     fun setCustomBassBoost(strength: Int) = viewModelScope.launch {
-        preferences.setCustomBassBoost(strength)
-        playbackManager.equalizerManager.setBassBoostStrength(strength)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setCustomBassBoost(strength)
+            playbackManager.equalizerManager.setBassBoostStrength(strength)
+        }
     }
 
     fun setCustomVirtualizer(strength: Int) = viewModelScope.launch {
-        preferences.setCustomVirtualizer(strength)
-        playbackManager.equalizerManager.setVirtualizerStrength(strength)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setCustomVirtualizer(strength)
+            playbackManager.equalizerManager.setVirtualizerStrength(strength)
+        }
     }
 
 
@@ -1020,7 +1208,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun setDatabaseStorageTier(tier: String) = viewModelScope.launch {
-        preferences.setDatabaseStorageTier(tier)
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setDatabaseStorageTier(tier)
+        }
         refreshDatabaseStats()
     }
 
@@ -1044,13 +1234,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updatePlaylistViewMode(mode: String) {
         viewModelScope.launch {
-            preferences.setPlaylistViewMode(mode)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setPlaylistViewMode(mode)
+            }
         }
     }
 
     fun updateLibrarySort(option: String, ascending: Boolean) {
         viewModelScope.launch {
-            preferences.saveLibrarySortOption(option, ascending)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.saveLibrarySortOption(option, ascending)
+            }
         }
     }
 
@@ -1606,10 +1800,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startSleepTimerMinutes(minutes: Int, finishLastSong: Boolean = false) = sleepTimerManager.startTimerMinutes(minutes, finishLastSong)
-    fun startSleepTimerSongs(count: Int) = playbackManager.startTrackSleepTimer(count)
+    fun setSleepTimerMode(mode: String) {
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setSleepTimerMode(mode)
+            }
+        }
+    }
+
+    fun startSleepTimerMinutes(minutes: Int, finishLastSong: Boolean = sleepTimerFinishLastSong.value) {
+        sleepTimerManager.startTimerMinutes(minutes, finishLastSong)
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setSleepTimerMode("TIME")
+                preferences.setSleepTimerFinishLastSong(finishLastSong)
+            }
+        }
+    }
+
+    fun startSleepTimerSongs(count: Int) {
+        playbackManager.startTrackSleepTimer(count)
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setSleepTimerMode("SONGS")
+            }
+        }
+    }
+
     fun addSleepTimerMinutes(minutes: Int) = sleepTimerManager.addMinutes(minutes)
-    fun setSleepTimerFinishLastSong(enabled: Boolean) = sleepTimerManager.setFinishLastSong(enabled)
+
+    fun setSleepTimerFinishLastSong(enabled: Boolean) {
+        sleepTimerManager.setFinishLastSong(enabled)
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setSleepTimerFinishLastSong(enabled)
+            }
+        }
+    }
+
     fun cancelSleepTimer() = sleepTimerManager.cancelTimer()
 
     fun associateCustomLrc(song: Song, lrcContent: String) {
