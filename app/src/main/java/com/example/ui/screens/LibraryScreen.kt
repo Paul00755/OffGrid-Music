@@ -1,6 +1,12 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -20,7 +26,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,6 +104,40 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val songsListState = rememberLazyListState()
+    var isLibraryHeaderVisible by remember { mutableStateOf(true) }
+    var previousIndex by remember { mutableIntStateOf(0) }
+    var previousScrollOffset by remember { mutableIntStateOf(0) }
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                if (delta < -8f) {
+                    isLibraryHeaderVisible = false
+                } else if (delta > 8f) {
+                    isLibraryHeaderVisible = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    LaunchedEffect(songsListState) {
+        snapshotFlow {
+            Pair(songsListState.firstVisibleItemIndex, songsListState.firstVisibleItemScrollOffset)
+        }.collect { (currentIndex, currentOffset) ->
+            if (currentIndex == 0 && currentOffset <= 10) {
+                isLibraryHeaderVisible = true
+            } else if (currentIndex > previousIndex || (currentIndex == previousIndex && currentOffset > previousScrollOffset + 10)) {
+                isLibraryHeaderVisible = false
+            } else if (currentIndex < previousIndex || (currentIndex == previousIndex && currentOffset < previousScrollOffset - 10)) {
+                isLibraryHeaderVisible = true
+            }
+            previousIndex = currentIndex
+            previousScrollOffset = currentOffset
+        }
+    }
+
     var selectedCategory by remember { mutableStateOf(LibraryCategory.SONGS) }
     var selectedSort by remember(initialSortOption) {
         mutableStateOf(
@@ -266,8 +310,6 @@ fun LibraryScreen(
                 when (selectedCategory) {
                     LibraryCategory.SONGS -> {
                         val labels = mutableListOf<String?>()
-                        labels.add(null) // Search header item at index 0
-                        labels.add(null) // Controls / Shuffle button row at index 1
                         if (groupedAlphabetSongs.isNotEmpty()) {
                             groupedAlphabetSongs.forEach { (letter, songs) ->
                                 labels.add(letter)
@@ -278,10 +320,10 @@ fun LibraryScreen(
                         }
                         labels
                     }
-                    LibraryCategory.ALBUMS -> listOf(null) + albums.keys.map { albumName ->
+                    LibraryCategory.ALBUMS -> albums.keys.map { albumName ->
                         albumName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }?.toString() ?: "#"
                     }
-                    LibraryCategory.ARTISTS -> listOf(null) + artists.keys.map { artistName ->
+                    LibraryCategory.ARTISTS -> artists.keys.map { artistName ->
                         artistName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }?.toString() ?: "#"
                     }
                     else -> emptyList()
@@ -299,7 +341,9 @@ fun LibraryScreen(
     }
 
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .nestedScroll(nestedScrollConnection),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(
@@ -457,47 +501,129 @@ fun LibraryScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Sort Option Row
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            AnimatedVisibility(
+                visible = isLibraryHeaderVisible,
+                enter = expandVertically(animationSpec = tween(250)) + fadeIn(animationSpec = tween(250)),
+                exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(animationSpec = tween(200))
             ) {
-                items(SortOption.values(), key = { it.name }, contentType = { "sort_chip" }) { option ->
-                    val isSelected = option == selectedSort
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSelected) BentoPrimary else BentoCardSurface)
-                            .clickable {
-                                selectedSort = option
-                                onSortChanged(option.name, sortAscending)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(SortOption.values(), key = { it.name }, contentType = { "sort_chip" }) { option ->
+                            val isSelected = option == selectedSort
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) BentoPrimary else BentoCardSurface)
+                                    .clickable {
+                                        selectedSort = option
+                                        onSortChanged(option.name, sortAscending)
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = option.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) BentoOnPrimary else BentoTextSecondary
+                                )
                             }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = option.label,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) BentoOnPrimary else BentoTextSecondary
-                        )
+                        }
+                    }
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(LibraryCategory.values(), key = { it.name }, contentType = { "category_chip" }) { category ->
+                            val isSelected = category == selectedCategory
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (isSelected) BentoPrimary else BentoCardSurface)
+                                    .clickable { selectedCategory = category }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = category.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) BentoOnPrimary else BentoTextSecondary
+                                )
+                            }
+                        }
+
+                        item(key = "favorites_filter_chip") {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (filterFavoritesOnly) BentoAccentPinkText else BentoCardSurface)
+                                    .clickable { filterFavoritesOnly = !filterFavoritesOnly }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Favorite,
+                                        contentDescription = null,
+                                        tint = if (filterFavoritesOnly) Color.White else BentoTextSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Favorites",
+                                        fontSize = 13.sp,
+                                        color = if (filterFavoritesOnly) Color.White else BentoTextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    LibrarySearchHeaderBlock(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = onSearchQueryChange,
+                        recentSearches = recentSearches,
+                        onAddRecentSearch = onAddRecentSearch,
+                        onDeleteRecentSearch = onDeleteRecentSearch,
+                        onClearRecentSearches = onClearRecentSearches
+                    )
+
+                    if (selectedCategory == LibraryCategory.SONGS && processedSongs.isNotEmpty()) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (processedSongs.isNotEmpty()) {
+                                            if (onShuffleAll != null) {
+                                                onShuffleAll(processedSongs)
+                                            } else {
+                                                val shuffled = processedSongs.shuffled()
+                                                onPlayQueue(shuffled, 0)
+                                            }
+                                            Toast.makeText(context, "Shuffling ${processedSongs.size} tracks", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                                ) {
+                                    Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Shuffle All Songs", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Keep search field pinned above list only when user is actively typing a query
-            if (searchQuery.isNotBlank()) {
-                LibrarySearchHeaderBlock(
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = onSearchQueryChange,
-                    recentSearches = recentSearches,
-                    onAddRecentSearch = onAddRecentSearch,
-                    onDeleteRecentSearch = onDeleteRecentSearch,
-                    onClearRecentSearches = onClearRecentSearches
-                )
-            }
-
-            // Scanning Banner if active in Library
+            // Scanning status remains available while the library controls auto-hide.
             if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -526,7 +652,7 @@ fun LibraryScreen(
                                     color = BentoPrimary
                                 )
                                 Text(
-                                    text = if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) "${scanProgress.validTracksFound} tracks indexed" else "${scanProgress.validTracksFound} tracks found",
+                                    text = "${scanProgress.validTracksFound} tracks indexed",
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = BentoPrimary
@@ -551,56 +677,6 @@ fun LibraryScreen(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            // Library Category Filter Tabs & Sort Chips
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(LibraryCategory.values(), key = { it.name }, contentType = { "category_chip" }) { category ->
-                    val isSelected = category == selectedCategory
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) BentoPrimary else BentoCardSurface)
-                            .clickable { selectedCategory = category }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = category.title,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) BentoOnPrimary else BentoTextSecondary
-                        )
-                    }
-                }
-
-                item(key = "favorites_filter_chip") {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (filterFavoritesOnly) BentoAccentPinkText else BentoCardSurface)
-                            .clickable { filterFavoritesOnly = !filterFavoritesOnly }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Favorite,
-                                contentDescription = null,
-                                tint = if (filterFavoritesOnly) Color.White else BentoTextSecondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "Favorites",
-                                fontSize = 13.sp,
-                                color = if (filterFavoritesOnly) Color.White else BentoTextSecondary
-                            )
-                        }
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(10.dp))
 
             // Main Content List with FastScrollbar
@@ -617,65 +693,8 @@ fun LibraryScreen(
                     contentPadding = PaddingValues(bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Render search header inside LazyColumn when query is blank so scrolling never triggers
-                    // full-screen AnimatedVisibility height re-measurements (eliminates scroll jank at 60/120Hz)
-                    if (searchQuery.isBlank()) {
-                        item(key = "library_inline_search_header", contentType = "search_header") {
-                            LibrarySearchHeaderBlock(
-                                searchQuery = searchQuery,
-                                onSearchQueryChange = onSearchQueryChange,
-                                recentSearches = recentSearches,
-                                onAddRecentSearch = onAddRecentSearch,
-                                onDeleteRecentSearch = onDeleteRecentSearch,
-                                onClearRecentSearches = onClearRecentSearches
-                            )
-                        }
-                    }
-
                     when (selectedCategory) {
                         LibraryCategory.SONGS -> {
-                            if (processedSongs.isNotEmpty()) {
-                                item(key = "shuffle_all_header", contentType = "shuffle_header") {
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 2.dp),
-                                        colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                                        shape = RoundedCornerShape(16.dp)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Button(
-                                                    onClick = {
-                                                        if (processedSongs.isNotEmpty()) {
-                                                            if (onShuffleAll != null) {
-                                                                onShuffleAll(processedSongs)
-                                                            } else {
-                                                                val shuffled = processedSongs.shuffled()
-                                                                onPlayQueue(shuffled, 0)
-                                                            }
-                                                            Toast.makeText(context, "Shuffling ${processedSongs.size} tracks", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
-                                                ) {
-                                                    Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(16.dp))
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text("Shuffle All Songs", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
                             if (isAlphabeticalSort && groupedAlphabetSongs.isNotEmpty()) {
                                 groupedAlphabetSongs.forEach { (letterHeader, songsForLetter) ->
                                     item(key = "letter_header_$letterHeader", contentType = "letter_header") {
