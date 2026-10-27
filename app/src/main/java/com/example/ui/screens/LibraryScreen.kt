@@ -104,7 +104,8 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val songsListState = rememberLazyListState()
-    var isLibraryHeaderVisible by remember { mutableStateOf(true) }
+    var areLibraryControlsVisible by remember { mutableStateOf(true) }
+    var isLibrarySearchVisible by remember { mutableStateOf(true) }
     var previousIndex by remember { mutableIntStateOf(0) }
     var previousScrollOffset by remember { mutableIntStateOf(0) }
 
@@ -113,9 +114,13 @@ fun LibraryScreen(
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 val delta = available.y
                 if (delta < -8f) {
-                    isLibraryHeaderVisible = false
+                    areLibraryControlsVisible = false
+                    isLibrarySearchVisible = false
                 } else if (delta > 8f) {
-                    isLibraryHeaderVisible = true
+                    isLibrarySearchVisible = true
+                    if (songsListState.firstVisibleItemIndex == 0 && songsListState.firstVisibleItemScrollOffset <= 10) {
+                        areLibraryControlsVisible = true
+                    }
                 }
                 return Offset.Zero
             }
@@ -126,12 +131,19 @@ fun LibraryScreen(
         snapshotFlow {
             Pair(songsListState.firstVisibleItemIndex, songsListState.firstVisibleItemScrollOffset)
         }.collect { (currentIndex, currentOffset) ->
-            if (currentIndex == 0 && currentOffset <= 10) {
-                isLibraryHeaderVisible = true
-            } else if (currentIndex > previousIndex || (currentIndex == previousIndex && currentOffset > previousScrollOffset + 10)) {
-                isLibraryHeaderVisible = false
-            } else if (currentIndex < previousIndex || (currentIndex == previousIndex && currentOffset < previousScrollOffset - 10)) {
-                isLibraryHeaderVisible = true
+            val scrollingDown = currentIndex > previousIndex ||
+                (currentIndex == previousIndex && currentOffset > previousScrollOffset + 10)
+            val scrollingUp = currentIndex < previousIndex ||
+                (currentIndex == previousIndex && currentOffset < previousScrollOffset - 10)
+
+            if (scrollingDown) {
+                areLibraryControlsVisible = false
+                isLibrarySearchVisible = false
+            } else if (scrollingUp) {
+                isLibrarySearchVisible = true
+                if (currentIndex == 0 && currentOffset <= 10) {
+                    areLibraryControlsVisible = true
+                }
             }
             previousIndex = currentIndex
             previousScrollOffset = currentOffset
@@ -502,7 +514,7 @@ fun LibraryScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             AnimatedVisibility(
-                visible = isLibraryHeaderVisible,
+                visible = areLibraryControlsVisible,
                 enter = expandVertically(animationSpec = tween(250)) + fadeIn(animationSpec = tween(250)),
                 exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(animationSpec = tween(200))
             ) {
@@ -577,15 +589,6 @@ fun LibraryScreen(
                         }
                     }
 
-                    LibrarySearchHeaderBlock(
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = onSearchQueryChange,
-                        recentSearches = recentSearches,
-                        onAddRecentSearch = onAddRecentSearch,
-                        onDeleteRecentSearch = onDeleteRecentSearch,
-                        onClearRecentSearches = onClearRecentSearches
-                    )
-
                     if (selectedCategory == LibraryCategory.SONGS && processedSongs.isNotEmpty()) {
                         Card(
                             modifier = Modifier
@@ -621,6 +624,21 @@ fun LibraryScreen(
                         }
                     }
                 }
+            }
+
+            AnimatedVisibility(
+                visible = isLibrarySearchVisible,
+                enter = expandVertically(animationSpec = tween(280)) + fadeIn(animationSpec = tween(280)),
+                exit = shrinkVertically(animationSpec = tween(240)) + fadeOut(animationSpec = tween(200))
+            ) {
+                LibrarySearchHeaderBlock(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = onSearchQueryChange,
+                    recentSearches = recentSearches,
+                    onAddRecentSearch = onAddRecentSearch,
+                    onDeleteRecentSearch = onDeleteRecentSearch,
+                    onClearRecentSearches = onClearRecentSearches
+                )
             }
 
             // Scanning status remains available while the library controls auto-hide.
