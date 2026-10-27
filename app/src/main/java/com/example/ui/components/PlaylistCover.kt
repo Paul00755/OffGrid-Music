@@ -283,7 +283,11 @@ fun PlaylistCover(
     var customArtUri by remember(playlist.id, playlist.artworkUri) {
         mutableStateOf(playlist.artworkUri?.takeIf(String::isNotBlank))
     }
-    var fetchedSongs by remember(playlist.id, playlistSongs) { mutableStateOf(emptyList<String>()) }
+    // Keep the last automatic cover while playlist songs reload or this screen is recreated.
+    // The effect below refreshes it when the membership/artwork signature changes.
+    var fetchedSongs by remember(playlist.id) {
+        mutableStateOf(PlaylistCoverCache.getCollageUris(playlist.id).orEmpty())
+    }
 
     LaunchedEffect(playlist.id, playlist.artworkUri) {
         customArtUri = withContext(Dispatchers.IO) {
