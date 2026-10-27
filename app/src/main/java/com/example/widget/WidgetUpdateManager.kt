@@ -713,10 +713,10 @@ object WidgetUpdateManager {
             }
 
             if (secondaryIds.isNotEmpty()) {
-                val waveBmp = WidgetBitmapRenderer.renderWaveformProgressBar(
+                val progressBmp = WidgetBitmapRenderer.renderStraightProgressBar(
                     context = context,
                     widthPx = (220 * density).toInt(),
-                    heightPx = (18 * density).toInt(),
+                    heightPx = (15 * density).toInt(),
                     progressRatio = progressRatio,
                     accentColor = accentColor
                 )
@@ -725,7 +725,7 @@ object WidgetUpdateManager {
                         val views = RemoteViews(context.packageName, R.layout.widget_secondary)
                         views.setTextViewText(R.id.widget_secondary_time_current, currentText)
                         views.setTextViewText(R.id.widget_secondary_time_total, totalText)
-                        views.setImageViewBitmap(R.id.widget_secondary_progress, waveBmp)
+                        views.setImageViewBitmap(R.id.widget_secondary_progress, progressBmp)
                         appWidgetManager.partiallyUpdateAppWidget(id, views)
                     } catch (_: Exception) {}
                 }
@@ -1050,10 +1050,10 @@ object WidgetUpdateManager {
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor
         )
-        val waveProgBmp = WidgetBitmapRenderer.renderWaveformProgressBar(
+        val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
-            heightPx = (17 * density).toInt(),
+            heightPx = (15 * density).toInt(),
             progressRatio = progressRatio,
             accentColor = themeColors.accentColor
         )
@@ -1113,7 +1113,7 @@ object WidgetUpdateManager {
                 views.setImageViewBitmap(R.id.widget_secondary_btn_favorite, favBmp)
                 views.setTextViewText(R.id.widget_secondary_title, title)
                 views.setTextViewText(R.id.widget_secondary_subtitle, subtitle)
-                views.setImageViewBitmap(R.id.widget_secondary_progress, waveProgBmp)
+                views.setImageViewBitmap(R.id.widget_secondary_progress, progBmp)
                 views.setTextViewText(R.id.widget_secondary_time_current, formatTime(posMs))
                 views.setTextViewText(R.id.widget_secondary_time_total, formatTime(durationMs))
                 views.setImageViewBitmap(R.id.widget_secondary_btn_prev, prevBmp)
@@ -1123,7 +1123,7 @@ object WidgetUpdateManager {
                 views.setOnClickPendingIntent(R.id.widget_secondary_root, openNowPlayingIntent)
                 views.setOnClickPendingIntent(R.id.widget_secondary_artwork, openNowPlayingIntent)
                 views.setOnClickPendingIntent(R.id.widget_secondary_header_click, openNowPlayingIntent)
-                views.setOnClickPendingIntent(R.id.widget_secondary_progress, openNowPlayingIntent)
+                setSecondarySeekActions(context, views)
                 views.setOnClickPendingIntent(R.id.widget_secondary_btn_favorite, createActionIntent(context, SecondaryMusicWidgetProvider::class.java, ACTION_WIDGET_FAVORITE, 400))
                 views.setOnClickPendingIntent(R.id.widget_secondary_btn_prev, createActionIntent(context, SecondaryMusicWidgetProvider::class.java, ACTION_WIDGET_PREV, 401))
                 views.setOnClickPendingIntent(R.id.widget_secondary_btn_play_pause, createActionIntent(context, SecondaryMusicWidgetProvider::class.java, ACTION_WIDGET_PLAY_PAUSE, 402))
@@ -1164,6 +1164,35 @@ object WidgetUpdateManager {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    private fun setSecondarySeekActions(context: Context, views: RemoteViews) {
+        val zoneIds = intArrayOf(
+            R.id.widget_secondary_seek_zone_0,
+            R.id.widget_secondary_seek_zone_1,
+            R.id.widget_secondary_seek_zone_2,
+            R.id.widget_secondary_seek_zone_3,
+            R.id.widget_secondary_seek_zone_4,
+            R.id.widget_secondary_seek_zone_5,
+            R.id.widget_secondary_seek_zone_6,
+            R.id.widget_secondary_seek_zone_7,
+            R.id.widget_secondary_seek_zone_8,
+            R.id.widget_secondary_seek_zone_9
+        )
+        zoneIds.forEachIndexed { index, viewId ->
+            val fraction = (index + 0.5f) / zoneIds.size
+            val intent = Intent(context, SecondaryMusicWidgetProvider::class.java).apply {
+                action = ACTION_WIDGET_SEEK
+                putExtra(EXTRA_SEEK_FRACTION, fraction)
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                410 + index,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(viewId, pendingIntent)
+        }
     }
 
     private fun formatTime(ms: Long): String {

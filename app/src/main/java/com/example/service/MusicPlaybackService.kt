@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -23,11 +24,72 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import com.example.data.model.Song
+import kotlin.math.abs
+
+internal data class NotificationUpdateKey(
+    val mediaId: String?,
+    val title: String?,
+    val artist: String?,
+    val album: String?,
+    val artworkUri: String?,
+    val durationMs: Long,
+    val playbackState: Int,
+    val isPlaying: Boolean,
+    val playWhenReady: Boolean,
+    val mediaItemIndex: Int,
+    val mediaItemCount: Int,
+    val repeatMode: Int,
+    val shuffleEnabled: Boolean,
+    val playbackSpeed: Float,
+    val queueIndex: Int,
+    val queueCount: Int,
+    val isFavorite: Boolean?
+)
+
+/** Keeps notification progress useful while avoiding repeated action and bitmap rebuilding. */
+internal class NotificationUpdateGate(
+    private val minimumPlayingIntervalMs: Long = 1_000L,
+    private val seekJumpThresholdMs: Long = 1_500L
+) {
+    private var lastKey: NotificationUpdateKey? = null
+    private var lastPositionMs = 0L
+    private var lastUpdateAtMs = Long.MIN_VALUE
+
+    fun shouldUpdate(
+        key: NotificationUpdateKey,
+        positionMs: Long,
+        isPlaying: Boolean,
+        nowMs: Long,
+        force: Boolean = false
+    ): Boolean {
+        val stateChanged = key != lastKey
+        val positionChanged = positionMs != lastPositionMs
+        val seekJumped = abs(positionMs - lastPositionMs) >= seekJumpThresholdMs
+        val pausedPositionChanged = !isPlaying && positionChanged
+        val progressIntervalElapsed = isPlaying &&
+            (lastUpdateAtMs == Long.MIN_VALUE || nowMs - lastUpdateAtMs >= minimumPlayingIntervalMs)
+
+        if (!force && !stateChanged && !seekJumped && !pausedPositionChanged && !progressIntervalElapsed) {
+            return false
+        }
+
+        lastKey = key
+        lastPositionMs = positionMs
+        lastUpdateAtMs = nowMs
+        return true
+    }
+}
 
 class MusicPlaybackService : MediaSessionService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var asyncArtDecodeJob: Job? = null
+    private var notificationArtworkRequestKey: String? = null
+    private var failedNotificationArtworkKey: String? = null
+    private var notificationArtworkRetryAfterMs = 0L
+    private val notificationUpdateGate = NotificationUpdateGate()
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -78,15 +140,6 @@ class MusicPlaybackService : MediaSessionService() {
 
                             var bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
                             if (bmp == null || bmp.isRecycled) {
-                                val artBytes = com.example.util.ArtworkManager.getCachedNotificationArtwork(currentSong.id, currentSong.path)
-                                if (artBytes != null && artBytes.isNotEmpty()) {
-                                    bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
-                                    if (bmp != null) {
-                                        com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, bmp, currentSong.path)
-                                    }
-                                }
-                            }
-                            if (bmp == null || bmp.isRecycled) {
                                 val memCached = com.example.ui.components.ArtworkResolutionCache.getMemory(currentSong.id, currentSong.path)
                                 if (memCached != null) {
                                     bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
@@ -97,28 +150,7 @@ class MusicPlaybackService : MediaSessionService() {
                                 @Suppress("DEPRECATION")
                                 mediaNotification.notification.largeIcon = bmp
                             } else {
-                                // Asynchronously decode and dispatch notification update without blocking
-                                asyncArtDecodeJob?.cancel()
-                                asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
-                                    val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
-                                        this@MusicPlaybackService,
-                                        currentSong.id,
-                                        currentSong.path,
-                                        currentSong.albumId,
-                                        currentSong.artworkUri
-                                    )
-                                    if (loadedBytes != null && loadedBytes.isNotEmpty()) {
-                                        val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
-                                        if (newBmp != null) {
-                                            com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp, currentSong.path)
-                                            withContext(Dispatchers.Main) {
-                                                if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
-                                                    triggerNotificationUpdate()
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                requestNotificationArtwork(currentSong)
                             }
                         } else {
                             @Suppress("DEPRECATION")
@@ -208,9 +240,13 @@ class MusicPlaybackService : MediaSessionService() {
             pm.handleHeadphoneConnectedFromBroadcast()
         }
         val result = super.onStartCommand(intent, flags, startId)
-        if (intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION || session != null) {
-            triggerNotificationUpdate()
-        }
+        val hasActiveMedia = session.player.mediaItemCount > 0 ||
+            PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
+        updateNotification(
+            session = session,
+            startInForegroundRequired = hasActiveMedia,
+            force = intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION
+        )
         return START_STICKY
     }
 
@@ -241,6 +277,10 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        updateNotification(session, startInForegroundRequired, force = false)
+    }
+
+    private fun updateNotification(session: MediaSession, startInForegroundRequired: Boolean, force: Boolean) {
         try {
             val player = session.player
             val isPlaying = player.isPlaying || player.playWhenReady
@@ -250,6 +290,38 @@ class MusicPlaybackService : MediaSessionService() {
                 acquireWakeLock()
             } else {
                 releaseWakeLock()
+            }
+            val managerState = PlaybackManager.activeInstance?.playbackState?.value
+            val currentSong = managerState?.currentSong
+            val metadata = player.currentMediaItem?.mediaMetadata
+            val updateKey = NotificationUpdateKey(
+                mediaId = player.currentMediaItem?.mediaId ?: currentSong?.id?.toString(),
+                title = metadata?.title?.toString() ?: currentSong?.displayTitle,
+                artist = metadata?.artist?.toString() ?: currentSong?.displayArtist,
+                album = metadata?.albumTitle?.toString() ?: currentSong?.displayAlbum,
+                artworkUri = currentSong?.artworkUri ?: metadata?.artworkUri?.toString(),
+                durationMs = player.duration,
+                playbackState = player.playbackState,
+                isPlaying = player.isPlaying,
+                playWhenReady = player.playWhenReady,
+                mediaItemIndex = player.currentMediaItemIndex,
+                mediaItemCount = player.mediaItemCount,
+                repeatMode = player.repeatMode,
+                shuffleEnabled = player.shuffleModeEnabled,
+                playbackSpeed = player.playbackParameters.speed,
+                queueIndex = managerState?.queueIndex ?: -1,
+                queueCount = managerState?.queue?.size ?: 0,
+                isFavorite = currentSong?.isFavorite
+            )
+            val currentPositionMs = player.currentPosition.coerceAtLeast(0L)
+            if (!notificationUpdateGate.shouldUpdate(
+                    key = updateKey,
+                    positionMs = currentPositionMs,
+                    isPlaying = isPlaying,
+                    nowMs = SystemClock.elapsedRealtime(),
+                    force = force
+                )) {
+                return
             }
             // Keep service in foreground with active status bar notification whenever media is loaded
             // so the notification stays active in the status bar while the app is in the background.
@@ -289,41 +361,69 @@ class MusicPlaybackService : MediaSessionService() {
         val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
         if (session != null) {
             try {
-                val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
-                if (currentSong != null) {
-                    val bmp = com.example.util.ArtworkManager.getCachedNotificationBitmap(currentSong.id, currentSong.path)
-                    if (bmp == null || bmp.isRecycled) {
-                        asyncArtDecodeJob?.cancel()
-                        asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
-                            val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
-                                this@MusicPlaybackService,
-                                currentSong.id,
-                                currentSong.path,
-                                currentSong.albumId,
-                                currentSong.artworkUri
-                            )
-                            if (loadedBytes != null && loadedBytes.isNotEmpty()) {
-                                val newBmp = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
-                                if (newBmp != null) {
-                                    com.example.util.ArtworkManager.putCachedNotificationBitmap(currentSong.id, newBmp, currentSong.path)
-                                    withContext(Dispatchers.Main) {
-                                        if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.id == currentSong.id) {
-                                            triggerNotificationUpdate()
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                val hasActiveMedia = session.player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
+                updateNotification(session, hasActiveMedia, force = true)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun requestNotificationArtwork(song: Song) {
+        val requestKey = "${song.id}:${song.path}:${song.artworkUri.orEmpty()}"
+        val now = SystemClock.elapsedRealtime()
+        if (notificationArtworkRequestKey == requestKey && asyncArtDecodeJob?.isActive == true) return
+        if (failedNotificationArtworkKey == requestKey && now < notificationArtworkRetryAfterMs) return
+
+        asyncArtDecodeJob?.cancel()
+        notificationArtworkRequestKey = requestKey
+        asyncArtDecodeJob = serviceScope.launch(Dispatchers.IO) {
+            var decodedBitmap: android.graphics.Bitmap? = null
+            try {
+                val loadedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                    this@MusicPlaybackService,
+                    song.id,
+                    song.path,
+                    song.albumId,
+                    song.artworkUri
+                )
+                decodedBitmap = com.example.util.ArtworkManager
+                    .getCachedNotificationBitmap(song.id, song.path)
+                    ?.takeUnless { it.isRecycled }
+                if (decodedBitmap == null && loadedBytes != null && loadedBytes.isNotEmpty()) {
+                    decodedBitmap = android.graphics.BitmapFactory.decodeByteArray(loadedBytes, 0, loadedBytes.size)
+                    if (decodedBitmap != null) {
+                        com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, decodedBitmap, song.path)
                     }
                 }
-                val hasActiveMedia = session.player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
-                onUpdateNotification(session, hasActiveMedia)
-            } catch (_: Exception) {}
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Keep the notification usable without artwork and retry after the backoff below.
+            }
+
+            withContext(Dispatchers.Main) {
+                if (notificationArtworkRequestKey == requestKey) {
+                    notificationArtworkRequestKey = null
+                    asyncArtDecodeJob = null
+                    if (decodedBitmap != null && !decodedBitmap.isRecycled) {
+                        failedNotificationArtworkKey = null
+                        notificationArtworkRetryAfterMs = 0L
+                        if (PlaybackManager.activeInstance?.playbackState?.value?.currentSong?.let {
+                                it.id == song.id && it.path == song.path
+                            } == true) {
+                            triggerNotificationUpdate()
+                        }
+                    } else {
+                        failedNotificationArtworkKey = requestKey
+                        notificationArtworkRetryAfterMs = SystemClock.elapsedRealtime() + ARTWORK_RETRY_INTERVAL_MS
+                    }
+                }
+            }
         }
     }
 
     override fun onDestroy() {
         asyncArtDecodeJob?.cancel()
+        notificationArtworkRequestKey = null
         serviceScope.cancel()
         releaseWakeLock()
         activeMediaSession?.let { safeRemoveSession(it) }
@@ -338,6 +438,7 @@ class MusicPlaybackService : MediaSessionService() {
 
     companion object {
         const val CHANNEL_ID = "media_playback_channel_v2"
+        private const val ARTWORK_RETRY_INTERVAL_MS = 5 * 60 * 1_000L
         const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
         const val ACTION_ENSURE_BACKGROUND_NOTIFICATION = "com.example.service.ACTION_ENSURE_BACKGROUND_NOTIFICATION"
         var instance: MusicPlaybackService? = null

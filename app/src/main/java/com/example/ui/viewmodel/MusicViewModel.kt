@@ -413,7 +413,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val maxPass = maxSec >= 300 || durSec <= maxSec
             minPass && maxPass
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val favoriteSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.favoriteSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
@@ -422,7 +423,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val maxPass = maxSec >= 300 || durSec <= maxSec
             minPass && maxPass
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val recentlyAddedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.recentlyAddedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
@@ -431,7 +433,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val maxPass = maxSec >= 300 || durSec <= maxSec
             minPass && maxPass
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val recentlyPlayedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.recentlyPlayedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
@@ -440,7 +443,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val maxPass = maxSec >= 300 || durSec <= maxSec
             minPass && maxPass
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val mostPlayedSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.mostPlayedSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
@@ -449,7 +453,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val maxPass = maxSec >= 300 || durSec <= maxSec
             minPass && maxPass
         }
-    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val allFolders: StateFlow<List<FolderInfo>> = repository.allFolders.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val allPlaylists: StateFlow<List<Playlist>> = repository.allPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val mostPlayedPlaylists: StateFlow<List<Playlist>> = repository.mostPlayedPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -639,25 +644,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         audioRouteManager.onDeviceSelected = { dev ->
             playbackManager.setPreferredAudioDevice(dev)
         }
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Default) {
             var lastWarmedLibrarySignature = 0L
-            allSongs.collect { songs ->
+            allSongs.collectLatest { songs ->
                 if (songs.isNotEmpty()) {
-                    val signature = songs.fold(songs.size.toLong()) { acc, s ->
-                        acc * 31L + s.id * 17L + (s.artworkUri?.hashCode()?.toLong() ?: 0L)
+                    val selectedSpeedDial = _speedDialSongs.value
+                    val selectedIds = selectedSpeedDial.mapTo(HashSet()) { it.id }
+                    val refreshedById = HashMap<Long, Song>(selectedIds.size)
+                    val sampledSongs = if (selectedSpeedDial.isEmpty()) ArrayList<Song>(9) else null
+                    var signature = songs.size.toLong()
+
+                    songs.forEachIndexed { index, song ->
+                        signature = signature * 31L + song.id * 17L + (song.artworkUri?.hashCode()?.toLong() ?: 0L)
+
+                        if (sampledSongs != null) {
+                            if (index < 9) {
+                                sampledSongs.add(song)
+                            } else {
+                                val replacementIndex = kotlin.random.Random.Default.nextInt(index + 1)
+                                if (replacementIndex < sampledSongs.size) sampledSongs[replacementIndex] = song
+                            }
+                        } else if (song.id in selectedIds) {
+                            refreshedById[song.id] = song
+                        }
+                    }
+                    val updatedSpeedDial = if (sampledSongs != null) {
+                        sampledSongs
+                    } else {
+                        selectedSpeedDial.mapNotNull { refreshedById[it.id] }
+                    }
+                    if (updatedSpeedDial != selectedSpeedDial) {
+                        _speedDialSongs.value = updatedSpeedDial
                     }
                     if (signature != lastWarmedLibrarySignature) {
+                        // Scans emit a full-list snapshot for each database batch. Wait for a quiet
+                        // interval before warming cached covers so intermediate snapshots do not
+                        // repeatedly cancel and restart the same disk work.
+                        kotlinx.coroutines.delay(350L)
                         lastWarmedLibrarySignature = signature
                         com.example.ui.components.ArtworkResolutionCache.warmAllSongsArtworkInBackground(getApplication(), songs)
-                    }
-                    if (_speedDialSongs.value.isEmpty()) {
-                        _speedDialSongs.value = songs.shuffled().take(9)
-                    } else {
-                        val byId = songs.associateBy { it.id }
-                        val updatedSpeedDial = _speedDialSongs.value.mapNotNull { byId[it.id] }
-                        if (updatedSpeedDial != _speedDialSongs.value) {
-                            _speedDialSongs.value = updatedSpeedDial
-                        }
                     }
                 }
             }

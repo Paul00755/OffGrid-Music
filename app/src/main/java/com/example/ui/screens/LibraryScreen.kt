@@ -147,7 +147,7 @@ fun LibraryScreen(
 
     // Deduplicate by id (.distinctBy { it.id }) and run filtering/sorting off the main thread with debouncing
     val processedSongs by produceState(
-        initialValue = remember { filterAndSortLibrarySongs(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly) },
+        initialValue = emptyList(),
         keys = arrayOf(allSongs, searchQuery, selectedSort, sortAscending, filterFavoritesOnly)
     ) {
         if (searchQuery.isNotBlank()) {
@@ -189,86 +189,103 @@ fun LibraryScreen(
         return if (ch in 'A'..'Z') ch.toString() else "#"
     }
 
-    val groupedAlphabetSongs = remember(processedSongs, isAlphabeticalSort, selectedCategory) {
-        if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
-            processedSongs.groupBy { getAlphabetLabel(it) }
-        } else {
-            emptyMap()
+    val groupedAlphabetSongs by produceState(
+        initialValue = emptyMap<String, List<Song>>(),
+        key1 = processedSongs,
+        key2 = isAlphabeticalSort,
+        key3 = selectedCategory
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (selectedCategory == LibraryCategory.SONGS && isAlphabeticalSort) {
+                processedSongs.groupBy { getAlphabetLabel(it) }
+            } else emptyMap()
         }
     }
 
-    val albums = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.ALBUMS) {
-            processedSongs.groupBy { it.displayAlbum }
-        } else {
-            emptyMap()
+    val albums by produceState(
+        initialValue = emptyMap<String, List<Song>>(),
+        key1 = processedSongs,
+        key2 = selectedCategory
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (selectedCategory == LibraryCategory.ALBUMS) processedSongs.groupBy { it.displayAlbum } else emptyMap()
         }
     }
 
-    val artists = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.ARTISTS) {
-            processedSongs.groupBy { it.displayArtist }
-        } else {
-            emptyMap()
+    val artists by produceState(
+        initialValue = emptyMap<String, List<Song>>(),
+        key1 = processedSongs,
+        key2 = selectedCategory
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (selectedCategory == LibraryCategory.ARTISTS) processedSongs.groupBy { it.displayArtist } else emptyMap()
         }
     }
 
-    val folders = remember(processedSongs, selectedCategory) {
-        if (selectedCategory == LibraryCategory.FOLDERS) {
-            processedSongs.groupBy { song ->
-                song.path.takeIf { p -> p.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
-            }
-        } else {
-            emptyMap()
+    val folders by produceState(
+        initialValue = emptyMap<String, List<Song>>(),
+        key1 = processedSongs,
+        key2 = selectedCategory
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (selectedCategory == LibraryCategory.FOLDERS) {
+                processedSongs.groupBy { song ->
+                    song.path.takeIf { path -> path.contains('/') }?.substringBeforeLast('/') ?: "Internal Storage"
+                }
+            } else emptyMap()
         }
     }
 
-    val albumsList = remember(albums) { albums.entries.toList() }
-    val artistsList = remember(artists) { artists.entries.toList() }
-    val foldersList = remember(folders) { folders.entries.toList() }
+    val albumsList by produceState(
+        initialValue = emptyList<Pair<String, List<Song>>>(),
+        key1 = albums
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { albums.map { it.key to it.value } }
+    }
+    val artistsList by produceState(
+        initialValue = emptyList<Pair<String, List<Song>>>(),
+        key1 = artists
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { artists.map { it.key to it.value } }
+    }
+    val foldersList by produceState(
+        initialValue = emptyList<Pair<String, List<Song>>>(),
+        key1 = folders
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { folders.map { it.key to it.value } }
+    }
 
-    val indexedAlphabetLabels = remember(selectedCategory, isAlphabeticalSort, groupedAlphabetSongs, processedSongs, albums, artists) {
-        if (!isAlphabeticalSort) {
-            emptyList<String?>()
-        } else {
-            when (selectedCategory) {
-                LibraryCategory.SONGS -> {
-                    if (groupedAlphabetSongs.isNotEmpty()) {
+    val indexedAlphabetLabels by produceState(
+        initialValue = emptyList<String?>(),
+        keys = arrayOf(selectedCategory, isAlphabeticalSort, groupedAlphabetSongs, processedSongs, albums, artists)
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            if (!isAlphabeticalSort) {
+                emptyList()
+            } else {
+                when (selectedCategory) {
+                    LibraryCategory.SONGS -> {
                         val labels = mutableListOf<String?>()
                         labels.add(null) // Search header item at index 0
                         labels.add(null) // Controls / Shuffle button row at index 1
-                        groupedAlphabetSongs.forEach { (letter, songs) ->
-                            labels.add(letter) // stickyHeader
-                            repeat(songs.size) { labels.add(letter) } // song items
+                        if (groupedAlphabetSongs.isNotEmpty()) {
+                            groupedAlphabetSongs.forEach { (letter, songs) ->
+                                labels.add(letter)
+                                repeat(songs.size) { labels.add(letter) }
+                            }
+                        } else {
+                            processedSongs.forEach { song -> labels.add(getAlphabetLabel(song)) }
                         }
                         labels
-                    } else {
-                        val labels = mutableListOf<String?>()
-                        labels.add(null)
-                        labels.add(null)
-                        processedSongs.forEach { song -> labels.add(getAlphabetLabel(song)) }
-                        labels
                     }
-                }
-                LibraryCategory.ALBUMS -> {
-                    val labels = mutableListOf<String?>()
-                    labels.add(null) // Search header row
-                    albums.keys.forEach { albumName ->
-                        val ch = albumName.trim().firstOrNull()?.uppercaseChar() ?: '#'
-                        labels.add(if (ch in 'A'..'Z') ch.toString() else "#")
+                    LibraryCategory.ALBUMS -> listOf(null) + albums.keys.map { albumName ->
+                        albumName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }?.toString() ?: "#"
                     }
-                    labels
-                }
-                LibraryCategory.ARTISTS -> {
-                    val labels = mutableListOf<String?>()
-                    labels.add(null) // Search header row
-                    artists.keys.forEach { artistName ->
-                        val ch = artistName.trim().firstOrNull()?.uppercaseChar() ?: '#'
-                        labels.add(if (ch in 'A'..'Z') ch.toString() else "#")
+                    LibraryCategory.ARTISTS -> listOf(null) + artists.keys.map { artistName ->
+                        artistName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }?.toString() ?: "#"
                     }
-                    labels
+                    else -> emptyList()
                 }
-                else -> emptyList()
             }
         }
     }
@@ -797,7 +814,7 @@ fun LibraryScreen(
                             }
                         }
                         LibraryCategory.ALBUMS -> {
-                            items(albumsList, key = { "album_${it.key}" }, contentType = { "album_item" }) { (albumName, songs) ->
+                            items(albumsList, key = { "album_${it.first}" }, contentType = { "album_item" }) { (albumName, songs) ->
                                 val firstSongWithArt = songs.firstOrNull { !it.artworkUri.isNullOrBlank() } ?: songs.firstOrNull()
                                 BentoCard(
                                     modifier = Modifier
@@ -836,7 +853,7 @@ fun LibraryScreen(
                             }
                         }
                         LibraryCategory.ARTISTS -> {
-                            items(artistsList, key = { "artist_${it.key}" }, contentType = { "artist_item" }) { (artistName, songs) ->
+                            items(artistsList, key = { "artist_${it.first}" }, contentType = { "artist_item" }) { (artistName, songs) ->
                                 BentoCard(
                                     modifier = Modifier
                                         .fillMaxWidth()

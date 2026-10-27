@@ -87,14 +87,38 @@
                     android:contentDescription="Favorite Track" />
             </LinearLayout>
 
-            <!-- Glowing Sine-Wave Waveform Progress Bar (tapping opens Now Playing screen) -->
-            <ImageView
-                android:id="@+id/widget_secondary_progress"
+            <!-- Straight progress line with discrete tap-to-seek targets (RemoteViews cannot drag). -->
+            <FrameLayout
+                android:id="@+id/widget_secondary_progress_container"
                 android:layout_width="match_parent"
-                android:layout_height="17dp"
-                android:layout_marginTop="2dp"
-                android:scaleType="fitCenter"
-                android:contentDescription="Waveform Playback Progress" />
+                android:layout_height="20dp"
+                android:layout_marginTop="2dp">
+
+                <ImageView
+                    android:id="@+id/widget_secondary_progress"
+                    android:layout_width="match_parent"
+                    android:layout_height="15dp"
+                    android:layout_gravity="center_vertical"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="Playback progress" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal">
+
+                    <TextView android:id="@+id/widget_secondary_seek_zone_0" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek near start" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_1" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 10 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_2" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 20 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_3" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 30 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_4" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 40 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_5" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 50 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_6" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 60 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_7" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 70 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_8" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek to 80 percent" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                    <TextView android:id="@+id/widget_secondary_seek_zone_9" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@android:color/transparent" android:contentDescription="Seek near end" android:focusable="true" android:textColor="@android:color/transparent" android:textSize="1sp" />
+                </LinearLayout>
+            </FrameLayout>
 
             <!-- Timestamps row (left current / right total) -->
             <LinearLayout

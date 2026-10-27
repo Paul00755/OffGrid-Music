@@ -25,7 +25,7 @@ import org.robolectric.annotation.Config
 class WidgetAndReliabilityFixesTest {
 
     @Test
-    fun testWidgetLayoutsHaveCorrectProgressViewsAndNoTapSeekSegments() {
+    fun testWidgetLayoutsExposeSecondaryTapSeekTargets() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val inflater = LayoutInflater.from(context)
 
@@ -53,7 +53,11 @@ class WidgetAndReliabilityFixesTest {
         assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_progress))
         assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_time_current))
         assertNotNull(secondaryView.findViewById<View>(R.id.widget_secondary_time_total))
-        assertEquals(0, context.resources.getIdentifier("widget_secondary_seek_0", "id", context.packageName))
+        for (index in 0 until 10) {
+            val zoneId = context.resources.getIdentifier("widget_secondary_seek_zone_$index", "id", context.packageName)
+            assertTrue("Missing secondary seek target $index", zoneId != 0)
+            assertNotNull(secondaryView.findViewById<View>(zoneId))
+        }
     }
 
     @Test

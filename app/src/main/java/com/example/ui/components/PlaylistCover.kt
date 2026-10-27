@@ -56,6 +56,8 @@ object PlaylistCoverCache {
         decodedBitmapCache.get(uriStr)
     }
 
+    internal fun getCollageUris(playlistId: Long): List<String>? = collageMemoryCache[playlistId]
+
     fun decodeAndCacheBitmapSync(context: Context, uriStr: String, targetPx: Int = 180): ImageBitmap? {
         if (uriStr.isBlank()) return null
         getDecodedBitmap(uriStr)?.let { return it }
@@ -327,6 +329,7 @@ fun PlaylistCover(
                 selected
             } catch (_: Exception) { emptyList() }
         }
+        fetchedSongs = resolved
     }
 
     val songArtworks = fetchedSongs
@@ -367,14 +370,14 @@ fun PlaylistCover(
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            // 2. 4-art collage if 4 or more unique song artwork URIs exist
+            // 2. Four-art collage when enough unique song artwork is available
             songArtworks.size >= 4 -> {
                 Column(modifier = Modifier.fillMaxSize()) {
                     Row(modifier = Modifier.weight(1f)) {
                         for (i in 0..1) {
                             StableArtworkImage(
                                 uriStr = songArtworks[i],
-                                contentDescription = null,
+                                contentDescription = "${playlist.name} cover artwork ${i + 1}",
                                 targetPx = 180,
                                 cacheKeyPrefix = "pl_cell",
                                 modifier = Modifier.weight(1f).fillMaxHeight()
@@ -385,7 +388,7 @@ fun PlaylistCover(
                         for (i in 2..3) {
                             StableArtworkImage(
                                 uriStr = songArtworks[i],
-                                contentDescription = null,
+                                contentDescription = "${playlist.name} cover artwork ${i + 1}",
                                 targetPx = 180,
                                 cacheKeyPrefix = "pl_cell",
                                 modifier = Modifier.weight(1f).fillMaxHeight()
@@ -394,11 +397,47 @@ fun PlaylistCover(
                     }
                 }
             }
-            // 3. First song's album artwork if 1-3 exist
-            songArtworks.isNotEmpty() -> {
+            // Show all available unique artwork instead of discarding items when fewer than four exist.
+            songArtworks.size == 3 -> {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    StableArtworkImage(
+                        uriStr = songArtworks[0],
+                        contentDescription = "${playlist.name} cover artwork 1",
+                        targetPx = 180,
+                        cacheKeyPrefix = "pl_cell",
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    )
+                    Row(modifier = Modifier.weight(1f)) {
+                        for (i in 1..2) {
+                            StableArtworkImage(
+                                uriStr = songArtworks[i],
+                                contentDescription = "${playlist.name} cover artwork ${i + 1}",
+                                targetPx = 180,
+                                cacheKeyPrefix = "pl_cell",
+                                modifier = Modifier.weight(1f).fillMaxHeight()
+                            )
+                        }
+                    }
+                }
+            }
+            songArtworks.size == 2 -> {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    songArtworks.forEachIndexed { index, uri ->
+                        StableArtworkImage(
+                            uriStr = uri,
+                            contentDescription = "${playlist.name} cover artwork ${index + 1}",
+                            targetPx = 180,
+                            cacheKeyPrefix = "pl_cell",
+                            modifier = Modifier.weight(1f).fillMaxHeight()
+                        )
+                    }
+                }
+            }
+            // 3. A single unique image fills the cover.
+            songArtworks.size == 1 -> {
                 StableArtworkImage(
-                    uriStr = songArtworks.first(),
-                    contentDescription = playlist.name,
+                    uriStr = songArtworks[0],
+                    contentDescription = "${playlist.name} cover artwork 1",
                     targetPx = 320,
                     cacheKeyPrefix = "pl_single",
                     modifier = Modifier.fillMaxSize()
