@@ -93,28 +93,6 @@ fun HomeScreenStudioDashboard(
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
     var selectedEqProfile by remember { mutableStateOf("FLAT") }
 
-    val (barAnim1, barAnim2, barAnim3) = if (playbackState.isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "studio_bars")
-        val b1 by infiniteTransition.animateFloat(
-            initialValue = 0.2f, targetValue = 0.95f,
-            animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b1"
-        )
-        val b2 by infiniteTransition.animateFloat(
-            initialValue = 0.35f, targetValue = 0.8f,
-            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b2"
-        )
-        val b3 by infiniteTransition.animateFloat(
-            initialValue = 0.15f, targetValue = 0.9f,
-            animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b3"
-        )
-        Triple(b1, b2, b3)
-    } else {
-        Triple(0.2f, 0.35f, 0.15f)
-    }
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -248,46 +226,7 @@ fun HomeScreenStudioDashboard(
                         )
                     }
 
-                    // Dynamic Frequency Visualizer Monitor Canvas
-                    val primaryColor = BentoPrimary
-                    val borderColor = BentoBorder
-                    val barCount = 28
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(BentoBackground)
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                    ) {
-                        val canvasWidth = size.width
-                        val canvasHeight = size.height
-                        val totalGap = (barCount - 1) * 3f
-                        val barWidth = (canvasWidth - totalGap) / barCount
-
-                        for (i in 0 until barCount) {
-                            val factor = when (i % 3) {
-                                0 -> barAnim1
-                                1 -> barAnim2
-                                else -> barAnim3
-                            }
-                            val isPlaying = playbackState.isPlaying
-                            val barHeight = if (isPlaying) {
-                                (canvasHeight * factor * ((i + 3).toFloat() / (barCount + 3))).coerceIn(4f, canvasHeight)
-                            } else {
-                                4f
-                            }
-                            val x = i * (barWidth + 3f)
-                            val y = canvasHeight - barHeight
-
-                            drawRoundRect(
-                                color = if (isPlaying) primaryColor.copy(alpha = 0.4f + factor * 0.6f) else borderColor,
-                                topLeft = Offset(x, y),
-                                size = Size(barWidth, barHeight),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                        }
-                    }
+                    StudioPlaybackVisualizer(isPlaying = playbackState.isPlaying)
 
                     // Track Details & Mini Master Transport
                     if (currentSong != null) {
@@ -430,5 +369,69 @@ fun HomeScreenStudioDashboard(
             getTrackCountBetween = getTrackCountBetween,
             getUniqueTrackCountBetween = getUniqueTrackCountBetween
         )
+    }
+}
+
+@Composable
+private fun StudioPlaybackVisualizer(isPlaying: Boolean) {
+    val (barAnim1, barAnim2, barAnim3) = if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "studio_bars")
+        val b1 by infiniteTransition.animateFloat(
+            initialValue = 0.2f, targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b1"
+        )
+        val b2 by infiniteTransition.animateFloat(
+            initialValue = 0.35f, targetValue = 0.8f,
+            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b2"
+        )
+        val b3 by infiniteTransition.animateFloat(
+            initialValue = 0.15f, targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), RepeatMode.Reverse),
+            label = "b3"
+        )
+        Triple(b1, b2, b3)
+    } else {
+        Triple(0.2f, 0.35f, 0.15f)
+    }
+
+    val primaryColor = BentoPrimary
+    val borderColor = BentoBorder
+    val barCount = 28
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(BentoBackground)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        val canvasWidth = size.width
+        val canvasHeight = size.height
+        val totalGap = (barCount - 1) * 3f
+        val barWidth = (canvasWidth - totalGap) / barCount
+
+        for (i in 0 until barCount) {
+            val factor = when (i % 3) {
+                0 -> barAnim1
+                1 -> barAnim2
+                else -> barAnim3
+            }
+            val barHeight = if (isPlaying) {
+                (canvasHeight * factor * ((i + 3).toFloat() / (barCount + 3))).coerceIn(4f, canvasHeight)
+            } else {
+                4f
+            }
+            val x = i * (barWidth + 3f)
+            val y = canvasHeight - barHeight
+
+            drawRoundRect(
+                color = if (isPlaying) primaryColor.copy(alpha = 0.4f + factor * 0.6f) else borderColor,
+                topLeft = Offset(x, y),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(2f, 2f)
+            )
+        }
     }
 }

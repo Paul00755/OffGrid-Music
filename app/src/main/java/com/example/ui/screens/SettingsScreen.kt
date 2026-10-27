@@ -1619,7 +1619,11 @@ fun SettingsScreen(
                     }
                 }
 
-                items(SETTINGS_CATEGORY_CARD_ITEMS, key = { it.section.name }) { catItem ->
+                items(
+                    items = SETTINGS_CATEGORY_CARD_ITEMS,
+                    key = { it.section.name },
+                    contentType = { "settings_category_card" }
+                ) { catItem ->
                     val sec = catItem.section
                     val title = catItem.title
                     val subtitle = catItem.subtitle

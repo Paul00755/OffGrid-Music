@@ -443,7 +443,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
 
                 if (mostPlayedFilteredSongs.isNotEmpty()) {
-                    itemsIndexed(mostPlayedFilteredSongs, key = { idx, item -> "most_played_${item.id}_$idx" }, contentType = { _, _ -> "song_item" }) { _, song ->
+                    itemsIndexed(mostPlayedFilteredSongs, key = { _, item -> "most_played_${item.id}" }, contentType = { _, _ -> "song_item" }) { _, song ->
                         var showMenu by remember { mutableStateOf(false) }
                         Box {
                             SongItem(
@@ -496,7 +496,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(playlistsToShow, key = { idx, item -> "pl_${item.id}_$idx" }) { _, playlist ->
+                            itemsIndexed(playlistsToShow, key = { _, item -> "pl_${item.id}" }, contentType = { _, _ -> "playlist_card" }) { _, playlist ->
                                 BentoCard(
                                     modifier = Modifier
                                         .width(130.dp)
@@ -583,7 +583,7 @@ fun LazyListScope.renderHomeFeedSections(
                         ) {
                             itemsIndexed(
                                 items = uniqueRecent,
-                                key = { idx, item -> "recent_played_${item.id}_$idx" },
+                                key = { _, item -> "recent_played_${item.id}" },
                                 contentType = { _, _ -> "recent_song" }
                             ) { _, song ->
                                 Column(
@@ -667,7 +667,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(recentlyAdded.take(10), key = { idx, item -> "recent_added_${item.id}_$idx" }, contentType = { _, _ -> "recent_added" }) { _, song ->
+                            itemsIndexed(recentlyAdded.take(10), key = { _, item -> "recent_added_${item.id}" }, contentType = { _, _ -> "recent_added" }) { _, song ->
                                 Column(
                                     modifier = Modifier
                                         .width(110.dp)

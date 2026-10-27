@@ -48,6 +48,7 @@ import java.util.concurrent.ConcurrentHashMap
 object ArtworkResolutionCache {
     private val lruCache = object : android.util.LruCache<Long, String>(8000) {}
     private val trackArtworkCache = object : android.util.LruCache<String, String>(8000) {}
+    private val trackIdentityCache = object : android.util.LruCache<Long, Pair<String, String>>(8000) {}
     private val trackArtworkPathById = ConcurrentHashMap<Long, String>()
     private val manualCoverCache = ConcurrentHashMap<Long, String>()
     private val manualPathCache = ConcurrentHashMap<String, String>()
@@ -83,10 +84,19 @@ object ArtworkResolutionCache {
     fun trackIdentity(songId: Long, path: String?): String {
         val normalizedPath = normalizedTrackPath(path)
         if (normalizedPath.isBlank()) return "id:$songId"
+        synchronized(trackIdentityCache) {
+            trackIdentityCache.get(songId)?.let { (cachedPath, identity) ->
+                if (cachedPath == normalizedPath) return identity
+            }
+        }
         val digest = java.security.MessageDigest.getInstance("SHA-256")
             .digest(normalizedPath.toByteArray())
             .joinToString("") { "%02x".format(it) }
-        return "id:$songId:$digest"
+        val identity = "id:$songId:$digest"
+        synchronized(trackIdentityCache) {
+            trackIdentityCache.put(songId, normalizedPath to identity)
+        }
+        return identity
     }
 
     fun trackFileName(songId: Long, path: String?): String =
