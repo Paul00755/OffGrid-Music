@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -206,7 +207,8 @@ fun FastScrollbar(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(30.dp)
+            .width(20.dp)
+            .testTag("fast_scrollbar")
             .onSizeChanged { containerHeightPx = it.height.toFloat() }
             .graphicsLayer {
                 alpha = alphaAnim

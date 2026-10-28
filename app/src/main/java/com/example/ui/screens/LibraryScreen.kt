@@ -6,6 +6,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -32,6 +33,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,6 +70,38 @@ enum class SortOption(val label: String) {
     DURATION("Duration")
 }
 
+enum class LibraryHeaderState {
+    FULL,
+    COMPACT,
+    HIDDEN
+}
+
+fun resolveLibraryHeaderStateOnScroll(
+    currentState: LibraryHeaderState,
+    deltaY: Float,
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+    downwardAccumulatedPx: Float,
+    upwardAccumulatedPx: Float,
+    collapseThresholdPx: Float = 18f,
+    revealCompactThresholdPx: Float = 18f,
+    topOffsetThresholdPx: Int = 12
+): LibraryHeaderState {
+    val isAtActualTop = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= topOffsetThresholdPx
+    if (isAtActualTop) {
+        return if (deltaY < 0f && downwardAccumulatedPx >= collapseThresholdPx) {
+            LibraryHeaderState.HIDDEN
+        } else {
+            LibraryHeaderState.FULL
+        }
+    }
+    return when {
+        deltaY < 0f && downwardAccumulatedPx >= collapseThresholdPx -> LibraryHeaderState.HIDDEN
+        deltaY > 0f && upwardAccumulatedPx >= revealCompactThresholdPx -> LibraryHeaderState.COMPACT
+        else -> currentState
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, FlowPreview::class)
 @Composable
 fun LibraryScreen(
@@ -100,15 +134,115 @@ fun LibraryScreen(
     onDeleteRecentSearch: (String) -> Unit = {},
     onClearRecentSearches: () -> Unit = {},
     scanProgress: com.example.scanner.ScanProgress = com.example.scanner.ScanProgress(),
+    onScreenEntered: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val songsListState = rememberLazyListState()
-    var areLibraryControlsVisible by remember { mutableStateOf(true) }
-    var isLibrarySearchVisible by remember { mutableStateOf(true) }
+    var headerState by remember { mutableStateOf(LibraryHeaderState.FULL) }
+    val areLibraryControlsVisible = headerState == LibraryHeaderState.FULL
+    val isLibrarySearchVisible = headerState == LibraryHeaderState.FULL || headerState == LibraryHeaderState.COMPACT
 
-    val nestedScrollConnection = remember {
-        object : NestedScrollConnection {}
+    var downwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
+    var upwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
+    var lastHeaderTransitionTimeMs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        onScreenEntered()
+    }
+
+    val nestedScrollConnection = remember(songsListState) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val deltaY = available.y
+                if (deltaY == 0f) return Offset.Zero
+
+                val nowMs = android.os.SystemClock.uptimeMillis()
+                val inTransitionCooldown = (nowMs - lastHeaderTransitionTimeMs) in 1..220L
+                val firstIndex = songsListState.firstVisibleItemIndex
+                val firstOffset = songsListState.firstVisibleItemScrollOffset
+                val isAtTop = firstIndex == 0 && firstOffset <= 12
+
+                if (deltaY < 0f) {
+                    val canScrollDown = songsListState.canScrollForward || firstIndex > 0 || firstOffset > 0
+                    if (!canScrollDown && isAtTop) {
+                        return Offset.Zero
+                    }
+                    upwardScrollAccumulator = 0f
+                    downwardScrollAccumulator += -deltaY
+                    val collapseThreshold = if (inTransitionCooldown) 40f else 18f
+                    val nextState = resolveLibraryHeaderStateOnScroll(
+                        currentState = headerState,
+                        deltaY = deltaY,
+                        firstVisibleItemIndex = firstIndex,
+                        firstVisibleItemScrollOffset = firstOffset,
+                        downwardAccumulatedPx = downwardScrollAccumulator,
+                        upwardAccumulatedPx = upwardScrollAccumulator,
+                        collapseThresholdPx = collapseThreshold
+                    )
+                    if (nextState != headerState) {
+                        headerState = nextState
+                        lastHeaderTransitionTimeMs = nowMs
+                    }
+                } else if (deltaY > 0f) {
+                    downwardScrollAccumulator = 0f
+                    upwardScrollAccumulator += deltaY
+                    val revealThreshold = if (inTransitionCooldown) 40f else 18f
+                    val nextState = resolveLibraryHeaderStateOnScroll(
+                        currentState = headerState,
+                        deltaY = deltaY,
+                        firstVisibleItemIndex = firstIndex,
+                        firstVisibleItemScrollOffset = firstOffset,
+                        downwardAccumulatedPx = downwardScrollAccumulator,
+                        upwardAccumulatedPx = upwardScrollAccumulator,
+                        revealCompactThresholdPx = revealThreshold
+                    )
+                    if (nextState != headerState) {
+                        headerState = nextState
+                        lastHeaderTransitionTimeMs = nowMs
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val firstIndex = songsListState.firstVisibleItemIndex
+                val firstOffset = songsListState.firstVisibleItemScrollOffset
+                if (firstIndex == 0 && firstOffset <= 12 && consumed.y >= 0f && downwardScrollAccumulator < 18f) {
+                    if (headerState != LibraryHeaderState.FULL) {
+                        headerState = LibraryHeaderState.FULL
+                        upwardScrollAccumulator = 0f
+                        lastHeaderTransitionTimeMs = android.os.SystemClock.uptimeMillis()
+                    }
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    LaunchedEffect(songsListState) {
+        snapshotFlow {
+            Triple(
+                songsListState.firstVisibleItemIndex,
+                songsListState.firstVisibleItemScrollOffset,
+                songsListState.canScrollForward
+            )
+        }
+            .distinctUntilChanged()
+            .collect { (index, offset, canScrollForward) ->
+                if (index == 0 && offset <= 12) {
+                    if (downwardScrollAccumulator < 18f || !canScrollForward) {
+                        if (headerState != LibraryHeaderState.FULL) {
+                            headerState = LibraryHeaderState.FULL
+                            lastHeaderTransitionTimeMs = android.os.SystemClock.uptimeMillis()
+                        }
+                    }
+                }
+            }
     }
 
     var selectedCategory by remember { mutableStateOf(LibraryCategory.SONGS) }
@@ -266,20 +400,24 @@ fun LibraryScreen(
         contentAlignment = Alignment.TopCenter
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp)
+            modifier = Modifier.fillMaxSize()
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Title Row with Back Button
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp)
             ) {
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Title Row with Back Button
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("library_title_row")
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 Row(
                     modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically
@@ -418,14 +556,26 @@ fun LibraryScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             AnimatedVisibility(
                 visible = areLibraryControlsVisible,
-                enter = expandVertically(animationSpec = tween(250)) + fadeIn(animationSpec = tween(250)),
-                exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(animationSpec = tween(200))
+                enter = expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 160))
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("library_full_header_controls")
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(SortOption.values(), key = { it.name }, contentType = { "sort_chip" }) { option ->
                             val isSelected = option == selectedSort
@@ -535,17 +685,29 @@ fun LibraryScreen(
 
             AnimatedVisibility(
                 visible = isLibrarySearchVisible,
-                enter = expandVertically(animationSpec = tween(280)) + fadeIn(animationSpec = tween(280)),
-                exit = shrinkVertically(animationSpec = tween(240)) + fadeOut(animationSpec = tween(200))
+                enter = expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 150))
             ) {
-                LibrarySearchHeaderBlock(
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = onSearchQueryChange,
-                    recentSearches = recentSearches,
-                    onAddRecentSearch = onAddRecentSearch,
-                    onDeleteRecentSearch = onDeleteRecentSearch,
-                    onClearRecentSearches = onClearRecentSearches
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("library_compact_search_header")
+                ) {
+                    LibrarySearchHeaderBlock(
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = onSearchQueryChange,
+                        recentSearches = recentSearches,
+                        onAddRecentSearch = onAddRecentSearch,
+                        onDeleteRecentSearch = onDeleteRecentSearch,
+                        onClearRecentSearches = onClearRecentSearches
+                    )
+                }
             }
 
             // Scanning status remains available while the library controls auto-hide.
@@ -602,9 +764,10 @@ fun LibraryScreen(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+            }
 
-            // Main Content List with FastScrollbar
+            // Main Content List with FastScrollbar in dedicated right-edge gutter
             val currentTotalItems = when (selectedCategory) {
                 LibraryCategory.SONGS -> processedSongs.size
                 LibraryCategory.ALBUMS -> albums.size
@@ -615,7 +778,10 @@ fun LibraryScreen(
             Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = songsListState,
-                    contentPadding = PaddingValues(bottom = 120.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("library_songs_list"),
+                    contentPadding = PaddingValues(start = 16.dp, end = 22.dp, top = 4.dp, bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     when (selectedCategory) {
@@ -867,6 +1033,7 @@ fun LibraryScreen(
                         bottomPadding = 120.dp,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
+                            .padding(end = 1.dp)
                     )
                 }
             }

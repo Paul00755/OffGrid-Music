@@ -58,6 +58,10 @@ object PlaylistCoverCache {
 
     internal fun getCollageUris(playlistId: Long): List<String>? = collageMemoryCache[playlistId]
 
+    fun invalidateAutoCollageCache() {
+        collageSignatureCache.clear()
+    }
+
     fun decodeAndCacheBitmapSync(context: Context, uriStr: String, targetPx: Int = 180): ImageBitmap? {
         if (uriStr.isBlank()) return null
         getDecodedBitmap(uriStr)?.let { return it }
@@ -289,13 +293,15 @@ fun PlaylistCover(
         mutableStateOf(PlaylistCoverCache.getCollageUris(playlist.id).orEmpty())
     }
 
-    LaunchedEffect(playlist.id, playlist.artworkUri) {
+    val globalArtworkVersion = ArtworkResolutionCache.artworkUpdateSignal.longValue
+
+    LaunchedEffect(playlist.id, playlist.artworkUri, globalArtworkVersion) {
         customArtUri = withContext(Dispatchers.IO) {
             PlaylistCoverCache.resolveCustomCoverSync(context, playlist.id, playlist.artworkUri)
         }
     }
 
-    LaunchedEffect(playlist.id, playlistSongs, customArtUri) {
+    LaunchedEffect(playlist.id, playlistSongs, customArtUri, globalArtworkVersion) {
         if (customArtUri != null) return@LaunchedEffect
         val resolved = withContext(Dispatchers.IO) {
             try {

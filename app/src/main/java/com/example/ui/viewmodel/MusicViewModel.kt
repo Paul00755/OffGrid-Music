@@ -1448,8 +1448,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @Volatile
+    private var lastAutoQuickScanTimeMs = 0L
+
     fun quickScanAndCleanLibrary() {
         if (quickScanJob?.isActive == true || scanJob?.isActive == true) return
+        lastAutoQuickScanTimeMs = android.os.SystemClock.elapsedRealtime()
         quickScanJob = viewModelScope.launch(Dispatchers.IO) {
             val isFull = preferences.fullDeviceScan.first()
             val minSec = preferences.ignoreAudioDuration.first()
@@ -1458,9 +1462,61 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             repository.quickScanAndCleanLibrary(
                 ignoreAudioDurationMs = minSec * 1000L,
                 maxAudioDurationMs = maxMs,
-                forceFullScan = isFull
+                forceFullScan = isFull,
+                skipIfAlreadyScanning = false
             )
         }
+    }
+
+    /**
+     * Triggered when the user enters the Home or Library screen.
+     * Deduplicates rapid or simultaneous entries, reuses any active scan, respects storage permissions,
+     * and runs a lightweight incremental quick scan in the background using the user's configured
+     * Library & Folders settings (included/excluded folders, min/max duration, full-device scan mode).
+     */
+    fun onScreenEnteredForAutoScan(screenName: String, force: Boolean = false): Boolean {
+        val isOnboarded = isOnboardingCompleted.value || preferences.isOnboardingCompletedSync()
+        if (!isOnboarded) return false
+
+        val appContext = getApplication<android.app.Application>()
+        if (!force && !hasReadAudioPermission(appContext)) return false
+
+        if (scanJob?.isActive == true || quickScanJob?.isActive == true || repository.isScanActive()) {
+            return false
+        }
+
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && lastAutoQuickScanTimeMs != 0L && (now - lastAutoQuickScanTimeMs) < 2_500L) {
+            return false
+        }
+        lastAutoQuickScanTimeMs = now
+
+        quickScanJob = viewModelScope.launch(Dispatchers.IO) {
+            val isFull = preferences.fullDeviceScan.first()
+            val minSec = preferences.ignoreAudioDuration.first()
+            val maxSec = preferences.maxSongDuration.first()
+            val maxMs = if (maxSec >= 300) Long.MAX_VALUE else maxSec * 1000L
+            repository.quickScanAndCleanLibrary(
+                ignoreAudioDurationMs = minSec * 1000L,
+                maxAudioDurationMs = maxMs,
+                forceFullScan = isFull,
+                skipIfAlreadyScanning = true
+            )
+        }
+        return true
+    }
+
+    private fun hasReadAudioPermission(context: android.content.Context): Boolean {
+        if (com.example.util.StoragePermissionHelper.hasStoragePermission(context)) return true
+        val permission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            android.Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            permission
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     fun addRecentSearch(query: String) {

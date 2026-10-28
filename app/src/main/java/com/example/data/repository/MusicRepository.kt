@@ -117,12 +117,21 @@ class MusicRepository(
     suspend fun quickScanAndCleanLibrary(
         ignoreAudioDurationMs: Long = 0L,
         maxAudioDurationMs: Long = Long.MAX_VALUE,
-        forceFullScan: Boolean = false
+        forceFullScan: Boolean = false,
+        skipIfAlreadyScanning: Boolean = false
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
         val excluded = if (forceFullScan) emptyList() else folderDao.getExcludedFoldersList()
-        libraryScanner.quickScanAndCleanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
+        libraryScanner.quickScanAndCleanLibrary(
+            includedFolders = included,
+            excludedFolders = excluded,
+            ignoreAudioDurationMs = ignoreAudioDurationMs,
+            maxAudioDurationMs = maxAudioDurationMs,
+            skipIfAlreadyScanning = skipIfAlreadyScanning
+        )
     }
+
+    fun isScanActive(): Boolean = libraryScanner.isScanActive()
 
     suspend fun detectAndImportNewSongs(): Int {
         return libraryScanner.detectAndImportNewSongs()
@@ -684,48 +693,84 @@ class MusicRepository(
         newYear: Int? = null,
         newTrackNumber: Int? = null
     ): Song {
+        val existingManual = com.example.util.ManualTagStore.getManualMetadata(context, song.id, song.path)
+        val trimmedTitle = newTitle.trim()
+        val trimmedArtist = newArtist.trim()
+        val trimmedAlbum = newAlbum.trim()
+        val trimmedGenre = newGenre?.trim()
+
+        val didEditTitle = (trimmedTitle.isNotBlank() && trimmedTitle != song.title && trimmedTitle != song.displayTitle) ||
+            (trimmedTitle.isNotBlank() && trimmedTitle != song.title) ||
+            existingManual?.titleEdited == true
+        val didEditArtist = (trimmedArtist.isNotBlank() && trimmedArtist != song.artist && trimmedArtist != song.displayArtist) ||
+            (trimmedArtist.isNotBlank() && trimmedArtist != song.artist) ||
+            existingManual?.artistEdited == true
+        val didEditAlbum = (trimmedAlbum.isNotBlank() && trimmedAlbum != song.album && trimmedAlbum != song.displayAlbum) ||
+            (trimmedAlbum.isNotBlank() && trimmedAlbum != song.album) ||
+            existingManual?.albumEdited == true
+        val didEditGenre = (!trimmedGenre.isNullOrBlank() && trimmedGenre != song.genre) ||
+            existingManual?.genreEdited == true
+        val didEditYear = (newYear != null && newYear > 0 && newYear != song.year) ||
+            existingManual?.yearEdited == true
+        val didEditTrack = (newTrackNumber != null && newTrackNumber > 0 && newTrackNumber != song.trackNumber) ||
+            existingManual?.trackEdited == true
+
+        val didModifyArtworkInCall = !newArtworkUri.isNullOrBlank() && newArtworkUri != song.artworkUri
+        val didEditArtwork = didModifyArtworkInCall || existingManual?.artworkEdited == true
+
         var finalArtworkUri = newArtworkUri
-        if (!newArtworkUri.isNullOrBlank()) {
+        if (didModifyArtworkInCall && !newArtworkUri.isNullOrBlank()) {
             val persistentUri = com.example.util.ArtworkManager.persistSongCover(context, song.id, newArtworkUri, song.path)
             if (!persistentUri.isNullOrBlank()) {
                 finalArtworkUri = persistentUri
             }
+        } else if (didEditArtwork && !existingManual?.artworkUri.isNullOrBlank()) {
+            finalArtworkUri = existingManual?.artworkUri
         } else if (finalArtworkUri.isNullOrBlank()) {
-            // Preserve existing artwork across title/tag changes
-            finalArtworkUri = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
-                ?: song.artworkUri
+            // Preserve existing cached/embedded artwork across title/tag changes without marking it as manual artwork
+            finalArtworkUri = song.artworkUri
                 ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
                 ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, song.id, song.path, song.albumId, song.album)
         }
 
-        if (!finalArtworkUri.isNullOrBlank()) {
-            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri, song.path)
-        }
+        val hasManualTextTags = didEditTitle || didEditArtist || didEditAlbum || didEditGenre || didEditYear || didEditTrack
 
         val updatedSong = song.copy(
-            title = newTitle.ifBlank { song.title },
-            artist = newArtist.ifBlank { song.artist },
-            album = newAlbum.ifBlank { song.album },
-            genre = newGenre?.ifBlank { song.genre } ?: song.genre,
+            title = trimmedTitle.ifBlank { song.title },
+            artist = trimmedArtist.ifBlank { song.artist },
+            album = trimmedAlbum.ifBlank { song.album },
+            genre = trimmedGenre?.ifBlank { song.genre } ?: song.genre,
             year = if (newYear != null && newYear > 0) newYear else song.year,
             trackNumber = if (newTrackNumber != null && newTrackNumber > 0) newTrackNumber else song.trackNumber,
             artworkUri = finalArtworkUri,
-            isManuallyEdited = true
+            isManuallyEdited = hasManualTextTags
         )
 
         com.example.util.ManualTagStore.markManuallyEdited(
             context = context,
             songId = song.id,
             path = song.path,
-            title = updatedSong.title,
-            artist = updatedSong.artist,
-            album = updatedSong.album,
-            genre = updatedSong.genre,
-            year = updatedSong.year,
-            trackNumber = updatedSong.trackNumber,
-            artworkUri = finalArtworkUri,
-            lyrics = newLyrics
+            title = if (didEditTitle) updatedSong.title else null,
+            artist = if (didEditArtist) updatedSong.artist else null,
+            album = if (didEditAlbum) updatedSong.album else null,
+            genre = if (didEditGenre) updatedSong.genre else null,
+            year = if (didEditYear) updatedSong.year else null,
+            trackNumber = if (didEditTrack) updatedSong.trackNumber else null,
+            artworkUri = if (didEditArtwork) finalArtworkUri else null,
+            lyrics = newLyrics,
+            titleEdited = didEditTitle,
+            artistEdited = didEditArtist,
+            albumEdited = didEditAlbum,
+            genreEdited = didEditGenre,
+            yearEdited = didEditYear,
+            trackEdited = didEditTrack,
+            artworkEdited = didModifyArtworkInCall,
+            lyricsEdited = !newLyrics.isNullOrBlank()
         )
+
+        if (!finalArtworkUri.isNullOrBlank()) {
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri, song.path)
+        }
 
         com.example.util.OnlineArtistImageFetcher.updateSongMetadataCacheKeys(
             context = context,

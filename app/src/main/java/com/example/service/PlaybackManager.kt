@@ -1217,30 +1217,35 @@ class PlaybackManager(
     fun checkVolume(explicitVolume: Int? = null) {
         scope.launch(Dispatchers.Main) {
             try {
-                val currentVol = explicitVolume ?: audioManager?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
-                if (currentVol == 0) {
+                val streamVol = audioManager?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
+                val currentVol = explicitVolume ?: streamVol
+                if (currentVol == 0 && (explicitVolume != null || streamVol == 0)) {
                     val isPlayingNow = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
                     val currentTrackPos = player.currentPosition
                     val isInitialStartup = currentTrackPos in 0L..2500L && explicitVolume == null
-                    if (isPlayingNow && pauseOnZeroVolume && !isInitialStartup) {
+                    if (isPlayingNow && pauseOnZeroVolume && !isInitialStartup && !audioFocusManager.hasActiveInterruption()) {
                         wasPausedByZeroVolume = true
                         if (fadeOutMs > 0) {
                             pauseWithFade(fromZeroVolume = true)
                         } else {
-                            pause()
+                            pauseInternal()
                             wasPausedByZeroVolume = true
                         }
                     }
                 } else if (currentVol > 0) {
                     if (wasPausedByZeroVolume) {
                         wasPausedByZeroVolume = false
-                        if (autoResumeOnVolumeIncrease) {
+                        if (autoResumeOnVolumeIncrease &&
+                            !audioFocusManager.userManuallyPausedOrStopped &&
+                            !audioFocusManager.hasActiveInterruption() &&
+                            !isSleepTimerFinalStopping
+                        ) {
                             val notPlaying = !_playbackState.value.isPlaying && !player.isPlaying
                             if (notPlaying && _playbackState.value.queue.isNotEmpty()) {
                                 if (fadeInMs > 0) {
-                                    playWithFade()
+                                    playWithFade(fromAutoResume = true)
                                 } else {
-                                    play()
+                                    play(fromAutoResume = true)
                                 }
                             }
                         }
@@ -1252,16 +1257,15 @@ class PlaybackManager(
 
     private val volumeReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
+            val streamType = intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) ?: -1
+            if (streamType != android.media.AudioManager.STREAM_MUSIC) return
             val now = System.currentTimeMillis()
             if (now - lastVolumeChangeTime < 100) return
             lastVolumeChangeTime = now
 
-            val streamType = intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) ?: -1
             val streamValue = intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1) ?: -1
-            if (streamType == android.media.AudioManager.STREAM_MUSIC && streamValue >= 0) {
+            if (streamValue >= 0) {
                 checkVolume(streamValue)
-            } else {
-                checkVolume(null)
             }
         }
     }
@@ -1269,7 +1273,6 @@ class PlaybackManager(
     private val volumeObserver = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
             super.onChange(selfChange)
-            checkVolume()
         }
     }
 
@@ -2384,9 +2387,9 @@ class PlaybackManager(
         val alreadyPlaying = !isFadingOutToPause && (player.isPlaying || _playbackState.value.isPlaying)
         if (alreadyPlaying) return
         if (fadeInMs > 0) {
-            playWithFade(fadeInMs)
+            playWithFade(fadeInMs, fromAutoResume = true)
         } else {
-            play()
+            play(fromAutoResume = true)
         }
     }
 
@@ -2414,7 +2417,9 @@ class PlaybackManager(
     }
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
-        audioFocusManager.cancelPendingResume()
+        if (!fromZeroVolume) {
+            audioFocusManager.cancelPendingResume()
+        }
         wasPausedByZeroVolume = fromZeroVolume
         val duration = (customFadeOutMs ?: fadeOutMs).coerceIn(0, 10000)
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
@@ -2443,16 +2448,20 @@ class PlaybackManager(
             }
         } else {
             isFadingOutToPause = false
-            pause()
+            pauseInternal()
             wasPausedByZeroVolume = fromZeroVolume
         }
     }
 
-    fun play() {
-        audioFocusManager.onUserPlayRequested()
+    fun play(fromAutoResume: Boolean = false) {
+        if (!fromAutoResume) {
+            audioFocusManager.onUserPlayRequested()
+        }
         val wasFadingOut = isFadingOutToPause
         isFadingOutToPause = false
-        audioFocusManager.requestAudioFocus()
+        if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
+            audioFocusManager.requestAudioFocus()
+        }
         fadeJob?.cancel()
         fadeJob = null
         player.volume = 1.0f
@@ -2488,12 +2497,16 @@ class PlaybackManager(
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
-    fun playWithFade(customFadeInMs: Int? = null) {
-        audioFocusManager.onUserPlayRequested()
+    fun playWithFade(customFadeInMs: Int? = null, fromAutoResume: Boolean = false) {
+        if (!fromAutoResume) {
+            audioFocusManager.onUserPlayRequested()
+        }
         val wasFadingOut = isFadingOutToPause
         val currentVolBeforeResume = player.volume.coerceIn(0f, 1f)
         isFadingOutToPause = false
-        audioFocusManager.requestAudioFocus()
+        if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
+            audioFocusManager.requestAudioFocus()
+        }
         fadeJob?.cancel()
         fadeJob = null
         val duration = (customFadeInMs ?: fadeInMs).coerceIn(0, 10000)
@@ -2880,7 +2893,7 @@ class PlaybackManager(
                                 lastPrewarmedSongId = nextSong.id
                                 prewarmJob = scope.launch(Dispatchers.IO) {
                                     try {
-                                        val authUri = com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, nextSong, false)
+                                        val authUri = resolveAndUpgradeTrackArtworkIfNeeded(nextSong)
                                         if (!authUri.isNullOrBlank()) {
                                             com.example.ui.components.ArtworkResolutionCache.cacheArtwork(nextSong.id, nextSong.path, authUri)
                                         }
@@ -3049,8 +3062,11 @@ class PlaybackManager(
             currentSong = newCurrentSong
         )
         try {
+            val activeMediaIdx = player.currentMediaItemIndex
             for (i in currentQueue.indices) {
-                if (currentQueue[i].id == updatedSong.id && i < player.mediaItemCount) {
+                // Never call replaceMediaItem on the actively playing item when only metadata/artwork changed,
+                // as ExoPlayer re-prepares the current period and causes a mid-playback pause!
+                if (currentQueue[i].id == updatedSong.id && i < player.mediaItemCount && i != activeMediaIdx) {
                     val newMediaItem = buildMediaItem(updatedSong, loadArtworkBytes = false)
                     player.replaceMediaItem(i, newMediaItem)
                 }
@@ -3099,13 +3115,20 @@ class PlaybackManager(
         val newQueue = _playbackState.value.queue.map {
             if (matchesSong(it)) it.copy(artworkUri = artworkUri) else it
         }
+        if (originalQueue.isNotEmpty()) {
+            originalQueue = originalQueue.map {
+                if (matchesSong(it)) it.copy(artworkUri = artworkUri) else it
+            }
+        }
         _playbackState.value = _playbackState.value.copy(
             currentSong = newCurrentSong,
             queue = newQueue
         )
         val targetIdx = newQueue.indexOfFirst(matchesSong)
         val targetSong = newQueue.getOrNull(targetIdx) ?: newCurrentSong?.takeIf(matchesSong)
-        if (targetIdx >= 0 && targetIdx < player.mediaItemCount) {
+        // Only update non-active MediaItems on ExoPlayer; replacing the currently playing MediaItem
+        // when only artworkUri changed causes ExoPlayer to rebuffer and pause playback!
+        if (targetIdx >= 0 && targetIdx < player.mediaItemCount && targetIdx != player.currentMediaItemIndex) {
             try {
                 player.replaceMediaItem(targetIdx, buildMediaItem(newQueue[targetIdx], loadArtworkBytes = false))
             } catch (_: Exception) {}
@@ -3134,10 +3157,71 @@ class PlaybackManager(
         }
     }
 
+    private suspend fun resolveAndUpgradeTrackArtworkIfNeeded(song: Song): String? {
+        var authUri = try {
+            com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song, false)?.also {
+                if (it.isNotBlank()) {
+                    com.example.ui.components.ArtworkResolutionCache.cacheArtwork(song.id, song.path, it)
+                }
+            }
+        } catch (_: Throwable) { null }
+
+        val isManualArt = com.example.util.ManualTagStore.isArtworkManuallyEdited(context, song.id, song.path)
+        if (isManualArt) return authUri
+
+        val preferHighRes = try { userPreferences.getFetchOnlineArtworkHighResSync() } catch (_: Throwable) { userPreferences.cachedFetchOnlineArtworkHighRes }
+        val cacheEnabled = userPreferences.cachedCacheAlbumArtEnabled && userPreferences.cachedCacheSongArtWorkEnabled
+        val isMissingArtwork = authUri.isNullOrBlank()
+        val isEligibleForHighResUpgrade = preferHighRes && !com.example.ui.components.ArtworkResolutionCache.hasHighResArtwork(context, song.id, song.path)
+
+        if ((isMissingArtwork || isEligibleForHighResUpgrade) &&
+            com.example.ui.components.ArtworkResolutionCache.shouldAttemptArtworkLookup(song.id, song.path) &&
+            com.example.ui.components.ArtworkResolutionCache.tryAcquireOnlineFetch(song.id, song.path, preferHighRes)
+        ) {
+            val startGen = com.example.util.ManualTagStore.getArtworkEditGeneration(context, song.id, song.path)
+            try {
+                val onlineUrl = com.example.util.OnlineArtistImageFetcher.getSongArtworkUrl(
+                    context = context,
+                    title = song.displayTitle,
+                    artist = song.displayArtist,
+                    album = song.displayAlbum,
+                    preferUltraHd = preferHighRes,
+                    cacheEnabled = cacheEnabled,
+                    songId = song.id,
+                    filePath = song.path
+                )
+                if (!onlineUrl.isNullOrBlank() &&
+                    !com.example.util.ManualTagStore.isArtworkManuallyEdited(context, song.id, song.path) &&
+                    com.example.util.ManualTagStore.getArtworkEditGeneration(context, song.id, song.path) == startGen
+                ) {
+                    val savedLocal = if (cacheEnabled) {
+                        com.example.util.ArtworkManager.saveFetchedArtworkLocally(
+                            context = context,
+                            songId = song.id,
+                            url = onlineUrl,
+                            filePath = song.path,
+                            isHighRes = preferHighRes,
+                            expectedArtworkGeneration = startGen
+                        ) ?: onlineUrl
+                    } else onlineUrl
+                    if (savedLocal.isNotBlank()) {
+                        authUri = savedLocal
+                    }
+                } else if (onlineUrl.isNullOrBlank() && isMissingArtwork) {
+                    com.example.ui.components.ArtworkResolutionCache.markArtworkLookupFailed(song.id, song.path)
+                }
+            } catch (_: Throwable) {
+            } finally {
+                com.example.ui.components.ArtworkResolutionCache.releaseOnlineFetch(song.id, song.path, preferHighRes)
+            }
+        }
+        return authUri
+    }
+
     private fun launchSongArtworkRefresh(song: Song) {
         notificationArtworkJob?.cancel()
         notificationArtworkJob = scope.launch(Dispatchers.IO) {
-            val authUri = try {
+            val initialLocalUri = try {
                 com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song, false)?.also {
                     if (it.isNotBlank()) {
                         com.example.ui.components.ArtworkResolutionCache.cacheArtwork(song.id, song.path, it)
@@ -3145,18 +3229,19 @@ class PlaybackManager(
                 }
             } catch (_: Throwable) { null }
 
-            val artBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+            // First immediately populate notification/widget with existing cached/embedded artwork (0ms wait)
+            val initialBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
                 context = context,
                 songId = song.id,
                 filePath = song.path,
                 albumId = song.albumId,
-                artworkUriStr = authUri ?: song.artworkUri
+                artworkUriStr = initialLocalUri ?: song.artworkUri
             )
-            if (artBytes != null && artBytes.isNotEmpty()) {
+            if (initialBytes != null && initialBytes.isNotEmpty()) {
                 val cached = com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
                 if (cached == null || cached.isRecycled) {
                     try {
-                        val bmp = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(initialBytes, 0, initialBytes.size)
                         if (bmp != null) {
                             com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
                         }
@@ -3168,6 +3253,32 @@ class PlaybackManager(
                         MusicPlaybackService.instance?.triggerNotificationUpdate()
                         com.example.widget.WidgetBitmapRenderer.invalidateSong(song.id)
                         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                    }
+                }
+            }
+
+            // Next, if artwork is missing (Case A) or eligible for High-Res upgrade when High-Res is ON (Case B),
+            // retrieve and upgrade in the background without blocking playback startup!
+            val upgradedUri = resolveAndUpgradeTrackArtworkIfNeeded(song)
+            if (!upgradedUri.isNullOrBlank() && upgradedUri != initialLocalUri) {
+                val upgradedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
+                    context = context,
+                    songId = song.id,
+                    filePath = song.path,
+                    albumId = song.albumId,
+                    artworkUriStr = upgradedUri
+                )
+                if (upgradedBytes != null && upgradedBytes.isNotEmpty()) {
+                    try {
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(upgradedBytes, 0, upgradedBytes.size)
+                        if (bmp != null) {
+                            com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
+                        }
+                    } catch (_: Throwable) {}
+                }
+                withContext(Dispatchers.Main) {
+                    if (_playbackState.value.currentSong?.let { it.id == song.id && it.path == song.path } == true) {
+                        updateCurrentSongArtwork(song.id, upgradedUri, song.path)
                     }
                 }
             }
@@ -3248,16 +3359,10 @@ class PlaybackManager(
     fun setPreferredAudioDevice(deviceInfo: android.media.AudioDeviceInfo?) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             try {
+                if (currentPreferredDevice?.id == deviceInfo?.id) return
                 currentPreferredDevice = deviceInfo
                 player.setPreferredAudioDevice(deviceInfo)
                 _crossfadePlayer?.setPreferredAudioDevice(deviceInfo)
-                if (player.isPlaying) {
-                    val currentPos = player.currentPosition
-                    player.seekTo(currentPos)
-                } else if (_crossfadePlayer?.isPlaying == true) {
-                    val currentPos = _crossfadePlayer?.currentPosition ?: 0L
-                    _crossfadePlayer?.seekTo(currentPos)
-                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }

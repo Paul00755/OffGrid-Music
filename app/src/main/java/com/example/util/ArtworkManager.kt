@@ -468,13 +468,24 @@ object ArtworkManager {
         }
     }
 
-    fun saveFetchedArtworkLocally(context: Context, songId: Long, url: String, filePath: String? = null): String? {
+    fun saveFetchedArtworkLocally(
+        context: Context,
+        songId: Long,
+        url: String,
+        filePath: String? = null,
+        isHighRes: Boolean = false,
+        expectedArtworkGeneration: Long? = null
+    ): String? {
         if (songId <= 0L || url.isBlank()) return null
+        val safePath = filePath.orEmpty()
         // Never overwrite an explicit user-selected manual cover
-        val existingManual = ManualTagStore.getManualMetadata(context, songId, filePath.orEmpty())?.artworkUri
-            ?: ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
-        if (!existingManual.isNullOrBlank()) {
-            return existingManual
+        if (ManualTagStore.isArtworkManuallyEdited(context, songId, safePath)) {
+            return ManualTagStore.getManualMetadata(context, songId, safePath)?.artworkUri
+                ?: ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
+        }
+        val startGen = expectedArtworkGeneration ?: ManualTagStore.getArtworkEditGeneration(context, songId, safePath)
+        if (ManualTagStore.getArtworkEditGeneration(context, songId, safePath) != startGen) {
+            return ManualTagStore.getManualMetadata(context, songId, safePath)?.artworkUri
         }
         return try {
             val destDir = File(context.filesDir, CACHE_DIR_NAME)
@@ -491,20 +502,43 @@ object ArtworkManager {
                 if (isValidCompleteImageFile(f)) f.readBytes() else null
             } else null
 
+            // Re-check manual edit state and generation after network/disk read to prevent concurrent race overwrite
+            if (ManualTagStore.isArtworkManuallyEdited(context, songId, safePath) ||
+                ManualTagStore.getArtworkEditGeneration(context, songId, safePath) != startGen
+            ) {
+                return ManualTagStore.getManualMetadata(context, songId, safePath)?.artworkUri
+                    ?: ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
+            }
+
             if (rawBytes != null && rawBytes.isNotEmpty()) {
                 val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
                 val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
                 if (bmp != null) {
-                    val savedBytes = writeBitmapAtomically(destFile, bmp, 90, songId)
+                    val savedBytes = writeBitmapAtomically(destFile, bmp, 92, songId)
                     if (savedBytes != null) {
                         putNotificationArtwork(songId, savedBytes, bmp, filePath)
                         val localUri = Uri.fromFile(destFile).toString()
+                        val achievedHighRes = isHighRes || bmp.width >= 600 || bmp.height >= 600 ||
+                            url.contains("1000x1000") || url.contains("600x600") || url.contains("cover_xl")
+                        if (achievedHighRes) {
+                            ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, localUri)
+                        }
                         ArtworkResolutionCache.cacheArtwork(songId, filePath, localUri)
+                        ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, localUri, filePath, forceReplace = true)
+                        ArtworkResolutionCache.notifyArtworkChanged(songId, localUri, filePath)
+                        try {
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    com.example.data.local.AppDatabase.getInstance(context).songDao().updateSongArtwork(songId, localUri)
+                                } catch (_: Throwable) {}
+                            }
+                        } catch (_: Throwable) {}
                         com.example.service.PlaybackManager.activeInstance?.let { pm ->
                             val currentSong = pm.playbackState.value.currentSong
-                            if (currentSong?.id == songId && (filePath.isNullOrBlank() || currentSong.path == filePath)) {
+                            val inQueue = pm.playbackState.value.queue.any { it.id == songId && (filePath.isNullOrBlank() || it.path == filePath) }
+                            if ((currentSong?.id == songId && (filePath.isNullOrBlank() || currentSong.path == filePath)) || inQueue) {
                                 CoroutineScope(Dispatchers.Main).launch {
-                                pm.updateCurrentSongArtwork(songId, localUri, filePath)
+                                    pm.updateCurrentSongArtwork(songId, localUri, filePath)
                                 }
                             }
                         }
@@ -721,16 +755,17 @@ object ArtworkManager {
         }
 
         // 1. Check manual song_covers first (highest priority, user-explicit)
-        val manualMetaArt = ManualTagStore.getManualMetadata(context, songId, filePath)?.artworkUri
-        if (!manualMetaArt.isNullOrBlank()) {
-            if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualMetaArt)
-            return@withContext manualMetaArt
-        }
-
-        val manualCoverUri = ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
-        if (!manualCoverUri.isNullOrBlank()) {
-            if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualCoverUri)
-            return@withContext manualCoverUri
+        if (ManualTagStore.isArtworkManuallyEdited(context, songId, filePath)) {
+            val manualMetaArt = ManualTagStore.getManualMetadata(context, songId, filePath)?.artworkUri
+            if (!manualMetaArt.isNullOrBlank()) {
+                if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualMetaArt)
+                return@withContext manualMetaArt
+            }
+            val manualCoverUri = ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
+            if (!manualCoverUri.isNullOrBlank()) {
+                if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, manualCoverUri)
+                return@withContext manualCoverUri
+            }
         }
 
         ArtworkResolutionCache.getOrCheckDisk(context, songId, filePath)?.let { return@withContext it }
@@ -986,10 +1021,12 @@ object ArtworkManager {
                     } catch (_: Exception) {}
 
                     val newUri = Uri.fromFile(destFile).toString()
+                    ManualTagStore.markArtworkManuallyEdited(context, songId, songPath.orEmpty(), newUri)
+                    ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
 
                     try {
                         val loader = coil.Coil.imageLoader(context)
-                        loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") }?.forEach { key ->
+                        loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") || it.key.contains("art_id:$songId") }?.forEach { key ->
                             loader.memoryCache?.remove(key)
                         }
                         // Pre-warm Coil memory cache with the new cover immediately
@@ -1013,6 +1050,8 @@ object ArtworkManager {
                             writeBytesAtomically(stableFile, rawBytes, songId)
                         }
                         val newUri = Uri.fromFile(destFile).toString()
+                        ManualTagStore.markArtworkManuallyEdited(context, songId, songPath.orEmpty(), newUri)
+                        ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
                         ArtworkResolutionCache.notifyArtworkChanged(songId, newUri, songPath)
                         return@withContext newUri
                     }

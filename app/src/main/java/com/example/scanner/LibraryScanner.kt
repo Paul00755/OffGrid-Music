@@ -115,68 +115,84 @@ class LibraryScanner(
         val filename = File(filePath).name
         val resolvedId = existing?.id ?: id
         val manualMeta = com.example.util.ManualTagStore.getManualMetadata(context, resolvedId, filePath)
-        val isManual = existing?.isManuallyEdited == true ||
-            (existing != null && com.example.util.ManualTagStore.isManuallyEdited(context, existing.id, existing.path)) ||
-            manualMeta != null
+        val hasLegacyManualFlag = manualMeta == null && existing?.isManuallyEdited == true
 
-        val manualArt = manualMeta?.artworkUri
-            ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, resolvedId, filePath)
-        val finalArtwork = manualArt ?: existing?.artworkUri?.takeIf { it.isNotBlank() } ?: try {
-            com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, resolvedId, filePath)
-        } catch (_: Exception) { null }
+        val isTitleManual = manualMeta?.titleEdited == true || hasLegacyManualFlag
+        val isArtistManual = manualMeta?.artistEdited == true || hasLegacyManualFlag
+        val isAlbumManual = manualMeta?.albumEdited == true || hasLegacyManualFlag
+        val isGenreManual = manualMeta?.genreEdited == true || hasLegacyManualFlag
+        val isYearManual = manualMeta?.yearEdited == true || hasLegacyManualFlag
+        val isTrackManual = manualMeta?.trackEdited == true || hasLegacyManualFlag
+        val isArtManual = manualMeta?.artworkEdited == true
 
-        if (isManual) {
-            val resolvedTitle = manualMeta?.title?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.title else rawTitle) ?: filename.substringBeforeLast(".")
-            val resolvedArtist = manualMeta?.artist?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.artist else rawArtist) ?: "Unknown Artist"
-            val resolvedAlbum = manualMeta?.album?.takeIf { it.isNotBlank() } ?: (if (existing?.isManuallyEdited == true) existing.album else rawAlbum) ?: "Unknown Album"
-            val resolvedGenre = manualMeta?.genre ?: existing?.genre ?: "Music"
-            val resolvedYear = manualMeta?.year ?: (if (year > 0) year else (existing?.year ?: 0))
-            val resolvedTrack = manualMeta?.trackNumber ?: (if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0))
-
-            return SongEntity(
-                id = resolvedId,
-                title = resolvedTitle,
-                artist = resolvedArtist,
-                album = resolvedAlbum,
-                genre = resolvedGenre,
-                durationMs = if (durationMs > 0) durationMs else (existing?.durationMs ?: 180000L),
-                path = filePath,
-                contentUriString = contentUri,
-                artworkUri = finalArtwork,
-                albumId = if (albumId > 0) albumId else (existing?.albumId ?: 0L),
-                artistId = if (artistId > 0) artistId else (existing?.artistId ?: 0L),
-                trackNumber = resolvedTrack,
-                year = resolvedYear,
-                dateAdded = existing?.dateAdded ?: dateAdded,
-                lastPlayed = existing?.lastPlayed ?: 0L,
-                playCount = existing?.playCount ?: 0,
-                isFavorite = existing?.isFavorite ?: false,
-                bitrate = existing?.bitrate ?: 0,
-                format = format,
-                isMissing = false,
-                isCorrupted = false,
-                isManuallyEdited = true
-            )
+        val resolvedArtwork = if (isArtManual) {
+            manualMeta?.artworkUri?.takeIf { it.isNotBlank() }
+                ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, resolvedId, filePath)
+                ?: existing?.artworkUri?.takeIf { it.isNotBlank() }
+        } else {
+            existing?.artworkUri?.takeIf { it.isNotBlank() } ?: try {
+                com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, resolvedId, filePath)
+            } catch (_: Exception) { null }
         }
 
-        val cleanTitle = TagCleaner.cleanTitle(rawTitle, filename)
-        val cleanArtist = TagCleaner.cleanArtist(rawArtist)
-        val cleanAlbum = TagCleaner.cleanAlbum(rawAlbum)
+        val resolvedTitle = if (isTitleManual) {
+            manualMeta?.title?.takeIf { it.isNotBlank() }
+                ?: existing?.title?.takeIf { it.isNotBlank() }
+                ?: TagCleaner.cleanTitle(rawTitle, filename)
+        } else {
+            TagCleaner.cleanTitle(rawTitle, filename)
+        }
+
+        val resolvedArtist = if (isArtistManual) {
+            manualMeta?.artist?.takeIf { it.isNotBlank() }
+                ?: existing?.artist?.takeIf { it.isNotBlank() }
+                ?: TagCleaner.cleanArtist(rawArtist)
+        } else {
+            TagCleaner.cleanArtist(rawArtist)
+        }
+
+        val resolvedAlbum = if (isAlbumManual) {
+            manualMeta?.album?.takeIf { it.isNotBlank() }
+                ?: existing?.album?.takeIf { it.isNotBlank() }
+                ?: TagCleaner.cleanAlbum(rawAlbum)
+        } else {
+            TagCleaner.cleanAlbum(rawAlbum)
+        }
+
+        val resolvedGenre = if (isGenreManual) {
+            manualMeta?.genre?.takeIf { it.isNotBlank() } ?: existing?.genre ?: "Music"
+        } else {
+            existing?.genre ?: "Music"
+        }
+
+        val resolvedYear = if (isYearManual) {
+            manualMeta?.year ?: (if (year > 0) year else (existing?.year ?: 0))
+        } else {
+            if (year > 0) year else (existing?.year ?: 0)
+        }
+
+        val resolvedTrack = if (isTrackManual) {
+            manualMeta?.trackNumber ?: (if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0))
+        } else {
+            if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0)
+        }
+
+        val hasManualTextTags = isTitleManual || isArtistManual || isAlbumManual || isGenreManual || isYearManual || isTrackManual
 
         return SongEntity(
             id = resolvedId,
-            title = cleanTitle,
-            artist = cleanArtist,
-            album = cleanAlbum,
-            genre = existing?.genre ?: "Music",
+            title = resolvedTitle,
+            artist = resolvedArtist,
+            album = resolvedAlbum,
+            genre = resolvedGenre,
             durationMs = if (durationMs > 0) durationMs else (existing?.durationMs ?: 180000L),
             path = filePath,
             contentUriString = contentUri,
-            artworkUri = finalArtwork,
+            artworkUri = resolvedArtwork,
             albumId = if (albumId > 0) albumId else (existing?.albumId ?: 0L),
             artistId = if (artistId > 0) artistId else (existing?.artistId ?: 0L),
-            trackNumber = if (trackNum > 0) trackNum else (existing?.trackNumber ?: 0),
-            year = if (year > 0) year else (existing?.year ?: 0),
+            trackNumber = resolvedTrack,
+            year = resolvedYear,
             dateAdded = existing?.dateAdded ?: dateAdded,
             lastPlayed = existing?.lastPlayed ?: 0L,
             playCount = existing?.playCount ?: 0,
@@ -184,7 +200,8 @@ class LibraryScanner(
             bitrate = existing?.bitrate ?: 0,
             format = format,
             isMissing = false,
-            isManuallyEdited = false
+            isCorrupted = false,
+            isManuallyEdited = hasManualTextTags
         )
     }
 
@@ -198,6 +215,8 @@ class LibraryScanner(
     private val scanMutex = Mutex()
     private var pendingAutoDetect = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    fun isScanActive(): Boolean = scanMutex.isLocked || _scanProgress.value.isEffectivelyScanning
 
     private var contentObserver: ContentObserver? = null
     private val activeFileObservers = mutableListOf<FileObserver>()
@@ -1006,9 +1025,15 @@ class LibraryScanner(
         includedFolders: List<FolderEntity> = emptyList(),
         excludedFolders: List<FolderEntity> = emptyList(),
         ignoreAudioDurationMs: Long = 0L,
-        maxAudioDurationMs: Long = Long.MAX_VALUE
+        maxAudioDurationMs: Long = Long.MAX_VALUE,
+        skipIfAlreadyScanning: Boolean = false
     ) = withContext(Dispatchers.IO) {
-        scanMutex.withLock {
+        if (skipIfAlreadyScanning) {
+            if (!scanMutex.tryLock()) return@withContext
+        } else {
+            scanMutex.lock()
+        }
+        try {
             var filesDiscovered = 0
             var filesProcessed = 0
             var duplicatesSkipped = 0
@@ -1055,22 +1080,24 @@ class LibraryScanner(
                         }
                     }
 
-                    val isManual = dbSong.isManuallyEdited || com.example.util.ManualTagStore.isManuallyEdited(context, dbSong.id, dbSong.path)
-                    if (!isManual) {
-                        val filename = File(dbSong.path).name
-                        val normalizedTitle = TagCleaner.cleanTitle(dbSong.title, filename)
-                        val normalizedArtist = TagCleaner.cleanArtist(dbSong.artist)
-                        val normalizedAlbum = TagCleaner.cleanAlbum(dbSong.album)
-
-                        if (normalizedTitle != dbSong.title || normalizedArtist != dbSong.artist || normalizedAlbum != dbSong.album) {
-                            songsToUpdate.add(
-                                dbSong.copy(
-                                    title = normalizedTitle,
-                                    artist = normalizedArtist,
-                                    album = normalizedAlbum
-                                )
-                            )
-                        }
+                    val evaluated = buildOrUpdateSongEntity(
+                        existing = dbSong,
+                        id = dbSong.id,
+                        rawTitle = dbSong.title,
+                        rawArtist = dbSong.artist,
+                        rawAlbum = dbSong.album,
+                        durationMs = dbSong.durationMs,
+                        filePath = dbSong.path,
+                        contentUri = dbSong.contentUriString,
+                        albumId = dbSong.albumId,
+                        artistId = dbSong.artistId,
+                        trackNum = dbSong.trackNumber,
+                        year = dbSong.year,
+                        dateAdded = dbSong.dateAdded,
+                        format = dbSong.format
+                    )
+                    if (evaluated != dbSong) {
+                        songsToUpdate.add(evaluated)
                     }
                 }
 
@@ -1304,7 +1331,7 @@ class LibraryScanner(
                     for (dir in fastScanDirs) {
                         scanDirectDirectoryForNewSongs(
                             directory = dir,
-                            maxDepth = 3,
+                            maxDepth = 4,
                             existingByPath = existingByPath,
                             discoveredPaths = discoveredPaths,
                             normIncludedPaths = normIncludedPaths,
@@ -1374,6 +1401,8 @@ class LibraryScanner(
                     isFinished = false
                 )
             }
+        } finally {
+            scanMutex.unlock()
         }
     }
 

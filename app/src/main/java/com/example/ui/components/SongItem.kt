@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,7 +42,8 @@ fun SongItem(
             .clip(SongItemRowShape)
             .background(if (isPlaying) BentoCardDarkPurple else BentoCardSurface)
             .clickable(onClick = onClick)
-            .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+            .testTag("song_item_${song.id}"),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Thumbnail Album Artwork
@@ -89,7 +91,9 @@ fun SongItem(
         // Favorite Button
         IconButton(
             onClick = onFavoriteToggle,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier
+                .size(36.dp)
+                .testTag("song_favorite_${song.id}")
         ) {
             Icon(
                 imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -102,7 +106,9 @@ fun SongItem(
         // More Menu
         IconButton(
             onClick = onMoreClick,
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier
+                .size(36.dp)
+                .testTag("song_more_${song.id}")
         ) {
             Icon(
                 imageVector = Icons.Default.MoreVert,

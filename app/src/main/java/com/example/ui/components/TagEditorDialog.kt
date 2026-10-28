@@ -45,14 +45,15 @@ fun TagEditorDialog(
     var yearText by remember(song.id) { mutableStateOf(if (song.year > 0) song.year.toString() else "") }
     var trackNumberText by remember(song.id) { mutableStateOf(if (song.trackNumber > 0) song.trackNumber.toString() else "") }
     var artworkUri by remember(song.id) { mutableStateOf<String?>(song.artworkUri) }
+    var userModifiedArtwork by remember(song.id) { mutableStateOf(false) }
     var lyrics by remember(song.id) { mutableStateOf(initialLyrics) }
     val context = LocalContext.current
 
     LaunchedEffect(song.id) {
-        if (artworkUri.isNullOrBlank()) {
-            val resolved = ArtworkResolutionCache.getOrCheckDisk(context, song.id)
+        if (artworkUri.isNullOrBlank() && !userModifiedArtwork) {
+            val resolved = ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
                 ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, song.id, song.path, song.albumId, song.album)
-            if (!resolved.isNullOrBlank()) {
+            if (!resolved.isNullOrBlank() && !userModifiedArtwork) {
                 artworkUri = resolved
             }
         }
@@ -75,6 +76,7 @@ fun TagEditorDialog(
     ) { uri: Uri? ->
         if (uri != null) {
             artworkUri = uri.toString()
+            userModifiedArtwork = true
         }
     }
 
@@ -263,7 +265,10 @@ fun TagEditorDialog(
 
                         if (!artworkUri.isNullOrBlank()) {
                             TextButton(
-                                onClick = { artworkUri = null },
+                                onClick = {
+                                    artworkUri = null
+                                    userModifiedArtwork = true
+                                },
                                 contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text("Remove artwork", fontSize = 11.sp, color = BentoAccentPinkText)
@@ -469,7 +474,8 @@ fun TagEditorDialog(
                             showConfirmSave = false
                             val y = yearText.trim().toIntOrNull() ?: 0
                             val trk = trackNumberText.trim().toIntOrNull() ?: 0
-                            onSaveTags(title.trim(), artist.trim(), album.trim(), genre.trim(), y, trk, artworkUri, lyrics.trim())
+                            val artToSave = if (userModifiedArtwork) artworkUri else song.artworkUri
+                            onSaveTags(title.trim(), artist.trim(), album.trim(), genre.trim(), y, trk, artToSave, lyrics.trim())
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(
@@ -705,6 +711,7 @@ fun TagEditorDialog(
                                 onClick = {
                                     if (!tempSelectedUri.isNullOrBlank()) {
                                         artworkUri = tempSelectedUri
+                                        userModifiedArtwork = true
                                     }
                                     showArtworkSearchDialog = false
                                 },

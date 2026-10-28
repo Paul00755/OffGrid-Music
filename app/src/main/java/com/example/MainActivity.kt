@@ -250,6 +250,13 @@ class MainActivity : ComponentActivity() {
                         val listener = androidx.lifecycle.LifecycleEventObserver { _, event ->
                             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                                 hasStorageAccess = hasAllFilesPermission()
+                                val currentTab = viewModel.selectedTab.value
+                                if (!viewModel.showSplash.value &&
+                                    viewModel.isOnboardingCompleted.value &&
+                                    (currentTab == NavTab.HOME || currentTab == NavTab.LIBRARY)
+                                ) {
+                                    viewModel.onScreenEnteredForAutoScan(currentTab.name)
+                                }
                             }
                         }
                         val lifecycle = this@MainActivity.lifecycle
@@ -520,7 +527,8 @@ class MainActivity : ComponentActivity() {
                                                 customAvatarUri = customAvatarUri,
                                                 onOpenAccount = { viewModel.openAccountScreen() },
                                                 onOpenAuth = { viewModel.openAuthScreen() },
-                                                onSignOut = { viewModel.signOut() }
+                                                onSignOut = { viewModel.signOut() },
+                                                onScreenEntered = { viewModel.onScreenEnteredForAutoScan("HOME") }
                                              )
                                             NavTab.LIBRARY -> LibraryScreen(
                                                 allSongs = allSongs,
@@ -556,7 +564,8 @@ class MainActivity : ComponentActivity() {
                                                 onAddRecentSearch = { viewModel.addRecentSearch(it) },
                                                 onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
                                                 onClearRecentSearches = { viewModel.clearRecentSearches() },
-                                                scanProgress = scanProgress
+                                                scanProgress = scanProgress,
+                                                onScreenEntered = { viewModel.onScreenEnteredForAutoScan("LIBRARY") }
                                             )
                                             NavTab.PLAYLISTS -> {
                                                 val playlistViewMode by viewModel.playlistViewMode.collectAsState()

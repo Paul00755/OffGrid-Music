@@ -195,13 +195,12 @@ class AudioFocusManager(
                         Log.d(TAG, "Phone call audio focus loss, pausing playback")
                         beginInterruptionLocked(InterruptionSource.PHONE_CALL)
                     }
+                    isCameraActive && !autoPauseCamera -> {
+                        Log.d(TAG, "Ignoring camera-correlated transient focus loss because autoPauseCamera=false")
+                    }
                     isCameraActive && !autoPauseSystemAudio -> {
-                        if (autoPauseCamera) {
-                            Log.d(TAG, "Camera-correlated transient focus loss with autoPauseCamera=true")
-                            beginInterruptionLocked(InterruptionSource.CAMERA)
-                        } else {
-                            Log.d(TAG, "Ignoring camera transient focus loss (both autoPauseCamera and autoPauseSystemAudio are false)")
-                        }
+                        Log.d(TAG, "Camera-correlated transient focus loss with autoPauseCamera=true")
+                        beginInterruptionLocked(InterruptionSource.CAMERA)
                     }
                     autoPauseSystemAudio -> {
                         Log.d(TAG, "Transient system audio focus loss with autoPauseSystemAudio=true, pausing playback")

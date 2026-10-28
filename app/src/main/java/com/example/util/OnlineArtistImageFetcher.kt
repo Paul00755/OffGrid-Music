@@ -39,6 +39,83 @@ object OnlineArtistImageFetcher {
         return lower.isBlank() || lower in GENERIC_ALBUM_OR_FOLDER_NAMES || lower.startsWith("track ") || lower.startsWith("audio_")
     }
 
+    private val STOP_WORDS = setOf(
+        "the", "and", "for", "with", "from", "feat", "ft", "official", "audio", "video", "lyrics", "song", "remix", "version"
+    )
+
+    private fun normalizeForMatch(raw: String): String {
+        return raw.lowercase()
+            .replace(Regex("\\([^)]*\\)|\\[[^]]*]"), " ")
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun significantTokens(normalized: String): Set<String> {
+        if (normalized.isBlank()) return emptySet()
+        return normalized.split(' ')
+            .map { it.trim() }
+            .filter { it.length >= 2 && it !in STOP_WORDS }
+            .toSet()
+    }
+
+    /**
+     * Validates that an online artwork candidate genuinely matches the requested song's metadata.
+     * Rejects weak or unrelated results so a song is never assigned another track's artwork.
+     */
+    fun isValidArtworkMatch(
+        requestedTitle: String,
+        requestedArtist: String,
+        requestedAlbum: String = "",
+        candidateTitle: String,
+        candidateArtist: String,
+        candidateAlbum: String = ""
+    ): Boolean {
+        val reqTitle = normalizeForMatch(TagCleaner.cleanTitle(requestedTitle, ""))
+        val candTitle = normalizeForMatch(candidateTitle)
+        if (reqTitle.isBlank() || candTitle.isBlank()) return false
+
+        val reqTitleTokens = significantTokens(reqTitle)
+        val candTitleTokens = significantTokens(candTitle)
+
+        val exactOrSubstringTitle = reqTitle == candTitle ||
+            (reqTitle.length >= 4 && candTitle.contains(reqTitle)) ||
+            (candTitle.length >= 4 && reqTitle.contains(candTitle))
+
+        val sharedTitleTokens = reqTitleTokens.intersect(candTitleTokens)
+        val titleTokenScore = if (reqTitleTokens.isNotEmpty() && candTitleTokens.isNotEmpty()) {
+            sharedTitleTokens.size.toFloat() / minOf(reqTitleTokens.size, candTitleTokens.size).toFloat()
+        } else 0f
+
+        val titleMatches = exactOrSubstringTitle || (sharedTitleTokens.isNotEmpty() && titleTokenScore >= 0.6f)
+        if (!titleMatches) return false
+
+        val cleanArtistRaw = TagCleaner.cleanArtist(requestedArtist).let { if (isGenericAlbumOrFolder(it)) "" else it }
+        val reqArtist = normalizeForMatch(cleanArtistRaw)
+        val candArtist = normalizeForMatch(candidateArtist)
+
+        if (reqArtist.isNotBlank() && candArtist.isNotBlank()) {
+            val reqArtistTokens = significantTokens(reqArtist)
+            val candArtistTokens = significantTokens(candArtist)
+            val artistSubstring = reqArtist == candArtist ||
+                (reqArtist.length >= 3 && candArtist.contains(reqArtist)) ||
+                (candArtist.length >= 3 && reqArtist.contains(candArtist)) ||
+                (candArtist.length >= 3 && reqTitle.contains(candArtist))
+            val artistTokenOverlap = reqArtistTokens.isNotEmpty() && reqArtistTokens.intersect(candArtistTokens).isNotEmpty()
+
+            if (!artistSubstring && !artistTokenOverlap) {
+                val cleanAlbumRaw = TagCleaner.cleanAlbum(requestedAlbum).let { if (isGenericAlbumOrFolder(it)) "" else it }
+                val reqAlbum = normalizeForMatch(cleanAlbumRaw)
+                val candAlbum = normalizeForMatch(candidateAlbum)
+                val albumMatches = reqAlbum.length >= 4 && candAlbum.length >= 4 &&
+                    (reqAlbum == candAlbum || candAlbum.contains(reqAlbum) || reqAlbum.contains(candAlbum))
+                if (!albumMatches) return false
+            }
+        }
+
+        return true
+    }
+
     suspend fun getSongArtworkUrl(
         context: Context,
         title: String,
@@ -49,8 +126,8 @@ object OnlineArtistImageFetcher {
         songId: Long = 0L,
         filePath: String? = null
     ): String? {
-        // 0. If this song has a manual cover, never override it with online cache
-        if (songId > 0L) {
+        // 0. If this song has a manually edited cover, never override it with online artwork
+        if (songId > 0L && ManualTagStore.isArtworkManuallyEdited(context, songId, filePath.orEmpty())) {
             val manualCover = ManualTagStore.getManualMetadata(context, songId, filePath.orEmpty())?.artworkUri
                 ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, songId, filePath)
             if (!manualCover.isNullOrBlank()) {
@@ -62,8 +139,11 @@ object OnlineArtistImageFetcher {
             com.example.ui.components.ArtworkResolutionCache.trackIdentity(songId, filePath)
         } else songId.toString()
 
-        // 1. Check the track-specific cache first
-        if (songId > 0L && cacheEnabled) {
+        val needsHighResUpgrade = preferUltraHd && songId > 0L &&
+            !com.example.ui.components.ArtworkResolutionCache.hasHighResArtwork(context, songId, filePath)
+
+        // 1. Check the track-specific cache first (unless upgrading to high-res from a lower-res entry)
+        if (songId > 0L && cacheEnabled && !needsHighResUpgrade) {
             val idPrefs = context.getSharedPreferences("song_artworks_online_cache_by_id", Context.MODE_PRIVATE)
             val savedById = idPrefs.getString(identityKey, null)
             if (!savedById.isNullOrBlank()) {
@@ -80,17 +160,31 @@ object OnlineArtistImageFetcher {
             return null
         }
 
+        val resSuffix = if (preferUltraHd) "hd" else "std"
         val cacheKey = if (songId > 0L) {
+            "${identityKey}_${cleanTitle}_${cleanArtist}_$resSuffix".lowercase().trim()
+        } else {
+            "${cleanTitle}_${cleanArtist}_${cleanAlbum}_$resSuffix".lowercase().trim()
+        }
+        val legacyCacheKey = if (songId > 0L) {
             "${identityKey}_${cleanTitle}_${cleanArtist}".lowercase().trim()
         } else {
             "${cleanTitle}_${cleanArtist}_$cleanAlbum".lowercase().trim()
         }
+
         if (cacheEnabled) {
             if (negativeSongCache.contains(cacheKey) || (songId > 0L && negativeSongCache.contains("song_$songId"))) return null
             songCache[cacheKey]?.let { return it }
 
             val prefs = context.getSharedPreferences("song_artworks_online_cache", Context.MODE_PRIVATE)
             val savedUrl = prefs.getString(cacheKey, null)
+                ?: if (!preferUltraHd) prefs.getString(legacyCacheKey, null) else prefs.getString(legacyCacheKey, null)?.let { url ->
+                    if (url.contains("500x500bb") || url.contains("600x600bb") || url.contains("100x100bb")) {
+                        url.replace("500x500bb", "1000x1000bb")
+                            .replace("600x600bb", "1000x1000bb")
+                            .replace("100x100bb", "1000x1000bb")
+                    } else if (url.startsWith("http")) url else null
+                }
             if (!savedUrl.isNullOrBlank()) {
                 songCache[cacheKey] = savedUrl
                 if (songId > 0L) {
@@ -112,7 +206,7 @@ object OnlineArtistImageFetcher {
                 fun fetchItunes(term: String): String? {
                     try {
                         val enc = URLEncoder.encode(term, "UTF-8")
-                        val itunesTrackUrl = URL("https://itunes.apple.com/search?term=$enc&entity=song&limit=3")
+                        val itunesTrackUrl = URL("https://itunes.apple.com/search?term=$enc&entity=song&limit=5")
                         val itunesConn = itunesTrackUrl.openConnection() as HttpURLConnection
                         itunesConn.connectTimeout = 3500
                         itunesConn.readTimeout = 3500
@@ -121,13 +215,21 @@ object OnlineArtistImageFetcher {
                             val json = JSONObject(jsonStr)
                             val results = json.optJSONArray("results")
                             if (results != null && results.length() > 0) {
-                                val first = results.getJSONObject(0)
-                                var pic = first.optString("artworkUrl100")
-                                if (pic.isNotBlank() && pic.startsWith("http")) {
-                                    return if (preferUltraHd) {
-                                        pic.replace("100x100bb", "600x600bb")
-                                    } else {
-                                        pic.replace("100x100bb", "500x500bb")
+                                for (i in 0 until results.length()) {
+                                    val item = results.getJSONObject(i)
+                                    val candTitle = item.optString("trackName", "")
+                                    val candArtist = item.optString("artistName", "")
+                                    val candAlbum = item.optString("collectionName", "")
+                                    if (!isValidArtworkMatch(cleanTitle, cleanArtist, cleanAlbum, candTitle, candArtist, candAlbum)) {
+                                        continue
+                                    }
+                                    val pic = item.optString("artworkUrl100")
+                                    if (pic.isNotBlank() && pic.startsWith("http")) {
+                                        return if (preferUltraHd) {
+                                            pic.replace("100x100bb", "1000x1000bb")
+                                        } else {
+                                            pic.replace("100x100bb", "500x500bb")
+                                        }
                                     }
                                 }
                             }
@@ -149,14 +251,28 @@ object OnlineArtistImageFetcher {
                             val json = JSONObject(jsonStr)
                             val data = json.optJSONArray("data")
                             if (data != null && data.length() > 0) {
-                                val first = data.getJSONObject(0)
-                                val albumObj = first.optJSONObject("album")
-                                if (albumObj != null) {
-                                    val pic = albumObj.optString("cover_xl")
-                                        .ifBlank { albumObj.optString("cover_big") }
-                                        .ifBlank { albumObj.optString("cover_medium") }
-                                    if (pic.isNotBlank() && pic.startsWith("http")) {
-                                        return pic
+                                for (i in 0 until minOf(data.length(), 5)) {
+                                    val item = data.getJSONObject(i)
+                                    val candTitle = item.optString("title", "")
+                                    val candArtist = item.optJSONObject("artist")?.optString("name", "").orEmpty()
+                                    val albumObj = item.optJSONObject("album")
+                                    val candAlbum = albumObj?.optString("title", "").orEmpty()
+                                    if (!isValidArtworkMatch(cleanTitle, cleanArtist, cleanAlbum, candTitle, candArtist, candAlbum)) {
+                                        continue
+                                    }
+                                    if (albumObj != null) {
+                                        val pic = if (preferUltraHd) {
+                                            albumObj.optString("cover_xl")
+                                                .ifBlank { albumObj.optString("cover_big") }
+                                                .ifBlank { albumObj.optString("cover_medium") }
+                                        } else {
+                                            albumObj.optString("cover_big")
+                                                .ifBlank { albumObj.optString("cover_medium") }
+                                                .ifBlank { albumObj.optString("cover_xl") }
+                                        }
+                                        if (pic.isNotBlank() && pic.startsWith("http")) {
+                                            return pic
+                                        }
                                     }
                                 }
                             }

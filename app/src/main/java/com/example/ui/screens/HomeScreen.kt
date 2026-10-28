@@ -189,6 +189,7 @@ fun HomeScreen(
     onOpenAccount: () -> Unit = {},
     onOpenAuth: () -> Unit = {},
     onSignOut: () -> Unit = {},
+    onScreenEntered: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedMostPlayedFilter by remember { mutableStateOf(MostPlayedFilter.SEVEN_DAYS) }
@@ -234,6 +235,10 @@ fun HomeScreen(
         com.example.util.HapticUtils.performClickHaptic(context)
         coroutineScope.launch { drawerState.snapTo(DrawerValue.Closed) }
         action()
+    }
+
+    LaunchedEffect(Unit) {
+        onScreenEntered()
     }
 
     // Pre-decode thumbnails for visible Home feed songs so scrolling has zero frame drops
