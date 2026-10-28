@@ -271,9 +271,16 @@ fun HomeScreen(
         }
     }
 
+    var isDrawerClosedAnchorReady by remember { mutableStateOf(false) }
+    val isDrawerActiveOrAnchored = drawerState.isOpen ||
+        drawerState.isAnimationRunning ||
+        drawerState.targetValue == DrawerValue.Open ||
+        (isDrawerClosedAnchorReady && !drawerState.currentOffset.isNaN())
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = true,
+        scrimColor = if (isDrawerActiveOrAnchored) DrawerDefaults.scrimColor else Color.Transparent,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = BentoCardSurface,
@@ -281,6 +288,30 @@ fun HomeScreen(
                 modifier = Modifier
                     .widthIn(min = 280.dp, max = 320.dp)
                     .fillMaxHeight()
+                    .graphicsLayer {
+                        val offset = drawerState.currentOffset
+                        if (!offset.isNaN() && offset < -1f) {
+                            isDrawerClosedAnchorReady = true
+                        }
+                        val isClosedAtRest = drawerState.currentValue == DrawerValue.Closed &&
+                            drawerState.targetValue == DrawerValue.Closed &&
+                            !drawerState.isAnimationRunning
+                        val shouldHide = if (isClosedAtRest) {
+                            !isDrawerClosedAnchorReady ||
+                                offset.isNaN() ||
+                                offset >= -1f ||
+                                (size.width > 0f && offset <= -(size.width - 2f))
+                        } else {
+                            false
+                        }
+                        if (shouldHide) {
+                            alpha = 0f
+                            translationX = -10000f
+                        } else {
+                            alpha = 1f
+                            translationX = 0f
+                        }
+                    }
                     .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {

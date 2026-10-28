@@ -463,7 +463,7 @@ class UserPreferencesRepository(private val context: Context) {
             pauseOnHeadsetUnplug = prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] ?: readBoolCached("pause_on_headset_unplug", true),
             notificationEnabled = prefs[PreferenceKeys.NOTIFICATION_ENABLED] ?: readBoolCached("notification_enabled", true),
             autoplayOnAppStartup = prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] ?: readBoolCached("autoplay_on_app_startup", false),
-            fetchOnlineArtworkHighRes = prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: readBoolCached("fetch_online_artwork_high_res", true),
+            fetchOnlineArtworkHighRes = prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] ?: readBoolCached("fetch_online_artwork_high_res", false),
             cacheLyricsEnabled = prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] ?: readBoolCached("cache_lyrics_enabled", true),
             cacheAlbumArtEnabled = prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] ?: readBoolCached("cache_album_art_enabled", true),
             cacheSongArtWorkEnabled = prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] ?: readBoolCached("cache_song_art_work_enabled", true),
@@ -1036,9 +1036,13 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val addToQueuePosition: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM")
+        val raw = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM")
+        if (raw.equals("TOP_NEXT", ignoreCase = true)) "TOP_NEXT" else "BOTTOM"
     }
-    fun getAddToQueuePositionSync(): String = readStringCached("add_to_queue_position", "BOTTOM")
+    fun getAddToQueuePositionSync(): String {
+        val raw = readStringCached("add_to_queue_position", "BOTTOM")
+        return if (raw.equals("TOP_NEXT", ignoreCase = true)) "TOP_NEXT" else "BOTTOM"
+    }
 
     val playlistAddSongPosition: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM")
@@ -1777,10 +1781,17 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setAddToQueuePosition(position: String) {
+        val normalized = if (position.equals("TOP_NEXT", ignoreCase = true)) "TOP_NEXT" else "BOTTOM"
         val now = System.currentTimeMillis()
-        writeStringCached("add_to_queue_position", position, now)
+        try {
+            bootCachePrefs.edit()
+                .putBoolean("pref_add_to_queue_position_explicit_v1", true)
+                .putBoolean("migrated_add_to_queue_bottom_default_v1", true)
+                .apply()
+        } catch (_: Exception) {}
+        writeStringCached("add_to_queue_position", normalized, now)
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = position
+            prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = normalized
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
@@ -1930,6 +1941,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setFetchOnlineArtworkHighRes(enabled: Boolean) {
         val now = System.currentTimeMillis()
         cachedFetchOnlineArtworkHighRes = enabled
+        try {
+            bootCachePrefs.edit()
+                .putBoolean("pref_fetch_online_artwork_high_res_explicit_v2", true)
+                .putBoolean("migrated_prefer_hires_default_off_v2", true)
+                .apply()
+        } catch (_: Exception) {}
         writeBoolCached("fetch_online_artwork_high_res", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = enabled
@@ -2110,8 +2127,63 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     init {
+        val needsHiResDefaultOffMigration = try {
+            val alreadyMigrated = bootCachePrefs.getBoolean("migrated_prefer_hires_default_off_v2", false)
+            val explicitlySet = bootCachePrefs.getBoolean("pref_fetch_online_artwork_high_res_explicit_v2", false)
+            if (!alreadyMigrated) {
+                if (!explicitlySet) {
+                    cachedFetchOnlineArtworkHighRes = false
+                    bootCachePrefs.edit()
+                        .putBoolean("pref_fetch_online_artwork_high_res", false)
+                        .putBoolean("migrated_prefer_hires_default_off_v2", true)
+                        .apply()
+                    true
+                } else {
+                    bootCachePrefs.edit()
+                        .putBoolean("migrated_prefer_hires_default_off_v2", true)
+                        .apply()
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+        val needsAddToQueueBottomDefaultMigration = try {
+            val alreadyMigrated = bootCachePrefs.getBoolean("migrated_add_to_queue_bottom_default_v1", false)
+            val explicitlySet = bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)
+            if (!alreadyMigrated) {
+                if (!explicitlySet) {
+                    bootCachePrefs.edit()
+                        .putString("pref_add_to_queue_position", "BOTTOM")
+                        .putBoolean("migrated_add_to_queue_bottom_default_v1", true)
+                        .apply()
+                    true
+                } else {
+                    bootCachePrefs.edit()
+                        .putBoolean("migrated_add_to_queue_bottom_default_v1", true)
+                        .apply()
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
+                if (needsHiResDefaultOffMigration && !bootCachePrefs.getBoolean("pref_fetch_online_artwork_high_res_explicit_v2", false)) {
+                    context.dataStore.edit { prefs ->
+                        prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = false
+                    }
+                }
+                if (needsAddToQueueBottomDefaultMigration && !bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)) {
+                    context.dataStore.edit { prefs ->
+                        prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = "BOTTOM"
+                    }
+                }
                 migrateLegacyInterruptionSettingsIfNeeded()
             } catch (_: Exception) {}
         }

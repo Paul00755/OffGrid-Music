@@ -524,7 +524,7 @@ object ArtworkManager {
                             ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, localUri)
                         }
                         ArtworkResolutionCache.cacheArtwork(songId, filePath, localUri)
-                        ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, localUri, filePath, forceReplace = true)
+                        ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, filePath)
                         ArtworkResolutionCache.notifyArtworkChanged(songId, localUri, filePath)
                         try {
                             CoroutineScope(Dispatchers.IO).launch {
@@ -546,6 +546,8 @@ object ArtworkManager {
                     } else null
                 } else null
             } else null
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {
             null
         }
@@ -790,33 +792,48 @@ object ArtworkManager {
                 return@withPermit uriStr
             }
 
-            // 3A. Embedded picture from the actual audio file
+            // 3A. Embedded picture from the actual audio file (with FileDescriptor fallback)
             if (filePath.isNotBlank()) {
                 val audioFile = File(filePath)
                 if (audioFile.exists() && audioFile.length() > 1024L) {
                     val mmr = MediaMetadataRetriever()
                     try {
-                        mmr.setDataSource(filePath)
-                        val artBytes = mmr.embeddedPicture
-                        if (artBytes != null && artBytes.isNotEmpty()) {
+                        var artBytes: ByteArray? = null
+                        try {
+                            mmr.setDataSource(filePath)
+                            artBytes = mmr.embeddedPicture
+                        } catch (_: Exception) {}
+                        if (artBytes == null || artBytes.isEmpty()) {
+                            try {
+                                java.io.FileInputStream(audioFile).use { fis ->
+                                    mmr.setDataSource(fis.fd)
+                                    artBytes = mmr.embeddedPicture
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        val validBytes = artBytes
+                        if (validBytes != null && validBytes.isNotEmpty()) {
                             val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, boundsOpts)
+                            BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, boundsOpts)
                             val sampleSize = calculateInSampleSize(boundsOpts, 512, 512)
                             val opts = BitmapFactory.Options().apply {
                                 inSampleSize = sampleSize
                                 inPreferredConfig = Bitmap.Config.ARGB_8888
                             }
-                            val bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, opts)
+                            val bitmap = BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, opts)
                             if (bitmap != null) {
                                 val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 90, songId)
                                 if (savedBytes != null) {
                                     putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                     val uriStr = Uri.fromFile(persistentFile).toString()
                                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
+                                    ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                     return@withPermit uriStr
                                 }
                             }
                         }
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
                     } catch (_: Exception) {
                     } finally {
                         try { mmr.release() } catch (_: Throwable) {}
@@ -824,7 +841,7 @@ object ArtworkManager {
                 }
             }
 
-            if (songId > 0L) {
+            if (songId in 1L until 1_000_000_000_000L) {
                 val mmr = MediaMetadataRetriever()
                 try {
                     val songContentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
@@ -845,10 +862,13 @@ object ArtworkManager {
                                 putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                 val uriStr = Uri.fromFile(persistentFile).toString()
                                 ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
+                                ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                 return@withPermit uriStr
                             }
                         }
                     }
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
                 } catch (_: Exception) {
                 } finally {
                     try { mmr.release() } catch (_: Throwable) {}
@@ -863,6 +883,7 @@ object ArtworkManager {
                     putNotificationArtwork(songId, savedBytes, mediaStoreBmp, filePath)
                     val uriStr = Uri.fromFile(persistentFile).toString()
                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
+                    ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, mediaStoreBmp, filePath)
                     return@withPermit uriStr
                 }
             }
@@ -872,7 +893,10 @@ object ArtworkManager {
                 val thumbFile = findThumbnailArtwork(filePath, songId, context)
                 if (thumbFile != null && isValidCompleteImageFile(thumbFile)) {
                     val thumbUri = Uri.fromFile(thumbFile).toString()
-                    if (songId > 0L) ArtworkResolutionCache.cacheArtwork(songId, filePath, thumbUri)
+                    if (songId > 0L) {
+                        ArtworkResolutionCache.cacheArtwork(songId, filePath, thumbUri)
+                        ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, thumbUri, filePath)
+                    }
                     return@withPermit thumbUri
                 }
             }

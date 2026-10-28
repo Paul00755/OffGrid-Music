@@ -3615,8 +3615,8 @@ fun SettingsScreen(
 
                                 SettingsSegmentedSelector(
                                     options = listOf(
-                                        "TOP_NEXT" to "Top Next",
-                                        "BOTTOM" to "Bottom"
+                                        "BOTTOM" to "Bottom",
+                                        "TOP_NEXT" to "Top Next"
                                     ),
                                     selectedOption = addToQueuePosition,
                                     onSelectOption = onSetAddToQueuePosition,

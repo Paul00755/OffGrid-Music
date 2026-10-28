@@ -190,7 +190,11 @@ fun ArtistDetailSheet(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                 ) {
-                    items(distinctAlbums.entries.toList()) { (albumName, songs) ->
+                    items(
+                        items = distinctAlbums.entries.toList(),
+                        key = { (albumName, _) -> "artist_album_$albumName" },
+                        contentType = { "artist_album_item" }
+                    ) { (albumName, songs) ->
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = BentoCardDarkPurple.copy(alpha = 0.6f),
@@ -243,7 +247,11 @@ fun ArtistDetailSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                itemsIndexed(artistSongs) { index, song ->
+                itemsIndexed(
+                    items = artistSongs,
+                    key = { index, song -> "${song.id}_$index" },
+                    contentType = { _, _ -> "artist_song_item" }
+                ) { index, song ->
                     val isPlaying = playbackState.currentSong?.id == song.id
                     BentoCard(
                         modifier = Modifier

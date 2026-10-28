@@ -140,8 +140,35 @@ fun LibraryScreen(
     val context = LocalContext.current
     val songsListState = rememberLazyListState()
     var headerState by remember { mutableStateOf(LibraryHeaderState.FULL) }
-    val areLibraryControlsVisible = headerState == LibraryHeaderState.FULL
-    val isLibrarySearchVisible = headerState == LibraryHeaderState.FULL || headerState == LibraryHeaderState.COMPACT
+    val areLibraryControlsVisible by remember {
+        derivedStateOf { headerState == LibraryHeaderState.FULL }
+    }
+    val isLibrarySearchVisible by remember {
+        derivedStateOf { headerState == LibraryHeaderState.FULL || headerState == LibraryHeaderState.COMPACT }
+    }
+
+    // Derived scroll position states to avoid per-pixel recompositions and redundant flow emissions
+    val firstVisibleItemIndex by remember {
+        derivedStateOf { songsListState.firstVisibleItemIndex }
+    }
+    val firstVisibleItemScrollOffset by remember {
+        derivedStateOf { songsListState.firstVisibleItemScrollOffset }
+    }
+    val isAtTopOfList by remember {
+        derivedStateOf {
+            songsListState.firstVisibleItemIndex == 0 && songsListState.firstVisibleItemScrollOffset <= 12
+        }
+    }
+    val canListScrollDown by remember {
+        derivedStateOf {
+            songsListState.canScrollForward ||
+                songsListState.firstVisibleItemIndex > 0 ||
+                songsListState.firstVisibleItemScrollOffset > 0
+        }
+    }
+    val hasLibraryListItems by remember {
+        derivedStateOf { songsListState.layoutInfo.totalItemsCount > 0 }
+    }
 
     var downwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
     var upwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
@@ -159,12 +186,13 @@ fun LibraryScreen(
 
                 val nowMs = android.os.SystemClock.uptimeMillis()
                 val inTransitionCooldown = (nowMs - lastHeaderTransitionTimeMs) in 1..220L
-                val firstIndex = songsListState.firstVisibleItemIndex
-                val firstOffset = songsListState.firstVisibleItemScrollOffset
-                val isAtTop = firstIndex == 0 && firstOffset <= 12
+                val firstIndex = firstVisibleItemIndex
+                val firstOffset = firstVisibleItemScrollOffset
+                val isAtTop = isAtTopOfList
 
                 if (deltaY < 0f) {
-                    val canScrollDown = songsListState.canScrollForward || firstIndex > 0 || firstOffset > 0
+                    val canScrollDown = canListScrollDown ||
+                        (headerState != LibraryHeaderState.HIDDEN && hasLibraryListItems)
                     if (!canScrollDown && isAtTop) {
                         return Offset.Zero
                     }
@@ -210,9 +238,8 @@ fun LibraryScreen(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                val firstIndex = songsListState.firstVisibleItemIndex
-                val firstOffset = songsListState.firstVisibleItemScrollOffset
-                if (firstIndex == 0 && firstOffset <= 12 && consumed.y >= 0f && downwardScrollAccumulator < 18f) {
+                val isScrollingUpwardToTop = consumed.y > 0f || (available.y > 12f && downwardScrollAccumulator == 0f)
+                if (isAtTopOfList && isScrollingUpwardToTop && downwardScrollAccumulator < 18f) {
                     if (headerState != LibraryHeaderState.FULL) {
                         headerState = LibraryHeaderState.FULL
                         upwardScrollAccumulator = 0f
@@ -225,17 +252,11 @@ fun LibraryScreen(
     }
 
     LaunchedEffect(songsListState) {
-        snapshotFlow {
-            Triple(
-                songsListState.firstVisibleItemIndex,
-                songsListState.firstVisibleItemScrollOffset,
-                songsListState.canScrollForward
-            )
-        }
+        snapshotFlow { isAtTopOfList }
             .distinctUntilChanged()
-            .collect { (index, offset, canScrollForward) ->
-                if (index == 0 && offset <= 12) {
-                    if (downwardScrollAccumulator < 18f || !canScrollForward) {
+            .collect { atTop ->
+                if (atTop) {
+                    if (downwardScrollAccumulator == 0f && upwardScrollAccumulator > 0f) {
                         if (headerState != LibraryHeaderState.FULL) {
                             headerState = LibraryHeaderState.FULL
                             lastHeaderTransitionTimeMs = android.os.SystemClock.uptimeMillis()
@@ -243,6 +264,14 @@ fun LibraryScreen(
                     }
                 }
             }
+    }
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank() && isAtTopOfList) {
+            downwardScrollAccumulator = 0f
+            upwardScrollAccumulator = 0f
+            headerState = LibraryHeaderState.FULL
+        }
     }
 
     var selectedCategory by remember { mutableStateOf(LibraryCategory.SONGS) }
@@ -303,7 +332,7 @@ fun LibraryScreen(
     // Debounced artwork preloading ahead of viewport so scrolling never stutters at 60Hz, 90Hz, or 120Hz
     LaunchedEffect(processedSongs, selectedCategory) {
         if (selectedCategory == LibraryCategory.SONGS && processedSongs.isNotEmpty()) {
-            snapshotFlow { songsListState.firstVisibleItemIndex }
+            snapshotFlow { firstVisibleItemIndex }
                 .distinctUntilChanged()
                 .debounce(16L)
                 .collectLatest { firstVisible ->
@@ -1021,6 +1050,17 @@ fun LibraryScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if (currentTotalItems > 0) {
+                        item(key = "library_tail_scroll_spacer", contentType = "tail_spacer") {
+                            Spacer(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(if (searchQuery.isNotBlank()) 176.dp else 84.dp)
+                                    .testTag("library_tail_scroll_spacer")
+                            )
                         }
                     }
                 }

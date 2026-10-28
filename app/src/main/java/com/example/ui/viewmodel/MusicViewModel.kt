@@ -644,6 +644,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
+            cloudSyncRepository.syncStatus.collect { status ->
+                if (status is com.example.data.sync.SyncStatus.Synced) {
+                    val activeSong = playbackState.value.currentSong ?: return@collect
+                    val latestDbLyrics = db.lyricsDao().getLyricsForSong(activeSong.id)?.toDomainModel()
+                    if (latestDbLyrics != null && latestDbLyrics != _currentLyrics.value) {
+                        _currentLyrics.value = latestDbLyrics
+                    }
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
             preferences.isOnboardingCompleted.collect { completed ->
                 _isOnboardingCompleted.value = completed
                 if (completed) {
@@ -952,6 +963,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun getLyricsOffsetMs(songId: Long): Long = preferences.getLyricsSyncOffsetMs(songId)
     fun setLyricsOffsetMs(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
+        cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
+        cloudSyncRepository.onLyricsUpdatedAsync(songId)
     }
     fun setLyricsFontSize(size: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setLyricsFontSize(size) }
@@ -1910,6 +1923,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = entity.toDomainModel()
             }
+            cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
     }
 
@@ -1947,6 +1961,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = candidate.source
             )
             _currentLyrics.value = updatedLyrics
+            cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
     }
 
@@ -2034,6 +2049,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _dynamicArtworkColor.value = null
                 }
             }
+            if (newLyrics.isNotBlank()) {
+                cloudSyncRepository.onLyricsUpdatedAsync(updatedSong.id)
+            }
             refreshCacheSizes()
             onSuccess()
         }
@@ -2045,6 +2063,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLyricsSyncOffset(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
+        cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
+        cloudSyncRepository.onLyricsUpdatedAsync(songId)
     }
 
     // =========================================================================
@@ -2395,6 +2415,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             source = preview.source
         )
         db.lyricsDao().insertLyrics(entity)
+        cloudSyncRepository.onLyricsUpdatedAsync(preview.song.id)
 
         val lrcContent = if (!preview.syncedLyricsJson.isNullOrBlank()) {
             com.example.util.LrcParser.formatSyncedJsonToLrc(preview.syncedLyricsJson) ?: preview.plainLyrics
@@ -2530,6 +2551,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = previous.source
             )
             db.lyricsDao().insertLyrics(entity)
+            cloudSyncRepository.onLyricsUpdatedAsync(songId)
             withContext(Dispatchers.Main) {
                 if (playbackState.value.currentSong?.id == songId) {
                     _currentLyrics.value = entity.toDomainModel()

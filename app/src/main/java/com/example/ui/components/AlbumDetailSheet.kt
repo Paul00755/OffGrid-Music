@@ -219,7 +219,11 @@ fun AlbumDetailSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
-                itemsIndexed(albumSongs, key = { idx, song -> "${song.id}_$idx" }) { _, song ->
+                itemsIndexed(
+                    items = albumSongs,
+                    key = { idx, song -> "${song.id}_$idx" },
+                    contentType = { _, _ -> "album_song_item" }
+                ) { _, song ->
                     Box {
                         SongItem(
                             song = song,

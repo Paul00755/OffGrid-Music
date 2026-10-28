@@ -103,14 +103,14 @@ fun FastScrollbar(
         }
     }
 
-    val currentItemIndex by remember(listState, totalItems, isDragging, dragFraction) {
+    val currentItemIndex by remember(listState, totalItems, isDragging) {
         derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
-            if (isDragging) {
-                (dragFraction * (totalCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+            if (!isDragging) {
+                0
             } else {
-                listState.firstVisibleItemIndex.coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+                val layoutInfo = listState.layoutInfo
+                val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
+                (dragFraction * (totalCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, (totalCount - 1).coerceAtLeast(0))
             }
         }
     }
@@ -166,7 +166,9 @@ fun FastScrollbar(
     }
 
     // Show/hide visibility based on scroll activity or drag state
-    val isScrollInProgress = listState.isScrollInProgress
+    val isScrollInProgress by remember(listState) {
+        derivedStateOf { listState.isScrollInProgress }
+    }
     LaunchedEffect(isScrollInProgress, isDragging) {
         if (isScrollInProgress || isDragging) {
             isVisible = true

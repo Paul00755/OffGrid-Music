@@ -162,6 +162,78 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertEquals(1, resumeCount)
     }
 
+    @Test
+    fun testNotificationFocusLossOnlyDucksVolumeOrContinuesWhileVideoAndCallsPause() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var currentVolume = 1.0f
+        var isVideoPlaying = false
+        var isCallActive = false
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { isVideoPlaying },
+            callActiveProvider = { isCallActive },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            },
+            onDuckRequested = { vol -> currentVolume = vol },
+            onRestoreVolumeRequested = { currentVolume = 1.0f }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.reduceVolumeOnNotification = true
+
+        // 1. Notification / Hotspot transient focus loss with ducking ON -> only ducks volume, does NOT pause
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertTrue("Notification focus loss must NOT pause playback even when autoPauseSystemAudio is ON", isPlaying)
+        assertEquals(0, pauseCount)
+        assertEquals(0.25f, currentVolume, 0.001f)
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue(isPlaying)
+        assertEquals(1.0f, currentVolume, 0.001f)
+        assertEquals(0, resumeCount)
+
+        // 2. Notification / Hotspot transient focus loss with ducking OFF -> continues at full volume without pause
+        focusManager.reduceVolumeOnNotification = false
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertTrue("Notification focus loss with ducking OFF must continue playback without pause", isPlaying)
+        assertEquals(0, pauseCount)
+        assertEquals(1.0f, currentVolume, 0.001f)
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+
+        // 3. Video playback transient focus loss -> pauses playback and auto-resumes when ended
+        isVideoPlaying = true
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Video playback must pause music when autoPauseSystemAudio is ON", isPlaying)
+        assertEquals(1, pauseCount)
+
+        isVideoPlaying = false
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Playback must auto-resume after video ends", isPlaying)
+        assertEquals(1, resumeCount)
+
+        // 4. Phone call transient focus loss -> pauses playback and auto-resumes when ended
+        isCallActive = true
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Incoming/active call must pause music", isPlaying)
+        assertEquals(2, pauseCount)
+
+        isCallActive = false
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Playback must auto-resume after call ends", isPlaying)
+        assertEquals(2, resumeCount)
+    }
+
     // =========================================================================
     // Priority 2 & 6: Startup Disk Cache Warmup & High-Res On-Demand Tracking
     // =========================================================================

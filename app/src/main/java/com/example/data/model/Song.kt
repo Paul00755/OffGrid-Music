@@ -60,6 +60,10 @@ data class Song(
     val displayAlbum: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (album.isBlank() || album.contains("unknown", ignoreCase = true)) "Unknown Album" else album
     }
+
+    val trackIdentityKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        com.example.ui.components.ArtworkResolutionCache.trackIdentity(id, path)
+    }
 }
 
 @Immutable

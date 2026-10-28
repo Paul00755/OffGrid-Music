@@ -77,6 +77,15 @@ class PlaybackManager(
         isSleepTimerStoppedProvider = {
             isSleepTimerFinalStopping || (sleepTimerManager.state.value.phase == TrackSleepTimerPhase.STOPPED)
         },
+        ownActiveMediaPlayerCountProvider = {
+            var count = 0
+            try {
+                if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) count++
+                if (_crossfadePlayer?.isPlaying == true) count++
+            } catch (_: Throwable) {
+            }
+            count
+        },
         onPauseRequested = { pauseFromAudioFocus() },
         onResumeRequested = { resumeFromInterruption() },
         onDuckRequested = { duckVol -> try { player.volume = duckVol } catch (_: Throwable) {} },

@@ -153,8 +153,12 @@ object ManualTagStore {
         if (songId > 0) editor.putString("$KEY_DATA_ID$songId", json)
         if (normPath.isNotBlank()) editor.putString("$KEY_DATA_PATH$normPath", json)
 
+        parsedMetadataCache.remove("id:$songId")
+        if (normPath.isNotBlank()) parsedMetadataCache.remove("path:$normPath")
         editor.apply()
     }
+
+    private val parsedMetadataCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, ManualSongMetadata>>()
 
     @Synchronized
     fun markArtworkManuallyEdited(
@@ -181,9 +185,20 @@ object ManualTagStore {
 
     fun getManualMetadata(context: Context, songId: Long, path: String): ManualSongMetadata? {
         val prefs = getPrefs(context)
-        val jsonStr = (if (songId > 0) prefs.getString("$KEY_DATA_ID$songId", null) else null)
-            ?: (if (path.isNotBlank()) prefs.getString("$KEY_DATA_PATH${normalizePath(path)}", null) else null)
-            ?: return null
+        if (prefs.all.isEmpty()) return null
+        val jsonById = if (songId > 0) prefs.getString("$KEY_DATA_ID$songId", null) else null
+        var normPath: String? = null
+        val jsonStr = jsonById ?: run {
+            if (path.isBlank()) return null
+            val np = normalizePath(path)
+            normPath = np
+            prefs.getString("$KEY_DATA_PATH$np", null)
+        } ?: return null
+
+        val cacheKey = if (jsonById != null && songId > 0) "id:$songId" else "path:${normPath ?: normalizePath(path)}"
+        parsedMetadataCache[cacheKey]?.let { (cachedJson, parsed) ->
+            if (cachedJson == jsonStr) return parsed
+        }
 
         return try {
             val obj = org.json.JSONObject(jsonStr)
@@ -196,7 +211,7 @@ object ManualTagStore {
             val tr = if (obj.has("track")) obj.getInt("track") else null
             val art = obj.optString("art", "").takeIf { it.isNotBlank() }
             val lyr = obj.optString("lyrics", "").takeIf { it.isNotBlank() }
-            ManualSongMetadata(
+            val parsed = ManualSongMetadata(
                 title = t,
                 artist = ar,
                 album = al,
@@ -215,6 +230,8 @@ object ManualTagStore {
                 lyricsEdited = if (hasFieldFlags) obj.optBoolean("lyricsEdited", false) else lyr != null,
                 artworkGeneration = obj.optLong("artworkGeneration", if (art != null) 1L else 0L)
             )
+            parsedMetadataCache[cacheKey] = jsonStr to parsed
+            parsed
         } catch (_: Exception) {
             null
         }
@@ -222,7 +239,9 @@ object ManualTagStore {
 
     fun isManuallyEdited(context: Context, songId: Long, path: String): Boolean {
         val prefs = getPrefs(context)
+        if (prefs.all.isEmpty()) return false
         if (songId > 0 && prefs.getBoolean("$KEY_PREFIX_ID$songId", false)) return true
+        if (path.isBlank()) return false
         val normPath = normalizePath(path)
         return if (normPath.isNotBlank()) prefs.getBoolean("$KEY_PREFIX_PATH$normPath", false) else false
     }
@@ -258,6 +277,8 @@ object ManualTagStore {
     fun clearManualEdit(context: Context, songId: Long, path: String) {
         val prefs = getPrefs(context)
         val normPath = normalizePath(path)
+        parsedMetadataCache.remove("id:$songId")
+        if (normPath.isNotBlank()) parsedMetadataCache.remove("path:$normPath")
         prefs.edit()
             .remove("$KEY_PREFIX_ID$songId")
             .remove("$KEY_PREFIX_PATH$normPath")

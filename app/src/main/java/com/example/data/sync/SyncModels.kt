@@ -70,7 +70,7 @@ data class CloudUserSettings(
     val pauseOnHeadsetUnplug: Boolean = true,
     val notificationEnabled: Boolean = true,
     val autoplayOnAppStartup: Boolean = false,
-    val fetchOnlineArtworkHighRes: Boolean = true,
+    val fetchOnlineArtworkHighRes: Boolean = false,
     val cacheLyricsEnabled: Boolean = true,
     val cacheAlbumArtEnabled: Boolean = true,
     val cacheSongArtWorkEnabled: Boolean = true,
@@ -241,7 +241,7 @@ data class CloudUserSettings(
                 pauseOnHeadsetUnplug = map["pauseOnHeadsetUnplug"] as? Boolean ?: true,
                 notificationEnabled = map["notificationEnabled"] as? Boolean ?: true,
                 autoplayOnAppStartup = map["autoplayOnAppStartup"] as? Boolean ?: false,
-                fetchOnlineArtworkHighRes = map["fetchOnlineArtworkHighRes"] as? Boolean ?: true,
+                fetchOnlineArtworkHighRes = map["fetchOnlineArtworkHighRes"] as? Boolean ?: false,
                 cacheLyricsEnabled = map["cacheLyricsEnabled"] as? Boolean ?: true,
                 cacheAlbumArtEnabled = map["cacheAlbumArtEnabled"] as? Boolean ?: true,
                 cacheSongArtWorkEnabled = map["cacheSongArtWorkEnabled"] as? Boolean ?: true,
@@ -414,19 +414,34 @@ data class CloudPlaybackEvent(
 data class CloudLyricsOffset(
     val songSignature: String = "",
     val offsetMs: Long = 0L,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val title: String = "",
+    val artist: String = "",
+    val album: String = "",
+    val durationMs: Long = 0L,
+    val filename: String = ""
 ) {
-    fun toMap(): Map<String, Any?> = mapOf(
-        "songSignature" to songSignature,
-        "offsetMs" to offsetMs,
-        "updatedAt" to updatedAt
-    )
+    fun toMap(): Map<String, Any?> = buildMap {
+        put("songSignature", songSignature)
+        put("offsetMs", offsetMs)
+        put("updatedAt", updatedAt)
+        if (title.isNotBlank()) put("title", title)
+        if (artist.isNotBlank()) put("artist", artist)
+        if (album.isNotBlank()) put("album", album)
+        if (durationMs > 0L) put("durationMs", durationMs)
+        if (filename.isNotBlank()) put("filename", filename)
+    }
 
     companion object {
         fun fromMap(map: Map<String, Any?>): CloudLyricsOffset = CloudLyricsOffset(
             songSignature = map["songSignature"] as? String ?: "",
             offsetMs = (map["offsetMs"] as? Number)?.toLong() ?: 0L,
-            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
+            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
+            title = map["title"] as? String ?: "",
+            artist = map["artist"] as? String ?: "",
+            album = map["album"] as? String ?: "",
+            durationMs = (map["durationMs"] as? Number)?.toLong() ?: 0L,
+            filename = map["filename"] as? String ?: ""
         )
     }
 }
@@ -438,9 +453,34 @@ data class CloudLyricsEntry(
     val syncedLyricsJson: String? = null,
     val isCached: Boolean = true,
     val source: String = "local",
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val offsetMs: Long = 0L,
+    val offsetUpdatedAt: Long = 0L,
+    val title: String = "",
+    val artist: String = "",
+    val album: String = "",
+    val durationMs: Long = 0L,
+    val filename: String = ""
 ) {
-    fun toMap(): Map<String, Any?> = mapOf(
+    fun toMap(): Map<String, Any?> = buildMap {
+        put("songSignature", songSignature)
+        put("plainLyrics", plainLyrics)
+        put("syncedLyricsJson", syncedLyricsJson)
+        put("isCached", isCached)
+        put("source", source)
+        put("updatedAt", updatedAt)
+        if (offsetMs != 0L || offsetUpdatedAt != 0L) {
+            put("offsetMs", offsetMs)
+            put("offsetUpdatedAt", offsetUpdatedAt)
+        }
+        if (title.isNotBlank()) put("title", title)
+        if (artist.isNotBlank()) put("artist", artist)
+        if (album.isNotBlank()) put("album", album)
+        if (durationMs > 0L) put("durationMs", durationMs)
+        if (filename.isNotBlank()) put("filename", filename)
+    }
+
+    fun toLegacyCoreMap(): Map<String, Any?> = mapOf(
         "songSignature" to songSignature,
         "plainLyrics" to plainLyrics,
         "syncedLyricsJson" to syncedLyricsJson,
@@ -456,7 +496,14 @@ data class CloudLyricsEntry(
             syncedLyricsJson = map["syncedLyricsJson"] as? String,
             isCached = map["isCached"] as? Boolean ?: true,
             source = map["source"] as? String ?: "local",
-            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L
+            updatedAt = (map["updatedAt"] as? Number)?.toLong() ?: 0L,
+            offsetMs = (map["offsetMs"] as? Number)?.toLong() ?: 0L,
+            offsetUpdatedAt = (map["offsetUpdatedAt"] as? Number)?.toLong() ?: 0L,
+            title = map["title"] as? String ?: "",
+            artist = map["artist"] as? String ?: "",
+            album = map["album"] as? String ?: "",
+            durationMs = (map["durationMs"] as? Number)?.toLong() ?: 0L,
+            filename = map["filename"] as? String ?: ""
         )
     }
 }

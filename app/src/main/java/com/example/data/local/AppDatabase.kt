@@ -143,33 +143,36 @@ abstract class AppDatabase : RoomDatabase() {
                     val nameColumn = cursor.getColumnIndex("name")
                     while (cursor.moveToNext()) if (nameColumn >= 0) columns += cursor.getString(nameColumn)
                 }
-                if ("updatedAt" !in columns) {
-                    db.execSQL("ALTER TABLE lyrics ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lyrics_new` (" +
+                        "`songId` INTEGER NOT NULL, " +
+                        "`plainLyrics` TEXT, " +
+                        "`syncedLyricsJson` TEXT, " +
+                        "`isCached` INTEGER NOT NULL, " +
+                        "`source` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`songId`))"
+                )
+                if ("updatedAt" in columns) {
+                    db.execSQL(
+                        "INSERT OR REPLACE INTO `lyrics_new` (`songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, `updatedAt`) " +
+                            "SELECT `songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, COALESCE(`updatedAt`, 0) FROM `lyrics`"
+                    )
+                } else if (columns.containsAll(listOf("songId", "plainLyrics", "syncedLyricsJson", "isCached", "source"))) {
+                    db.execSQL(
+                        "INSERT OR REPLACE INTO `lyrics_new` (`songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, `updatedAt`) " +
+                            "SELECT `songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, 0 FROM `lyrics`"
+                    )
                 }
+                db.execSQL("DROP TABLE IF EXISTS `lyrics`")
+                db.execSQL("ALTER TABLE `lyrics_new` RENAME TO `lyrics`")
             }
         }
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
-        /**
-         * Non-destructively heals an existing SQLite database on disk BEFORE Room opens it.
-         *
-         * Why this is critical for in-place app updates:
-         * - When a user installs a newer APK over an older APK that already had `version = 10`
-         *   (or a lower version with legacy column definitions in `smart_playlists` or missing
-         *   indices in `playlist_play_events` / `playback_history`), Room's `RoomOpenHelper.checkIdentity`
-         *   checks `room_master_table.identity_hash`.
-         * - If the schema hash changed while `version` stayed `10`, Room does NOT run
-         *   `fallbackToDestructiveMigration` — it throws a fatal `IllegalStateException` on startup,
-         *   crashing the app immediately when opened after an update!
-         * - By opening the raw SQLite file first, ensuring every table, column, and index matches
-         *   the current Room entities while preserving 100% of user data (songs, playlists,
-         *   favorites, listening stats, lyrics, recent searches), and dropping `room_master_table`,
-         *   Room sees no existing master hash, runs `onValidateSchema(db)` (which succeeds),
-         *   and writes the new `identity_hash` cleanly without wiping any data.
-         */
-        private const val ROOM_MASTER_IDENTITY_HASH = "bbe7c72c916555313ebf50d3515990b4"
+        private const val ROOM_MASTER_IDENTITY_HASH = "849000c812092e7ab39e852cbaef982b"
 
         @Synchronized
         internal fun healExistingDatabaseBeforeRoomOpen(context: Context) {
@@ -298,12 +301,14 @@ abstract class AppDatabase : RoomDatabase() {
                             "`name` TEXT NOT NULL, " +
                             "`createdAt` INTEGER NOT NULL, " +
                             "`isPinned` INTEGER NOT NULL, " +
-                            "`artworkUri` TEXT)"
+                            "`artworkUri` TEXT, " +
+                            "`cloudId` TEXT NOT NULL DEFAULT '')"
                     )
                     ensureColumn("playlists", "name", "TEXT NOT NULL DEFAULT ''")
                     ensureColumn("playlists", "createdAt", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playlists", "isPinned", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumn("playlists", "artworkUri", "TEXT")
+                    ensureColumn("playlists", "cloudId", "TEXT NOT NULL DEFAULT ''")
 
                     // 4. Ensure `playlist_songs` table exists
                     rawDb.execSQL(
@@ -355,20 +360,33 @@ abstract class AppDatabase : RoomDatabase() {
                     rawDb.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_playback_history_sessionId` ON `playback_history` (`sessionId`)")
                     rawDb.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_history_isQualified_startedAt` ON `playback_history` (`isQualified`, `startedAt`)")
 
-                    // 7. Ensure `lyrics` table exists
+                    // 7. Ensure `lyrics` table exists with exact Room v12 schema (updatedAt without SQLite DEFAULT mismatch)
+                    val lyricsCols = getColumns("lyrics")
                     rawDb.execSQL(
-                        "CREATE TABLE IF NOT EXISTS `lyrics` (" +
+                        "CREATE TABLE IF NOT EXISTS `lyrics_new` (" +
                             "`songId` INTEGER NOT NULL, " +
                             "`plainLyrics` TEXT, " +
                             "`syncedLyricsJson` TEXT, " +
                             "`isCached` INTEGER NOT NULL, " +
                             "`source` TEXT NOT NULL, " +
+                            "`updatedAt` INTEGER NOT NULL, " +
                             "PRIMARY KEY(`songId`))"
                     )
-                    ensureColumn("lyrics", "plainLyrics", "TEXT")
-                    ensureColumn("lyrics", "syncedLyricsJson", "TEXT")
-                    ensureColumn("lyrics", "isCached", "INTEGER NOT NULL DEFAULT 1")
-                    ensureColumn("lyrics", "source", "TEXT NOT NULL DEFAULT 'local'")
+                    if (lyricsCols.isNotEmpty()) {
+                        if ("updatedAt" in lyricsCols) {
+                            rawDb.execSQL(
+                                "INSERT OR REPLACE INTO `lyrics_new` (`songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, `updatedAt`) " +
+                                    "SELECT `songId`, `plainLyrics`, `syncedLyricsJson`, COALESCE(`isCached`, 1), COALESCE(`source`, 'local'), COALESCE(`updatedAt`, 0) FROM `lyrics`"
+                            )
+                        } else if (lyricsCols.contains("songId")) {
+                            rawDb.execSQL(
+                                "INSERT OR REPLACE INTO `lyrics_new` (`songId`, `plainLyrics`, `syncedLyricsJson`, `isCached`, `source`, `updatedAt`) " +
+                                    "SELECT `songId`, `plainLyrics`, `syncedLyricsJson`, 1, 'local', 0 FROM `lyrics`"
+                            )
+                        }
+                        rawDb.execSQL("DROP TABLE IF EXISTS `lyrics`")
+                    }
+                    rawDb.execSQL("ALTER TABLE `lyrics_new` RENAME TO `lyrics`")
 
                     // 8. Ensure `recent_searches` table exists
                     rawDb.execSQL(
@@ -448,17 +466,18 @@ abstract class AppDatabase : RoomDatabase() {
                     val editor = bootPrefs.edit()
                         .putBoolean("db_checked_once", true)
                         .putBoolean("db_healed_v10", true)
-                    if (!alreadyCheckedInstall && (existingSongs > 0 || existingPlaylists > 0 || (priorVersion in 1..9))) {
+                        .putBoolean("db_healed_v12", true)
+                    if (!alreadyCheckedInstall && (existingSongs > 0 || existingPlaylists > 0 || (priorVersion in 1..11))) {
                         editor.putBoolean("onboarding_completed", true)
                     }
                     editor.apply()
 
-                    // 12. Stamp room_master_table with the current version 10 identity_hash so Room's
+                    // 12. Stamp room_master_table with the current version 12 identity_hash so Room's
                     //     RoomOpenDelegate.checkIdentity succeeds without throwing IllegalStateException
                     //     on minor SQLite default/affinity differences from older builds, preserving 100% of data.
                     rawDb.execSQL("CREATE TABLE IF NOT EXISTS `room_master_table` (`id` INTEGER PRIMARY KEY, `identity_hash` TEXT)")
                     rawDb.execSQL("INSERT OR REPLACE INTO `room_master_table` (`id`, `identity_hash`) VALUES(42, '$ROOM_MASTER_IDENTITY_HASH')")
-                    rawDb.version = 10
+                    rawDb.version = 12
 
                     rawDb.setTransactionSuccessful()
                 } finally {
@@ -519,14 +538,17 @@ abstract class AppDatabase : RoomDatabase() {
                 INSTANCE ?: run {
                     val appContext = context.applicationContext
                     val bootPrefs = appContext.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
-                    val alreadyHealedV10 = bootPrefs.getBoolean("db_healed_v10", false)
-                    if (!alreadyHealedV10) {
+                    val alreadyHealedV12 = bootPrefs.getBoolean("db_healed_v12", false)
+                    if (!alreadyHealedV12) {
                         val dbFile = appContext.getDatabasePath("offgrid_music_db")
                         val hadExistingDatabase = dbFile != null && dbFile.exists() && dbFile.length() > 0L
                         if (hadExistingDatabase) {
                             healExistingDatabaseBeforeRoomOpen(appContext)
                         } else {
-                            bootPrefs.edit().putBoolean("db_healed_v10", true).apply()
+                            bootPrefs.edit()
+                                .putBoolean("db_healed_v10", true)
+                                .putBoolean("db_healed_v12", true)
+                                .apply()
                         }
                     }
                     val instance = buildRoomDatabase(appContext)

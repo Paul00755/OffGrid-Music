@@ -1546,6 +1546,9 @@ private fun LyricsPanelContent(
     var syncOffsetMs by remember(song.id) {
         mutableLongStateOf(onGetLyricsOffset?.invoke(song.id) ?: 0L)
     }
+    LaunchedEffect(song.id, currentLyrics) {
+        syncOffsetMs = onGetLyricsOffset?.invoke(song.id) ?: 0L
+    }
     var showOffsetDialog by remember { mutableStateOf(false) }
     var showTranscribeDialog by remember { mutableStateOf(false) }
     var transcribeDialogInitialMode by remember { mutableStateOf(AudioTranscribeMode.TRANSLATE) }

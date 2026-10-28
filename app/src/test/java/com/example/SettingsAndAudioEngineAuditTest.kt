@@ -53,6 +53,8 @@ class SettingsAndAudioEngineAuditTest {
             assertTrue("Default Auto-pause for System Audio must be ON", repo.getAutoPauseSystemAudioSync())
             assertFalse(repo.autoPauseCamera.first())
             assertTrue(repo.autoPauseSystemAudio.first())
+            assertEquals("Default Add to Queue Position must be BOTTOM", "BOTTOM", repo.getAddToQueuePositionSync())
+            assertEquals("Default Add to Queue Position flow must emit BOTTOM", "BOTTOM", repo.addToQueuePosition.first())
         }
     }
 

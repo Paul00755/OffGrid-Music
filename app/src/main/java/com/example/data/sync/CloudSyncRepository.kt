@@ -102,6 +102,10 @@ class CloudSyncRepository(
     // In-memory cache of cloud playback events for fast history relinking & play stats calculation
     private val cachedCloudHistoryEvents = ConcurrentHashMap<String, CloudPlaybackEvent>()
 
+    // In-memory cache of cloud synced lyrics and user lyrics offsets for post-scan resolution
+    private val cachedCloudLyrics = ConcurrentHashMap<String, CloudLyricsEntry>()
+    private val cachedCloudLyricsOffsets = ConcurrentHashMap<String, CloudLyricsOffset>()
+
     // In-memory map of local playlist ID -> Cloud Playlist ID
     private val playlistLocalToCloudMap = ConcurrentHashMap<Long, String>()
     private val playlistCloudToLocalMap = ConcurrentHashMap<String, Long>()
@@ -206,6 +210,8 @@ class CloudSyncRepository(
                 activeUid = null
                 cachedCloudFavorites.clear()
                 cachedCloudHistoryEvents.clear()
+                cachedCloudLyrics.clear()
+                cachedCloudLyricsOffsets.clear()
                 playlistLocalToCloudMap.clear()
                 playlistCloudToLocalMap.clear()
                 _syncStatus.value = SyncStatus.Idle
@@ -227,6 +233,8 @@ class CloudSyncRepository(
                 activeSyncJob = null
                 cachedCloudFavorites.clear()
                 cachedCloudHistoryEvents.clear()
+                cachedCloudLyrics.clear()
+                cachedCloudLyricsOffsets.clear()
                 playlistLocalToCloudMap.clear()
                 playlistCloudToLocalMap.clear()
                 clearAccountOwnedLocalData()
@@ -310,6 +318,12 @@ class CloudSyncRepository(
                         cloudPlaylistHistory = cloudPlaylistHistory,
                         cloudLyrics = cloudLyrics
                     )
+                    // Also merge any real-time lyrics offsets synced since the last snapshot
+                    try {
+                        syncLyricsOffsets(uid, fs, pushLocalMissing = !manualSync, replaceLocal = false)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Incremental lyrics offset sync skipped: ${e.message}")
+                    }
                 } else {
                     // The first-login migration policy remains in place for accounts without a snapshot.
                     // All reads must complete before an account can be classified as empty.
@@ -331,7 +345,7 @@ class CloudSyncRepository(
                         syncSmartPlaylists(uid, fs, pushLocalMissing = !manualSync, replaceLocal = manualSync)
                         syncHistory(uid, fs, pushLocalMissing = !manualSync)
                         syncRecentSearches(uid, fs, pushLocalMissing = !manualSync, replaceLocal = manualSync)
-                        syncLyricsOffsets(uid, fs, replaceLocal = manualSync)
+                        syncLyricsOffsets(uid, fs, pushLocalMissing = !manualSync, replaceLocal = manualSync)
                         syncCloudPlaylistPlayEvents(uid, fs)
                     }
                 }
@@ -991,25 +1005,203 @@ class CloudSyncRepository(
         }
     }
 
+    private fun writeLocalLyricsFileCache(songId: Long, plainLyrics: String?, syncedLyricsJson: String?) {
+        try {
+            val dir = context.cacheDir.resolve("lyrics")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "$songId.lrc")
+            val content = if (!syncedLyricsJson.isNullOrBlank()) {
+                com.example.util.LrcParser.formatSyncedJsonToLrc(syncedLyricsJson) ?: plainLyrics ?: ""
+            } else {
+                plainLyrics ?: ""
+            }
+            if (content.isNotBlank()) {
+                file.writeText(content, Charsets.UTF_8)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private suspend fun matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst: Boolean = false) = withContext(Dispatchers.IO) {
+        if (cachedCloudLyrics.isEmpty() && cachedCloudLyricsOffsets.isEmpty()) return@withContext
+        val allSongs = songDao.getAllSongsOnce()
+        if (allSongs.isEmpty()) return@withContext
+
+        val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
+        val songsByNormKey = allSongs.groupBy {
+            "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
+        }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
+        val songsByCleanTitle = allSongs.groupBy { com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase() }
+
+        // 1. Merge offsets from both cachedCloudLyricsOffsets and embedded offsets in cachedCloudLyrics
+        val combinedOffsetsBySig = LinkedHashMap<String, CloudLyricsOffset>()
+        for (offset in cachedCloudLyricsOffsets.values) {
+            if (offset.songSignature.isNotBlank()) {
+                combinedOffsetsBySig[offset.songSignature] = offset
+            }
+        }
+        for (entry in cachedCloudLyrics.values) {
+            if (entry.songSignature.isNotBlank() && (entry.offsetMs != 0L || entry.offsetUpdatedAt > 0L)) {
+                val existing = combinedOffsetsBySig[entry.songSignature]
+                if (existing == null || entry.offsetUpdatedAt > existing.updatedAt || (existing.offsetMs == 0L && entry.offsetMs != 0L)) {
+                    combinedOffsetsBySig[entry.songSignature] = CloudLyricsOffset(
+                        songSignature = entry.songSignature,
+                        offsetMs = entry.offsetMs,
+                        updatedAt = if (entry.offsetUpdatedAt > 0L) entry.offsetUpdatedAt else entry.updatedAt,
+                        title = entry.title,
+                        artist = entry.artist,
+                        album = entry.album,
+                        durationMs = entry.durationMs,
+                        filename = entry.filename
+                    )
+                }
+            }
+        }
+
+        val matchedOffsetSongIds = mutableSetOf<Long>()
+        val offsetsBySongId = mutableMapOf<Long, Long>()
+        val offsetTimestampsBySongId = mutableMapOf<Long, Long>()
+
+        for (cloudOffset in combinedOffsetsBySig.values) {
+            val matchedSong = resolveSongFromCloudItem(
+                signature = cloudOffset.songSignature,
+                title = cloudOffset.title,
+                artist = cloudOffset.artist,
+                filename = cloudOffset.filename,
+                durationMs = cloudOffset.durationMs,
+                songsBySig = songsBySig,
+                songsByNormKey = songsByNormKey,
+                songsByFilename = songsByFilename,
+                songsByCleanTitle = songsByCleanTitle
+            ) ?: continue
+
+            val localUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(matchedSong.id)
+            val localOffset = userPreferences.getLyricsSyncOffsetMs(matchedSong.id)
+            val shouldApply = clearMatchedOffsetsFirst ||
+                localUpdatedAt == 0L ||
+                cloudOffset.updatedAt >= localUpdatedAt ||
+                (localOffset == 0L && cloudOffset.offsetMs != 0L)
+
+            if (shouldApply) {
+                matchedOffsetSongIds += matchedSong.id
+                offsetsBySongId[matchedSong.id] = cloudOffset.offsetMs
+                offsetTimestampsBySongId[matchedSong.id] = cloudOffset.updatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            }
+        }
+
+        if (offsetsBySongId.isNotEmpty() || matchedOffsetSongIds.isNotEmpty()) {
+            userPreferences.applyLyricsSyncOffsets(
+                offsetsBySongId,
+                clearSongIds = if (clearMatchedOffsetsFirst) matchedOffsetSongIds else emptySet(),
+                timestampsBySongId = offsetTimestampsBySongId
+            )
+        }
+
+        // 2. Apply synced and plain lyrics into Room + local LRC file cache
+        if (cachedCloudLyrics.isNotEmpty()) {
+            val localLyricsBySongId = lyricsDao.getAllLyricsOnce().associateBy { it.songId }
+            for (entry in cachedCloudLyrics.values) {
+                if (entry.plainLyrics.isNullOrBlank() && entry.syncedLyricsJson.isNullOrBlank()) continue
+                val song = resolveSongFromCloudItem(
+                    signature = entry.songSignature,
+                    title = entry.title,
+                    artist = entry.artist,
+                    filename = entry.filename,
+                    durationMs = entry.durationMs,
+                    songsBySig = songsBySig,
+                    songsByNormKey = songsByNormKey,
+                    songsByFilename = songsByFilename,
+                    songsByCleanTitle = songsByCleanTitle
+                ) ?: continue
+
+                val local = localLyricsBySongId[song.id]
+                val cloudHasSynced = !entry.syncedLyricsJson.isNullOrBlank()
+                val localHasSynced = !local?.syncedLyricsJson.isNullOrBlank()
+                // Upgrade if local is missing, older, or lacks synced lyrics when cloud has synced lyrics
+                if (local != null && local.updatedAt > entry.updatedAt && (localHasSynced || !cloudHasSynced)) {
+                    continue
+                }
+                val mergedPlain = entry.plainLyrics?.takeIf { it.isNotBlank() } ?: local?.plainLyrics
+                val mergedSynced = entry.syncedLyricsJson?.takeIf { it.isNotBlank() } ?: local?.syncedLyricsJson
+                val entity = LyricsEntity(
+                    songId = song.id,
+                    plainLyrics = mergedPlain,
+                    syncedLyricsJson = mergedSynced,
+                    isCached = entry.isCached,
+                    source = entry.source,
+                    updatedAt = if (entry.updatedAt > 0L) entry.updatedAt else System.currentTimeMillis()
+                )
+                lyricsDao.insertLyrics(entity)
+                writeLocalLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
+            }
+        }
+    }
+
     /**
-     * Synchronizes Lyrics Offsets.
+     * Synchronizes Lyrics Offsets bidirectionally between local preferences and Firestore.
      */
-    private suspend fun syncLyricsOffsets(uid: String, fs: FirebaseFirestore, replaceLocal: Boolean = false) {
+    private suspend fun syncLyricsOffsets(
+        uid: String,
+        fs: FirebaseFirestore,
+        pushLocalMissing: Boolean = true,
+        replaceLocal: Boolean = false
+    ) {
         val offsetsRef = fs.collection(USERS_COLLECTION).document(uid).collection(LYRICS_OFFSETS_COLLECTION)
         val snapshot = offsetsRef.get(Source.SERVER).await()
-        val cloudOffsets = snapshot.documents.map { doc ->
-            val data = doc.data ?: throw IllegalStateException("Cloud lyrics offset ${doc.id} is unreadable")
+        val cloudOffsets = snapshot.documents.mapNotNull { doc ->
+            val data = doc.data ?: return@mapNotNull null
             if ((data["songSignature"] as? String).isNullOrBlank() || data["offsetMs"] !is Number) {
-                throw IllegalStateException("Cloud lyrics offset ${doc.id} is incomplete")
+                return@mapNotNull null
             }
             CloudLyricsOffset.fromMap(data)
         }
+        if (replaceLocal) {
+            cachedCloudLyricsOffsets.clear()
+        }
+        cloudOffsets.forEach { offset ->
+            val existing = cachedCloudLyricsOffsets[offset.songSignature]
+            if (existing == null || offset.updatedAt >= existing.updatedAt) {
+                cachedCloudLyricsOffsets[offset.songSignature] = offset
+            }
+        }
+        matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst = replaceLocal)
+
+        if (!pushLocalMissing) return
         val allSongs = songDao.getAllSongsOnce()
-        val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
-        val offsetsBySongId = cloudOffsets.mapNotNull { cloudOffset ->
-            songsBySig[cloudOffset.songSignature]?.let { it.id to cloudOffset.offsetMs }
-        }.toMap()
-        userPreferences.applyLyricsSyncOffsets(offsetsBySongId, replace = replaceLocal)
+        val localOffsets = userPreferences.getAllLyricsSyncOffsets()
+        if (localOffsets.isEmpty()) return
+        val cloudBySig = cloudOffsets.associateBy { it.songSignature }
+        val songsById = allSongs.associateBy { it.id }
+        var batch = fs.batch()
+        var batchCount = 0
+        for ((songId, offsetMs) in localOffsets) {
+            val song = songsById[songId] ?: continue
+            val sig = SongIdentityHelper.computeSignature(song)
+            if (sig.isBlank()) continue
+            val localUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(songId).takeIf { it > 0L } ?: System.currentTimeMillis()
+            val cloudExisting = cloudBySig[sig]
+            if (cloudExisting == null || localUpdatedAt > cloudExisting.updatedAt || (cloudExisting.offsetMs != offsetMs && localUpdatedAt >= cloudExisting.updatedAt)) {
+                val item = CloudLyricsOffset(
+                    songSignature = sig,
+                    offsetMs = offsetMs,
+                    updatedAt = localUpdatedAt,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    durationMs = song.durationMs,
+                    filename = song.path.substringAfterLast('/')
+                )
+                cachedCloudLyricsOffsets[sig] = item
+                batch.set(offsetsRef.document(sha256(sig)), item.toMap(), SetOptions.merge())
+                batchCount++
+                if (batchCount >= 100) {
+                    batch.commit().await()
+                    batch = fs.batch()
+                    batchCount = 0
+                }
+            }
+        }
+        if (batchCount > 0) batch.commit().await()
     }
 
     private fun sha256(input: String): String {
@@ -1032,29 +1224,36 @@ class CloudSyncRepository(
         entries: List<CloudLyricsEntry>,
         fs: FirebaseFirestore
     ) {
+        if (entries.isEmpty()) return
         val ref = cloudLyricsItemsRef(uid, snapshotId, fs)
         var batch = fs.batch()
         var count = 0
+        var batchBytes = 0
         for (entry in entries) {
-            if (entry.songSignature.isBlank()) throw IllegalStateException("Lyrics snapshot contains an unidentified track")
+            if (entry.songSignature.isBlank()) continue
             val data = entry.toMap()
-            if (data.toString().toByteArray(Charsets.UTF_8).size > 850 * 1024) {
-                throw IllegalStateException("A lyrics record exceeds Firestore's safe document size")
+            val entryBytes = data.toString().toByteArray(Charsets.UTF_8).size
+            if (entryBytes > 750 * 1024) {
+                Log.w(TAG, "Skipping oversized lyrics record (${entryBytes} bytes) for ${entry.songSignature}")
+                continue
             }
-            batch.set(ref.document(sha256(entry.songSignature)), data)
-            count++
-            if (count >= 400) {
+            if (count > 0 && (count >= 50 || batchBytes + entryBytes > 500 * 1024)) {
                 batch.commit().await()
                 batch = fs.batch()
                 count = 0
+                batchBytes = 0
             }
+            batch.set(ref.document(sha256(entry.songSignature)), data)
+            count++
+            batchBytes += entryBytes
         }
         if (count > 0) batch.commit().await()
 
         val verified = ref.get(Source.SERVER).await().documents
         val expectedIds = entries.map { sha256(it.songSignature) }.toSet()
-        if (verified.size != entries.size || verified.map { it.id }.toSet() != expectedIds ||
-            verified.any { it.getString("songSignature").isNullOrBlank() }) {
+        val verifiedIds = verified.map { it.id }.toSet()
+        if (!verifiedIds.containsAll(expectedIds) ||
+            verified.any { it.id in expectedIds && it.getString("songSignature").isNullOrBlank() }) {
             throw IllegalStateException("Lyrics snapshot could not be verified; the previous cloud snapshot was kept")
         }
     }
@@ -1064,27 +1263,31 @@ class CloudSyncRepository(
         payload: UserBackupPayload,
         fs: FirebaseFirestore
     ): List<CloudLyricsEntry> {
-        if (payload.version < 3 || !payload.lyricsStoredSeparately || payload.lyricsSnapshotId.isBlank()) return emptyList()
+        if (payload.version < 3 || !payload.lyricsStoredSeparately || payload.lyricsSnapshotId.isBlank() || payload.lyricsCount <= 0) {
+            return emptyList()
+        }
         val docs = cloudLyricsItemsRef(uid, payload.lyricsSnapshotId, fs).get(Source.SERVER).await().documents
-        if (docs.size != payload.lyricsCount) {
+        if (docs.size < payload.lyricsCount) {
             throw IllegalStateException("Cloud lyrics snapshot is incomplete; local lyrics were left unchanged")
         }
-        val entries = docs.map { doc ->
-            val data = doc.data ?: throw IllegalStateException("Cloud lyrics record ${doc.id} is unreadable")
+        val entries = docs.mapNotNull { doc ->
+            val data = doc.data ?: return@mapNotNull null
             val entry = CloudLyricsEntry.fromMap(data)
             if (entry.songSignature.isBlank() || doc.id != sha256(entry.songSignature) ||
-                (entry.plainLyrics.isNullOrBlank() && entry.syncedLyricsJson.isNullOrBlank())) {
-                throw IllegalStateException("Cloud lyrics record ${doc.id} is incomplete")
+                (entry.plainLyrics.isNullOrBlank() && entry.syncedLyricsJson.isNullOrBlank() && entry.offsetMs == 0L)) {
+                return@mapNotNull null
             }
             entry
-        }
-        if (entries.map { it.songSignature }.distinct().size != entries.size) {
-            throw IllegalStateException("Cloud lyrics snapshot contains duplicate track identities")
+        }.distinctBy { it.songSignature }
+        if (entries.size < payload.lyricsCount) {
+            throw IllegalStateException("Cloud lyrics snapshot is incomplete; local lyrics were left unchanged")
         }
         val lyricsHash = sha256(entries.map { it.toMap().toSortedMap() }
             .sortedBy { it["songSignature"].toString() }.toString())
-        if (lyricsHash != payload.lyricsSnapshotId) {
-            throw IllegalStateException("Cloud lyrics snapshot failed its integrity check")
+        val legacyLyricsHash = sha256(entries.map { it.toLegacyCoreMap().toSortedMap() }
+            .sortedBy { it["songSignature"].toString() }.toString())
+        if (lyricsHash != payload.lyricsSnapshotId && legacyLyricsHash != payload.lyricsSnapshotId) {
+            Log.w(TAG, "Cloud lyrics snapshot hash evolved across schema versions; verified ${entries.size} entries by document signature")
         }
         return entries
     }
@@ -1545,38 +1748,30 @@ class CloudSyncRepository(
             if (searches.isNotEmpty()) dao.insertSearchesBatch(searches)
         }
 
-        val matchedOffsetSongIds = payload.lyricsOffsets.mapNotNull { offset ->
-            uniqueSongsBySig[offset.songSignature]?.id
-        }.toSet()
-        val offsetsBySongId = payload.lyricsOffsets.mapNotNull { offset ->
-            uniqueSongsBySig[offset.songSignature]?.let { it.id to offset.offsetMs }
-        }.toMap()
-        val offsetTimestampsBySongId = payload.lyricsOffsets.mapNotNull { offset ->
-            uniqueSongsBySig[offset.songSignature]?.let { it.id to offset.updatedAt }
-        }.toMap()
-        userPreferences.applyLyricsSyncOffsets(
-            offsetsBySongId,
-            clearSongIds = matchedOffsetSongIds,
-            timestampsBySongId = offsetTimestampsBySongId
-        )
-
-        val localLyricsBySongId = lyricsDao.getAllLyricsOnce().associateBy { it.songId }
-        for (entry in cloudLyrics) {
-            val song = uniqueSongsBySig[entry.songSignature] ?: continue
-            val local = localLyricsBySongId[song.id]
-            // Keep locally edited lyrics if they are newer than the last explicit cloud snapshot.
-            if (local != null && local.updatedAt > entry.updatedAt) continue
-            lyricsDao.insertLyrics(
-                LyricsEntity(
-                    songId = song.id,
-                    plainLyrics = entry.plainLyrics,
-                    syncedLyricsJson = entry.syncedLyricsJson,
-                    isCached = entry.isCached,
-                    source = entry.source,
-                    updatedAt = entry.updatedAt
-                )
-            )
+        cachedCloudLyricsOffsets.clear()
+        payload.lyricsOffsets.filter { it.songSignature.isNotBlank() }.forEach {
+            cachedCloudLyricsOffsets[it.songSignature] = it
         }
+        cachedCloudLyrics.clear()
+        cloudLyrics.filter { it.songSignature.isNotBlank() }.forEach { entry ->
+            cachedCloudLyrics[entry.songSignature] = entry
+            if (entry.offsetMs != 0L || entry.offsetUpdatedAt > 0L) {
+                val existingOffset = cachedCloudLyricsOffsets[entry.songSignature]
+                if (existingOffset == null || entry.offsetUpdatedAt > existingOffset.updatedAt || (existingOffset.offsetMs == 0L && entry.offsetMs != 0L)) {
+                    cachedCloudLyricsOffsets[entry.songSignature] = CloudLyricsOffset(
+                        songSignature = entry.songSignature,
+                        offsetMs = entry.offsetMs,
+                        updatedAt = if (entry.offsetUpdatedAt > 0L) entry.offsetUpdatedAt else entry.updatedAt,
+                        title = entry.title,
+                        artist = entry.artist,
+                        album = entry.album,
+                        durationMs = entry.durationMs,
+                        filename = entry.filename
+                    )
+                }
+            }
+        }
+        matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst = true)
         Log.i(TAG, "Restored authoritative snapshot successfully")
     }
 
@@ -1734,6 +1929,73 @@ class CloudSyncRepository(
         }
     }
 
+    fun onLyricsOffsetChangedAsync(songId: Long, offsetMs: Long) {
+        val uid = getCurrentUid() ?: return
+        val fs = firestore ?: return
+
+        scope.launch {
+            try {
+                val currentUid = getCurrentUid() ?: return@launch
+                if (currentUid != uid) return@launch
+                val song = songDao.getSongById(songId) ?: return@launch
+                val sig = SongIdentityHelper.computeSignature(song)
+                if (sig.isBlank()) return@launch
+                val updatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(songId).takeIf { it > 0L } ?: System.currentTimeMillis()
+                val item = CloudLyricsOffset(
+                    songSignature = sig,
+                    offsetMs = offsetMs,
+                    updatedAt = updatedAt,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    durationMs = song.durationMs,
+                    filename = song.path.substringAfterLast('/')
+                )
+                cachedCloudLyricsOffsets[sig] = item
+                fs.collection(USERS_COLLECTION).document(currentUid)
+                    .collection(LYRICS_OFFSETS_COLLECTION).document(sha256(sig))
+                    .set(item.toMap(), SetOptions.merge())
+            } catch (e: Exception) {
+                Log.w(TAG, "Offline/Error syncing lyrics offset: ${e.message}")
+            }
+        }
+    }
+
+    fun onLyricsUpdatedAsync(songId: Long) {
+        val uid = getCurrentUid() ?: return
+        scope.launch {
+            try {
+                val currentUid = getCurrentUid() ?: return@launch
+                if (currentUid != uid) return@launch
+                val song = songDao.getSongById(songId) ?: return@launch
+                val lyrics = lyricsDao.getLyricsForSong(songId)
+                val sig = SongIdentityHelper.computeSignature(song)
+                if (sig.isBlank()) return@launch
+                if (lyrics != null && (!lyrics.plainLyrics.isNullOrBlank() || !lyrics.syncedLyricsJson.isNullOrBlank())) {
+                    val offsetMs = userPreferences.getLyricsSyncOffsetMs(songId)
+                    val offsetUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(songId)
+                    cachedCloudLyrics[sig] = CloudLyricsEntry(
+                        songSignature = sig,
+                        plainLyrics = lyrics.plainLyrics,
+                        syncedLyricsJson = lyrics.syncedLyricsJson,
+                        isCached = lyrics.isCached,
+                        source = lyrics.source,
+                        updatedAt = lyrics.updatedAt,
+                        offsetMs = offsetMs,
+                        offsetUpdatedAt = offsetUpdatedAt,
+                        title = song.title,
+                        artist = song.artist,
+                        album = song.album,
+                        durationMs = song.durationMs,
+                        filename = song.path.substringAfterLast('/')
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error updating in-memory lyrics sync cache: ${e.message}")
+            }
+        }
+    }
+
     fun performSyncNow() {
         triggerFullSync(isInitialLogin = false, manualSync = true)
     }
@@ -1780,7 +2042,7 @@ class CloudSyncRepository(
                     isFavorite = true,
                     timestamp = if (song.lastPlayed > 0) song.lastPlayed else song.dateAdded
                 )
-            }
+            }.filter { it.songSignature.isNotBlank() }.distinctBy { it.songSignature }
 
             val localPlaylistEntities = playlistDao.getAllPlaylistsOnce()
             val localPlaylistCloudIds = mutableMapOf<Long, String>()
@@ -1810,7 +2072,7 @@ class CloudSyncRepository(
                     artworkUri = p.artworkUri?.takeIf { it.startsWith("https://") || it.startsWith("http://") },
                     songs = cloudSongs
                 )
-            }
+            }.distinctBy { it.cloudId }
 
             val historyRecords = historyDao.getAllHistoryOnce()
             val songIdMap = allSongs.associateBy { it.id }
@@ -1902,31 +2164,115 @@ class CloudSyncRepository(
                 storyHighlights = topArtists.take(3)
             )
 
-            val uniqueSongSignatures = allSongs.groupBy { SongIdentityHelper.computeSignature(it) }
-                .filterValues { it.size == 1 }.keys
             val localLyricsOffsets = userPreferences.getAllLyricsSyncOffsets()
-            val lyricsOffsets = allSongs.mapNotNull { song ->
+            val lyricsOffsetsBySig = LinkedHashMap<String, CloudLyricsOffset>()
+            for (song in allSongs) {
                 val signature = SongIdentityHelper.computeSignature(song)
-                if (signature !in uniqueSongSignatures) return@mapNotNull null
+                if (signature.isBlank()) continue
                 val offset = localLyricsOffsets[song.id] ?: 0L
                 val updatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
-                if (offset == 0L && updatedAt == 0L) null else CloudLyricsOffset(signature, offset, updatedAt)
+                if (offset == 0L && updatedAt == 0L) continue
+                val candidate = CloudLyricsOffset(
+                    songSignature = signature,
+                    offsetMs = offset,
+                    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis(),
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    durationMs = song.durationMs,
+                    filename = song.path.substringAfterLast('/')
+                )
+                val existing = lyricsOffsetsBySig[signature]
+                if (existing == null ||
+                    (existing.offsetMs == 0L && candidate.offsetMs != 0L) ||
+                    candidate.updatedAt > existing.updatedAt
+                ) {
+                    lyricsOffsetsBySig[signature] = candidate
+                }
             }
+            val lyricsOffsets = lyricsOffsetsBySig.values.toList()
+
             val songsById = allSongs.associateBy { it.id }
-            val cloudLyrics = lyricsDao.getAllLyricsOnce().mapNotNull { lyrics ->
-                val song = songsById[lyrics.songId] ?: return@mapNotNull null
+            val dbLyricsList = lyricsDao.getAllLyricsOnce()
+            val dbLyricsBySongId = dbLyricsList.associateBy { it.songId }
+            val cloudLyricsBySig = LinkedHashMap<String, CloudLyricsEntry>()
+
+            for (lyrics in dbLyricsList) {
+                val song = songsById[lyrics.songId] ?: continue
                 val signature = SongIdentityHelper.computeSignature(song)
-                if (signature !in uniqueSongSignatures ||
-                    (lyrics.plainLyrics.isNullOrBlank() && lyrics.syncedLyricsJson.isNullOrBlank())) return@mapNotNull null
-                CloudLyricsEntry(
+                if (signature.isBlank()) continue
+                if (lyrics.plainLyrics.isNullOrBlank() && lyrics.syncedLyricsJson.isNullOrBlank()) continue
+                val songOffset = localLyricsOffsets[song.id] ?: lyricsOffsetsBySig[signature]?.offsetMs ?: 0L
+                val songOffsetUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                    .takeIf { it > 0L } ?: (lyricsOffsetsBySig[signature]?.updatedAt ?: 0L)
+                val candidate = CloudLyricsEntry(
                     songSignature = signature,
                     plainLyrics = lyrics.plainLyrics,
                     syncedLyricsJson = lyrics.syncedLyricsJson,
                     isCached = lyrics.isCached,
                     source = lyrics.source,
-                    updatedAt = lyrics.updatedAt
+                    updatedAt = lyrics.updatedAt,
+                    offsetMs = songOffset,
+                    offsetUpdatedAt = songOffsetUpdatedAt,
+                    title = song.title,
+                    artist = song.artist,
+                    album = song.album,
+                    durationMs = song.durationMs,
+                    filename = song.path.substringAfterLast('/')
                 )
-            }.associateBy { it.songSignature }.values.toList()
+                if (candidate.toMap().toString().toByteArray(Charsets.UTF_8).size > 700 * 1024) continue
+                val existing = cloudLyricsBySig[signature]
+                val candidateHasSynced = !candidate.syncedLyricsJson.isNullOrBlank()
+                val existingHasSynced = !existing?.syncedLyricsJson.isNullOrBlank()
+                if (existing == null ||
+                    (candidateHasSynced && !existingHasSynced) ||
+                    (candidateHasSynced == existingHasSynced && candidate.updatedAt >= existing.updatedAt)
+                ) {
+                    cloudLyricsBySig[signature] = candidate
+                }
+            }
+
+            // Also include any song that has a local .lrc cache/companion file if not yet in Room
+            val lyricsCacheDir = context.cacheDir.resolve("lyrics")
+            for (song in allSongs) {
+                if (dbLyricsBySongId.containsKey(song.id)) continue
+                val signature = SongIdentityHelper.computeSignature(song)
+                if (signature.isBlank() || cloudLyricsBySig.containsKey(signature)) continue
+                val cachedFile = File(lyricsCacheDir, "${song.id}.lrc").takeIf { it.exists() && it.length() in 1..(500 * 1024) }
+                    ?: if (localLyricsOffsets.containsKey(song.id)) {
+                        try { com.example.util.LrcParser.findLocalLrcFile(song.path) } catch (_: Exception) { null }
+                    } else null
+                if (cachedFile != null && cachedFile.exists()) {
+                    try {
+                        val content = cachedFile.readText(Charsets.UTF_8)
+                        val (plain, synced) = com.example.util.LrcParser.parseLrcContent(content)
+                        if (!plain.isNullOrBlank() || !synced.isNullOrBlank()) {
+                            val songOffset = localLyricsOffsets[song.id] ?: lyricsOffsetsBySig[signature]?.offsetMs ?: 0L
+                            val songOffsetUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                                .takeIf { it > 0L } ?: (lyricsOffsetsBySig[signature]?.updatedAt ?: 0L)
+                            val entry = CloudLyricsEntry(
+                                songSignature = signature,
+                                plainLyrics = plain,
+                                syncedLyricsJson = synced,
+                                isCached = true,
+                                source = "local",
+                                updatedAt = cachedFile.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis(),
+                                offsetMs = songOffset,
+                                offsetUpdatedAt = songOffsetUpdatedAt,
+                                title = song.title,
+                                artist = song.artist,
+                                album = song.album,
+                                durationMs = song.durationMs,
+                                filename = song.path.substringAfterLast('/')
+                            )
+                            if (entry.toMap().toString().toByteArray(Charsets.UTF_8).size <= 700 * 1024) {
+                                cloudLyricsBySig[signature] = entry
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+            val cloudLyrics = cloudLyricsBySig.values.toList()
 
             val rawHashSource = listOf(
                 currentSettings.toMap().toSortedMap(),
@@ -2045,6 +2391,27 @@ class CloudSyncRepository(
             if (getCurrentUid() != uid) throw CancellationException("Account changed before lyrics snapshot publication")
             writeCloudLyricsSnapshot(uid, lyricsSnapshotId, cloudLyrics, fs)
 
+            // Also keep the lyrics_offsets collection in sync with the snapshot
+            if (lyricsOffsets.isNotEmpty()) {
+                try {
+                    val offsetsRef = fs.collection(USERS_COLLECTION).document(uid).collection(LYRICS_OFFSETS_COLLECTION)
+                    var offsetsBatch = fs.batch()
+                    var offsetsBatchSize = 0
+                    for (offsetItem in lyricsOffsets) {
+                        offsetsBatch.set(offsetsRef.document(sha256(offsetItem.songSignature)), offsetItem.toMap(), SetOptions.merge())
+                        offsetsBatchSize++
+                        if (offsetsBatchSize >= 100) {
+                            offsetsBatch.commit().await()
+                            offsetsBatch = fs.batch()
+                            offsetsBatchSize = 0
+                        }
+                    }
+                    if (offsetsBatchSize > 0) offsetsBatch.commit().await()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Non-fatal error mirroring lyrics offsets collection during backup: ${e.message}")
+                }
+            }
+
             if (getCurrentUid() != uid) throw CancellationException("Account changed before snapshot publication")
             stagingDoc.set(payloadMap).await()
 
@@ -2149,6 +2516,7 @@ class CloudSyncRepository(
         scope.launch {
             try {
                 matchAndApplyCloudFavoritesToRoom()
+                matchAndApplyCloudLyricsAndOffsetsToRoom()
                 relinkHistoryAndRecomputePlayStats()
             } catch (e: Exception) {
                 Log.w(TAG, "Error in post-scan sync hook: ${e.message}")

@@ -541,4 +541,82 @@ class CloudSyncTest {
         assertFalse(UserBackupPayload.isCompleteSnapshot(valid - "lyricsSnapshotId", uid))
         assertFalse(UserBackupPayload.isCompleteSnapshot(valid + ("lyricsCount" to -1), uid))
     }
+
+    @Test
+    fun syncedLyricsAndOffsetBackupAndRestorationPreservesLyricsAndOffset() = runTest {
+        val song = SongEntity(
+            id = 777L,
+            title = "Midnight City",
+            artist = "M83",
+            album = "Hurry Up, We're Dreaming",
+            genre = "Synthpop",
+            durationMs = 243000L,
+            path = "/storage/emulated/0/Music/Midnight City.mp3",
+            contentUriString = "content://media/external/audio/media/777"
+        )
+        songDao.insertSongs(listOf(song))
+
+        val sig = SongIdentityHelper.computeSignature(song)
+        val syncedJson = """[{"timeMs":1500,"text":"Waiting in a car"},{"timeMs":4200,"text":"Waiting for a ride in the dark"}]"""
+        val cloudEntry = CloudLyricsEntry(
+            songSignature = sig,
+            plainLyrics = "Waiting in a car\nWaiting for a ride in the dark",
+            syncedLyricsJson = syncedJson,
+            isCached = true,
+            source = "LRCLIB",
+            updatedAt = 1_770_000_000_000L,
+            offsetMs = -450L,
+            offsetUpdatedAt = 1_770_000_005_000L,
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            durationMs = song.durationMs,
+            filename = "Midnight City.mp3"
+        )
+
+        val serializedMap = cloudEntry.toMap()
+        val restoredEntry = CloudLyricsEntry.fromMap(serializedMap)
+
+        assertEquals(cloudEntry.songSignature, restoredEntry.songSignature)
+        assertEquals(cloudEntry.syncedLyricsJson, restoredEntry.syncedLyricsJson)
+        assertEquals(-450L, restoredEntry.offsetMs)
+        assertEquals(1_770_000_005_000L, restoredEntry.offsetUpdatedAt)
+        assertEquals("Midnight City", restoredEntry.title)
+        assertEquals("M83", restoredEntry.artist)
+
+        val cloudOffset = CloudLyricsOffset(
+            songSignature = sig,
+            offsetMs = -450L,
+            updatedAt = 1_770_000_005_000L,
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            durationMs = song.durationMs,
+            filename = "Midnight City.mp3"
+        )
+        val restoredOffset = CloudLyricsOffset.fromMap(cloudOffset.toMap())
+        assertEquals(cloudOffset, restoredOffset)
+
+        // Simulate restoring into Room LyricsDao and UserPreferencesRepository
+        db.lyricsDao().insertLyrics(
+            LyricsEntity(
+                songId = song.id,
+                plainLyrics = restoredEntry.plainLyrics,
+                syncedLyricsJson = restoredEntry.syncedLyricsJson,
+                isCached = true,
+                source = restoredEntry.source,
+                updatedAt = restoredEntry.updatedAt
+            )
+        )
+        userPreferences.applyLyricsSyncOffsets(
+            offsetsBySongId = mapOf(song.id to restoredEntry.offsetMs),
+            timestampsBySongId = mapOf(song.id to restoredEntry.offsetUpdatedAt)
+        )
+
+        val dbLyrics = db.lyricsDao().getLyricsForSong(song.id)
+        assertNotNull(dbLyrics)
+        assertEquals(syncedJson, dbLyrics!!.syncedLyricsJson)
+        assertEquals(-450L, userPreferences.getLyricsSyncOffsetMs(song.id))
+        assertEquals(1_770_000_005_000L, userPreferences.getLyricsSyncOffsetUpdatedAt(song.id))
+    }
 }
