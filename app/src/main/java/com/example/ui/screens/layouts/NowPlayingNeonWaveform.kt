@@ -1,10 +1,8 @@
 package com.example.ui.screens.layouts
 
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,27 +13,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Lyrics
-import com.example.data.model.Song
 import com.example.service.PlaybackState
 import com.example.ui.components.AlbumArtView
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
 import com.example.util.HapticUtils
 import kotlinx.coroutines.flow.StateFlow
-import kotlin.math.sin
 
 @Composable
 fun NowPlayingNeonWaveform(
@@ -74,54 +65,127 @@ fun NowPlayingNeonWaveform(
     }
 
     val neonAccent = BentoPrimary
+    val neonSecondary = BentoAccentPinkText
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(BentoBackground)
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
+        // Dual-tone Neon Studio ambient backdrop glow
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(380.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            neonAccent.copy(alpha = 0.16f),
+                            neonSecondary.copy(alpha = 0.08f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Header
+            // 1. Neon Studio Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Surface(shape = CircleShape, color = neonAccent, modifier = Modifier.size(6.dp)) {}
-                    Text("NEON SOUNDWAVE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = neonAccent, letterSpacing = 1.2.sp)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onOpenOptionsMenu, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                Surface(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(14.dp),
+                    color = BentoCardSurface,
+                    border = BorderStroke(1.dp, neonAccent.copy(alpha = 0.35f)),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Close",
+                            tint = BentoTextPrimary,
+                            modifier = Modifier.size(26.dp)
+                        )
                     }
-                    IconButton(onClick = onOpenQueueSheet, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                }
+
+                Surface(
+                    onClick = onOpenAudioOutputSwitcher,
+                    shape = RoundedCornerShape(50),
+                    color = BentoCardSurface,
+                    border = BorderStroke(
+                        1.dp,
+                        Brush.horizontalGradient(listOf(neonAccent.copy(alpha = 0.6f), neonSecondary.copy(alpha = 0.5f)))
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (playbackState.isPlaying) neonAccent else BentoTextSecondary,
+                            modifier = Modifier.size(7.dp)
+                        ) {}
+                        Text(
+                            text = "NEON STUDIO • ${audioRouteInfo.name.uppercase()}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = neonAccent,
+                            letterSpacing = 1.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(
+                        onClick = onOpenQueueSheet,
+                        shape = RoundedCornerShape(14.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Surface(
+                        onClick = onOpenOptionsMenu,
+                        shape = RoundedCornerShape(14.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
 
-            // Neon Bordered Cover
+            // 2. Neon Studio Framed Cover Showcase + Track Monitor
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = false)
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 BoxWithConstraints(contentAlignment = Alignment.Center) {
-                    val coverSize = minOf(maxHeight * 0.95f, maxWidth * 0.75f, 230.dp)
+                    val coverSize = minOf(maxHeight * 0.94f, maxWidth * 0.80f, 250.dp)
                     com.example.ui.components.AlbumArtGestureBox(
                         enabled = gesturePlaybackEnabled,
                         isPlaying = playbackState.isPlaying,
@@ -130,140 +194,311 @@ fun NowPlayingNeonWaveform(
                         onSkipNext = onSkipNext
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(24.dp),
+                            shape = RoundedCornerShape(28.dp),
                             color = BentoCardSurface,
-                            border = androidx.compose.foundation.BorderStroke(
+                            border = BorderStroke(
                                 2.dp,
-                                Brush.linearGradient(listOf(neonAccent, BentoPrimary, BentoAccentPinkText))
+                                Brush.linearGradient(listOf(neonAccent, BentoPrimary, neonSecondary))
                             ),
+                            shadowElevation = 12.dp,
                             modifier = Modifier.size(coverSize)
                         ) {
-                            AlbumArtView(
-                                song = song,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(22.dp)),
-                                cornerRadius = 22
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                AlbumArtView(
+                                    song = song,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(4.dp)
+                                        .clip(RoundedCornerShape(24.dp)),
+                                    cornerRadius = 24
+                                )
+
+                                // Floating Studio Live Badge
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = BentoBackground.copy(alpha = 0.80f),
+                                    border = BorderStroke(1.dp, neonAccent.copy(alpha = 0.5f)),
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(12.dp)
+                                ) {
+                                    Text(
+                                        text = if (playbackState.isPlaying) "STUDIO LIVE" else "MONITOR",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = neonAccent,
+                                        letterSpacing = 1.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                // Floating Favorite Action on Cover
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onFavoriteToggle()
+                                    },
+                                    shape = CircleShape,
+                                    color = BentoBackground.copy(alpha = 0.82f),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (song.isFavorite) neonSecondary else BentoBorder.copy(alpha = 0.5f)
+                                    ),
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(12.dp)
+                                        .size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                            contentDescription = "Favorite",
+                                            tint = if (song.isFavorite) neonSecondary else BentoTextPrimary,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Neon Soundwave & Track Telemetry Console Card
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(
+                    1.2.dp,
+                    Brush.horizontalGradient(
+                        listOf(
+                            neonAccent.copy(alpha = 0.45f),
+                            BentoBorder.copy(alpha = 0.4f),
+                            neonSecondary.copy(alpha = 0.45f)
+                        )
+                    )
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = song.displayTitle,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = BentoTextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${song.displayArtist} • ${song.displayAlbum}",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = neonAccent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Surface(
+                            onClick = onOpenLyricsSheet,
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoCardDarkPurple,
+                            border = BorderStroke(1.dp, neonAccent.copy(alpha = 0.35f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = neonAccent, modifier = Modifier.size(15.dp))
+                                Text("LYRICS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary, letterSpacing = 0.6.sp)
+                            }
+                        }
+                    }
+
+                    // Interactive Neon Soundwave Visualizer
+                    com.example.ui.components.NowPlayingWaveformVisualizer(
+                        trackId = song.id,
+                        progressMs = positionMs,
+                        durationMs = duration,
+                        isPlaying = playbackState.isPlaying,
+                        style = waveformStyle,
+                        accentColor = neonAccent,
+                        onSeekTo = onSeekTo,
+                        playbackPositionFlow = playbackPositionFlow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(BentoBackground.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        com.example.ui.components.PlaybackPositionText(
+                            playbackPositionFlow,
+                            positionMs,
+                            duration,
+                            fontSize = 11.5.sp,
+                            color = neonAccent
+                        )
+                        Text(
+                            text = "WAVEFORM • ${waveformStyle.uppercase()}",
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSecondary,
+                            letterSpacing = 0.8.sp
+                        )
+                        Text(formatTime(duration), fontSize = 11.5.sp, color = BentoTextSecondary)
+                    }
+                }
+            }
+
+            // 4. Sculpted Neon Studio Transport & Action Deck
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onToggleShuffle, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (playbackState.isShuffleEnabled) neonAccent else BentoTextSecondary
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onSkipPrevious()
+                        },
+                        shape = RoundedCornerShape(18.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, neonAccent.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(50.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = neonAccent,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier
+                            .width(82.dp)
+                            .height(58.dp)
+                            .clickable {
+                                HapticUtils.performClickHaptic(context)
+                                onTogglePlayPause()
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = BentoOnPrimary,
+                                modifier = Modifier.size(34.dp)
                             )
                         }
                     }
-                }
-            }
-
-            // Track Info
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = song.displayTitle,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BentoTextPrimary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = song.displayArtist,
-                    fontSize = 13.5.sp,
-                    color = neonAccent,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            // Interactive Neon Soundwave Seek Bar
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                com.example.ui.components.NowPlayingWaveformVisualizer(
-                    trackId = song.id,
-                    progressMs = positionMs,
-                    durationMs = duration,
-                    isPlaying = playbackState.isPlaying,
-                    style = waveformStyle,
-                    accentColor = neonAccent,
-                    onSeekTo = onSeekTo,
-                    playbackPositionFlow = playbackPositionFlow,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(BentoCardSurface.copy(alpha = 0.8f))
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    com.example.ui.components.PlaybackPositionText(playbackPositionFlow, positionMs, duration, fontSize = 11.sp, color = BentoTextSecondary)
-                    Text(formatTime(duration), fontSize = 11.sp, color = BentoTextSecondary)
-                }
-            }
-
-            // Transport Control
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onToggleShuffle, modifier = Modifier.size(38.dp)) {
-                    Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = if (playbackState.isShuffleEnabled) neonAccent else BentoTextSecondary)
-                }
-                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", tint = BentoTextPrimary, modifier = Modifier.size(30.dp))
-                }
-                Surface(
-                    shape = CircleShape,
-                    color = neonAccent,
-                    modifier = Modifier
-                        .size(62.dp)
-                        .clickable {
+                    Surface(
+                        onClick = {
                             HapticUtils.performClickHaptic(context)
-                            onTogglePlayPause()
+                            onSkipNext()
+                        },
+                        shape = RoundedCornerShape(18.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, neonAccent.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(50.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
                         }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    }
+                    IconButton(onClick = onToggleRepeat, modifier = Modifier.size(40.dp)) {
                         Icon(
-                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play",
-                            tint = BentoOnPrimary,
-                            modifier = Modifier.size(32.dp)
+                            imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                            contentDescription = "Repeat",
+                            tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) neonAccent else BentoTextSecondary
                         )
                     }
                 }
-                IconButton(onClick = onSkipNext, modifier = Modifier.size(46.dp)) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = BentoTextPrimary, modifier = Modifier.size(30.dp))
-                }
-                IconButton(onClick = onToggleRepeat, modifier = Modifier.size(38.dp)) {
-                    Icon(
-                        imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                        contentDescription = "Repeat",
-                        tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) neonAccent else BentoTextSecondary
-                    )
-                }
-            }
 
-            // Bottom Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onFavoriteToggle, modifier = Modifier.size(36.dp)) {
-                    Icon(if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = "Favorite", tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = onOpenLyricsSheet, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = BentoTextSecondary, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = onOpenAudioOutputSwitcher, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.SpeakerGroup, contentDescription = "Output", tint = neonAccent, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = onOpenSleepTimer, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Bedtime, contentDescription = "Sleep", tint = BentoTextSecondary, modifier = Modifier.size(20.dp))
+                // Bottom Studio Action Pills
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onOpenAudioOutputSwitcher,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.SpeakerGroup, contentDescription = "Output", tint = neonAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Output", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
+                    Surface(
+                        onClick = onOpenSleepTimer,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Bedtime, contentDescription = "Sleep", tint = neonAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Sleep Timer", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
+                    Surface(
+                        onClick = onOpenQueueSheet,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = neonAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Up Next", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
                 }
             }
         }

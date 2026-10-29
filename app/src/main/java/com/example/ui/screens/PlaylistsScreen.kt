@@ -349,6 +349,8 @@ fun PlaylistsScreen(
                     artworkPickerLauncher.launch("image/*")
                 },
                 onImportM3u = launchM3uPicker,
+                onBackClick = onBackClick,
+                onOpenSearch = onOpenSearch,
                 modifier = modifier
             )
         }
@@ -374,6 +376,7 @@ fun PlaylistsScreen(
                     artworkPickerLauncher.launch("image/*")
                 },
                 onImportM3u = launchM3uPicker,
+                onBackClick = onBackClick,
                 modifier = modifier
             )
         }
@@ -412,8 +415,9 @@ fun PlaylistsScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                 ) {
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
+                    // 1. Bento Grid Top Bar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -427,9 +431,9 @@ fun PlaylistsScreen(
                         ) {
                             Surface(
                                 onClick = onBackClick,
-                                shape = CircleShape,
+                                shape = RoundedCornerShape(13.dp),
                                 color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                 modifier = Modifier.size(38.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -446,29 +450,29 @@ fun PlaylistsScreen(
 
                             Column {
                                 Text(
-                                    text = "Playlists",
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = BentoTextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    text = "BENTO COLLECTIONS",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = BentoPrimary,
+                                    letterSpacing = 1.sp
                                 )
                                 Text(
-                                    text = "${playlists.size + smartPlaylists.size} collections",
-                                    fontSize = 11.5.sp,
-                                    color = BentoTextSecondary,
+                                    text = "Playlists",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                             Surface(
                                 onClick = onOpenSearch,
                                 shape = CircleShape,
                                 color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -485,7 +489,7 @@ fun PlaylistsScreen(
                                 onClick = onOpenFavorites,
                                 shape = CircleShape,
                                 color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -502,7 +506,7 @@ fun PlaylistsScreen(
                                 onClick = onToggleViewMode,
                                 shape = CircleShape,
                                 color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
+                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -514,195 +518,163 @@ fun PlaylistsScreen(
                                     )
                                 }
                             }
+                        }
+                    }
 
-                            Surface(
-                                onClick = launchM3uPicker,
-                                shape = CircleShape,
-                                color = BentoCardSurface,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
-                                modifier = Modifier.size(36.dp)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 2. Bento Overview & Quick Action Tiles Strip
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // New Playlist Bento Action Tile
+                        Surface(
+                            onClick = { showCreateDialog = true },
+                            shape = RoundedCornerShape(16.dp),
+                            color = BentoPrimary,
+                            modifier = Modifier.weight(1.1f).height(52.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.FileDownload,
-                                        contentDescription = "Import M3U",
-                                        tint = BentoTextPrimary,
-                                        modifier = Modifier.size(17.dp)
-                                    )
+                                Icon(Icons.Default.Add, contentDescription = "New Playlist", tint = BentoOnPrimary, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text("New Mix", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = BentoOnPrimary, maxLines = 1)
+                                    Text("${playlists.size} saved", fontSize = 10.sp, color = BentoOnPrimary.copy(alpha = 0.8f), maxLines = 1)
                                 }
                             }
+                        }
 
-                            Surface(
-                                onClick = { showCreateDialog = true },
-                                shape = CircleShape,
-                                color = BentoPrimary.copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.32f)),
-                                modifier = Modifier.size(36.dp)
+                        // Smart Rule Bento Tile
+                        Surface(
+                            onClick = { showSmartCriteriaDialog = true },
+                            shape = RoundedCornerShape(16.dp),
+                            color = BentoCardSurface,
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "New Playlist",
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(17.dp)
-                                    )
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "Smart Mix", tint = BentoPrimary, modifier = Modifier.size(17.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text("Smart Hub", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary, maxLines = 1)
+                                    Text("${smartPlaylists.size} rules", fontSize = 10.sp, color = BentoTextSecondary, maxLines = 1)
+                                }
+                            }
+                        }
+
+                        // Import M3U Bento Tile
+                        Surface(
+                            onClick = launchM3uPicker,
+                            shape = RoundedCornerShape(16.dp),
+                            color = BentoCardSurface,
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                            modifier = Modifier.weight(0.95f).height(52.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.FileDownload, contentDescription = "Import M3U", tint = BentoPrimary, modifier = Modifier.size(17.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Column {
+                                    Text("Import", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary, maxLines = 1)
+                                    Text(".M3U / 8", fontSize = 10.sp, color = BentoTextSecondary, maxLines = 1)
                                 }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Smart Playlists Hub Section
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    // 3. Smart Playlists Bento Carousel (when populated)
+                    if (smartPlaylists.isNotEmpty()) {
+                        androidx.compose.foundation.lazy.LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "Smart Playlists Hub",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
-                                )
-                            }
-
-                            TextButton(onClick = { showSmartCriteriaDialog = true }) {
-                                Text("+ Create", color = BentoPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (smartPlaylists.isEmpty()) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { showSmartCriteriaDialog = true },
-                                colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
+                            itemsIndexed(smartPlaylists, key = { idx, smart -> "${smart.id}_$idx" }) { _, smart ->
+                                val matchedCount = remember(smart, allSongs) { smart.filterSongs(allSongs).size }
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = BentoCardDarkPurple,
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        .width(205.dp)
+                                        .clickable { onSmartPlaylistClick(smart) }
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(BentoPrimary.copy(alpha = 0.2f)),
-                                        contentAlignment = Alignment.Center
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = BentoPrimary
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "Build Dynamic Smart Playlists",
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoTextPrimary
-                                        )
-                                        Text(
-                                            text = "Auto-generate playlists by genre, play count, recency & limit.",
-                                            fontSize = 12.sp,
-                                            color = BentoTextSecondary
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            androidx.compose.foundation.lazy.LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                itemsIndexed(smartPlaylists, key = { idx, smart -> "${smart.id}_$idx" }) { _, smart ->
-                                    val matchedCount = remember(smart, allSongs) { smart.filterSongs(allSongs).size }
-                                    Card(
-                                        modifier = Modifier
-                                            .width(210.dp)
-                                            .clickable { onSmartPlaylistClick(smart) },
-                                        colors = CardDefaults.cardColors(containerColor = BentoCardDarkPurple),
-                                        shape = RoundedCornerShape(14.dp)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.AutoAwesome,
                                                     contentDescription = null,
                                                     tint = BentoPrimary,
-                                                    modifier = Modifier.size(20.dp)
+                                                    modifier = Modifier.size(16.dp)
                                                 )
-                                                IconButton(
-                                                    onClick = { smartPlaylistToDelete = smart },
-                                                    modifier = Modifier.size(24.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Close,
-                                                        contentDescription = "Delete",
-                                                        tint = BentoTextSecondary,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
+                                                Text(
+                                                    text = "$matchedCount tracks",
+                                                    fontSize = 10.5.sp,
+                                                    color = BentoPrimary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
                                             }
-
-                                            Text(
-                                                text = smart.name,
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = BentoTextPrimary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-
-                                            Text(
-                                                text = "$matchedCount tracks matched",
-                                                fontSize = 12.sp,
-                                                color = BentoPrimary,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                            IconButton(
+                                                onClick = { smartPlaylistToDelete = smart },
+                                                modifier = Modifier.size(20.dp)
                                             ) {
-                                                smart.getCriteriaBadges().take(3).forEach { badge ->
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .background(BentoCardSurface.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = badge,
-                                                            fontSize = 9.sp,
-                                                            color = BentoTextSecondary
-                                                        )
-                                                    }
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Delete",
+                                                    tint = BentoTextSecondary,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Text(
+                                            text = smart.name,
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            smart.getCriteriaBadges().take(2).forEach { badge ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(BentoCardSurface.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = badge,
+                                                        fontSize = 9.sp,
+                                                        color = BentoTextSecondary
+                                                    )
                                                 }
                                             }
                                         }
@@ -710,9 +682,8 @@ fun PlaylistsScreen(
                                 }
                             }
                         }
+                        Spacer(modifier = Modifier.height(12.dp))
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     if (playlists.isEmpty()) {
                         BentoCard(
@@ -1110,11 +1081,11 @@ private fun PlaylistGridCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(22.dp))
             .background(BentoCardSurface)
-            .border(1.dp, BentoBorder, RoundedCornerShape(20.dp))
+            .border(1.dp, BentoBorder.copy(alpha = 0.65f), RoundedCornerShape(22.dp))
             .clickable(onClick = onClick)
-            .padding(12.dp)
+            .padding(11.dp)
     ) {
         Column {
             Box(
@@ -1130,17 +1101,55 @@ private fun PlaylistGridCard(
                     cornerRadius = 16
                 )
 
+                // Top-left Track Count Bento Pill
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.Black.copy(alpha = 0.62f),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(7.dp)
+                ) {
+                    Text(
+                        text = "${playlist.songCount}",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = BentoPrimary,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                    )
+                }
+
+                // Bottom-end Floating Play Button
+                Surface(
+                    onClick = onPlayNow,
+                    shape = CircleShape,
+                    color = BentoPrimary,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(7.dp)
+                        .size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Playlist",
+                            tint = BentoOnPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(4.dp)
+                        .padding(6.dp)
                 ) {
                     IconButton(
                         onClick = { showMenu = true },
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.5f))
+                            .background(Color.Black.copy(alpha = 0.55f))
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
@@ -1267,7 +1276,7 @@ private fun PlaylistGridCard(
 
             Text(
                 text = "$trackSubtitle • $timeSubtitle",
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 color = BentoTextSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

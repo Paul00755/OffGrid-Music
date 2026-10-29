@@ -40,16 +40,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * High-responsiveness, zero-lag FastScrollbar for LazyColumn lists.
  *
  * Features:
- * - Instant 1:1 finger tracking with zero coordinate distortion (only the thumb scales, never the touch container).
- * - Sub-item pixel scroll interpolation so both short lists and 10,000-item libraries glide at 120fps.
- * - Direct track tap/drag support when visible so grabbing slightly outside the thumb still responds immediately.
- * - Conflated Main.immediate scroll dispatch for zero input latency.
+ * - Instant 1:1 finger tracking with zero coordinate distortion.
+ * - Smoothed running average item height estimation so heterogeneous list items (headers, carousels, song rows)
+ *   never cause vertical jitter during fast scrubbing.
+ * - GPU-accelerated graphicsLayer translation for thumb and floating section indicator to avoid layout-phase
+ *   re-measurements on every drag frame.
+ * - Deduplicated Main.immediate scroll dispatch for buttery-smooth 120fps scrolling.
  */
 @Composable
 fun FastScrollbar(
@@ -67,7 +70,7 @@ fun FastScrollbar(
         derivedStateOf { listState.layoutInfo.totalItemsCount }
     }
     val effectiveTotalItems = if (layoutTotalItems > 0) layoutTotalItems else totalItems
-    if (effectiveTotalItems <= 8) return
+    if (effectiveTotalItems <= 6) return
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -80,9 +83,14 @@ fun FastScrollbar(
     var activeLabel by remember { mutableStateOf<String?>(null) }
     var lastHapticLabel by remember { mutableStateOf<String?>(null) }
 
+    // Exponentially smoothed item height prevents sudden jumps when headers/cards enter or leave the viewport
+    var smoothedItemSizePx by remember { mutableFloatStateOf(with(density) { 68.dp.toPx() }) }
+    var lastDispatchedIndex by remember { mutableIntStateOf(-1) }
+    var lastDispatchedOffsetPx by remember { mutableIntStateOf(-1) }
+
     val topPaddingPx = remember(density, topPadding) { with(density) { topPadding.toPx() } }
     val bottomPaddingPx = remember(density, bottomPadding) { with(density) { bottomPadding.toPx() } }
-    val thumbHeightPx = remember(density) { with(density) { 46.dp.toPx() } }
+    val thumbHeightPx = remember(density) { with(density) { 48.dp.toPx() } }
 
     // Continuous sub-item scroll fraction so the thumb glides smoothly pixel-by-pixel
     val stateScrollFraction by remember(listState, totalItems) {
@@ -91,15 +99,19 @@ fun FastScrollbar(
             val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
             val visibleItems = layoutInfo.visibleItemsInfo
             val visibleCount = visibleItems.size
-            val scrollableItems = (totalCount - visibleCount).coerceAtLeast(1)
-            val firstItemSize = visibleItems.firstOrNull()?.size ?: 0
-            val subItemFraction = if (firstItemSize > 0) {
-                (listState.firstVisibleItemScrollOffset.toFloat() / firstItemSize.toFloat()).coerceIn(0f, 1f)
-            } else {
+            if (totalCount <= 1 || visibleCount == 0) {
                 0f
+            } else {
+                val scrollableItems = (totalCount - visibleCount).coerceAtLeast(1)
+                val firstItemSize = visibleItems.firstOrNull()?.size ?: 0
+                val subItemFraction = if (firstItemSize > 0) {
+                    (listState.firstVisibleItemScrollOffset.toFloat() / firstItemSize.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                val exactIndex = listState.firstVisibleItemIndex.toFloat() + subItemFraction
+                (exactIndex / scrollableItems.toFloat()).coerceIn(0f, 1f)
             }
-            val exactIndex = listState.firstVisibleItemIndex.toFloat() + subItemFraction
-            (exactIndex / scrollableItems.toFloat()).coerceIn(0f, 1f)
         }
     }
 
@@ -136,17 +148,19 @@ fun FastScrollbar(
             val targetIndex = exactScrollPos.toInt().coerceIn(0, maxItemIndex)
             val remainder = (exactScrollPos - targetIndex).coerceIn(0f, 0.999f)
 
-            val avgItemSizePx = if (visibleItems.isNotEmpty()) {
+            if (visibleItems.isNotEmpty()) {
                 var sum = 0
                 for (i in visibleItems.indices) sum += visibleItems[i].size
-                (sum.toFloat() / visibleItems.size.toFloat()).coerceAtLeast(1f)
-            } else {
-                160f
+                val observedAvg = (sum.toFloat() / visibleItems.size.toFloat()).coerceAtLeast(24f)
+                // Smooth item height with 80/20 EMA to eliminate jumpiness across heterogeneous rows
+                smoothedItemSizePx = (smoothedItemSizePx * 0.78f) + (observedAvg * 0.22f)
             }
+
+            val finalIndex = if (clamped >= 0.998f) maxItemIndex else targetIndex
             val targetOffsetPx = if (clamped >= 0.998f) {
                 0
             } else {
-                (remainder * avgItemSizePx).roundToInt().coerceAtLeast(0)
+                (remainder * smoothedItemSizePx).roundToInt().coerceAtLeast(0)
             }
 
             val labelIdx = (clamped * maxItemIndex.toFloat()).roundToInt().coerceIn(0, maxItemIndex)
@@ -157,10 +171,16 @@ fun FastScrollbar(
                 HapticUtils.performTickHaptic(context)
             }
 
-            activeScrollJob?.cancel()
-            activeScrollJob = coroutineScope.launch(Dispatchers.Main.immediate) {
-                val finalIndex = if (clamped >= 0.998f) maxItemIndex else targetIndex
-                listState.scrollToItem(finalIndex, targetOffsetPx)
+            val indexChanged = finalIndex != lastDispatchedIndex
+            val offsetChanged = abs(targetOffsetPx - lastDispatchedOffsetPx) >= 2
+            if (indexChanged || offsetChanged) {
+                lastDispatchedIndex = finalIndex
+                lastDispatchedOffsetPx = targetOffsetPx
+                if (activeScrollJob?.isActive != true) {
+                    activeScrollJob = coroutineScope.launch(Dispatchers.Main.immediate) {
+                        listState.scrollToItem(lastDispatchedIndex, lastDispatchedOffsetPx)
+                    }
+                }
             }
         }
     }
@@ -191,7 +211,7 @@ fun FastScrollbar(
     val alphaAnim by animateFloatAsState(
         targetValue = if (isVisible || isDragging) 1f else 0f,
         animationSpec = tween(
-            durationMillis = if (isVisible || isDragging) 90 else 280,
+            durationMillis = if (isVisible || isDragging) 80 else 260,
             easing = FastOutSlowInEasing
         ),
         label = "scrollbar_alpha"
@@ -199,7 +219,7 @@ fun FastScrollbar(
 
     val thumbWidthDp by animateDpAsState(
         targetValue = if (isDragging) 8.dp else 5.dp,
-        animationSpec = tween(durationMillis = 100),
+        animationSpec = tween(durationMillis = 90),
         label = "scrollbar_thumb_width"
     )
 
@@ -209,7 +229,7 @@ fun FastScrollbar(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(20.dp)
+            .width(26.dp)
             .testTag("fast_scrollbar")
             .onSizeChanged { containerHeightPx = it.height.toFloat() }
             .graphicsLayer {
@@ -223,8 +243,8 @@ fun FastScrollbar(
                         val currentThumbTop = topPaddingPx + (stateScrollFraction.coerceIn(0f, 1f) * usableHeight)
                         val currentThumbBottom = currentThumbTop + thumbHeightPx
                         // Allow tapping directly on the thumb or along the active scrollbar track
-                        if (offset.y in (topPaddingPx - 12f)..(containerHeightPx - bottomPaddingPx + 12f)) {
-                            if (offset.y !in (currentThumbTop - 16f)..(currentThumbBottom + 16f)) {
+                        if (offset.y in (topPaddingPx - 16f)..(containerHeightPx - bottomPaddingPx + 16f)) {
+                            if (offset.y !in (currentThumbTop - 18f)..(currentThumbBottom + 18f)) {
                                 HapticUtils.performTickHaptic(context)
                                 val tappedFraction = ((offset.y - topPaddingPx - thumbHeightPx / 2f) / usableHeight).coerceIn(0f, 1f)
                                 scrollToFractionImmediate(tappedFraction)
@@ -241,13 +261,15 @@ fun FastScrollbar(
                         val thumbTop = topPaddingPx + (currentFraction * usableHeight)
                         val thumbBottom = thumbTop + thumbHeightPx
 
-                        val hitPadding = 32f
+                        val hitPadding = 40f
                         val isDirectThumbHit = offset.y in (thumbTop - hitPadding)..(thumbBottom + hitPadding)
-                        val isTrackHitWhenVisible = isVisible && offset.y in (topPaddingPx - 16f)..(containerHeightPx - bottomPaddingPx + 16f)
+                        val isTrackHitWhenVisible = isVisible && offset.y in (topPaddingPx - 20f)..(containerHeightPx - bottomPaddingPx + 20f)
 
                         if (isDirectThumbHit || isTrackHitWhenVisible) {
                             isDragging = true
                             isVisible = true
+                            lastDispatchedIndex = -1
+                            lastDispatchedOffsetPx = -1
                             HapticUtils.performClickHaptic(context)
                             if (isDirectThumbHit) {
                                 grabOffsetOnThumbPx = (offset.y - thumbTop).coerceIn(0f, thumbHeightPx)
@@ -289,41 +311,42 @@ fun FastScrollbar(
                     .padding(end = 7.dp)
                     .width(2.dp)
                     .height(with(density) { (containerHeightPx - topPaddingPx - bottomPaddingPx).coerceAtLeast(0f).toDp() })
-                    .offset { IntOffset(x = 0, y = topPaddingPx.roundToInt()) }
+                    .graphicsLayer {
+                        translationY = topPaddingPx
+                    }
                     .clip(CircleShape)
-                    .background(thumbColor.copy(alpha = 0.18f))
+                    .background(thumbColor.copy(alpha = 0.22f))
             )
         }
 
-        // Thumb Pill — uses IntOffset for immediate layout-consistent positioning with 0 lag
+        // Thumb Pill — uses graphicsLayer translationY for zero-recomposition GPU positioning
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = 4.dp)
                 .width(thumbWidthDp)
-                .height(46.dp)
-                .offset {
+                .height(48.dp)
+                .graphicsLayer {
                     val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
                     val displayFraction = if (isDragging) dragFraction else stateScrollFraction
-                    val yPx = topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight)
-                    IntOffset(x = 0, y = yPx.roundToInt())
+                    translationY = topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight)
                 }
                 .clip(CircleShape)
-                .background(if (isDragging) thumbColor else thumbColor.copy(alpha = 0.82f))
+                .background(if (isDragging) thumbColor else thumbColor.copy(alpha = 0.85f))
         )
 
         // Floating section / letter bubble while dragging
         AnimatedVisibility(
             visible = isDragging && !activeLabel.isNullOrBlank(),
-            enter = fadeIn(tween(80)) + scaleIn(tween(100), initialScale = 0.8f),
-            exit = fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.8f),
+            enter = fadeIn(tween(70)) + scaleIn(tween(90), initialScale = 0.82f),
+            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.82f),
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset {
+                .graphicsLayer {
                     val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
                     val displayFraction = if (isDragging) dragFraction else stateScrollFraction
-                    val yOffset = (topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight) - 6f).roundToInt()
-                    IntOffset(x = with(density) { (-44).dp.roundToPx() }, y = yOffset)
+                    translationY = (topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight) - 6f)
+                    translationX = with(density) { (-46).dp.toPx() }
                 }
         ) {
             Surface(

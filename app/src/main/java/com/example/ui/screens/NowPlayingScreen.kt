@@ -909,363 +909,558 @@ fun NowPlayingScreen(
                     )
                 }
                 com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> {
-                    // Standard Portrait View
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        com.example.ui.components.AlbumArtGestureBox(
-                            enabled = gesturePlaybackEnabled,
-                            isPlaying = playbackState.isPlaying,
-                            onTogglePlayPause = onTogglePlayPause,
-                            onSkipPrevious = onSkipPrevious,
-                            onSkipNext = onSkipNext,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight(0.72f)
-                        ) {
-                            AlbumArtView(
-                                song = song,
-                                modifier = Modifier.fillMaxSize(),
-                                cornerRadius = 0
-                            )
-                        }
-
-                // Top dismiss / collapse swipe down button
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .statusBarsPadding()
-                        .padding(16.dp)
-                        .align(Alignment.TopStart)
-                        .clip(CircleShape)
-                        .background(BentoCardSurface.copy(alpha = 0.7f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Collapse",
-                        tint = BentoTextPrimary,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                // Dark Gradient Scrim overlay over lower screen
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.Transparent,
-                                    BentoBackground.copy(alpha = 0.5f),
-                                    BentoBackground.copy(alpha = 0.95f),
-                                    BentoBackground
-                                )
-                            )
-                        )
-                )
-            }
-
-            // Lower Controls & Song Info Content
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.Bottom
-            ) {
-                // Song Title & Artist + Favorite & Options
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = song.displayTitle,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = BentoTextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${song.displayArtist} • ${song.displayAlbum}",
-                            fontSize = 14.sp,
-                            color = BentoTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Options Button
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BentoCardPurple)
-                                .clickable { showOptionsMenu = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
-                                tint = BentoTextPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        // Favorite Button
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(BentoCardPurple)
-                                .clickable { onFavoriteToggle() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Favorite",
-                                tint = if (song.isFavorite) BentoAccentPinkText else BentoTextPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Waveform & Progress Visualization
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    com.example.ui.components.NowPlayingWaveformVisualizer(
-                        trackId = song.id,
-                        progressMs = livePositionMs,
-                        durationMs = playbackState.durationMs,
-                        isPlaying = playbackState.isPlaying,
-                        style = waveformStyle,
-                        accentColor = BentoPrimary,
-                        onSeekTo = onSeekTo,
-                        playbackPositionFlow = playbackPositionFlow,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        com.example.ui.components.PlaybackPositionText(playbackPositionFlow, livePositionMs, effectiveDurationMs, fontSize = 12.sp, color = BentoTextSecondary)
-                        Text(text = formattedDuration, fontSize = 12.sp, color = BentoTextSecondary)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Large White Playback Controls
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Previous Button
-                    IconButton(
-                        onClick = {
-                            com.example.util.HapticUtils.performClickHaptic(context)
-                            onSkipPrevious()
-                        },
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipPrevious,
-                            contentDescription = "Previous",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(42.dp)
-                        )
-                    }
-
-                    // Play / Pause Pill Button
+                    // Structured Modern Bento Portrait View
                     Box(
                         modifier = Modifier
-                            .width(72.dp)
-                            .height(52.dp)
-                            .clip(CircleShape)
-                            .background(BentoPrimary)
-                            .clickable {
-                                com.example.util.HapticUtils.performClickHaptic(context)
-                                onTogglePlayPause()
-                            },
-                        contentAlignment = Alignment.Center
+                            .fillMaxSize()
+                            .background(BentoBackground)
                     ) {
-                        Icon(
-                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            tint = BentoOnPrimary,
-                            modifier = Modifier.size(36.dp)
+                        // Subtle top radial ambient glow
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(340.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            BentoPrimary.copy(alpha = 0.14f),
+                                            BentoCardDarkPurple.copy(alpha = 0.35f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
                         )
-                    }
 
-                    // Next Button
-                    IconButton(
-                        onClick = {
-                            com.example.util.HapticUtils.performClickHaptic(context)
-                            onSkipNext()
-                        },
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = "Next",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(42.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-
-
-                // Audio Device Route Interactive Selector
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            showAudioOutputSheet = true
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        color = BentoCardSurface.copy(alpha = 0.7f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
-                        modifier = Modifier.testTag("audio_output_route_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .statusBarsPadding()
+                                .navigationBarsPadding()
+                                .padding(horizontal = 18.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(
-                                imageVector = audioRouteInfo.icon,
-                                contentDescription = "Audio Output Device",
-                                tint = BentoPrimary.copy(alpha = 0.95f),
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = audioRouteInfo.name,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = BentoTextPrimary,
-                                maxLines = 1
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.ExpandMore,
-                                contentDescription = "Switch Output Device",
-                                tint = BentoTextSecondary,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
-                }
+                            // 1. Top Bento Header Strip
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    onClick = onDismiss,
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = BentoCardSurface,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "Collapse",
+                                            tint = BentoTextPrimary,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                                // Center Audio Output Route Bento Pill
+                                Surface(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        showAudioOutputSheet = true
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = BentoCardSurface,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                    modifier = Modifier.testTag("audio_output_route_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = audioRouteInfo.icon,
+                                            contentDescription = "Audio Output Device",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = audioRouteInfo.name,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoTextPrimary,
+                                            maxLines = 1
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandMore,
+                                            contentDescription = "Switch Output Device",
+                                            tint = BentoTextSecondary,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
 
-                // Bottom Quick Actions Bar (Shuffle, Repeat, Queue, Timer, Lyrics)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        onToggleShuffle()
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Shuffle,
-                            contentDescription = "Shuffle",
-                            tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            showQueueSheet = true
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                        modifier = Modifier.size(42.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.QueueMusic,
+                                                contentDescription = "Up Next Queue",
+                                                tint = BentoTextPrimary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
 
-                    IconButton(onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        onToggleRepeat()
-                    }) {
-                        Icon(
-                            imageVector = if (playbackState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                            contentDescription = "Repeat",
-                            tint = if (playbackState.repeatMode != Player.REPEAT_MODE_OFF) BentoPrimary else BentoTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    IconButton(onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        showQueueSheet = true
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.QueueMusic,
-                            contentDescription = "Up Next Queue",
-                            tint = BentoTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    IconButton(onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        showTimerDialog = true
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = "Sleep Timer",
-                            tint = if (sleepTimerState.isActive) BentoPrimary else BentoTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    // Lyrics Toggle Button with Swipe Hint
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (showLyricsView) BentoPrimary.copy(alpha = 0.35f) else BentoCardPurple)
-                            .clickable {
-                                HapticUtils.performClickHaptic(context)
-                                showLyricsView = !showLyricsView
+                                    Surface(
+                                        onClick = { showOptionsMenu = true },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                        modifier = Modifier.size(42.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = "Options",
+                                                tint = BentoTextPrimary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChatBubbleOutline,
-                            contentDescription = "Lyrics",
-                            tint = BentoTextPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Lyrics",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = BentoTextPrimary
-                        )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // 2. Hero Artwork Bento Tile
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f, fill = false),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(28.dp),
+                                    color = BentoCardSurface,
+                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, BentoBorder.copy(alpha = 0.6f)),
+                                    shadowElevation = 10.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        com.example.ui.components.AlbumArtGestureBox(
+                                            enabled = gesturePlaybackEnabled,
+                                            isPlaying = playbackState.isPlaying,
+                                            onTogglePlayPause = onTogglePlayPause,
+                                            onSkipPrevious = onSkipPrevious,
+                                            onSkipNext = onSkipNext,
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            AlbumArtView(
+                                                song = song,
+                                                modifier = Modifier.fillMaxSize(),
+                                                cornerRadius = 28
+                                            )
+                                        }
+
+                                        // Top-left Bento Mode Badge
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = BentoBackground.copy(alpha = 0.72f),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (playbackState.isPlaying) BentoPrimary else BentoTextSecondary)
+                                                )
+                                                Text(
+                                                    text = if (playbackState.isPlaying) "NOW PLAYING" else "PAUSED",
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BentoTextPrimary,
+                                                    letterSpacing = 0.8.sp
+                                                )
+                                            }
+                                        }
+
+                                        // Floating Lyrics Quick Pill on Bottom-End of Artwork
+                                        Surface(
+                                            onClick = {
+                                                HapticUtils.performClickHaptic(context)
+                                                showLyricsView = !showLyricsView
+                                            },
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (showLyricsView) BentoPrimary else BentoBackground.copy(alpha = 0.78f),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                if (showLyricsView) BentoPrimary else BentoBorder.copy(alpha = 0.5f)
+                                            ),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ChatBubbleOutline,
+                                                    contentDescription = "Lyrics",
+                                                    tint = if (showLyricsView) BentoOnPrimary else BentoPrimary,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = "Lyrics",
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (showLyricsView) BentoOnPrimary else BentoTextPrimary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 3. Bento Metadata & Waveform Module Card
+                            Surface(
+                                shape = RoundedCornerShape(24.dp),
+                                color = BentoCardSurface,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                            Text(
+                                                text = song.displayTitle,
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoTextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "${song.displayArtist} • ${song.displayAlbum}",
+                                                fontSize = 13.sp,
+                                                color = BentoTextSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        // Favorite Bento Tile Button
+                                        Surface(
+                                            onClick = {
+                                                HapticUtils.performClickHaptic(context)
+                                                onFavoriteToggle()
+                                            },
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (song.isFavorite) BentoAccentPinkText.copy(alpha = 0.16f) else BentoCardDarkPurple,
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                if (song.isFavorite) BentoAccentPinkText.copy(alpha = 0.45f) else BentoBorder.copy(alpha = 0.4f)
+                                            ),
+                                            modifier = Modifier.size(42.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                    contentDescription = "Favorite",
+                                                    tint = if (song.isFavorite) BentoAccentPinkText else BentoTextPrimary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Waveform & Live Timestamps
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        com.example.ui.components.NowPlayingWaveformVisualizer(
+                                            trackId = song.id,
+                                            progressMs = livePositionMs,
+                                            durationMs = playbackState.durationMs,
+                                            isPlaying = playbackState.isPlaying,
+                                            style = waveformStyle,
+                                            accentColor = BentoPrimary,
+                                            onSeekTo = onSeekTo,
+                                            playbackPositionFlow = playbackPositionFlow,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(46.dp)
+                                        )
+
+                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 2.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            com.example.ui.components.PlaybackPositionText(
+                                                playbackPositionFlow,
+                                                livePositionMs,
+                                                effectiveDurationMs,
+                                                fontSize = 11.5.sp,
+                                                color = BentoPrimary
+                                            )
+                                            Text(text = formattedDuration, fontSize = 11.5.sp, color = BentoTextSecondary)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 4. Bento Tactile Transport & Utility Grid
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Primary Transport Row
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Previous Bento Tile
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onSkipPrevious()
+                                        },
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(58.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.SkipPrevious,
+                                                contentDescription = "Previous",
+                                                tint = BentoTextPrimary,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Play / Pause Hero Bento Tile
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onTogglePlayPause()
+                                        },
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = BentoPrimary,
+                                        modifier = Modifier
+                                            .weight(1.45f)
+                                            .height(58.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxSize(),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                contentDescription = "Play/Pause",
+                                                tint = BentoOnPrimary,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (playbackState.isPlaying) "Pause" else "Play",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoOnPrimary
+                                            )
+                                        }
+                                    }
+
+                                    // Next Bento Tile
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onSkipNext()
+                                        },
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(58.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.SkipNext,
+                                                contentDescription = "Next",
+                                                tint = BentoTextPrimary,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Secondary Utility Bento Tiles Row (Shuffle, Repeat, Sleep Timer, Queue)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Shuffle Tile
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onToggleShuffle()
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (playbackState.isShuffleEnabled) BentoPrimary.copy(alpha = 0.18f) else BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (playbackState.isShuffleEnabled) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.4f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(42.dp)
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shuffle,
+                                                contentDescription = "Shuffle",
+                                                tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Shuffle",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary
+                                            )
+                                        }
+                                    }
+
+                                    // Repeat Tile
+                                    val isRepeatActive = playbackState.repeatMode != Player.REPEAT_MODE_OFF
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onToggleRepeat()
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (isRepeatActive) BentoPrimary.copy(alpha = 0.18f) else BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isRepeatActive) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.4f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(42.dp)
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (playbackState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                                                contentDescription = "Repeat",
+                                                tint = if (isRepeatActive) BentoPrimary else BentoTextSecondary,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (playbackState.repeatMode == Player.REPEAT_MODE_ONE) "One" else "Repeat",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isRepeatActive) BentoPrimary else BentoTextSecondary
+                                            )
+                                        }
+                                    }
+
+                                    // Sleep Timer Tile
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            showTimerDialog = true
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (sleepTimerState.isActive) BentoPrimary.copy(alpha = 0.18f) else BentoCardSurface,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (sleepTimerState.isActive) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.4f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(42.dp)
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Timer,
+                                                contentDescription = "Sleep Timer",
+                                                tint = if (sleepTimerState.isActive) BentoPrimary else BentoTextSecondary,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (sleepTimerState.isActive) "Active" else "Timer",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (sleepTimerState.isActive) BentoPrimary else BentoTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-}
 
         if (showOptionsMenu && song != null) {
             com.example.ui.components.NowPlayingActionMenu(

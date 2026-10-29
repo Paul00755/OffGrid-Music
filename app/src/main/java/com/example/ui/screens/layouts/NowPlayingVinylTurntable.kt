@@ -1,6 +1,7 @@
 package com.example.ui.screens.layouts
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,27 +15,28 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Lyrics
-import com.example.data.model.Song
 import com.example.service.PlaybackState
 import com.example.ui.components.AlbumArtView
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
 import com.example.util.HapticUtils
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.cos
+import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,10 +73,10 @@ fun NowPlayingVinylTurntable(
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
                 animation = tween(
-                    durationMillis = 4000,
+                    durationMillis = 4200,
                     easing = LinearEasing
                 ),
-                repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+                repeatMode = RepeatMode.Restart
             ),
             label = "vinyl_angle"
         )
@@ -82,6 +84,13 @@ fun NowPlayingVinylTurntable(
     } else {
         0f
     }
+
+    // Tonearm pivots smoothly onto the vinyl platter when playing
+    val tonearmAngle by animateFloatAsState(
+        targetValue = if (playbackState.isPlaying) 24f else 2f,
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = "tonearm_angle"
+    )
 
     val duration = (if (playbackState.durationMs > 0L) playbackState.durationMs else song.durationMs).coerceAtLeast(1L)
 
@@ -102,59 +111,162 @@ fun NowPlayingVinylTurntable(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = 18.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Bar
+            // 1. Top Analog Deck Header
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Collapse", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
-                }
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "VINYL TURNTABLE",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BentoPrimary,
-                        letterSpacing = 1.5.sp
-                    )
-                    Text(
-                        text = audioRouteInfo.name,
-                        fontSize = 11.sp,
-                        color = BentoTextSecondary
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onOpenOptionsMenu, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(22.dp))
+                Surface(
+                    onClick = onDismiss,
+                    shape = CircleShape,
+                    color = BentoCardSurface,
+                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Collapse",
+                            tint = BentoTextPrimary,
+                            modifier = Modifier.size(26.dp)
+                        )
                     }
-                    IconButton(onClick = onOpenQueueSheet, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = BentoTextPrimary, modifier = Modifier.size(22.dp))
+                }
+
+                Surface(
+                    onClick = onOpenAudioOutputSwitcher,
+                    shape = RoundedCornerShape(16.dp),
+                    color = BentoCardSurface,
+                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (playbackState.isPlaying) BentoPrimary else BentoTextSecondary)
+                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "VINYL TURNTABLE • 33⅓ RPM",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = BentoPrimary,
+                                letterSpacing = 1.1.sp
+                            )
+                            Text(
+                                text = audioRouteInfo.name,
+                                fontSize = 10.5.sp,
+                                color = BentoTextSecondary,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(
+                        onClick = onOpenQueueSheet,
+                        shape = CircleShape,
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Surface(
+                        onClick = onOpenOptionsMenu,
+                        shape = CircleShape,
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
 
-            // Realistic Spinning Vinyl Turntable Platter
-            Box(
+            // 2. Turntable Plinth Enclosure & Spinning Vinyl Platter + Tonearm
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(1.5.dp, BentoBorder.copy(alpha = 0.65f)),
+                shadowElevation = 10.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = false)
-                    .padding(vertical = 4.dp),
-                contentAlignment = Alignment.Center
+                    .padding(vertical = 6.dp)
             ) {
-                BoxWithConstraints(contentAlignment = Alignment.Center) {
-                    val platterSize = minOf(maxHeight * 0.95f, maxWidth * 0.9f, 290.dp)
-                    val labelSize = platterSize * (115f / 290f)
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    BentoCardDarkPurple.copy(alpha = 0.85f),
+                                    BentoCardSurface
+                                )
+                            )
+                        )
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val platterSize = minOf(maxHeight * 0.92f, maxWidth * 0.82f, 268.dp)
+                    val labelSize = platterSize * 0.40f
 
+                    // Corner Brushed Metal Deck Screws / Accents
+                    val screwColor = BentoBorder.copy(alpha = 0.7f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(screwColor)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(screwColor)
+                    )
+                    // Bottom-Start Strobe Power Indicator
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (playbackState.isPlaying) Color(0xFFFF5252) else BentoTextSecondary.copy(alpha = 0.4f))
+                        )
+                        Text(
+                            text = if (playbackState.isPlaying) "QUARTZ LOCK" else "STANDBY",
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSecondary,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+
+                    // Spinning Platter
                     com.example.ui.components.AlbumArtGestureBox(
                         enabled = gesturePlaybackEnabled,
                         isPlaying = playbackState.isPlaying,
@@ -166,10 +278,10 @@ fun NowPlayingVinylTurntable(
                             modifier = Modifier
                                 .size(platterSize)
                                 .clip(CircleShape)
-                                .background(Color(0xFF14121A)),
+                                .background(Color(0xFF100E16)),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Vinyl Grooves Canvas
+                            // Vinyl Grooves & Strobe Rim Canvas
                             Canvas(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -180,37 +292,54 @@ fun NowPlayingVinylTurntable(
                                 val center = Offset(size.width / 2f, size.height / 2f)
                                 val maxRadius = size.width / 2f
 
-                                // Outer Vinyl Ring
-                                drawCircle(color = Color(0xFF1F1D27), radius = maxRadius)
+                                // Metallic Strobe Rim
+                                drawCircle(color = Color(0xFF282534), radius = maxRadius)
+                                drawCircle(color = Color(0xFF121018), radius = maxRadius * 0.95f)
 
-                                // Concentric Grooves
-                                for (r in 40..maxRadius.toInt() step 7) {
+                                // Strobe dots around outer rim
+                                val dotCount = 36
+                                for (i in 0 until dotCount) {
+                                    val rad = Math.toRadians((i * (360.0 / dotCount)))
+                                    val dotRadius = maxRadius * 0.972f
+                                    val dx = center.x + (dotRadius * cos(rad)).toFloat()
+                                    val dy = center.y + (dotRadius * sin(rad)).toFloat()
                                     drawCircle(
-                                        color = Color(0xFF110E18),
-                                        radius = r.toFloat(),
-                                        center = center,
-                                        style = Stroke(width = 1.2f)
+                                        color = Color.White.copy(alpha = 0.42f),
+                                        radius = 2.2f,
+                                        center = Offset(dx, dy)
                                     )
                                 }
 
-                                // Shimmer highlights
+                                // Concentric Vinyl Micro-Grooves
+                                val grooveStart = (maxRadius * 0.43f).toInt()
+                                val grooveEnd = (maxRadius * 0.92f).toInt()
+                                for (r in grooveStart..grooveEnd step 6) {
+                                    drawCircle(
+                                        color = Color(0xFF1B1824),
+                                        radius = r.toFloat(),
+                                        center = center,
+                                        style = Stroke(width = 1.15f)
+                                    )
+                                }
+
+                                // Anisotropic Vinyl Sheen Highlights
                                 drawCircle(
                                     brush = Brush.sweepGradient(
                                         listOf(
                                             Color.Transparent,
-                                            Color.White.copy(alpha = 0.08f),
+                                            Color.White.copy(alpha = 0.09f),
                                             Color.Transparent,
-                                            Color.White.copy(alpha = 0.08f),
+                                            Color.White.copy(alpha = 0.09f),
                                             Color.Transparent
                                         ),
                                         center = center
                                     ),
-                                    radius = maxRadius,
+                                    radius = maxRadius * 0.94f,
                                     center = center
                                 )
                             }
 
-                            // Centered Album Artwork Label
+                            // Centered Album Artwork Record Label
                             Box(
                                 modifier = Modifier
                                     .size(labelSize)
@@ -228,149 +357,291 @@ fun NowPlayingVinylTurntable(
                                         .clip(CircleShape),
                                     cornerRadius = 100
                                 )
-                                // Center Spindle Hole
+                                // Center Spindle Adapter Ring & Hole
                                 Surface(
                                     shape = CircleShape,
                                     color = Color(0xFF0C0911),
-                                    border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF33313B)),
+                                    border = BorderStroke(2.5.dp, Color(0xFF423E4F)),
                                     modifier = Modifier.size(18.dp)
                                 ) {}
                             }
                         }
                     }
+
+                    // Pivoting Tonearm Assembly on Top-Right
+                    val accentColor = BentoPrimary
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { clip = false }
+                    ) {
+                        val pivotX = size.width * 0.87f
+                        val pivotY = size.height * 0.16f
+                        val pivot = Offset(pivotX, pivotY)
+
+                        // Tonearm gimbal base
+                        drawCircle(color = Color(0xFF2B2838), radius = 24f, center = pivot)
+                        drawCircle(color = accentColor.copy(alpha = 0.55f), radius = 15f, center = pivot)
+                        drawCircle(color = Color(0xFF14121C), radius = 8f, center = pivot)
+
+                        // Calculate tonearm shaft end based on animated tonearmAngle
+                        val armLength = size.height * 0.56f
+                        val angleRad = Math.toRadians((95.0 + tonearmAngle))
+                        val endX = pivotX + (armLength * cos(angleRad)).toFloat()
+                        val endY = pivotY + (armLength * sin(angleRad)).toFloat()
+
+                        // Tonearm tube
+                        drawLine(
+                            color = Color(0xFFB5B2C2),
+                            start = pivot,
+                            end = Offset(endX, endY),
+                            strokeWidth = 6f,
+                            cap = StrokeCap.Round
+                        )
+
+                        // Cartridge headshell at the tip
+                        drawRoundRect(
+                            color = accentColor,
+                            topLeft = Offset(endX - 9f, endY - 5f),
+                            size = Size(18f, 12f),
+                            cornerRadius = CornerRadius(4f, 4f)
+                        )
+                    }
                 }
             }
 
-            // Song Info & Favorite
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            // 3. Analog Track Console & Waveform Seek Module
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = song.displayTitle,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BentoTextPrimary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${song.displayArtist} • ${song.displayAlbum}",
-                    fontSize = 13.5.sp,
-                    color = BentoTextSecondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            // Seek Bar & Waveform Visualization
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                com.example.ui.components.NowPlayingWaveformVisualizer(
-                    trackId = song.id,
-                    progressMs = positionMs,
-                    durationMs = duration,
-                    isPlaying = playbackState.isPlaying,
-                    style = waveformStyle,
-                    accentColor = BentoPrimary,
-                    onSeekTo = onSeekTo,
-                    playbackPositionFlow = playbackPositionFlow,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    com.example.ui.components.PlaybackPositionText(playbackPositionFlow, positionMs, duration, fontSize = 11.5.sp, color = BentoTextSecondary)
-                    Text(formatTime(duration), fontSize = 11.5.sp, color = BentoTextSecondary)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = song.displayTitle,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoTextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${song.displayArtist} • ${song.displayAlbum}",
+                                fontSize = 12.5.sp,
+                                color = BentoTextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Surface(
+                            onClick = {
+                                HapticUtils.performClickHaptic(context)
+                                onFavoriteToggle()
+                            },
+                            shape = CircleShape,
+                            color = if (song.isFavorite) BentoAccentPinkText.copy(alpha = 0.16f) else BentoCardDarkPurple,
+                            border = BorderStroke(
+                                1.dp,
+                                if (song.isFavorite) BentoAccentPinkText.copy(alpha = 0.45f) else BentoBorder.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    contentDescription = "Favorite",
+                                    tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Waveform & Timestamps
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        com.example.ui.components.NowPlayingWaveformVisualizer(
+                            trackId = song.id,
+                            progressMs = positionMs,
+                            durationMs = duration,
+                            isPlaying = playbackState.isPlaying,
+                            style = waveformStyle,
+                            accentColor = BentoPrimary,
+                            onSeekTo = onSeekTo,
+                            playbackPositionFlow = playbackPositionFlow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            com.example.ui.components.PlaybackPositionText(
+                                playbackPositionFlow,
+                                positionMs,
+                                duration,
+                                fontSize = 11.5.sp,
+                                color = BentoPrimary
+                            )
+                            Text(formatTime(duration), fontSize = 11.5.sp, color = BentoTextSecondary)
+                        }
+                    }
                 }
             }
 
-            // Transport Control Deck
-            Row(
+            // 4. Tactile Hardware Transport Deck
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                IconButton(onClick = onToggleShuffle, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary
-                    )
-                }
-
-                IconButton(onClick = onSkipPrevious, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = BentoTextPrimary, modifier = Modifier.size(32.dp))
-                }
-
-                Surface(
-                    shape = CircleShape,
-                    color = BentoPrimary,
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clickable {
-                            HapticUtils.performClickHaptic(context)
-                            onTogglePlayPause()
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = onToggleShuffle, modifier = Modifier.size(42.dp)) {
                         Icon(
-                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            tint = BentoOnPrimary,
-                            modifier = Modifier.size(36.dp)
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary
+                        )
+                    }
+
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onSkipPrevious()
+                        },
+                        shape = CircleShape,
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                        modifier = Modifier.size(50.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = BentoPrimary,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier
+                            .size(66.dp)
+                            .clickable {
+                                HapticUtils.performClickHaptic(context)
+                                onTogglePlayPause()
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = BentoOnPrimary,
+                                modifier = Modifier.size(34.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onSkipNext()
+                        },
+                        shape = CircleShape,
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                        modifier = Modifier.size(50.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))
+                        }
+                    }
+
+                    IconButton(onClick = onToggleRepeat, modifier = Modifier.size(42.dp)) {
+                        Icon(
+                            imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                            contentDescription = "Repeat",
+                            tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) BentoPrimary else BentoTextSecondary
                         )
                     }
                 }
 
-                IconButton(onClick = onSkipNext, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = BentoTextPrimary, modifier = Modifier.size(32.dp))
-                }
+                // Bottom Studio Utility Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onOpenLyricsSheet,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Lyrics", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
 
-                IconButton(onClick = onToggleRepeat, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                        contentDescription = "Repeat",
-                        tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) BentoPrimary else BentoTextSecondary
-                    )
-                }
-            }
+                    Surface(
+                        onClick = onOpenAudioOutputSwitcher,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.SpeakerGroup, contentDescription = "Audio Output", tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Output", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
 
-            // Bottom Auxiliary Action Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onFavoriteToggle, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Favorite",
-                        tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                IconButton(onClick = onOpenLyricsSheet, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = BentoTextSecondary, modifier = Modifier.size(20.dp))
-                }
-
-                IconButton(onClick = onOpenAudioOutputSwitcher, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.SpeakerGroup, contentDescription = "Audio Output", tint = BentoPrimary, modifier = Modifier.size(20.dp))
-                }
-
-                IconButton(onClick = onOpenSleepTimer, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Bedtime, contentDescription = "Sleep Timer", tint = BentoTextSecondary, modifier = Modifier.size(20.dp))
+                    Surface(
+                        onClick = onOpenSleepTimer,
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Bedtime, contentDescription = "Sleep Timer", tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("Sleep", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                        }
+                    }
                 }
             }
         }
