@@ -1398,6 +1398,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             val fetched = lyricsFetcher.getOrFetchLyrics(song)
                             if (coroutineContext[kotlinx.coroutines.Job]?.isActive == true && playbackState.value.currentSong?.id == song.id) {
                                 _currentLyrics.value = fetched
+                                com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
+                                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
                                 refreshCacheSizes()
                             }
                             try {
@@ -1920,8 +1922,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = "Custom File"
             )
             db.lyricsDao().insertLyrics(entity)
+            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
             if (playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = entity.toDomainModel()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
             }
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
@@ -1961,6 +1965,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = candidate.source
             )
             _currentLyrics.value = updatedLyrics
+            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
     }
@@ -1972,8 +1978,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         try {
             val fetched = lyricsFetcher.getOrFetchLyrics(song)
+            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
             if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = fetched
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
             }
         } catch (e: Exception) {
             if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
@@ -2033,14 +2041,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, null, updatedSong.path)
             }
             com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
+            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(updatedSong.id)
             playbackManager.updateSongInQueue(updatedSong)
             if (!finalArt.isNullOrBlank()) {
                 playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt, updatedSong.path)
             }
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            playbackManager.notifyLiveMetadataChanged()
+            com.example.widget.WidgetUpdateManager.forceRefreshMetadata(getApplication(), playbackState.value)
             com.example.service.MusicPlaybackService.instance?.triggerNotificationUpdate()
             if (playbackState.value.currentSong?.id == updatedSong.id) {
                 _currentLyrics.value = lyricsFetcher.getOrFetchLyrics(updatedSong)
+                com.example.widget.WidgetUpdateManager.invalidateLyricsCache(updatedSong.id)
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
                 val artUri = updatedSong.artworkUri
                 if (!artUri.isNullOrBlank()) {
                     val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColor(getApplication(), artUri)
@@ -2063,6 +2075,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLyricsSyncOffset(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
+        com.example.widget.WidgetUpdateManager.invalidateLyricsCache(songId)
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
         cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
         cloudSyncRepository.onLyricsUpdatedAsync(songId)
     }

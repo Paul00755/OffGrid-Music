@@ -105,20 +105,56 @@ object WidgetUpdateManager {
     private var lastLyricsLineSignature: String = ""
     @Volatile
     private var currentLyricsFlipperPage: Int = 0
+    @Volatile
+    private var lastLyricsTransitionTimeMs: Long = 0L
+    @Volatile
+    private var lyricsTransitionToken: Long = 0L
+
+    private val attemptedLyricsFetchSongIds: MutableSet<Long> =
+        java.util.Collections.synchronizedSet(HashSet<Long>())
+    private val lyricsFetchCompletedNoLyricsSongIds: MutableSet<Long> =
+        java.util.Collections.synchronizedSet(HashSet<Long>())
+
+    private enum class LyricsDisplayMode {
+        NONE,
+        LOADING,
+        SYNCED,
+        PLAIN,
+        MISSING
+    }
 
     private data class LyricsStageWindow(
         val prevLine: String,
         val currLine: String,
         val nextLine: String,
-        val signature: String
+        val signature: String,
+        val songPrefix: String,
+        val mode: LyricsDisplayMode,
+        val shouldAnimateTransition: Boolean
     )
 
     fun invalidateLyricsCache(songId: Long = -1L) {
+        if (songId > 0L) {
+            attemptedLyricsFetchSongIds.remove(songId)
+            lyricsFetchCompletedNoLyricsSongIds.remove(songId)
+        } else {
+            attemptedLyricsFetchSongIds.clear()
+            lyricsFetchCompletedNoLyricsSongIds.clear()
+        }
         if (songId <= 0L || songId == cachedLyricsSongId) {
             cachedLyricsSongId = -1L
             lastLyricsDbCheckMs = 0L
             lastLyricsLineSignature = ""
         }
+    }
+
+    private fun computeTrackRenderSignature(song: com.example.data.model.Song?): String {
+        if (song == null) return ""
+        val baseId = com.example.ui.components.ArtworkResolutionCache.trackIdentity(song.id, song.path)
+        val bmpHash = System.identityHashCode(
+            com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
+        )
+        return "$baseId|${song.displayTitle}|${song.displayArtist}|${song.displayAlbum}|${song.artworkUri.orEmpty()}|$bmpHash"
     }
 
     private fun refreshThemePrefsIfNeeded(context: Context) {
@@ -157,6 +193,20 @@ object WidgetUpdateManager {
         lastLyricsLineSignature = ""
         WidgetBitmapRenderer.clearCache()
         updateAllWidgets(context, state)
+    }
+
+    fun forceRefreshMetadata(context: Context, state: PlaybackState) {
+        val appContext = context.applicationContext
+        val songId = state.currentSong?.id ?: -1L
+        if (songId > 0L) {
+            WidgetBitmapRenderer.invalidateSong(songId)
+            invalidateLyricsCache(songId)
+        } else {
+            WidgetBitmapRenderer.clearCache()
+        }
+        lastRenderedTrackIdentity = ""
+        savePlaybackSnapshot(appContext, state)
+        updateAllWidgets(appContext, state)
     }
 
     /**
@@ -684,7 +734,7 @@ object WidgetUpdateManager {
             val song = state.currentSong
 
             if (fullIds.isEmpty() && smallIds.isEmpty() && mediumIds.isEmpty() && secondaryIds.isEmpty() && lyricsIds.isEmpty()) {
-                lastRenderedTrackIdentity = song?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
+                lastRenderedTrackIdentity = computeTrackRenderSignature(song)
                 lastRenderedIsPlaying = state.isPlaying
                 lastRenderedHasArtwork = song != null && com.example.util.ArtworkManager.getCachedNotificationBitmap(song.id, song.path) != null
                 return
@@ -701,7 +751,7 @@ object WidgetUpdateManager {
             cachedLastAccentColor = themeColors.accentColor
             val isFavorite = if (song != null) checkIsFavorite(context, song.id) else false
 
-            lastRenderedTrackIdentity = song?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
+            lastRenderedTrackIdentity = computeTrackRenderSignature(song)
             lastRenderedIsPlaying = state.isPlaying
             lastRenderedHasArtwork = sourceBitmap != null && !sourceBitmap.isRecycled
             lastRenderedIsLightTheme = cachedIsLightTheme
@@ -745,11 +795,11 @@ object WidgetUpdateManager {
         try {
             refreshThemePrefsIfNeeded(context)
             val rawSong = rawState.currentSong
-            val rawTrackIdentity = rawSong?.let { com.example.ui.components.ArtworkResolutionCache.trackIdentity(it.id, it.path) }.orEmpty()
+            val rawTrackIdentity = computeTrackRenderSignature(rawSong)
             val hasNewlyDecodedArt = !lastRenderedHasArtwork && rawSong != null &&
                 com.example.util.ArtworkManager.getCachedNotificationBitmap(rawSong.id, rawSong.path) != null
 
-            // If track identity, play/pause state, theme mode, or decoded artwork state changed since the last full render,
+            // If track identity/metadata, play/pause state, theme mode, or decoded artwork state changed since the last full render,
             // automatically promote this progress tick to a full update across all 5 widget variants!
             if (rawTrackIdentity != lastRenderedTrackIdentity ||
                 rawState.isPlaying != lastRenderedIsPlaying ||
@@ -820,6 +870,11 @@ object WidgetUpdateManager {
             }
 
             if (lyricsIds.isNotEmpty()) {
+                val nowElapsed = android.os.SystemClock.elapsedRealtime()
+                // Do not interrupt an active 260ms ViewFlipper lyric transition with a progress partial update
+                if (nowElapsed - lastLyricsTransitionTimeMs < 310L) {
+                    return
+                }
                 val lyricsProgBmp = WidgetBitmapRenderer.renderStraightProgressBar(
                     context = context,
                     widthPx = (220 * density).toInt(),
@@ -828,22 +883,31 @@ object WidgetUpdateManager {
                     accentColor = accentColor
                 )
                 val window = resolveLyricsWindow(context, song, posMs, durationMs)
-                val lineChanged = window.signature != lastLyricsLineSignature
-                if (lineChanged) {
-                    lastLyricsLineSignature = window.signature
-                    currentLyricsFlipperPage = (currentLyricsFlipperPage + 1) % 2
-                }
+                val prevSig = lastLyricsLineSignature
+                val lineChanged = window.signature != prevSig
+                val shouldAnimate = lineChanged &&
+                    window.shouldAnimateTransition &&
+                    prevSig.isNotEmpty() &&
+                    window.songPrefix.isNotEmpty() &&
+                    prevSig.startsWith(window.songPrefix)
+
+                lastLyricsLineSignature = window.signature
+
                 val isLight = cachedIsLightTheme
                 val currLyricColor = if (isLight) android.graphics.Color.parseColor("#0F172A") else android.graphics.Color.WHITE
                 val dimLyricColor = if (isLight) android.graphics.Color.parseColor("#64748B") else android.graphics.Color.parseColor("#8A94A6")
 
-                for (id in lyricsIds) {
-                    try {
-                        val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
-                        views.setTextViewText(R.id.widget_lyrics_time_current, currentText)
-                        views.setTextViewText(R.id.widget_lyrics_time_total, totalText)
-                        views.setImageViewBitmap(R.id.widget_lyrics_progress, lyricsProgBmp)
-                        if (lineChanged) {
+                if (shouldAnimate) {
+                    currentLyricsFlipperPage = (currentLyricsFlipperPage + 1) % 2
+                    lastLyricsTransitionTimeMs = nowElapsed
+                    val transitionToken = ++lyricsTransitionToken
+
+                    for (id in lyricsIds) {
+                        try {
+                            val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
+                            views.setTextViewText(R.id.widget_lyrics_time_current, currentText)
+                            views.setTextViewText(R.id.widget_lyrics_time_total, totalText)
+                            views.setImageViewBitmap(R.id.widget_lyrics_progress, lyricsProgBmp)
                             if (currentLyricsFlipperPage == 0) {
                                 views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
                                 views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
@@ -860,9 +924,66 @@ object WidgetUpdateManager {
                                 views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
                             }
                             views.setDisplayedChild(R.id.widget_lyrics_flipper, currentLyricsFlipperPage)
+                            appWidgetManager.partiallyUpdateAppWidget(id, views)
+                        } catch (_: Exception) {}
+                    }
+
+                    // CRITICAL ANTI-FLICKER CLEANUP:
+                    // Android's AppWidgetServiceImpl merges partial RemoteViews into the stored widget.views.
+                    // If `setDisplayedChild` remains inside widget.views, every subsequent 1-second
+                    // `partiallyUpdateAppWidget` call re-executes `ViewAnimator.setDisplayedChild`, which
+                    // unconditionally restarts `mInAnimation` and causes the lyrics to flicker every second!
+                    // Once the 260ms slide transition completes (at 300ms), we replace widget.views via
+                    // full `updateAppWidget` (which does NOT contain `setDisplayedChild` and syncs both pages).
+                    val appContext = context.applicationContext
+                    widgetScope.launch {
+                        kotlinx.coroutines.delay(300L)
+                        updateMutex.withLock {
+                            if (transitionToken == lyricsTransitionToken) {
+                                try {
+                                    val liveState = resolveEffectiveState(appContext, getAuthoritativeState(appContext))
+                                    val liveSong = liveState.currentSong
+                                    val srcBmp = WidgetBitmapRenderer.getOrLoadSongBitmap(appContext, liveSong)
+                                    val tColors = WidgetBitmapRenderer.getThemeColors(
+                                        songBitmap = srcBmp,
+                                        isDynamicTheme = cachedIsDynamicTheme,
+                                        manualAccentColor = cachedManualAccentArgb
+                                    )
+                                    val isFav = if (liveSong != null) checkIsFavorite(appContext, liveSong.id) else false
+                                    val awm = AppWidgetManager.getInstance(appContext)
+                                    val currentIds = awm.getAppWidgetIds(ComponentName(appContext, LyricsMusicWidgetProvider::class.java))
+                                    if (currentIds.isNotEmpty()) {
+                                        updateLyricsWidgets(appContext, awm, currentIds, liveState, srcBmp, tColors, isFav)
+                                    }
+                                } catch (_: Exception) {}
+                            }
                         }
-                        appWidgetManager.partiallyUpdateAppWidget(id, views)
-                    } catch (_: Exception) {}
+                    }
+                } else {
+                    for (id in lyricsIds) {
+                        try {
+                            val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
+                            views.setTextViewText(R.id.widget_lyrics_time_current, currentText)
+                            views.setTextViewText(R.id.widget_lyrics_time_total, totalText)
+                            views.setImageViewBitmap(R.id.widget_lyrics_progress, lyricsProgBmp)
+                            if (lineChanged) {
+                                views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
+                                views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
+                                views.setTextViewText(R.id.widget_lyrics_next_0, window.nextLine)
+                                views.setTextColor(R.id.widget_lyrics_prev_0, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_curr_0, currLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next_0, dimLyricColor)
+
+                                views.setTextViewText(R.id.widget_lyrics_prev_1, window.prevLine)
+                                views.setTextViewText(R.id.widget_lyrics_curr_1, window.currLine)
+                                views.setTextViewText(R.id.widget_lyrics_next_1, window.nextLine)
+                                views.setTextColor(R.id.widget_lyrics_prev_1, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_curr_1, currLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
+                            }
+                            appWidgetManager.partiallyUpdateAppWidget(id, views)
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         } catch (_: Exception) {}
@@ -1269,8 +1390,9 @@ object WidgetUpdateManager {
         }
     }
 
-    private fun ensureLyricsLoadedForSong(context: Context, songId: Long) {
-        if (songId <= 0L) {
+    private fun ensureLyricsLoadedForSong(context: Context, song: com.example.data.model.Song?) {
+        val songId = song?.id ?: -1L
+        if (song == null || songId <= 0L) {
             cachedLyricsSongId = -1L
             cachedSyncedLines = emptyList()
             cachedPlainLines = emptyList()
@@ -1313,9 +1435,35 @@ object WidgetUpdateManager {
                 } else {
                     emptyList()
                 }
+                if (cachedSyncedLines.isEmpty() && cachedPlainLines.isEmpty()) {
+                    lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                }
             } else {
                 cachedSyncedLines = emptyList()
                 cachedPlainLines = emptyList()
+                // Automatically trigger a background local/embedded/online lyrics resolution once per song
+                // so the Lyrics Widget works even if the user hasn't opened the Lyrics sheet yet!
+                if (attemptedLyricsFetchSongIds.add(songId)) {
+                    widgetScope.launch {
+                        try {
+                            val db = AppDatabase.getInstance(appContext)
+                            val fetcher = com.example.service.LyricsFetcher(db.lyricsDao(), appContext)
+                            val fetched = fetcher.getOrFetchLyrics(song)
+                            val hasAnyLyrics = !fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()
+                            if (!hasAnyLyrics) {
+                                lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                            }
+                            cachedLyricsSongId = -1L
+                            lastLyricsDbCheckMs = 0L
+                            val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
+                            updateMutex.withLock {
+                                performFullWidgetUpdateInternal(appContext, liveState)
+                            }
+                        } catch (_: Exception) {
+                            lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                        }
+                    }
+                }
             }
         } catch (_: Exception) {
             cachedSyncedLines = emptyList()
@@ -1334,10 +1482,13 @@ object WidgetUpdateManager {
                 prevLine = "",
                 currLine = "♪ Play a song to view live synced lyrics",
                 nextLine = "Tap to open OffGrid Music",
-                signature = "none"
+                signature = "none",
+                songPrefix = "",
+                mode = LyricsDisplayMode.NONE,
+                shouldAnimateTransition = false
             )
         }
-        ensureLyricsLoadedForSong(context, song.id)
+        ensureLyricsLoadedForSong(context, song)
         val synced = cachedSyncedLines
         if (synced.isNotEmpty()) {
             val adjustedPos = (posMs + cachedLyricsOffsetMs).coerceAtLeast(0L)
@@ -1345,33 +1496,79 @@ object WidgetUpdateManager {
             val prev = if (activeIdx > 0) synced[activeIdx - 1].second else "♪ • •"
             val curr = synced[activeIdx].second.ifBlank { "♪" }
             val next = if (activeIdx + 1 < synced.size) synced[activeIdx + 1].second else ""
+            val prefix = "sync_${song.id}_"
             return LyricsStageWindow(
                 prevLine = prev,
                 currLine = curr,
                 nextLine = next,
-                signature = "sync_${song.id}_$activeIdx"
+                signature = "${prefix}$activeIdx",
+                songPrefix = prefix,
+                mode = LyricsDisplayMode.SYNCED,
+                shouldAnimateTransition = true
             )
         }
         val plain = cachedPlainLines
         if (plain.isNotEmpty()) {
-            val ratio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 0.999f) else 0f
+            val prefix = "plain_${song.id}_"
+            if (plain.size <= 3 || durationMs <= 0L) {
+                val line0 = if (plain.size >= 3) plain[0] else "♪ Plain Lyrics"
+                val line1 = when {
+                    plain.size >= 3 -> plain[1]
+                    plain.isNotEmpty() -> plain[0]
+                    else -> ""
+                }
+                val line2 = when {
+                    plain.size >= 3 -> plain[2]
+                    plain.size == 2 -> plain[1]
+                    else -> ""
+                }
+                return LyricsStageWindow(
+                    prevLine = line0,
+                    currLine = line1,
+                    nextLine = line2,
+                    signature = "${prefix}static",
+                    songPrefix = prefix,
+                    mode = LyricsDisplayMode.PLAIN,
+                    shouldAnimateTransition = false
+                )
+            }
+            val ratio = (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 0.999f)
             val activeIdx = (ratio * plain.size).toInt().coerceIn(plain.indices)
-            val prev = if (activeIdx > 0) plain[activeIdx - 1] else ""
+            val prev = if (activeIdx > 0) plain[activeIdx - 1] else "♪ Plain Lyrics"
             val curr = plain[activeIdx]
             val next = if (activeIdx + 1 < plain.size) plain[activeIdx + 1] else ""
             return LyricsStageWindow(
                 prevLine = prev,
                 currLine = curr,
                 nextLine = next,
-                signature = "plain_${song.id}_$activeIdx"
+                signature = "${prefix}$activeIdx",
+                songPrefix = prefix,
+                mode = LyricsDisplayMode.PLAIN,
+                shouldAnimateTransition = true
             )
         }
-        return LyricsStageWindow(
-            prevLine = song.displayArtist,
-            currLine = "♪ ${song.displayTitle}",
-            nextLine = "Tap to open Now Playing & load lyrics",
-            signature = "empty_${song.id}"
-        )
+        val isChecking = song.id in attemptedLyricsFetchSongIds && song.id !in lyricsFetchCompletedNoLyricsSongIds
+        return if (isChecking) {
+            LyricsStageWindow(
+                prevLine = "♪ • •",
+                currLine = "Loading lyrics for ${song.displayTitle}…",
+                nextLine = song.displayArtist,
+                signature = "loading_${song.id}",
+                songPrefix = "loading_${song.id}_",
+                mode = LyricsDisplayMode.LOADING,
+                shouldAnimateTransition = false
+            )
+        } else {
+            LyricsStageWindow(
+                prevLine = "♪ • •",
+                currLine = "No lyrics available for this song",
+                nextLine = "Tap to search or add lyrics in Now Playing",
+                signature = "missing_${song.id}",
+                songPrefix = "missing_${song.id}_",
+                mode = LyricsDisplayMode.MISSING,
+                shouldAnimateTransition = false
+            )
+        }
     }
 
     private fun updateLyricsWidgets(
@@ -1384,11 +1581,20 @@ object WidgetUpdateManager {
         isFavorite: Boolean
     ) {
         val song = state.currentSong
-        val title = song?.displayTitle ?: "OffGrid Music"
-        val subtitle = song?.displayArtist ?: "Live Synced Lyrics"
         val durationMs = if (state.durationMs > 0L) state.durationMs else (song?.durationMs ?: 0L)
         val posMs = state.positionMs.coerceAtLeast(0L)
         val progressRatio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+
+        val window = resolveLyricsWindow(context, song, posMs, durationMs)
+        lastLyricsLineSignature = window.signature
+
+        val title = song?.displayTitle ?: "OffGrid Music"
+        val subtitle = when {
+            song == null -> "Live Synced Lyrics"
+            window.mode == LyricsDisplayMode.PLAIN -> "${song.displayArtist} • Plain Lyrics"
+            window.mode == LyricsDisplayMode.MISSING -> "${song.displayArtist} • No Lyrics"
+            else -> song.displayArtist
+        }
 
         val isLight = cachedIsLightTheme
         // Black/Dark vs Light theme colors as per user set theme
@@ -1422,13 +1628,6 @@ object WidgetUpdateManager {
         } else {
             android.graphics.Color.parseColor("#8A94A6")
         }
-
-        val window = resolveLyricsWindow(context, song, posMs, durationMs)
-        val lineChanged = window.signature != lastLyricsLineSignature && lastLyricsLineSignature.isNotEmpty()
-        if (lineChanged) {
-            currentLyricsFlipperPage = (currentLyricsFlipperPage + 1) % 2
-        }
-        lastLyricsLineSignature = window.signature
 
         val density = WidgetBitmapRenderer.getRenderDensity(context)
         val artBmp = WidgetBitmapRenderer.renderRoundedArtwork(
@@ -1496,7 +1695,10 @@ object WidgetUpdateManager {
                 views.setImageViewBitmap(R.id.widget_lyrics_btn_play_pause, playPauseBmp)
                 views.setImageViewBitmap(R.id.widget_lyrics_btn_next, nextBmp)
 
-                // Populate both Flipper pages and display currentLyricsFlipperPage
+                // Populate BOTH Flipper pages with identical current lines and DO NOT call setDisplayedChild here!
+                // Omitting setDisplayedChild in full updateAppWidget guarantees that AppWidgetServiceImpl's
+                // stored base RemoteViews does not contain a setDisplayedChild action that would re-trigger
+                // ViewFlipper's slide animation on every 1-second partial progress update.
                 views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
                 views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
                 views.setTextViewText(R.id.widget_lyrics_next_0, window.nextLine)
@@ -1510,8 +1712,6 @@ object WidgetUpdateManager {
                 views.setTextColor(R.id.widget_lyrics_prev_1, dimLyricColor)
                 views.setTextColor(R.id.widget_lyrics_curr_1, currLyricColor)
                 views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
-
-                views.setDisplayedChild(R.id.widget_lyrics_flipper, currentLyricsFlipperPage)
 
                 views.setImageViewBitmap(R.id.widget_lyrics_progress, progBmp)
                 views.setTextViewText(R.id.widget_lyrics_time_current, formatTime(posMs))

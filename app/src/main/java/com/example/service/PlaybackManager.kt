@@ -191,7 +191,102 @@ class PlaybackManager(
 
     var onFavoriteToggleFromNotification: (() -> Unit)? = null
 
+    private val forwardingListeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
+
+    private fun buildLiveMediaMetadata(
+        song: Song,
+        base: androidx.media3.common.MediaMetadata? = null
+    ): androidx.media3.common.MediaMetadata {
+        val builder = (base?.buildUpon() ?: androidx.media3.common.MediaMetadata.Builder())
+            .setTitle(song.displayTitle)
+            .setDisplayTitle(song.displayTitle)
+            .setArtist(song.displayArtist)
+            .setAlbumTitle(song.displayAlbum)
+            .setAlbumArtist(song.displayArtist)
+
+        val artBytes = ArtworkManager.getCachedNotificationArtwork(song.id, song.path)
+        if (artBytes != null && artBytes.isNotEmpty()) {
+            builder.setArtworkData(artBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        } else {
+            builder.setArtworkData(null, null)
+        }
+
+        val artUri = song.artworkUri?.takeIf { it.isNotBlank() }
+            ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+            ?: song.contentUriString.takeIf { it.startsWith("http") }
+        if (!artUri.isNullOrBlank()) {
+            try {
+                builder.setArtworkUri(android.net.Uri.parse(artUri))
+            } catch (_: Exception) {}
+        } else {
+            builder.setArtworkUri(null)
+        }
+        return builder.build()
+    }
+
+    fun notifyLiveMetadataChanged() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) {
+                notifyLiveMetadataChanged()
+            }
+            return
+        }
+        try {
+            val liveMeta = forwardingPlayer.mediaMetadata
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .addAll(
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                        Player.EVENT_TIMELINE_CHANGED
+                    )
+                    .build()
+            )
+            for (listener in forwardingListeners) {
+                try {
+                    listener.onMediaMetadataChanged(liveMeta)
+                    listener.onEvents(forwardingPlayer, events)
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
+    }
+
     val forwardingPlayer: androidx.media3.common.ForwardingPlayer = object : androidx.media3.common.ForwardingPlayer(player) {
+        override fun addListener(listener: Player.Listener) {
+            forwardingListeners.add(listener)
+            super.addListener(listener)
+        }
+
+        override fun removeListener(listener: Player.Listener) {
+            forwardingListeners.remove(listener)
+            super.removeListener(listener)
+        }
+
+        override fun getMediaMetadata(): androidx.media3.common.MediaMetadata {
+            val base = super.getMediaMetadata()
+            val currentSong = _playbackState.value.currentSong ?: return base
+            return buildLiveMediaMetadata(currentSong, base)
+        }
+
+        override fun getCurrentMediaItem(): MediaItem? {
+            val baseItem = super.getCurrentMediaItem()
+            val currentSong = _playbackState.value.currentSong ?: return baseItem
+            val liveMeta = buildLiveMediaMetadata(currentSong, baseItem?.mediaMetadata)
+            return (baseItem?.buildUpon()
+                ?: MediaItem.Builder().setMediaId(currentSong.id.toString()).setUri(currentSong.contentUri))
+                .setMediaMetadata(liveMeta)
+                .build()
+        }
+
+        override fun getMediaItemAt(index: Int): MediaItem {
+            val baseItem = super.getMediaItemAt(index)
+            val currentSong = _playbackState.value.currentSong
+            if (currentSong != null && index == currentMediaItemIndex) {
+                val liveMeta = buildLiveMediaMetadata(currentSong, baseItem.mediaMetadata)
+                return baseItem.buildUpon().setMediaMetadata(liveMeta).build()
+            }
+            return baseItem
+        }
+
         override fun play() {
             if (fadeInMs > 0) {
                 playWithFade()
@@ -3082,30 +3177,43 @@ class PlaybackManager(
             }
         } catch (_: Exception) {}
 
-        if (isCurrent && !updatedSong.artworkUri.isNullOrBlank()) {
+        if (isCurrent) {
+            // Immediately push updated title, artist, album, and any already-decoded artwork bytes to MediaSession & Notification
+            notifyLiveMetadataChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetUpdateManager.forceRefreshMetadata(context, _playbackState.value)
+
             scope.launch(Dispatchers.IO) {
-                val bmp = ArtworkManager.decodeBitmapFromUri(context, updatedSong.artworkUri)
-                if (bmp != null) {
-                    ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp, updatedSong.path)
-                    try {
-                        val stream = java.io.ByteArrayOutputStream()
-                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
-                        val bytes = stream.toByteArray()
-                        ArtworkManager.putNotificationArtwork(updatedSong.id, bytes, bmp, updatedSong.path)
-                    } catch (_: Throwable) {}
+                val resolvedArtUri = updatedSong.artworkUri?.takeIf { it.isNotBlank() }
+                    ?: com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, updatedSong, false)
+                if (!resolvedArtUri.isNullOrBlank()) {
+                    val bmp = ArtworkManager.decodeBitmapFromUri(context, resolvedArtUri)
+                    if (bmp != null) {
+                        ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp, updatedSong.path)
+                        try {
+                            val stream = java.io.ByteArrayOutputStream()
+                            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
+                            val bytes = stream.toByteArray()
+                            ArtworkManager.putNotificationArtwork(updatedSong.id, bytes, bmp, updatedSong.path)
+                        } catch (_: Throwable) {}
+                    }
+                } else {
+                    ArtworkManager.invalidateNotificationArtwork(updatedSong.id, updatedSong.path)
                 }
                 withContext(Dispatchers.Main) {
+                    notifyLiveMetadataChanged()
                     updateNotificationLayout()
                     MusicPlaybackService.instance?.triggerNotificationUpdate()
                     com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
-                    com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                    com.example.widget.WidgetUpdateManager.forceRefreshMetadata(context, _playbackState.value)
                 }
             }
         } else {
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()
             com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshMetadata(context, _playbackState.value)
         }
     }
 
@@ -3158,10 +3266,11 @@ class PlaybackManager(
                 } catch (_: Throwable) {}
             }
             withContext(Dispatchers.Main) {
+                notifyLiveMetadataChanged()
                 updateNotificationLayout()
                 MusicPlaybackService.instance?.triggerNotificationUpdate()
                 com.example.widget.WidgetBitmapRenderer.invalidateSong(songId)
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                com.example.widget.WidgetUpdateManager.forceRefreshMetadata(context, _playbackState.value)
             }
         }
     }

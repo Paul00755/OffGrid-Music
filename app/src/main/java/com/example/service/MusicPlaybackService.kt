@@ -45,7 +45,8 @@ internal data class NotificationUpdateKey(
     val playbackSpeed: Float,
     val queueIndex: Int,
     val queueCount: Int,
-    val isFavorite: Boolean?
+    val isFavorite: Boolean?,
+    val artworkIdentityHash: Int = 0
 )
 
 /** Keeps notification progress useful while avoiding repeated action and bitmap rebuilding. */
@@ -294,11 +295,14 @@ class MusicPlaybackService : MediaSessionService() {
             val managerState = PlaybackManager.activeInstance?.playbackState?.value
             val currentSong = managerState?.currentSong
             val metadata = player.currentMediaItem?.mediaMetadata
+            val cachedBmp = currentSong?.let {
+                com.example.util.ArtworkManager.getCachedNotificationBitmap(it.id, it.path)
+            }
             val updateKey = NotificationUpdateKey(
                 mediaId = player.currentMediaItem?.mediaId ?: currentSong?.id?.toString(),
-                title = metadata?.title?.toString() ?: currentSong?.displayTitle,
-                artist = metadata?.artist?.toString() ?: currentSong?.displayArtist,
-                album = metadata?.albumTitle?.toString() ?: currentSong?.displayAlbum,
+                title = currentSong?.displayTitle ?: metadata?.title?.toString(),
+                artist = currentSong?.displayArtist ?: metadata?.artist?.toString(),
+                album = currentSong?.displayAlbum ?: metadata?.albumTitle?.toString(),
                 artworkUri = currentSong?.artworkUri ?: metadata?.artworkUri?.toString(),
                 durationMs = player.duration,
                 playbackState = player.playbackState,
@@ -311,7 +315,8 @@ class MusicPlaybackService : MediaSessionService() {
                 playbackSpeed = player.playbackParameters.speed,
                 queueIndex = managerState?.queueIndex ?: -1,
                 queueCount = managerState?.queue?.size ?: 0,
-                isFavorite = currentSong?.isFavorite
+                isFavorite = currentSong?.isFavorite,
+                artworkIdentityHash = System.identityHashCode(cachedBmp)
             )
             val currentPositionMs = player.currentPosition.coerceAtLeast(0L)
             if (!notificationUpdateGate.shouldUpdate(
@@ -358,6 +363,8 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     fun triggerNotificationUpdate() {
+        failedNotificationArtworkKey = null
+        notificationArtworkRetryAfterMs = 0L
         val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
         if (session != null) {
             try {
