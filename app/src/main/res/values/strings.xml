@@ -4,4 +4,5 @@
     <string name="widget_small_description">Small Music Widget with inset album cover, favorite button, progress bar, and controls</string>
     <string name="widget_medium_description">Medium Music Widget with split album cover, progress bar, and controls</string>
     <string name="widget_secondary_description">Secondary Music Widget with left-bleed album cover, glowing waveform progress bar, and controls</string>
+    <string name="widget_lyrics_description">Live Lyrics Music Widget with smooth synced lyric transitions and adaptive Black/Light theme</string>
 </resources>

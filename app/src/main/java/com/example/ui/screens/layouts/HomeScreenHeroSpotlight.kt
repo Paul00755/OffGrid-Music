@@ -248,6 +248,7 @@ fun HomeScreenHeroSpotlight(
                 item(key = "hero_spotlight_banner_${featuredSong.id}", contentType = "hero_banner") {
                     val isCurrentActive = playbackState.currentSong?.id == featuredSong.id
                     val isFav = favoriteSongs.any { it.id == featuredSong.id }
+                    var showHeroSongMenu by remember(featuredSong.id) { mutableStateOf(false) }
 
                     Box(
                         modifier = Modifier
@@ -293,43 +294,17 @@ fun HomeScreenHeroSpotlight(
                                 .padding(20.dp),
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            // Top Floating Pill Badge + Frosted Circular Actions
+                            // Top Frosted Circular Actions (Right-Aligned)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.End,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = Color.White.copy(alpha = 0.16f),
-                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.6f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(7.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isCurrentActive && playbackState.isPlaying) BentoPrimary else Color.White)
-                                        )
-                                        Text(
-                                            text = if (isCurrentActive && playbackState.isPlaying) "LIVE SPOTLIGHT" else "HERO STAGE",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White,
-                                            letterSpacing = 1.1.sp
-                                        )
-                                    }
-                                }
-
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
-                                            onAddToQueue(featuredSong)
+                                            showHeroSongMenu = true
                                         },
                                         shape = CircleShape,
                                         color = Color.White.copy(alpha = 0.16f),
@@ -338,7 +313,7 @@ fun HomeScreenHeroSpotlight(
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Default.QueueMusic,
-                                                contentDescription = "Add to Queue",
+                                                contentDescription = "Song Actions",
                                                 tint = Color.White,
                                                 modifier = Modifier.size(18.dp)
                                             )
@@ -495,6 +470,27 @@ fun HomeScreenHeroSpotlight(
                             }
                         }
                     }
+
+                    if (showHeroSongMenu) {
+                        com.example.ui.components.SongActionMenu(
+                            expanded = true,
+                            song = featuredSong,
+                            onDismissRequest = { showHeroSongMenu = false },
+                            onPlayNow = {
+                                if (isCurrentActive) {
+                                    onTogglePlayPause()
+                                } else {
+                                    onSongClick(featuredSong)
+                                }
+                            },
+                            onPlayNext = { onPlayNext(featuredSong) },
+                            onAddToQueue = { onAddToQueue(featuredSong) },
+                            onAddToPlaylist = { onAddToPlaylist(featuredSong) },
+                            onFavoriteToggle = { onFavoriteToggle(featuredSong) },
+                            onEditTags = if (onEditTags != null) { { onEditTags(featuredSong) } } else null,
+                            onDeleteSong = { onDeleteSong(featuredSong) }
+                        )
+                    }
                 }
             }
 
@@ -564,14 +560,6 @@ fun HomeScreenHeroSpotlight(
                 feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT
             )
         }
-
-        FastScrollbar(
-            listState = listState,
-            totalItems = effectiveSections.size + 4,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(bottom = 100.dp, end = 2.dp)
-        )
     }
 }
 

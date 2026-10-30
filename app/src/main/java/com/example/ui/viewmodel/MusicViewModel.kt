@@ -847,7 +847,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val fallbackId = if (!com.example.ui.theme.AppUiTheme.isThemeCompatibleWith(currentTheme, targetMode))
                 com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode).id else null
             preferences.setThemeMode(targetMode, fallbackId)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
 
@@ -860,7 +860,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val newMode = if (selectedTheme.isDark) "DARK" else "LIGHT"
                 preferences.setThemeMode(newMode)
             }
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
 
@@ -888,19 +888,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setAccentColorPreset(preset: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setAccentColorPreset(preset)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
     fun setCustomAccentColor(colorInt: Int) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setCustomAccentColor(colorInt)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
     fun setDynamicArtworkTheme(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setDynamicArtworkTheme(enabled)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
     fun setCornerRadiusDp(radius: Int) = viewModelScope.launch {

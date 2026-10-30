@@ -502,14 +502,6 @@ fun HomeScreenStudioDashboard(
                 feedStyle = HomeFeedVisualStyle.STUDIO_DECK
             )
         }
-
-        FastScrollbar(
-            listState = listState,
-            totalItems = effectiveSections.size + 4,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(bottom = 100.dp, end = 2.dp)
-        )
     }
 }
 

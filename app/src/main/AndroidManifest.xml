@@ -143,6 +143,23 @@
                 android:resource="@xml/widget_secondary_info" />
         </receiver>
 
+        <receiver
+            android:name=".widget.LyricsMusicWidgetProvider"
+            android:label="Lyrics Music Widget"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.example.widget.ACTION_NEXT" />
+                <action android:name="com.example.widget.ACTION_PREV" />
+                <action android:name="com.example.widget.ACTION_FAVORITE" />
+                <action android:name="com.example.widget.ACTION_SEEK" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lyrics_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -358,14 +358,6 @@ fun HomeScreenMinimalFeed(
                 feedStyle = HomeFeedVisualStyle.MINIMAL_STREAM
             )
         }
-
-        FastScrollbar(
-            listState = listState,
-            totalItems = effectiveSections.size + 4,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(bottom = 100.dp, end = 2.dp)
-        )
     }
 }
 
