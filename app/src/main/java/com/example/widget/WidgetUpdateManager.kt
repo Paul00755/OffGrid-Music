@@ -110,6 +110,9 @@ object WidgetUpdateManager {
     @Volatile
     private var lyricsTransitionToken: Long = 0L
 
+    @Volatile
+    private var lyricsCacheGeneration: Long = 0L
+
     private val attemptedLyricsFetchSongIds: MutableSet<Long> =
         java.util.Collections.synchronizedSet(HashSet<Long>())
     private val lyricsFetchCompletedNoLyricsSongIds: MutableSet<Long> =
@@ -136,6 +139,7 @@ object WidgetUpdateManager {
     )
 
     fun invalidateLyricsCache(songId: Long = -1L) {
+        lyricsCacheGeneration++
         if (songId > 0L) {
             attemptedLyricsFetchSongIds.remove(songId)
             lyricsFetchCompletedNoLyricsSongIds.remove(songId)
@@ -147,9 +151,53 @@ object WidgetUpdateManager {
         }
         if (songId <= 0L || songId == cachedLyricsSongId) {
             cachedLyricsSongId = -1L
+            cachedSyncedLines = emptyList()
+            cachedPlainLines = emptyList()
             lastLyricsDbCheckMs = 0L
             lastLyricsLineSignature = ""
         }
+    }
+
+    fun syncLyricsFromApp(
+        context: Context,
+        songId: Long,
+        lyrics: com.example.data.model.Lyrics?
+    ) {
+        if (songId <= 0L) return
+        lyricsCacheGeneration++
+        pendingLyricsDbLoadSongIds.remove(songId)
+        attemptedLyricsFetchSongIds.add(songId)
+
+        val synced = lyrics?.parseSyncedLines().orEmpty()
+        val plain = if (synced.isEmpty() && !lyrics?.plainLyrics.isNullOrBlank()) {
+            lyrics!!.plainLyrics!!
+                .lines()
+                .map { it.replace(Regex("""\[\d{2}:\d{2}(?:\.\d{1,3})?\]"""), "").trim() }
+                .filter { it.isNotEmpty() }
+        } else {
+            emptyList()
+        }
+
+        cachedSyncedLines = synced
+        cachedPlainLines = plain
+        cachedLyricsSongId = songId
+        lastLyricsDbCheckMs = System.currentTimeMillis()
+        lastLyricsLineSignature = ""
+
+        if (synced.isEmpty() && plain.isEmpty()) {
+            lyricsFetchCompletedNoLyricsSongIds.add(songId)
+        } else {
+            lyricsFetchCompletedNoLyricsSongIds.remove(songId)
+        }
+
+        val appContext = context.applicationContext
+        cachedLyricsOffsetMs = try {
+            UserPreferencesRepository.getInstance(appContext).getLyricsSyncOffsetMs(songId)
+        } catch (_: Exception) {
+            0L
+        }
+        val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
+        updateAllWidgets(appContext, liveState)
     }
 
     private fun computeTrackRenderSignature(song: com.example.data.model.Song?): String {
@@ -1417,10 +1465,12 @@ object WidgetUpdateManager {
             val prefs = UserPreferencesRepository.getInstance(appContext)
             cachedLyricsOffsetMs = prefs.getLyricsSyncOffsetMs(songId)
 
-            if (cachedLyricsSongId != songId && pendingLyricsDbLoadSongIds.add(songId)) {
+            if (pendingLyricsDbLoadSongIds.add(songId)) {
+                val startGen = lyricsCacheGeneration
                 widgetScope.launch(Dispatchers.IO) {
                     try {
                         val entity = AppDatabase.getInstance(appContext).lyricsDao().getLyricsForSong(songId)
+                        if (lyricsCacheGeneration != startGen) return@launch
                         if (entity != null) {
                             val domainLyrics = com.example.data.model.Lyrics(
                                 songId = entity.songId,
@@ -1430,8 +1480,7 @@ object WidgetUpdateManager {
                                 source = entity.source
                             )
                             val synced = domainLyrics.parseSyncedLines()
-                            cachedSyncedLines = synced
-                            cachedPlainLines = if (synced.isEmpty() && !entity.plainLyrics.isNullOrBlank()) {
+                            val plain = if (synced.isEmpty() && !entity.plainLyrics.isNullOrBlank()) {
                                 entity.plainLyrics
                                     .lines()
                                     .map { it.replace(Regex("""\[\d{2}:\d{2}(?:\.\d{1,3})?\]"""), "").trim() }
@@ -1439,21 +1488,34 @@ object WidgetUpdateManager {
                             } else {
                                 emptyList()
                             }
-                            if (cachedSyncedLines.isEmpty() && cachedPlainLines.isEmpty()) {
+                            val didChange = cachedLyricsSongId != songId ||
+                                cachedSyncedLines != synced ||
+                                cachedPlainLines != plain
+                            cachedSyncedLines = synced
+                            cachedPlainLines = plain
+                            if (synced.isEmpty() && plain.isEmpty()) {
                                 lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                            } else {
+                                lyricsFetchCompletedNoLyricsSongIds.remove(songId)
                             }
                             cachedLyricsSongId = songId
-                            val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
-                            updateMutex.withLock {
-                                performFullWidgetUpdateInternal(appContext, liveState)
+                            if (didChange) {
+                                lastLyricsLineSignature = ""
+                                val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
+                                updateMutex.withLock {
+                                    performFullWidgetUpdateInternal(appContext, liveState)
+                                }
                             }
                         } else {
-                            cachedSyncedLines = emptyList()
-                            cachedPlainLines = emptyList()
+                            if (cachedLyricsSongId != songId) {
+                                cachedSyncedLines = emptyList()
+                                cachedPlainLines = emptyList()
+                            }
                             if (attemptedLyricsFetchSongIds.add(songId)) {
                                 val db = AppDatabase.getInstance(appContext)
                                 val fetcher = com.example.service.LyricsFetcher(db.lyricsDao(), appContext)
                                 val fetched = fetcher.getOrFetchLyrics(song)
+                                if (lyricsCacheGeneration != startGen) return@launch
                                 val hasAnyLyrics = !fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()
                                 if (!hasAnyLyrics) {
                                     lyricsFetchCompletedNoLyricsSongIds.add(songId)
@@ -1467,7 +1529,9 @@ object WidgetUpdateManager {
                             }
                         }
                     } catch (_: Exception) {
-                        lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                        if (lyricsCacheGeneration == startGen) {
+                            lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                        }
                     } finally {
                         pendingLyricsDbLoadSongIds.remove(songId)
                     }
@@ -1518,41 +1582,17 @@ object WidgetUpdateManager {
         val plain = cachedPlainLines
         if (plain.isNotEmpty()) {
             val prefix = "plain_${song.id}_"
-            if (plain.size <= 3 || durationMs <= 0L) {
-                val line0 = if (plain.size >= 3) plain[0] else "♪ Plain Lyrics"
-                val line1 = when {
-                    plain.size >= 3 -> plain[1]
-                    plain.isNotEmpty() -> plain[0]
-                    else -> ""
-                }
-                val line2 = when {
-                    plain.size >= 3 -> plain[2]
-                    plain.size == 2 -> plain[1]
-                    else -> ""
-                }
-                return LyricsStageWindow(
-                    prevLine = line0,
-                    currLine = line1,
-                    nextLine = line2,
-                    signature = "${prefix}static",
-                    songPrefix = prefix,
-                    mode = LyricsDisplayMode.PLAIN,
-                    shouldAnimateTransition = false
-                )
-            }
-            val ratio = (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 0.999f)
-            val activeIdx = (ratio * plain.size).toInt().coerceIn(plain.indices)
-            val prev = if (activeIdx > 0) plain[activeIdx - 1] else "♪ Plain Lyrics"
-            val curr = plain[activeIdx]
-            val next = if (activeIdx + 1 < plain.size) plain[activeIdx + 1] else ""
+            val firstLine = plain.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Plain lyrics available"
+            val secondLine = plain.getOrNull(1)?.takeIf { it.isNotBlank() }
+                ?: "Unsynced plain text • Tap to view in Now Playing"
             return LyricsStageWindow(
-                prevLine = prev,
-                currLine = curr,
-                nextLine = next,
-                signature = "${prefix}$activeIdx",
+                prevLine = "♪ PLAIN LYRICS • STATIC",
+                currLine = firstLine,
+                nextLine = secondLine,
+                signature = "${prefix}static_${plain.hashCode()}",
                 songPrefix = prefix,
                 mode = LyricsDisplayMode.PLAIN,
-                shouldAnimateTransition = true
+                shouldAnimateTransition = false
             )
         }
         val isChecking = song.id in attemptedLyricsFetchSongIds && song.id !in lyricsFetchCompletedNoLyricsSongIds

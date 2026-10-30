@@ -296,4 +296,79 @@ class WidgetAndReliabilityFixesTest {
         manualPauseListener.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN)
         assertEquals("An explicit pause prevents automatic resume", 1, resumeCount)
     }
+
+    @Test
+    fun testPlainLyricsRemainStaticAndWidgetAdaptsToAppConfiguredLyrics() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val song = Song(
+            id = 555_123L,
+            title = "Static Plain Lyrics Song",
+            artist = "Test Artist",
+            album = "Test Album",
+            albumId = 42L,
+            durationMs = 240_000L,
+            path = "/storage/emulated/0/Music/static_plain.mp3",
+            contentUriString = "content://media/external/audio/media/555123"
+        )
+
+        val resolveMethod = WidgetUpdateManager::class.java.getDeclaredMethod(
+            "resolveLyricsWindow",
+            Context::class.java,
+            Song::class.java,
+            Long::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        // 1. Configure multi-line plain lyrics in app -> widget must stay static across all playback timestamps
+        val plainLyrics = com.example.data.model.Lyrics(
+            songId = song.id,
+            plainLyrics = (1..12).joinToString("\n") { "Plain lyric line $it" },
+            syncedLyricsJson = null,
+            isCached = true,
+            source = "Tag Editor"
+        )
+        WidgetUpdateManager.syncLyricsFromApp(context, song.id, plainLyrics)
+
+        val windowStart = resolveMethod.invoke(WidgetUpdateManager, context, song, 0L, 240_000L)!!
+        val windowMid = resolveMethod.invoke(WidgetUpdateManager, context, song, 120_000L, 240_000L)!!
+        val windowEnd = resolveMethod.invoke(WidgetUpdateManager, context, song, 235_000L, 240_000L)!!
+
+        val prevProp = windowStart.javaClass.getDeclaredField("prevLine").apply { isAccessible = true }
+        val currProp = windowStart.javaClass.getDeclaredField("currLine").apply { isAccessible = true }
+        val nextProp = windowStart.javaClass.getDeclaredField("nextLine").apply { isAccessible = true }
+        val sigProp = windowStart.javaClass.getDeclaredField("signature").apply { isAccessible = true }
+        val animProp = windowStart.javaClass.getDeclaredField("shouldAnimateTransition").apply { isAccessible = true }
+
+        assertEquals("♪ PLAIN LYRICS • STATIC", prevProp.get(windowStart))
+        assertEquals("Plain lyric line 1", currProp.get(windowStart))
+        assertEquals("Plain lyric line 2", nextProp.get(windowStart))
+        assertFalse(animProp.getBoolean(windowStart))
+
+        // Verify lines and signature never scroll or change as playback progresses
+        assertEquals(currProp.get(windowStart), currProp.get(windowMid))
+        assertEquals(currProp.get(windowStart), currProp.get(windowEnd))
+        assertEquals(nextProp.get(windowStart), nextProp.get(windowMid))
+        assertEquals(nextProp.get(windowStart), nextProp.get(windowEnd))
+        assertEquals(sigProp.get(windowStart), sigProp.get(windowMid))
+        assertEquals(sigProp.get(windowStart), sigProp.get(windowEnd))
+        assertFalse(animProp.getBoolean(windowMid))
+        assertFalse(animProp.getBoolean(windowEnd))
+
+        // 2. User now configures synced lyrics in the app -> widget immediately adapts to user's synced lyrics
+        val syncedLyrics = com.example.data.model.Lyrics(
+            songId = song.id,
+            plainLyrics = "App Synced Line A\nApp Synced Line B",
+            syncedLyricsJson = """[{"timeMs":0,"text":"App Synced Line A"},{"timeMs":60000,"text":"App Synced Line B"}]""",
+            isCached = true,
+            source = "Custom File"
+        )
+        WidgetUpdateManager.syncLyricsFromApp(context, song.id, syncedLyrics)
+
+        val syncedAt10s = resolveMethod.invoke(WidgetUpdateManager, context, song, 10_000L, 240_000L)!!
+        val syncedAt90s = resolveMethod.invoke(WidgetUpdateManager, context, song, 90_000L, 240_000L)!!
+
+        assertEquals("App Synced Line A", currProp.get(syncedAt10s))
+        assertEquals("App Synced Line B", currProp.get(syncedAt90s))
+        assertTrue(animProp.getBoolean(syncedAt10s))
+    }
 }

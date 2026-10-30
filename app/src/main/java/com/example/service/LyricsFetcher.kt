@@ -310,10 +310,25 @@ class LyricsFetcher(
         return results
     }
 
-    suspend fun getOrFetchLyrics(song: Song): Lyrics = withContext(Dispatchers.IO) {
-        // 1. Check database cache - if we already have synced lyrics, return them immediately
+    private suspend fun persistFetchedLyricsIfNotOverridden(
+        entity: LyricsEntity,
+        forceRefresh: Boolean
+    ): Lyrics {
+        if (!forceRefresh) {
+            val latest = lyricsDao.getLyricsForSong(entity.songId)
+            if (latest != null && (!latest.syncedLyricsJson.isNullOrBlank() || !latest.plainLyrics.isNullOrBlank())) {
+                return latest.toDomainModel()
+            }
+        }
+        lyricsDao.insertLyrics(entity)
+        writeLyricsFileCache(entity.songId, entity.plainLyrics, entity.syncedLyricsJson)
+        return entity.toDomainModel()
+    }
+
+    suspend fun getOrFetchLyrics(song: Song, forceRefresh: Boolean = false): Lyrics = withContext(Dispatchers.IO) {
+        // 1. Check database cache - if we already have configured or cached lyrics (synced or plain), return them immediately
         val cached = lyricsDao.getLyricsForSong(song.id)
-        if (cached != null && !cached.syncedLyricsJson.isNullOrBlank()) {
+        if (!forceRefresh && cached != null && (!cached.syncedLyricsJson.isNullOrBlank() || !cached.plainLyrics.isNullOrBlank())) {
             return@withContext cached.toDomainModel()
         }
 
@@ -339,9 +354,7 @@ class LyricsFetcher(
                         isCached = true,
                         source = "Local LRC (${localLrcFile.name})"
                     )
-                    lyricsDao.insertLyrics(entity)
-                    writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-                    return@withContext entity.toDomainModel()
+                    return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
                 } else if (!plain.isNullOrBlank()) {
                     fallbackPlain = plain
                     fallbackSource = "Local LRC (${localLrcFile.name})"
@@ -361,9 +374,7 @@ class LyricsFetcher(
                     isCached = true,
                     source = "Embedded Tag"
                 )
-                lyricsDao.insertLyrics(entity)
-                writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-                return@withContext entity.toDomainModel()
+                return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
             } else if (!plain.isNullOrBlank()) {
                 fallbackPlain = plain
                 fallbackSource = "Embedded Tag"
@@ -444,9 +455,7 @@ class LyricsFetcher(
                 isCached = true,
                 source = "Online (LRCLIB - Synced)"
             )
-            lyricsDao.insertLyrics(entity)
-            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-            return@withContext entity.toDomainModel()
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
         }
 
         // 5. Query NetEase Cloud Music (provides massive open library of Synced LRC lyrics)
@@ -461,9 +470,7 @@ class LyricsFetcher(
                 isCached = true,
                 source = "Online (NetEase - Synced)"
             )
-            lyricsDao.insertLyrics(entity)
-            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-            return@withContext entity.toDomainModel()
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
         }
 
         // 6. Query JioSaavn (Premier catalog for Tamil songs in Tamil script/synced & newly released tracks)
@@ -479,9 +486,7 @@ class LyricsFetcher(
                 isCached = true,
                 source = if (isTamil) "Online (JioSaavn - Tamil Synced)" else "Online (JioSaavn - Synced)"
             )
-            lyricsDao.insertLyrics(entity)
-            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-            return@withContext entity.toDomainModel()
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
         }
 
         // =========================================================================
@@ -510,9 +515,7 @@ class LyricsFetcher(
                 isCached = true,
                 source = "${titleOnlyDisambiguated.source} (Title Match)"
             )
-            lyricsDao.insertLyrics(entity)
-            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-            return@withContext entity.toDomainModel()
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
         }
 
         // 7. Query Lyrist API (indexes newly released songs, singles, and hot drops)
@@ -562,9 +565,14 @@ class LyricsFetcher(
                 isCached = true,
                 source = bestSource
             )
-            lyricsDao.insertLyrics(entity)
-            writeLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-            return@withContext entity.toDomainModel()
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
+        }
+
+        if (!forceRefresh) {
+            val latest = lyricsDao.getLyricsForSong(song.id)
+            if (latest != null) {
+                return@withContext latest.toDomainModel()
+            }
         }
 
         // Fallback: Return empty model

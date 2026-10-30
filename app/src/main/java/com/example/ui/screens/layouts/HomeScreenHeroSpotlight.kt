@@ -103,19 +103,26 @@ fun HomeScreenHeroSpotlight(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // Top atmospheric radial spotlight glow
+    val isDarkBg = (BentoBackground.red * 0.299f + BentoBackground.green * 0.587f + BentoBackground.blue * 0.114f) < 0.5f
+    val topCoverColor = if (isDarkBg) Color.Black else BentoBackground
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(BentoBackground)
+    ) {
+        // Top atmospheric spotlight glow with seamless black cover transition at the top punch-hole edge
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(320.dp)
+                .height(360.dp)
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            BentoPrimary.copy(alpha = 0.18f),
-                            BentoAccentPinkText.copy(alpha = 0.06f),
-                            Color.Transparent
-                        )
+                        0.0f to topCoverColor,
+                        0.05f to BentoBackground,
+                        0.22f to BentoPrimary.copy(alpha = 0.18f),
+                        0.60f to BentoAccentPinkText.copy(alpha = 0.06f),
+                        1.0f to Color.Transparent
                     )
                 )
         )
@@ -560,6 +567,21 @@ fun HomeScreenHeroSpotlight(
                 feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT
             )
         }
+
+        // Seamless top feather so scrolled items fade into the top black cover without a hard edge
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to topCoverColor,
+                        0.45f to topCoverColor.copy(alpha = 0.55f),
+                        1.0f to Color.Transparent
+                    )
+                )
+        )
     }
 }
 

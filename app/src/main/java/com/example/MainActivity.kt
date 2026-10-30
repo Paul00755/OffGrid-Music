@@ -400,13 +400,15 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             ) { innerPadding ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(innerPadding)
-                                ) {
-                                    val currentPlaylist = selectedPlaylist
-                                    val currentSmartPlaylist = selectedSmartPlaylist
+                                val isDarkMainBg = (BentoBackground.red * 0.299f + BentoBackground.green * 0.587f + BentoBackground.blue * 0.114f) < 0.5f
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(innerPadding)
+                                    ) {
+                                        val currentPlaylist = selectedPlaylist
+                                        val currentSmartPlaylist = selectedSmartPlaylist
                                     if (currentPlaylist != null) {
                                         com.example.ui.screens.PlaylistDetailScreen(
                                             playlist = currentPlaylist,
@@ -774,6 +776,37 @@ class MainActivity : ComponentActivity() {
                                             onSignOut = { viewModel.signOut() },
                                             onBackClick = { viewModel.closeAccountScreen() }
                                         )
+                                    }
+                                    }
+
+                                    // Top punch-hole camera black cover that merges the cutout into the black display
+                                    // while smoothly transitioning into the gradient below it
+                                    if (isDarkMainBg) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .align(Alignment.TopCenter)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                                                    .background(Color.Black)
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(10.dp)
+                                                    .background(
+                                                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                                                            listOf(
+                                                                Color.Black,
+                                                                Color.Transparent
+                                                            )
+                                                        )
+                                                    )
+                                            )
+                                        }
                                     }
                                 }
                             }

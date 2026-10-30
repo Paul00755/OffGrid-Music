@@ -523,14 +523,16 @@ fun NowPlayingScreen(
     }
 
     val currentBg = BentoBackground
+    val isDarkNowPlayingBg = (currentBg.red * 0.299f + currentBg.green * 0.587f + currentBg.blue * 0.114f) < 0.5f
+    val topPunchHoleCover = if (isDarkNowPlayingBg) Color.Black else currentBg
     val ambientThemeColor = dynamicArtworkColor ?: BentoPrimary
-    val bgBrush = remember(ambientThemeColor, currentBg) {
+    val bgBrush = remember(ambientThemeColor, currentBg, topPunchHoleCover) {
         androidx.compose.ui.graphics.Brush.verticalGradient(
-            colors = listOf(
-                ambientThemeColor.copy(alpha = 0.45f),
-                ambientThemeColor.copy(alpha = 0.18f),
-                currentBg
-            )
+            0.0f to topPunchHoleCover,
+            0.05f to topPunchHoleCover,
+            0.16f to ambientThemeColor.copy(alpha = 0.42f),
+            0.52f to ambientThemeColor.copy(alpha = 0.18f),
+            1.0f to currentBg
         )
     }
 
@@ -946,15 +948,17 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            // Smooth multi-stop gradient fade from artwork into lower controls
+                            // Top punch-hole black cover + smooth multi-stop gradient fade from artwork into lower controls
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
                                         Brush.verticalGradient(
-                                            0.0f to Color.Black.copy(alpha = 0.24f),
-                                            0.18f to Color.Transparent,
-                                            0.52f to Color.Transparent,
+                                            0.0f to Color.Black,
+                                            0.07f to Color.Black.copy(alpha = 0.94f),
+                                            0.15f to ambientThemeColor.copy(alpha = 0.22f),
+                                            0.26f to Color.Transparent,
+                                            0.54f to Color.Transparent,
                                             0.78f to bottomScrimColor.copy(alpha = 0.72f),
                                             1.0f to bottomScrimColor
                                         )
@@ -2340,6 +2344,32 @@ private fun LyricsPanelContent(
                     onSaveLyricsOffset?.invoke(song.id, newOffset)
                 },
                 onDismiss = { showOffsetDialog = false }
+            )
+        }
+
+        // Top punch-hole camera black cover + smooth gradient transition for full-screen view
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(Color.Black)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(22.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to Color.Black,
+                            0.45f to Color.Black.copy(alpha = 0.58f),
+                            1.0f to Color.Transparent
+                        )
+                    )
             )
         }
     }

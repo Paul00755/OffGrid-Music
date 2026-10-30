@@ -1397,9 +1397,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         lyricsFetchJob = viewModelScope.launch(Dispatchers.IO) {
                             val fetched = lyricsFetcher.getOrFetchLyrics(song)
                             if (coroutineContext[kotlinx.coroutines.Job]?.isActive == true && playbackState.value.currentSong?.id == song.id) {
-                                _currentLyrics.value = fetched
-                                com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
-                                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+                                val latestDb = db.lyricsDao().getLyricsForSong(song.id)?.toDomainModel()
+                                val effectiveLyrics = if (latestDb != null && (!latestDb.syncedLyricsJson.isNullOrBlank() || !latestDb.plainLyrics.isNullOrBlank())) {
+                                    latestDb
+                                } else {
+                                    fetched
+                                }
+                                _currentLyrics.value = effectiveLyrics
+                                com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, effectiveLyrics)
                                 refreshCacheSizes()
                             }
                             try {
@@ -1922,11 +1927,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = "Custom File"
             )
             db.lyricsDao().insertLyrics(entity)
-            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
+            val domainLyrics = entity.toDomainModel()
             if (playbackState.value.currentSong?.id == song.id) {
-                _currentLyrics.value = entity.toDomainModel()
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+                _currentLyrics.value = domainLyrics
             }
+            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, domainLyrics)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
     }
@@ -1958,6 +1963,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun applySelectedLyrics(candidate: com.example.service.LyricsCandidate) {
         val song = playbackState.value.currentSong ?: return
         viewModelScope.launch {
+            previousLyricsHistory[song.id] = _currentLyrics.value
+            _canUndoLyricsForCurrentSong.value = true
             val updatedLyrics = lyricsFetcher.saveSelectedLyrics(
                 songId = song.id,
                 plainLyrics = candidate.plainLyrics,
@@ -1965,8 +1972,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = candidate.source
             )
             _currentLyrics.value = updatedLyrics
-            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
-            com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, updatedLyrics)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
         }
     }
@@ -1977,12 +1983,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentLyrics.value = com.example.data.model.Lyrics(songId = song.id, plainLyrics = null, syncedLyricsJson = null, isCached = false, source = "loading")
         }
         try {
-            val fetched = lyricsFetcher.getOrFetchLyrics(song)
-            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(song.id)
+            val fetched = lyricsFetcher.getOrFetchLyrics(song, forceRefresh = true)
             if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = fetched
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
             }
+            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, fetched)
         } catch (e: Exception) {
             if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = com.example.data.model.Lyrics(songId = -1)
@@ -2041,18 +2046,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, null, updatedSong.path)
             }
             com.example.widget.WidgetBitmapRenderer.invalidateSong(updatedSong.id)
-            com.example.widget.WidgetUpdateManager.invalidateLyricsCache(updatedSong.id)
+            val savedEntity = withContext(Dispatchers.IO) {
+                db.lyricsDao().getLyricsForSong(updatedSong.id)
+            }
+            val resolvedLyrics = savedEntity?.toDomainModel()
+                ?: if (newLyrics.isBlank()) {
+                    com.example.data.model.Lyrics(songId = updatedSong.id, plainLyrics = null, syncedLyricsJson = null, isCached = false, source = "none")
+                } else {
+                    lyricsFetcher.getOrFetchLyrics(updatedSong)
+                }
             playbackManager.updateSongInQueue(updatedSong)
             if (!finalArt.isNullOrBlank()) {
                 playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt, updatedSong.path)
             }
             playbackManager.notifyLiveMetadataChanged()
+            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), updatedSong.id, resolvedLyrics)
             com.example.widget.WidgetUpdateManager.forceRefreshMetadata(getApplication(), playbackState.value)
             com.example.service.MusicPlaybackService.instance?.triggerNotificationUpdate()
             if (playbackState.value.currentSong?.id == updatedSong.id) {
-                _currentLyrics.value = lyricsFetcher.getOrFetchLyrics(updatedSong)
-                com.example.widget.WidgetUpdateManager.invalidateLyricsCache(updatedSong.id)
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+                _currentLyrics.value = resolvedLyrics
                 val artUri = updatedSong.artworkUri
                 if (!artUri.isNullOrBlank()) {
                     val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColor(getApplication(), artUri)
@@ -2527,10 +2539,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             android.util.Log.w("MusicViewModel", "Could not write local .lrc file: ${e.message}")
         }
 
+        val domainLyrics = entity.toDomainModel()
         withContext(Dispatchers.Main) {
             if (playbackState.value.currentSong?.id == preview.song.id) {
-                _currentLyrics.value = entity.toDomainModel()
+                _currentLyrics.value = domainLyrics
+                _canUndoLyricsForCurrentSong.value = true
             }
+            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), preview.song.id, domainLyrics)
             _transcribeLyricsPreview.value = null
             android.widget.Toast.makeText(
                 getApplication(),
@@ -2555,6 +2570,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _currentLyrics.value = null
                     _canUndoLyricsForCurrentSong.value = false
                 }
+                com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), songId, null)
             }
         } else {
             val entity = com.example.data.local.LyricsEntity(
@@ -2566,11 +2582,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             )
             db.lyricsDao().insertLyrics(entity)
             cloudSyncRepository.onLyricsUpdatedAsync(songId)
+            val restoredLyrics = entity.toDomainModel()
             withContext(Dispatchers.Main) {
                 if (playbackState.value.currentSong?.id == songId) {
-                    _currentLyrics.value = entity.toDomainModel()
+                    _currentLyrics.value = restoredLyrics
                     _canUndoLyricsForCurrentSong.value = false
                 }
+                com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), songId, restoredLyrics)
             }
         }
     }
