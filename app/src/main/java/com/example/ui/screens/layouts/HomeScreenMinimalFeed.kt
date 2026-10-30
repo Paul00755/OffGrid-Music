@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +27,7 @@ import com.example.data.model.Song
 import com.example.service.PlaybackState
 import com.example.ui.components.AlbumArtView
 import com.example.ui.components.FastScrollbar
+import com.example.ui.screens.HomeFeedVisualStyle
 import com.example.ui.screens.MostPlayedFilter
 import com.example.ui.screens.renderHomeFeedSections
 import com.example.ui.theme.*
@@ -84,7 +86,7 @@ fun HomeScreenMinimalFeed(
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
     val listState = rememberLazyListState()
 
-    // Deduplicate continue_listening because Minimal Stream already includes the inline Now Playing stream card
+    // Deduplicate continue_listening because Minimal Stream includes the sleek capsule stream bar
     val effectiveSections = remember(homeSections, currentSong) {
         if (currentSong != null) {
             homeSections.filterNot { it.equals("continue_listening", ignoreCase = true) }
@@ -98,17 +100,15 @@ fun HomeScreenMinimalFeed(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 18.dp),
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // 1. Minimalist Typographic Stream Header
+            // 1. Frameless Editorial Typographic Header (Zero Boxy Cards!)
             item(key = "minimal_stream_header", contentType = "header") {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -127,35 +127,28 @@ fun HomeScreenMinimalFeed(
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Column {
                                 Text(
                                     text = "MINIMAL STREAM",
                                     fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.ExtraBold,
                                     color = BentoPrimary,
-                                    letterSpacing = 1.2.sp
+                                    letterSpacing = 1.6.sp
                                 )
                                 Text(
-                                    text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
-                                    fontSize = 21.sp,
+                                    text = if (userAccount != null) effectiveDisplayName else greeting,
+                                    fontSize = 24.sp,
                                     fontWeight = FontWeight.Light,
                                     color = BentoTextPrimary,
-                                    letterSpacing = (-0.4).sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = userAccount?.email ?: "${allSongs.size} tracks • ${allPlaylists.size} playlists",
-                                    fontSize = 11.5.sp,
-                                    color = BentoTextSecondary,
+                                    letterSpacing = (-0.5).sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                             val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
                             IconButton(
                                 onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
@@ -166,7 +159,7 @@ fun HomeScreenMinimalFeed(
                                         model = avatarUrl,
                                         contentDescription = "Account",
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        modifier = Modifier.size(28.dp).clip(CircleShape)
+                                        modifier = Modifier.size(26.dp).clip(CircleShape)
                                     )
                                 } else {
                                     Icon(
@@ -189,82 +182,72 @@ fun HomeScreenMinimalFeed(
                         }
                     }
 
-                    // Minimal Quick-Jump Filter Strip
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Frameless Hairline Editorial Navigation Strip
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                         item(key = "min_chip_lib") {
-                            MinimalStreamChip(label = "Library", count = allSongs.size, onClick = onOpenLibrary)
+                            MinimalEditorialNavTab(label = "LIBRARY", count = allSongs.size, onClick = onOpenLibrary)
                         }
                         item(key = "min_chip_fav") {
-                            MinimalStreamChip(label = "Favorites", count = favoriteSongs.size, onClick = onOpenFavorites)
+                            MinimalEditorialNavTab(label = "FAVORITES", count = favoriteSongs.size, onClick = onOpenFavorites)
                         }
                         item(key = "min_chip_pl") {
-                            MinimalStreamChip(label = "Playlists", count = allPlaylists.size, onClick = onOpenPlaylists)
+                            MinimalEditorialNavTab(label = "PLAYLISTS", count = allPlaylists.size, onClick = onOpenPlaylists)
                         }
                         item(key = "min_chip_rec") {
-                            MinimalStreamChip(label = "History", count = null, onClick = onOpenRecentlyPlayed)
+                            MinimalEditorialNavTab(label = "HISTORY", count = null, onClick = onOpenRecentlyPlayed)
                         }
                         item(key = "min_chip_stats") {
-                            MinimalStreamChip(label = "Analytics", count = null, onClick = onOpenStatsDetail)
+                            MinimalEditorialNavTab(label = "ANALYTICS", count = null, onClick = onOpenStatsDetail)
                         }
                     }
+
+                    HorizontalDivider(thickness = 0.5.dp, color = BentoBorder.copy(alpha = 0.5f))
                 }
             }
 
-            // 2. Minimal Now Playing Stream Dock
+            // 2. Sleek Floating Capsule Stream Pill (Round 50% Capsule, Non-Boxy!)
             if (currentSong != null) {
                 item(key = "minimal_now_playing_${currentSong.id}", contentType = "now_playing_strip") {
                     val isCurrentActive = playbackState.currentSong?.id == currentSong.id
                     val isFav = favoriteSongs.any { it.id == currentSong.id }
 
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenNowPlaying() }
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = BentoCardSurface.copy(alpha = 0.65f),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                .clickable { onOpenNowPlaying() }
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 AlbumArtView(
                                     song = currentSong,
                                     modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(RoundedCornerShape(10.dp)),
-                                    cornerRadius = 10
+                                        .size(46.dp)
+                                        .clip(CircleShape),
+                                    cornerRadius = 50
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isCurrentActive && playbackState.isPlaying) BentoPrimary else BentoTextSecondary)
-                                        )
-                                        Text(
-                                            text = if (isCurrentActive && playbackState.isPlaying) "NOW STREAMING" else "READY TO PLAY",
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoPrimary,
-                                            letterSpacing = 0.8.sp
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (isCurrentActive && playbackState.isPlaying) "STREAMING NOW" else "ON DECK",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = BentoPrimary,
+                                        letterSpacing = 1.2.sp
+                                    )
                                     Text(
                                         text = currentSong.displayTitle,
-                                        fontSize = 15.sp,
+                                        fontSize = 14.5.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = BentoTextPrimary,
                                         maxLines = 1,
@@ -272,7 +255,7 @@ fun HomeScreenMinimalFeed(
                                     )
                                     Text(
                                         text = currentSong.displayArtist,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         color = BentoTextSecondary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -304,7 +287,7 @@ fun HomeScreenMinimalFeed(
                                         }
                                     },
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(42.dp)
                                         .clip(CircleShape)
                                         .background(BentoPrimary)
                                 ) {
@@ -316,22 +299,24 @@ fun HomeScreenMinimalFeed(
                                     )
                                 }
                             }
+                        }
 
-                            if (isCurrentActive && playbackState.durationMs > 0) {
-                                com.example.ui.components.RealtimeTrackProgressBar(
-                                    playbackPositionFlow = playbackPositionFlow,
-                                    isActive = true,
-                                    durationMs = playbackState.durationMs,
-                                    height = 2.5.dp,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
+                        if (isCurrentActive && playbackState.durationMs > 0) {
+                            com.example.ui.components.RealtimeTrackProgressBar(
+                                playbackPositionFlow = playbackPositionFlow,
+                                isActive = true,
+                                durationMs = playbackState.durationMs,
+                                height = 2.dp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp)
+                            )
                         }
                     }
                 }
             }
 
-            // 3. Authoritative Dynamic Home Sections
+            // 3. Authoritative Dynamic Home Sections with Frameless Minimal Stream Styling
             renderHomeFeedSections(
                 homeSections = effectiveSections,
                 speedDialSongs = speedDialSongs,
@@ -369,7 +354,8 @@ fun HomeScreenMinimalFeed(
                 onQuickShuffle = onQuickShuffle,
                 getDurationPlayedBetween = getDurationPlayedBetween,
                 getTrackCountBetween = getTrackCountBetween,
-                getUniqueTrackCountBetween = getUniqueTrackCountBetween
+                getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                feedStyle = HomeFeedVisualStyle.MINIMAL_STREAM
             )
         }
 
@@ -384,36 +370,32 @@ fun HomeScreenMinimalFeed(
 }
 
 @Composable
-private fun MinimalStreamChip(
+private fun MinimalEditorialNavTab(
     label: String,
     count: Int?,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(50),
-        color = BentoCardSurface,
-        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
+    Row(
+        modifier = Modifier
+            .clickable { onClick() }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+        Text(
+            text = label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = BentoTextPrimary,
+            letterSpacing = 1.sp
+        )
+        if (count != null) {
             Text(
-                text = label,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = BentoTextPrimary
+                text = "/$count",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = BentoPrimary
             )
-            if (count != null) {
-                Text(
-                    text = "$count",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BentoPrimary
-                )
-            }
         }
     }
 }

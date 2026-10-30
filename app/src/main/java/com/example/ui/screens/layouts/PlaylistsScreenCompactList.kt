@@ -18,9 +18,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,11 +79,11 @@ fun PlaylistsScreenCompactList(
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // 1. High-Density Compact Header + Inline Filter Bar
+            // 1. Frameless Audiophile Index Header + Floating Capsule Filter Bar
             item(key = "compact_list_header", contentType = "header") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -96,7 +98,7 @@ fun PlaylistsScreenCompactList(
                                 Surface(
                                     onClick = onBackClick,
                                     shape = CircleShape,
-                                    color = BentoCardSurface,
+                                    color = BentoCardSurface.copy(alpha = 0.65f),
                                     border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                     modifier = Modifier.size(36.dp)
                                 ) {
@@ -112,16 +114,17 @@ fun PlaylistsScreenCompactList(
                             }
                             Column {
                                 Text(
-                                    text = "COMPACT INDEX",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    text = "AUDIOPHILE DIRECTORY // COMPACT STREAM",
+                                    fontSize = 9.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
                                     color = BentoPrimary,
-                                    letterSpacing = 1.1.sp
+                                    letterSpacing = 1.2.sp
                                 )
                                 Text(
-                                    text = "Playlists (${playlists.size + smartPlaylists.size})",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    text = "Index (${playlists.size + smartPlaylists.size})",
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.ExtraBold,
                                     color = BentoTextPrimary
                                 )
                             }
@@ -132,7 +135,7 @@ fun PlaylistsScreenCompactList(
                                 Surface(
                                     onClick = onImportM3u,
                                     shape = CircleShape,
-                                    color = BentoCardSurface,
+                                    color = BentoCardSurface.copy(alpha = 0.65f),
                                     border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                     modifier = Modifier.size(36.dp)
                                 ) {
@@ -144,7 +147,7 @@ fun PlaylistsScreenCompactList(
                             Surface(
                                 onClick = onCreateSmartPlaylist,
                                 shape = CircleShape,
-                                color = BentoCardSurface,
+                                color = BentoCardSurface.copy(alpha = 0.65f),
                                 border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                                 modifier = Modifier.size(36.dp)
                             ) {
@@ -165,19 +168,22 @@ fun PlaylistsScreenCompactList(
                         }
                     }
 
-                    // Compact Instant Filter Bar
+                    // 50%-Rounded Floating Capsule Filter Bar
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                        shape = RoundedCornerShape(50),
+                        color = BentoCardSurface.copy(alpha = 0.72f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (filterQuery.isNotEmpty()) BentoPrimary.copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.45f)
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Search,
@@ -188,7 +194,7 @@ fun PlaylistsScreenCompactList(
                             Box(modifier = Modifier.weight(1f)) {
                                 if (filterQuery.isEmpty()) {
                                     Text(
-                                        text = "Filter ${playlists.size + smartPlaylists.size} collections...",
+                                        text = "Quick filter ${playlists.size + smartPlaylists.size} collections...",
                                         fontSize = 12.5.sp,
                                         color = BentoTextSecondary
                                     )
@@ -218,27 +224,34 @@ fun PlaylistsScreenCompactList(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(2.dp))
                 }
             }
 
-            // 2. Smart Playlists Compact Section
+            // 2. Smart Playlists Frameless Capsule Strip
             if (filteredSmartPlaylists.isNotEmpty()) {
                 item(key = "compact_smart_section_label") {
-                    Text(
-                        text = "SMART RULES (${filteredSmartPlaylists.size})",
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = BentoPrimary,
-                        letterSpacing = 0.9.sp,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "DYNAMIC RULES // ${filteredSmartPlaylists.size}",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoPrimary,
+                            letterSpacing = 1.1.sp
+                        )
+                    }
                 }
                 itemsIndexed(filteredSmartPlaylists, key = { idx, sm -> "smart_${sm.id}_$idx" }, contentType = { _, _ -> "smart_compact_row" }) { _, smart ->
                     var smartMenuExpanded by remember { mutableStateOf(false) }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BentoCardDarkPurple,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSmartPlaylistClick(smart) }
@@ -246,24 +259,25 @@ fun PlaylistsScreenCompactList(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = BentoPrimary.copy(alpha = 0.18f),
+                                shape = CircleShape,
+                                color = BentoPrimary.copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
                                 modifier = Modifier.size(38.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
                                 }
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = smart.name,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
                                     color = BentoTextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -274,6 +288,19 @@ fun PlaylistsScreenCompactList(
                                     color = BentoTextSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = BentoPrimary.copy(alpha = 0.14f)
+                            ) {
+                                Text(
+                                    text = "AUTO",
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = BentoPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                             Box {
@@ -293,30 +320,46 @@ fun PlaylistsScreenCompactList(
                                 }
                             }
                         }
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = BentoBorder.copy(alpha = 0.25f),
+                            modifier = Modifier.padding(start = 50.dp)
+                        )
                     }
                 }
             }
 
-            // 3. User Playlists High-Density Rows
+            // 3. User Playlists Frameless High-Density Index Rows (Unboxed with Hairline Dividers)
             if (filteredPlaylists.isNotEmpty()) {
                 item(key = "compact_user_section_label") {
-                    Text(
-                        text = "COLLECTIONS (${filteredPlaylists.size})",
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = BentoTextSecondary,
-                        letterSpacing = 0.9.sp,
-                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "MASTER ARCHIVE // ${filteredPlaylists.size}",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextSecondary,
+                            letterSpacing = 1.1.sp
+                        )
+                        Text(
+                            text = "TRK / DUR",
+                            fontSize = 9.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = BentoTextSecondary.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
 
             itemsIndexed(filteredPlaylists, key = { _, it -> it.id }, contentType = { _, _ -> "playlist_compact_row" }) { index, playlist ->
                 var menuExpanded by remember { mutableStateOf(false) }
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onPlaylistClick(playlist) }
@@ -324,39 +367,58 @@ fun PlaylistsScreenCompactList(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                            .padding(vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
                             text = "%02d".format(index + 1),
-                            fontSize = 11.sp,
+                            fontSize = 11.5.sp,
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = BentoTextSecondary,
-                            modifier = Modifier.width(20.dp)
+                            color = BentoPrimary.copy(alpha = 0.85f),
+                            modifier = Modifier.width(22.dp)
                         )
                         PlaylistCover(
                             playlist = playlist,
                             modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .size(44.dp)
+                                .clip(CircleShape),
+                            cornerRadius = 50
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = playlist.name,
-                                fontSize = 14.sp,
+                                fontSize = 14.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = BentoTextPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${playlist.songCount} songs • ${formatDuration(playlist.totalDurationMs)}",
-                                fontSize = 11.5.sp,
+                                text = if (playlist.isPinned) "Pinned Collection" else "Custom Mix",
+                                fontSize = 11.sp,
                                 color = BentoTextSecondary,
                                 maxLines = 1
                             )
                         }
+
+                        // Compact Telemetry Pill (Track count + Duration)
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = BentoCardSurface.copy(alpha = 0.65f),
+                            border = BorderStroke(0.5.dp, BentoBorder.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                text = "${playlist.songCount} • ${formatDuration(playlist.totalDurationMs)}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoTextSecondary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+
                         IconButton(
                             onClick = {
                                 HapticUtils.performClickHaptic(context)
@@ -365,13 +427,14 @@ fun PlaylistsScreenCompactList(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(BentoPrimary)
+                                .background(BentoPrimary.copy(alpha = 0.16f))
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = BentoOnPrimary, modifier = Modifier.size(17.dp))
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = BentoPrimary, modifier = Modifier.size(17.dp))
                         }
+
                         Box {
-                            IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextSecondary, modifier = Modifier.size(17.dp))
+                            IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
                             }
                             DropdownMenu(
                                 expanded = menuExpanded,
@@ -406,6 +469,12 @@ fun PlaylistsScreenCompactList(
                             }
                         }
                     }
+
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = BentoBorder.copy(alpha = 0.25f),
+                        modifier = Modifier.padding(start = 78.dp)
+                    )
                 }
             }
         }

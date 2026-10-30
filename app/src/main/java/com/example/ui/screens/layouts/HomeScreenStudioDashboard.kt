@@ -21,9 +21,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,6 +35,7 @@ import com.example.data.model.Song
 import com.example.service.PlaybackState
 import com.example.ui.components.AlbumArtView
 import com.example.ui.components.FastScrollbar
+import com.example.ui.screens.HomeFeedVisualStyle
 import com.example.ui.screens.MostPlayedFilter
 import com.example.ui.screens.renderHomeFeedSections
 import com.example.ui.theme.*
@@ -111,7 +114,7 @@ fun HomeScreenStudioDashboard(
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Studio Rack Header
+            // 1. Pro-Audio Studio Rack Header
             item(key = "studio_deck_header", contentType = "header") {
                 Row(
                     modifier = Modifier
@@ -126,9 +129,9 @@ fun HomeScreenStudioDashboard(
                     ) {
                         Surface(
                             onClick = onOpenDrawer,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(8.dp),
                             color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f)),
                             modifier = Modifier.size(38.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -137,17 +140,28 @@ fun HomeScreenStudioDashboard(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF00E676))
+                                )
+                                Text(
+                                    text = "STUDIO DECK // DSP-24",
+                                    fontSize = 9.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = BentoPrimary,
+                                    letterSpacing = 1.1.sp,
+                                    maxLines = 1
+                                )
+                            }
                             Text(
-                                text = "STUDIO DECK • 24-BIT DSP",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = BentoPrimary,
-                                letterSpacing = 1.1.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
+                                text = if (userAccount != null) effectiveDisplayName else greeting,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = BentoTextPrimary,
@@ -161,7 +175,7 @@ fun HomeScreenStudioDashboard(
                         val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
                         Surface(
                             onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(8.dp),
                             color = BentoCardSurface,
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
                             modifier = Modifier.size(36.dp)
@@ -172,7 +186,7 @@ fun HomeScreenStudioDashboard(
                                         model = avatarUrl,
                                         contentDescription = "Account",
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        modifier = Modifier.size(28.dp).clip(CircleShape)
+                                        modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
                                     )
                                 } else {
                                     Icon(
@@ -186,7 +200,7 @@ fun HomeScreenStudioDashboard(
                         }
                         Surface(
                             onClick = onOpenSearch,
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(8.dp),
                             color = BentoCardSurface,
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
                             modifier = Modifier.size(36.dp)
@@ -197,7 +211,7 @@ fun HomeScreenStudioDashboard(
                         }
                         Surface(
                             onClick = onScanClick,
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(8.dp),
                             color = BentoCardSurface,
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
                             modifier = Modifier.size(36.dp)
@@ -208,7 +222,7 @@ fun HomeScreenStudioDashboard(
                         }
                         Surface(
                             onClick = { onOpenSettings("AUDIO") },
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(8.dp),
                             color = BentoPrimary,
                             modifier = Modifier.size(36.dp)
                         ) {
@@ -220,24 +234,34 @@ fun HomeScreenStudioDashboard(
                 }
             }
 
-            // 2. Live Spectrum & Master Cue Monitor Console
+            // 2. Dual-Channel LED VU Meter & Master Cue Monitor Console
             item(key = "studio_master_cue_deck", contentType = "studio_deck") {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.38f)),
-                    shadowElevation = 8.dp,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(BentoCardSurface)
                         .clickable { onOpenNowPlaying() }
                 ) {
+                    // Top Glowing Hardware Status Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFF00E676), BentoPrimary, BentoAccentPinkText)
+                                )
+                            )
+                    )
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Top Telemetry Strip
+                        // Top Telemetry Readout Strip
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -250,34 +274,28 @@ fun HomeScreenStudioDashboard(
                                 Surface(
                                     shape = CircleShape,
                                     color = if (playbackState.isPlaying) Color(0xFF00E676) else BentoBorder,
-                                    modifier = Modifier.size(8.dp)
+                                    modifier = Modifier.size(7.dp)
                                 ) {}
                                 Text(
-                                    text = if (playbackState.isPlaying) "DAC ACTIVE • 48kHz / 32-BIT" else "STUDIO MONITOR STANDBY",
+                                    text = if (playbackState.isPlaying) "BUS A // 48kHz 32-BIT FLOAT" else "BUS A // MONITOR STANDBY",
                                     fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = if (playbackState.isPlaying) Color(0xFF00E676) else BentoTextSecondary,
                                     letterSpacing = 0.7.sp
                                 )
                             }
 
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = BentoCardDarkPurple,
-                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f))
-                            ) {
-                                Text(
-                                    text = "MASTER CUE",
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoPrimary,
-                                    letterSpacing = 0.9.sp,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
+                            Text(
+                                text = "PEAK -0.2 dB",
+                                fontSize = 9.5.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimary
+                            )
                         }
 
-                        // Spectrum Analyzer Visualizer
+                        // Multi-Color LED Spectrum Analyzer Visualizer
                         StudioPlaybackVisualizer(isPlaying = playbackState.isPlaying)
 
                         // Active Track Monitor + Cue Transport
@@ -293,24 +311,25 @@ fun HomeScreenStudioDashboard(
                                 AlbumArtView(
                                     song = currentSong,
                                     modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(12.dp)),
-                                    cornerRadius = 12
+                                        .size(54.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    cornerRadius = 8
                                 )
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = currentSong.displayTitle,
-                                        fontSize = 15.5.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.ExtraBold,
                                         color = BentoTextPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${currentSong.displayArtist} • ${currentSong.displayAlbum}",
-                                        fontSize = 12.sp,
-                                        color = BentoTextSecondary,
+                                        text = "${currentSong.displayArtist} // ${currentSong.format.uppercase()}",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = BentoPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -350,15 +369,15 @@ fun HomeScreenStudioDashboard(
                                             onSongClick(currentSong)
                                         }
                                     },
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = BentoPrimary,
-                                    modifier = Modifier.size(46.dp)
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isCurrentActive && playbackState.isPlaying) Color(0xFF00E676) else BentoPrimary,
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = if (isCurrentActive && playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                             contentDescription = "Play",
-                                            tint = BentoOnPrimary,
+                                            tint = Color.Black,
                                             modifier = Modifier.size(24.dp)
                                         )
                                     }
@@ -369,61 +388,27 @@ fun HomeScreenStudioDashboard(
                 }
             }
 
-            // 3. Studio Quick Launch Pads & DSP Profile Selector
+            // 3. DSP Profile Rack Selector Strip
             item(key = "studio_pads_and_dsp", contentType = "studio_controls") {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // 4-Pad Studio Quick Launch Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        StudioLaunchPad(
-                            icon = Icons.Default.LibraryMusic,
-                            title = "Tracks",
-                            subtitle = "${allSongs.size}",
-                            onClick = onOpenLibrary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StudioLaunchPad(
-                            icon = Icons.Default.Favorite,
-                            title = "Liked",
-                            subtitle = "${favoriteSongs.size}",
-                            onClick = onOpenFavorites,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StudioLaunchPad(
-                            icon = Icons.Default.QueueMusic,
-                            title = "Mixes",
-                            subtitle = "${allPlaylists.size}",
-                            onClick = onOpenPlaylists,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StudioLaunchPad(
-                            icon = Icons.Default.BarChart,
-                            title = "Analytics",
-                            subtitle = "Studio",
-                            onClick = onOpenStatsDetail,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // DSP Profiles Rack Strip
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "DSP ENGINE PRESETS",
-                            fontSize = 10.5.sp,
+                            text = "CH // DSP ENGINE PRESETS",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
                             color = BentoPrimary,
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = "Open Equalizer →",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            text = "OPEN 5-BAND EQ →",
+                            fontSize = 10.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
                             color = BentoTextSecondary,
                             modifier = Modifier.clickable { onOpenSettings("AUDIO") }
                         )
@@ -431,17 +416,17 @@ fun HomeScreenStudioDashboard(
 
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val profiles = listOf(
-                            "FLAT" to "Flat Studio",
-                            "BASS" to "Bass Boost",
-                            "VOCAL" to "Vocal Clarity",
-                            "ROCK" to "Rock Drive",
-                            "ELECTRONIC" to "Club Punch"
+                            "FLAT" to "FLAT STUDIO",
+                            "BASS" to "SUB BOOST",
+                            "VOCAL" to "VOCAL AIR",
+                            "ROCK" to "OVERDRIVE",
+                            "ELECTRONIC" to "CLUB MASTER"
                         )
                         items(profiles.size, key = { profiles[it].first }) { idx ->
                             val (key, label) = profiles[idx]
                             val isSelected = selectedEqProfile == key
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(6.dp),
                                 color = if (isSelected) BentoPrimary else BentoCardSurface,
                                 border = BorderStroke(1.dp, if (isSelected) BentoPrimary else BentoBorder.copy(alpha = 0.55f)),
                                 modifier = Modifier.clickable {
@@ -451,20 +436,21 @@ fun HomeScreenStudioDashboard(
                                 }
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Equalizer,
-                                        contentDescription = null,
-                                        tint = if (isSelected) BentoOnPrimary else BentoPrimary,
-                                        modifier = Modifier.size(14.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) BentoOnPrimary else Color(0xFF00E676))
                                     )
                                     Text(
                                         text = label,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
                                         color = if (isSelected) BentoOnPrimary else BentoTextPrimary
                                     )
                                 }
@@ -474,7 +460,7 @@ fun HomeScreenStudioDashboard(
                 }
             }
 
-            // 4. Authoritative Dynamic Home Sections
+            // 4. Authoritative Dynamic Home Sections with Studio Deck Channel-Strip Styling
             renderHomeFeedSections(
                 homeSections = effectiveSections,
                 speedDialSongs = speedDialSongs,
@@ -512,7 +498,8 @@ fun HomeScreenStudioDashboard(
                 onQuickShuffle = onQuickShuffle,
                 getDurationPlayedBetween = getDurationPlayedBetween,
                 getTrackCountBetween = getTrackCountBetween,
-                getUniqueTrackCountBetween = getUniqueTrackCountBetween
+                getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                feedStyle = HomeFeedVisualStyle.STUDIO_DECK
             )
         }
 
@@ -523,45 +510,6 @@ fun HomeScreenStudioDashboard(
                 .align(Alignment.CenterEnd)
                 .padding(bottom = 100.dp, end = 2.dp)
         )
-    }
-}
-
-@Composable
-private fun StudioLaunchPad(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = BentoCardSurface,
-        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
-        modifier = modifier
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(icon, contentDescription = title, tint = BentoPrimary, modifier = Modifier.size(18.dp))
-            Text(
-                text = title,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = BentoTextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = subtitle,
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = BentoTextSecondary,
-                maxLines = 1
-            )
-        }
     }
 }
 
@@ -590,13 +538,15 @@ private fun StudioPlaybackVisualizer(isPlaying: Boolean) {
     }
 
     val primaryColor = BentoPrimary
+    val peakColor = BentoAccentPinkText
+    val ledGreen = Color(0xFF00E676)
     val borderColor = BentoBorder
-    val barCount = 32
+    val barCount = 36
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .height(58.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(BentoBackground)
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
@@ -611,19 +561,27 @@ private fun StudioPlaybackVisualizer(isPlaying: Boolean) {
                 1 -> barAnim2
                 else -> barAnim3
             }
+            val normalizedRatio = (factor * ((i + 6).toFloat() / (barCount + 6))).coerceIn(0.12f, 1f)
             val barHeight = if (isPlaying) {
-                (canvasHeight * factor * ((i + 4).toFloat() / (barCount + 4))).coerceIn(5f, canvasHeight)
+                (canvasHeight * normalizedRatio).coerceIn(5f, canvasHeight)
             } else {
                 5f
             }
             val x = i * (barWidth + 3f)
             val y = canvasHeight - barHeight
 
+            val barColor = when {
+                !isPlaying -> borderColor
+                normalizedRatio > 0.78f -> peakColor
+                normalizedRatio > 0.48f -> primaryColor
+                else -> ledGreen
+            }
+
             drawRoundRect(
-                color = if (isPlaying) primaryColor.copy(alpha = 0.42f + factor * 0.58f) else borderColor,
+                color = barColor,
                 topLeft = Offset(x, y),
                 size = Size(barWidth, barHeight),
-                cornerRadius = CornerRadius(2.5f, 2.5f)
+                cornerRadius = CornerRadius(2f, 2f)
             )
         }
     }

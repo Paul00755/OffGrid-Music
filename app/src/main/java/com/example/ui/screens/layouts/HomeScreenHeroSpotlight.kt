@@ -2,6 +2,7 @@ package com.example.ui.screens.layouts
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -31,6 +33,7 @@ import com.example.scanner.ScanProgress
 import com.example.service.PlaybackState
 import com.example.ui.components.AlbumArtView
 import com.example.ui.components.FastScrollbar
+import com.example.ui.screens.HomeFeedVisualStyle
 import com.example.ui.screens.MostPlayedFilter
 import com.example.ui.screens.renderHomeFeedSections
 import com.example.ui.theme.*
@@ -91,7 +94,7 @@ fun HomeScreenHeroSpotlight(
     val listState = rememberLazyListState()
     val featuredSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
-    // Deduplicate continue_listening when Hero Spotlight card already features the active song
+    // Deduplicate continue_listening when Hero Spotlight stage already features the active song
     val effectiveSections = remember(homeSections, featuredSong) {
         if (featuredSong != null) {
             homeSections.filterNot { it.equals("continue_listening", ignoreCase = true) }
@@ -101,6 +104,22 @@ fun HomeScreenHeroSpotlight(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Top atmospheric radial spotlight glow
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(320.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            BentoPrimary.copy(alpha = 0.18f),
+                            BentoAccentPinkText.copy(alpha = 0.06f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -109,7 +128,7 @@ fun HomeScreenHeroSpotlight(
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // 1. Top Spotlight Header
+            // 1. Floating Glassmorphic Spotlight Header
             item(key = "hero_spotlight_header", contentType = "header") {
                 Row(
                     modifier = Modifier
@@ -124,10 +143,10 @@ fun HomeScreenHeroSpotlight(
                     ) {
                         Surface(
                             onClick = onOpenDrawer,
-                            shape = RoundedCornerShape(14.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                            modifier = Modifier.size(40.dp)
+                            shape = CircleShape,
+                            color = BentoCardSurface.copy(alpha = 0.78f),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                            modifier = Modifier.size(42.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -147,13 +166,13 @@ fun HomeScreenHeroSpotlight(
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BentoPrimary,
-                                letterSpacing = 1.1.sp,
+                                letterSpacing = 1.3.sp,
                                 maxLines = 1
                             )
                             Text(
                                 text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = BentoTextPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -166,7 +185,7 @@ fun HomeScreenHeroSpotlight(
                         Surface(
                             onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
                             shape = CircleShape,
-                            color = BentoCardSurface,
+                            color = BentoCardSurface.copy(alpha = 0.78f),
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                             modifier = Modifier.size(38.dp)
                         ) {
@@ -191,7 +210,7 @@ fun HomeScreenHeroSpotlight(
                         Surface(
                             onClick = onOpenSearch,
                             shape = CircleShape,
-                            color = BentoCardSurface,
+                            color = BentoCardSurface.copy(alpha = 0.78f),
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                             modifier = Modifier.size(38.dp)
                         ) {
@@ -202,7 +221,7 @@ fun HomeScreenHeroSpotlight(
                         Surface(
                             onClick = onScanClick,
                             shape = CircleShape,
-                            color = BentoCardSurface,
+                            color = BentoCardSurface.copy(alpha = 0.78f),
                             border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                             modifier = Modifier.size(38.dp)
                         ) {
@@ -224,163 +243,181 @@ fun HomeScreenHeroSpotlight(
                 }
             }
 
-            // 2. Hero Spotlight Showcase Card
+            // 2. Immersive Full-Bleed Hero Spotlight Amphitheater Stage (Non-Boxy!)
             if (featuredSong != null) {
                 item(key = "hero_spotlight_banner_${featuredSong.id}", contentType = "hero_banner") {
                     val isCurrentActive = playbackState.currentSong?.id == featuredSong.id
                     val isFav = favoriteSongs.any { it.id == featuredSong.id }
 
-                    Surface(
-                        shape = RoundedCornerShape(28.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.42f)),
-                        shadowElevation = 10.dp,
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(276.dp)
+                            .clip(RoundedCornerShape(34.dp))
+                            .border(
+                                width = 1.5.dp,
+                                brush = Brush.linearGradient(
+                                    listOf(
+                                        BentoPrimary.copy(alpha = 0.65f),
+                                        BentoAccentPinkText.copy(alpha = 0.35f)
+                                    )
+                                ),
+                                shape = RoundedCornerShape(34.dp)
+                            )
                             .clickable { onOpenNowPlaying() }
                     ) {
+                        // Full-bleed background cover artwork with atmospheric scrim
+                        AlbumArtView(
+                            song = featuredSong,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .blur(18.dp),
+                            cornerRadius = 0
+                        )
+
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        listOf(
-                                            BentoPrimary.copy(alpha = 0.22f),
-                                            BentoCardDarkPurple.copy(alpha = 0.96f),
-                                            BentoCardSurface
-                                        )
+                                        0.0f to Color.Black.copy(alpha = 0.32f),
+                                        0.45f to Color.Black.copy(alpha = 0.65f),
+                                        1.0f to Color.Black.copy(alpha = 0.92f)
                                     )
                                 )
-                                .padding(20.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(20.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                // Top Badge + Actions Row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                            // Top Floating Pill Badge + Frosted Circular Actions
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = Color.White.copy(alpha = 0.16f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.6f))
                                 ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = BentoPrimary.copy(alpha = 0.20f),
-                                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f))
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(6.dp)
-                                                    .clip(CircleShape)
-                                                    .background(if (isCurrentActive && playbackState.isPlaying) BentoPrimary else BentoTextSecondary)
-                                            )
-                                            Text(
-                                                text = if (isCurrentActive && playbackState.isPlaying) "LIVE SPOTLIGHT" else "FEATURED TRACK",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = BentoPrimary,
-                                                letterSpacing = 1.sp
-                                            )
-                                        }
-                                    }
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(
-                                            onClick = {
-                                                HapticUtils.performClickHaptic(context)
-                                                onAddToQueue(featuredSong)
-                                            },
-                                            shape = CircleShape,
-                                            color = BentoCardDarkPurple,
-                                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                                            modifier = Modifier.size(34.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Default.QueueMusic,
-                                                    contentDescription = "Add to Queue",
-                                                    tint = BentoTextPrimary,
-                                                    modifier = Modifier.size(17.dp)
-                                                )
-                                            }
-                                        }
-
-                                        Surface(
-                                            onClick = {
-                                                HapticUtils.performClickHaptic(context)
-                                                onFavoriteToggle(featuredSong)
-                                            },
-                                            shape = CircleShape,
-                                            color = if (isFav) BentoAccentPinkText.copy(alpha = 0.16f) else BentoCardDarkPurple,
-                                            border = BorderStroke(
-                                                1.dp,
-                                                if (isFav) BentoAccentPinkText.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.45f)
-                                            ),
-                                            modifier = Modifier.size(34.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                    contentDescription = "Favorite",
-                                                    tint = if (isFav) BentoAccentPinkText else BentoTextSecondary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isCurrentActive && playbackState.isPlaying) BentoPrimary else Color.White)
+                                        )
+                                        Text(
+                                            text = if (isCurrentActive && playbackState.isPlaying) "LIVE SPOTLIGHT" else "HERO STAGE",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White,
+                                            letterSpacing = 1.1.sp
+                                        )
                                     }
                                 }
 
-                                // Artwork + Track Metadata
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                                ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
-                                        shape = RoundedCornerShape(20.dp),
-                                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
-                                        shadowElevation = 6.dp,
-                                        modifier = Modifier.size(106.dp)
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onAddToQueue(featuredSong)
+                                        },
+                                        shape = CircleShape,
+                                        color = Color.White.copy(alpha = 0.16f),
+                                        modifier = Modifier.size(36.dp)
                                     ) {
-                                        AlbumArtView(
-                                            song = featuredSong,
-                                            modifier = Modifier.fillMaxSize(),
-                                            cornerRadius = 20
-                                        )
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.QueueMusic,
+                                                contentDescription = "Add to Queue",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
 
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onFavoriteToggle(featuredSong)
+                                        },
+                                        shape = CircleShape,
+                                        color = if (isFav) BentoAccentPinkText.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.16f),
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                contentDescription = "Favorite",
+                                                tint = if (isFav) BentoAccentPinkText else Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Center Circular Spotlight Medallion + Dramatic Typography
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(92.dp)
+                                        .clip(CircleShape)
+                                        .border(2.dp, BentoPrimary, CircleShape)
+                                        .padding(3.dp)
+                                        .clip(CircleShape)
+                                ) {
+                                    AlbumArtView(
+                                        song = featuredSong,
+                                        modifier = Modifier.fillMaxSize(),
+                                        cornerRadius = 100
+                                    )
+                                }
+
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        text = featuredSong.displayTitle,
+                                        fontSize = 21.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = featuredSong.displayArtist,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (featuredSong.displayAlbum.isNotEmpty()) {
                                         Text(
-                                            text = featuredSong.displayTitle,
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = BentoTextPrimary,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = featuredSong.displayArtist,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = BentoPrimary,
+                                            text = featuredSong.displayAlbum,
+                                            fontSize = 12.sp,
+                                            color = Color.White.copy(alpha = 0.72f),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                        if (featuredSong.displayAlbum.isNotEmpty()) {
-                                            Text(
-                                                text = featuredSong.displayAlbum,
-                                                fontSize = 12.sp,
-                                                color = BentoTextSecondary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
                                     }
                                 }
+                            }
 
-                                // Live Progress Strip
+                            // Bottom Live Progress + Pill Controls
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 if (isCurrentActive && playbackState.durationMs > 0) {
                                     com.example.ui.components.RealtimeTrackProgressBar(
                                         playbackPositionFlow = playbackPositionFlow,
@@ -391,17 +428,16 @@ fun HomeScreenHeroSpotlight(
                                     )
                                 }
 
-                                // Primary Spotlight Action Bar
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Surface(
-                                        shape = RoundedCornerShape(16.dp),
+                                        shape = RoundedCornerShape(50),
                                         color = BentoPrimary,
                                         modifier = Modifier
-                                            .weight(1.35f)
+                                            .weight(1.4f)
                                             .height(44.dp)
                                             .clickable {
                                                 HapticUtils.performClickHaptic(context)
@@ -425,8 +461,8 @@ fun HomeScreenHeroSpotlight(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = if (isCurrentActive && playbackState.isPlaying) "Pause Spotlight" else "Play Spotlight",
-                                                fontSize = 13.sp,
+                                                text = if (isCurrentActive && playbackState.isPlaying) "Pause Stage" else "Play Stage",
+                                                fontSize = 13.5.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = BentoOnPrimary
                                             )
@@ -434,9 +470,9 @@ fun HomeScreenHeroSpotlight(
                                     }
 
                                     Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = BentoCardDarkPurple,
-                                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.6f)),
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.White.copy(alpha = 0.16f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.30f)),
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(44.dp)
@@ -450,9 +486,9 @@ fun HomeScreenHeroSpotlight(
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = Color.White, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Shuffle All", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                                            Text("Shuffle Mix", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                         }
                                     }
                                 }
@@ -462,31 +498,31 @@ fun HomeScreenHeroSpotlight(
                 }
             }
 
-            // 3. Quick Category Bento Pills
+            // 3. Floating Capsule Category Strip
             item(key = "hero_spotlight_categories", contentType = "categories") {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(vertical = 2.dp)
                 ) {
                     item(key = "cat_lib") {
-                        CategoryPill(icon = Icons.Default.LibraryMusic, label = "Library", badge = "${allSongs.size}", onClick = onOpenLibrary)
+                        SpotlightCategoryCapsule(icon = Icons.Default.LibraryMusic, label = "Library", badge = "${allSongs.size}", onClick = onOpenLibrary)
                     }
                     item(key = "cat_fav") {
-                        CategoryPill(icon = Icons.Default.Favorite, label = "Favorites", badge = "${favoriteSongs.size}", onClick = onOpenFavorites)
+                        SpotlightCategoryCapsule(icon = Icons.Default.Favorite, label = "Favorites", badge = "${favoriteSongs.size}", onClick = onOpenFavorites)
                     }
                     item(key = "cat_pl") {
-                        CategoryPill(icon = Icons.Default.QueueMusic, label = "Playlists", badge = "${allPlaylists.size}", onClick = onOpenPlaylists)
+                        SpotlightCategoryCapsule(icon = Icons.Default.QueueMusic, label = "Playlists", badge = "${allPlaylists.size}", onClick = onOpenPlaylists)
                     }
                     item(key = "cat_rec") {
-                        CategoryPill(icon = Icons.Default.History, label = "Recent", badge = null, onClick = onOpenRecentlyPlayed)
+                        SpotlightCategoryCapsule(icon = Icons.Default.History, label = "Recent", badge = null, onClick = onOpenRecentlyPlayed)
                     }
                     item(key = "cat_stats") {
-                        CategoryPill(icon = Icons.Default.BarChart, label = "Stats Studio", badge = null, onClick = onOpenStatsDetail)
+                        SpotlightCategoryCapsule(icon = Icons.Default.BarChart, label = "Stats Studio", badge = null, onClick = onOpenStatsDetail)
                     }
                 }
             }
 
-            // 4. Authoritative Dynamic Home Sections
+            // 4. Authoritative Dynamic Home Sections with Hero Spotlight Component Styling
             renderHomeFeedSections(
                 homeSections = effectiveSections,
                 speedDialSongs = speedDialSongs,
@@ -524,7 +560,8 @@ fun HomeScreenHeroSpotlight(
                 onQuickShuffle = onQuickShuffle,
                 getDurationPlayedBetween = getDurationPlayedBetween,
                 getTrackCountBetween = getTrackCountBetween,
-                getUniqueTrackCountBetween = getUniqueTrackCountBetween
+                getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT
             )
         }
 
@@ -539,36 +576,36 @@ fun HomeScreenHeroSpotlight(
 }
 
 @Composable
-private fun CategoryPill(
+private fun SpotlightCategoryCapsule(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     badge: String?,
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = BentoCardSurface,
-        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+        shape = RoundedCornerShape(50),
+        color = BentoCardSurface.copy(alpha = 0.80f),
+        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
         modifier = Modifier.clickable { onClick() }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             Icon(icon, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
             if (!badge.isNullOrBlank()) {
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = BentoPrimary.copy(alpha = 0.16f)
+                    shape = RoundedCornerShape(50),
+                    color = BentoPrimary.copy(alpha = 0.18f)
                 ) {
                     Text(
                         text = badge,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         color = BentoPrimary,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                     )
                 }
             }

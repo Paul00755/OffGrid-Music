@@ -571,6 +571,7 @@ class MainActivity : ComponentActivity() {
                                                 val playlistViewMode by viewModel.playlistViewMode.collectAsState()
                                                 PlaylistsScreen(
                                                     playlists = allPlaylists,
+                                                    mostPlayedPlaylists = mostPlayedPlaylists,
                                                     smartPlaylists = smartPlaylists,
                                                     allSongs = allSongs,
                                                     playlistViewMode = playlistViewMode,
