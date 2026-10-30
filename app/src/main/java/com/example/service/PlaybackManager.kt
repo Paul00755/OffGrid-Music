@@ -63,7 +63,13 @@ class PlaybackManager(
         }
     }
 
-    // activeInstance is published at the bottom of initialization once all fields and StateFlows are ready
+    // State flows MUST be initialized before audioFocusManager, player, forwardingPlayer, or mediaSession
+    private val _playbackState = MutableStateFlow(PlaybackState())
+    val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
+
+    private val _playbackPositionMs = MutableStateFlow(0L)
+    val playbackPositionMs: StateFlow<Long> = _playbackPositionMs.asStateFlow()
+
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
     val audioFocusManager = AudioFocusManager(
         context = context,
@@ -197,31 +203,31 @@ class PlaybackManager(
         song: Song,
         base: androidx.media3.common.MediaMetadata? = null
     ): androidx.media3.common.MediaMetadata {
-        val builder = (base?.buildUpon() ?: androidx.media3.common.MediaMetadata.Builder())
-            .setTitle(song.displayTitle)
-            .setDisplayTitle(song.displayTitle)
-            .setArtist(song.displayArtist)
-            .setAlbumTitle(song.displayAlbum)
-            .setAlbumArtist(song.displayArtist)
+        return try {
+            val builder = (base?.buildUpon() ?: androidx.media3.common.MediaMetadata.Builder())
+                .setTitle(song.displayTitle)
+                .setDisplayTitle(song.displayTitle)
+                .setArtist(song.displayArtist)
+                .setAlbumTitle(song.displayAlbum)
+                .setAlbumArtist(song.displayArtist)
 
-        val artBytes = ArtworkManager.getCachedNotificationArtwork(song.id, song.path)
-        if (artBytes != null && artBytes.isNotEmpty()) {
-            builder.setArtworkData(artBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-        } else {
-            builder.setArtworkData(null, null)
-        }
+            val artBytes = ArtworkManager.getCachedNotificationArtwork(song.id, song.path)
+            if (artBytes != null && artBytes.isNotEmpty()) {
+                builder.setArtworkData(artBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            }
 
-        val artUri = song.artworkUri?.takeIf { it.isNotBlank() }
-            ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
-            ?: song.contentUriString.takeIf { it.startsWith("http") }
-        if (!artUri.isNullOrBlank()) {
-            try {
-                builder.setArtworkUri(android.net.Uri.parse(artUri))
-            } catch (_: Exception) {}
-        } else {
-            builder.setArtworkUri(null)
+            val artUri = song.artworkUri?.takeIf { it.isNotBlank() }
+                ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+                ?: song.contentUriString.takeIf { it.startsWith("http") }
+            if (!artUri.isNullOrBlank()) {
+                try {
+                    builder.setArtworkUri(android.net.Uri.parse(artUri))
+                } catch (_: Exception) {}
+            }
+            builder.build()
+        } catch (_: Throwable) {
+            base ?: androidx.media3.common.MediaMetadata.EMPTY
         }
-        return builder.build()
     }
 
     fun notifyLiveMetadataChanged() {
@@ -268,11 +274,10 @@ class PlaybackManager(
         }
 
         override fun getCurrentMediaItem(): MediaItem? {
-            val baseItem = super.getCurrentMediaItem()
+            val baseItem = super.getCurrentMediaItem() ?: return null
             val currentSong = _playbackState.value.currentSong ?: return baseItem
-            val liveMeta = buildLiveMediaMetadata(currentSong, baseItem?.mediaMetadata)
-            return (baseItem?.buildUpon()
-                ?: MediaItem.Builder().setMediaId(currentSong.id.toString()).setUri(currentSong.contentUri))
+            val liveMeta = buildLiveMediaMetadata(currentSong, baseItem.mediaMetadata)
+            return baseItem.buildUpon()
                 .setMediaMetadata(liveMeta)
                 .build()
         }
@@ -452,12 +457,6 @@ class PlaybackManager(
             }
         }
     }
-
-    private val _playbackState = MutableStateFlow(PlaybackState())
-    val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
-
-    private val _playbackPositionMs = MutableStateFlow(0L)
-    val playbackPositionMs: StateFlow<Long> = _playbackPositionMs.asStateFlow()
 
     @Volatile var currentPositionMs: Long = 0L
         private set

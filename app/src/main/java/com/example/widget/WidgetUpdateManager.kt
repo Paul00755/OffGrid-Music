@@ -114,6 +114,8 @@ object WidgetUpdateManager {
         java.util.Collections.synchronizedSet(HashSet<Long>())
     private val lyricsFetchCompletedNoLyricsSongIds: MutableSet<Long> =
         java.util.Collections.synchronizedSet(HashSet<Long>())
+    private val pendingLyricsDbLoadSongIds: MutableSet<Long> =
+        java.util.Collections.synchronizedSet(HashSet<Long>())
 
     private enum class LyricsDisplayMode {
         NONE,
@@ -137,9 +139,11 @@ object WidgetUpdateManager {
         if (songId > 0L) {
             attemptedLyricsFetchSongIds.remove(songId)
             lyricsFetchCompletedNoLyricsSongIds.remove(songId)
+            pendingLyricsDbLoadSongIds.remove(songId)
         } else {
             attemptedLyricsFetchSongIds.clear()
             lyricsFetchCompletedNoLyricsSongIds.clear()
+            pendingLyricsDbLoadSongIds.clear()
         }
         if (songId <= 0L || songId == cachedLyricsSongId) {
             cachedLyricsSongId = -1L
@@ -175,9 +179,8 @@ object WidgetUpdateManager {
                     nightMask != android.content.res.Configuration.UI_MODE_NIGHT_YES
                 }
             }
-            val exported = kotlinx.coroutines.runBlocking { prefs.exportUserSettings() }
-            cachedIsDynamicTheme = exported.dynamicArtworkTheme
-            cachedManualAccentArgb = when (exported.accentColorPreset.uppercase()) {
+            val accentPreset = prefs.getAccentColorPresetSync().uppercase()
+            cachedManualAccentArgb = when (accentPreset) {
                 "PURPLE" -> android.graphics.Color.parseColor("#BB86FC")
                 "PINK" -> android.graphics.Color.parseColor("#FF4081")
                 "CYAN" -> android.graphics.Color.parseColor("#00E5FF")
@@ -1413,55 +1416,60 @@ object WidgetUpdateManager {
             val appContext = context.applicationContext
             val prefs = UserPreferencesRepository.getInstance(appContext)
             cachedLyricsOffsetMs = prefs.getLyricsSyncOffsetMs(songId)
-            val entity = kotlinx.coroutines.runBlocking {
-                AppDatabase.getInstance(appContext).lyricsDao().getLyricsForSong(songId)
-            }
-            cachedLyricsSongId = songId
-            if (entity != null) {
-                val domainLyrics = com.example.data.model.Lyrics(
-                    songId = entity.songId,
-                    plainLyrics = entity.plainLyrics,
-                    syncedLyricsJson = entity.syncedLyricsJson,
-                    isCached = entity.isCached,
-                    source = entity.source
-                )
-                val synced = domainLyrics.parseSyncedLines()
-                cachedSyncedLines = synced
-                cachedPlainLines = if (synced.isEmpty() && !entity.plainLyrics.isNullOrBlank()) {
-                    entity.plainLyrics
-                        .lines()
-                        .map { it.replace(Regex("""\[\d{2}:\d{2}(?:\.\d{1,3})?\]"""), "").trim() }
-                        .filter { it.isNotEmpty() }
-                } else {
-                    emptyList()
-                }
-                if (cachedSyncedLines.isEmpty() && cachedPlainLines.isEmpty()) {
-                    lyricsFetchCompletedNoLyricsSongIds.add(songId)
-                }
-            } else {
-                cachedSyncedLines = emptyList()
-                cachedPlainLines = emptyList()
-                // Automatically trigger a background local/embedded/online lyrics resolution once per song
-                // so the Lyrics Widget works even if the user hasn't opened the Lyrics sheet yet!
-                if (attemptedLyricsFetchSongIds.add(songId)) {
-                    widgetScope.launch {
-                        try {
-                            val db = AppDatabase.getInstance(appContext)
-                            val fetcher = com.example.service.LyricsFetcher(db.lyricsDao(), appContext)
-                            val fetched = fetcher.getOrFetchLyrics(song)
-                            val hasAnyLyrics = !fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()
-                            if (!hasAnyLyrics) {
+
+            if (cachedLyricsSongId != songId && pendingLyricsDbLoadSongIds.add(songId)) {
+                widgetScope.launch(Dispatchers.IO) {
+                    try {
+                        val entity = AppDatabase.getInstance(appContext).lyricsDao().getLyricsForSong(songId)
+                        if (entity != null) {
+                            val domainLyrics = com.example.data.model.Lyrics(
+                                songId = entity.songId,
+                                plainLyrics = entity.plainLyrics,
+                                syncedLyricsJson = entity.syncedLyricsJson,
+                                isCached = entity.isCached,
+                                source = entity.source
+                            )
+                            val synced = domainLyrics.parseSyncedLines()
+                            cachedSyncedLines = synced
+                            cachedPlainLines = if (synced.isEmpty() && !entity.plainLyrics.isNullOrBlank()) {
+                                entity.plainLyrics
+                                    .lines()
+                                    .map { it.replace(Regex("""\[\d{2}:\d{2}(?:\.\d{1,3})?\]"""), "").trim() }
+                                    .filter { it.isNotEmpty() }
+                            } else {
+                                emptyList()
+                            }
+                            if (cachedSyncedLines.isEmpty() && cachedPlainLines.isEmpty()) {
                                 lyricsFetchCompletedNoLyricsSongIds.add(songId)
                             }
-                            cachedLyricsSongId = -1L
-                            lastLyricsDbCheckMs = 0L
+                            cachedLyricsSongId = songId
                             val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
                             updateMutex.withLock {
                                 performFullWidgetUpdateInternal(appContext, liveState)
                             }
-                        } catch (_: Exception) {
-                            lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                        } else {
+                            cachedSyncedLines = emptyList()
+                            cachedPlainLines = emptyList()
+                            if (attemptedLyricsFetchSongIds.add(songId)) {
+                                val db = AppDatabase.getInstance(appContext)
+                                val fetcher = com.example.service.LyricsFetcher(db.lyricsDao(), appContext)
+                                val fetched = fetcher.getOrFetchLyrics(song)
+                                val hasAnyLyrics = !fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()
+                                if (!hasAnyLyrics) {
+                                    lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                                }
+                                cachedLyricsSongId = -1L
+                                lastLyricsDbCheckMs = 0L
+                                val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
+                                updateMutex.withLock {
+                                    performFullWidgetUpdateInternal(appContext, liveState)
+                                }
+                            }
                         }
+                    } catch (_: Exception) {
+                        lyricsFetchCompletedNoLyricsSongIds.add(songId)
+                    } finally {
+                        pendingLyricsDbLoadSongIds.remove(songId)
                     }
                 }
             }
