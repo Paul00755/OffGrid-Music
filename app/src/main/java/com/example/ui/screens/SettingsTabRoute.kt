@@ -266,6 +266,11 @@ fun SettingsTabRoute(
         onOpenAuth = { viewModel.openAuthScreen() },
         onSignInGoogle = { activity?.let { viewModel.signInWithGoogle(it) } ?: viewModel.openAuthScreen() },
         initialTargetSection = viewModel.settingsTargetSection.collectAsState().value,
-        onTargetSectionConsumed = { viewModel.settingsTargetSection.value = null }
+        onTargetSectionConsumed = { viewModel.settingsTargetSection.value = null },
+        updateCheckResult = viewModel.updateCheckResult.collectAsState().value,
+        updateNotificationsEnabled = viewModel.updateNotificationsEnabled.collectAsState().value,
+        onSetUpdateNotificationsEnabled = { viewModel.setUpdateNotificationsEnabled(it) },
+        onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
+        onOpenUpdateDialog = { viewModel.checkForUpdates(isManual = true) }
     )
 }

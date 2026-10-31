@@ -1,0 +1,239 @@
+name: Publish Release & Update Notification
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to announce (e.g. v1.0.4 or v1.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  notify-update:
+    name: Verify Artifact & Broadcast Update
+    runs-on: ubuntu-24.04
+    # Only notify for published, non-draft, non-prerelease stable releases
+    if: (!github.event.release.draft && !github.event.release.prerelease) || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Determine Release Tag and Details
+        id: release_info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.release_tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "Processing release tag: $TAG"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Check Existing Release Artifacts
+        id: check_artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking if APK assets exist on release $TAG..."
+          ASSETS=$(gh release view "$TAG" --json assets -q '.assets.[].name' 2>/dev/null || echo "")
+          echo "Found assets: $ASSETS"
+          if echo "$ASSETS" | grep -qi "OffGrid.*\.apk"; then
+            echo "has_apk=true" >> $GITHUB_OUTPUT
+            echo "Release already contains an APK artifact."
+          else
+            echo "has_apk=false" >> $GITHUB_OUTPUT
+            echo "No APK artifact found on release. Building APK now..."
+          fi
+
+      - name: Build APK (if not attached)
+        if: steps.check_artifacts.outputs.has_apk != 'true'
+        run: |
+          # Ensure .env exists
+          if [ ! -f .env ]; then
+            cp .env.example .env 2>/dev/null || touch .env
+          fi
+
+          # Restore persistent signing key
+          if [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
+          chmod +x gradlew
+          ./gradlew assembleDebug \
+            -Pkotlin.compiler.execution.strategy=daemon \
+            -Pksp.useKSP2=true \
+            --no-configuration-cache \
+            -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true"
+
+          COMPILED_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
+          if [ -n "$COMPILED_APK" ] && [ -f "$COMPILED_APK" ]; then
+            CLEAN_APK="app/build/outputs/apk/debug/OffGrid-Music.apk"
+            cp "$COMPILED_APK" "$CLEAN_APK"
+            gh release upload "$TAG" "$CLEAN_APK" --clobber
+            echo "Successfully attached $CLEAN_APK to release $TAG"
+          else
+            echo "Warning: APK build did not produce an APK file."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Broadcast FCM Update Notification to Subscribers
+        id: send_fcm
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "ℹ️ Note: FIREBASE_SERVICE_ACCOUNT_JSON secret is not set."
+            echo "In-app GitHub release checker is active on home screen entry (via api.github.com/repos/Paul00755/OffGrid-Music/releases/latest)."
+            echo "To enable push notifications via FCM, add your Google Service Account JSON as repository secret 'FIREBASE_SERVICE_ACCOUNT_JSON'."
+            exit 0
+          fi
+
+          # Extract project ID from service account JSON
+          PROJECT_ID=$(echo "$FIREBASE_SERVICE_ACCOUNT_JSON" | jq -r '.project_id // empty')
+          if [ -z "$PROJECT_ID" ]; then
+            echo "Could not extract project_id from FIREBASE_SERVICE_ACCOUNT_JSON."
+            exit 0
+          fi
+
+          echo "Preparing FCM broadcast for project: $PROJECT_ID, tag: $TAG..."
+
+          # Fetch release metadata from GitHub
+          RELEASE_JSON=$(gh release view "$TAG" --json name,body,url 2>/dev/null || echo "{}")
+          RELEASE_NAME=$(echo "$RELEASE_JSON" | jq -r '.name // empty')
+          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="OffGrid Music $TAG"
+          RELEASE_URL=$(echo "$RELEASE_JSON" | jq -r '.url // empty')
+          [ -z "$RELEASE_URL" ] && RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+          RELEASE_BODY=$(echo "$RELEASE_JSON" | jq -r '.body // empty' | head -n 10)
+
+          # Generate Google OAuth2 Access Token using Python jwt / oauth
+          ACCESS_TOKEN=$(python3 - << 'PYEOF'
+import json, time, os, urllib.request, urllib.parse
+
+sa_str = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', '')
+if not sa_str:
+    exit(0)
+
+try:
+    sa = json.loads(sa_str)
+    # If pyjwt and cryptography are not present, fallback gracefully
+    import base64, hmac, hashlib
+
+    # Create JWT header and claim
+    now = int(time.time())
+    header = {"alg": "RS256", "typ": "JWT"}
+    payload = {
+        "iss": sa["client_email"],
+        "sub": sa["client_email"],
+        "aud": "https://oauth2.googleapis.com/token",
+        "iat": now,
+        "exp": now + 3600,
+        "scope": "https://www.googleapis.com/auth/firebase.messaging"
+    }
+
+    def b64_url(b):
+        return base64.urlsafe_b64encode(b).decode('utf-8').rstrip('=')
+
+    header_b64 = b64_url(json.dumps(header).encode('utf-8'))
+    payload_b64 = b64_url(json.dumps(payload).encode('utf-8'))
+    signing_input = f"{header_b64}.{payload_b64}".encode('utf-8')
+
+    # Sign using OpenSSL via subprocess for portability in standard Ubuntu runner
+    import subprocess
+    p = subprocess.Popen(
+        ['openssl', 'dgst', '-sha256', '-sign', '-'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    signature, err = p.communicate(input=sa['private_key'].encode('utf-8'))
+    
+    # We need to sign signing_input with the private key
+    p2 = subprocess.Popen(
+        ['openssl', 'rsautl', '-sign', '-inkey', '-'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    # Using openssl dgst -sha256 -sign is standard:
+    cmd = ['openssl', 'dgst', '-sha256', '-sign', '/dev/stdin']
+    with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE) as proc:
+        # We can pass the private key in a temp file or process
+        pass
+
+    # Alternative: use python cryptography if available
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        pk = load_pem_private_key(sa['private_key'].encode('utf-8'), password=None)
+        sig = pk.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        jwt_token = f"{header_b64}.{payload_b64}.{b64_url(sig)}"
+
+        # Exchange JWT for token
+        data = urllib.parse.urlencode({
+            'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion': jwt_token
+        }).encode('utf-8')
+        req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)
+        with urllib.request.urlopen(req) as resp:
+            token_resp = json.loads(resp.read().decode('utf-8'))
+            print(token_resp.get('access_token', ''))
+    except Exception as e:
+        # Silently skip if cryptography is not installed
+        pass
+except Exception as e:
+    pass
+PYEOF
+)
+
+          if [ -n "$ACCESS_TOKEN" ]; then
+            echo "Sending FCM message to topic: offgrid_updates..."
+            curl -s -X POST \
+              "https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send" \
+              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"message\": {
+                  \"topic\": \"offgrid_updates\",
+                  \"notification\": {
+                    \"title\": \"OffGrid Music Update Available\",
+                    \"body\": \"${RELEASE_NAME} has been published with new features and fixes.\"
+                  },
+                  \"data\": {
+                    \"version\": \"${TAG}\",
+                    \"release_tag\": \"${TAG}\",
+                    \"title\": \"${RELEASE_NAME}\",
+                    \"body\": \"New stable release ${TAG} is available.\",
+                    \"release_url\": \"${RELEASE_URL}\",
+                    \"apk_url\": \"https://github.com/${{ github.repository }}/releases/download/${TAG}/OffGrid-Music.apk\"
+                  }
+                }
+              }"
+            echo "FCM update message dispatched successfully."
+          else
+            echo "Skipped push notification dispatch (Token could not be generated)."
+          fi

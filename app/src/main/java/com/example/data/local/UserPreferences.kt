@@ -95,7 +95,29 @@ class UserPreferencesRepository(private val context: Context) {
         } catch (_: Exception) {}
     }
 
+    private fun readLongCached(key: String, default: Long): Long {
+        return try {
+            if (bootCachePrefs.contains("pref_$key")) bootCachePrefs.getLong("pref_$key", default) else default
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    private fun writeLongCached(key: String, value: Long, now: Long = System.currentTimeMillis()) {
+        try {
+            bootCachePrefs.edit()
+                .putLong("pref_$key", value)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
     private object PreferenceKeys {
+        // App Updates & GitHub Release Notifications
+        val UPDATE_NOTIFICATIONS_ENABLED = booleanPreferencesKey("update_notifications_enabled")
+        val DISMISSED_UPDATE_TAG = stringPreferencesKey("dismissed_update_tag")
+        val LAST_UPDATE_CHECK_TIMESTAMP = longPreferencesKey("last_update_check_timestamp")
+        val CACHED_LATEST_RELEASE_JSON = stringPreferencesKey("cached_latest_release_json")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val THEME_MODE = stringPreferencesKey("theme_mode") // "DARK", "LIGHT", "SYSTEM"
         val UI_THEME = stringPreferencesKey("ui_theme") // "MIDNIGHT_OBSIDIAN", "PURE_AMOLED", "CYBERPUNK_NEON", etc.
@@ -2213,6 +2235,51 @@ class UserPreferencesRepository(private val context: Context) {
             } catch (_: Exception) {}
         }
     }
+
+    val updateNotificationsEnabled: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.UPDATE_NOTIFICATIONS_ENABLED]
+            ?: readBoolCached("update_notifications_enabled", true)
+    }
+
+    suspend fun setUpdateNotificationsEnabled(enabled: Boolean) {
+        writeBoolCached("update_notifications_enabled", enabled)
+        context.dataStore.edit { it[PreferenceKeys.UPDATE_NOTIFICATIONS_ENABLED] = enabled }
+    }
+
+    fun getUpdateNotificationsEnabledSync(): Boolean = readBoolCached("update_notifications_enabled", true)
+
+    val dismissedUpdateTag: Flow<String> = safeData.map { prefs ->
+        prefs[PreferenceKeys.DISMISSED_UPDATE_TAG] ?: readStringCached("dismissed_update_tag", "")
+    }
+
+    suspend fun setDismissedUpdateTag(tag: String) {
+        writeStringCached("dismissed_update_tag", tag)
+        context.dataStore.edit { it[PreferenceKeys.DISMISSED_UPDATE_TAG] = tag }
+    }
+
+    fun getDismissedUpdateTagSync(): String = readStringCached("dismissed_update_tag", "")
+
+    val lastUpdateCheckTimestamp: Flow<Long> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LAST_UPDATE_CHECK_TIMESTAMP] ?: readLongCached("last_update_check_timestamp", 0L)
+    }
+
+    suspend fun setLastUpdateCheckTimestamp(timestamp: Long) {
+        writeLongCached("last_update_check_timestamp", timestamp)
+        context.dataStore.edit { it[PreferenceKeys.LAST_UPDATE_CHECK_TIMESTAMP] = timestamp }
+    }
+
+    fun getLastUpdateCheckTimestampSync(): Long = readLongCached("last_update_check_timestamp", 0L)
+
+    val cachedLatestReleaseJson: Flow<String> = safeData.map { prefs ->
+        prefs[PreferenceKeys.CACHED_LATEST_RELEASE_JSON] ?: readStringCached("cached_latest_release_json", "")
+    }
+
+    suspend fun setCachedLatestReleaseJson(json: String) {
+        writeStringCached("cached_latest_release_json", json)
+        context.dataStore.edit { it[PreferenceKeys.CACHED_LATEST_RELEASE_JSON] = json }
+    }
+
+    fun getCachedLatestReleaseJsonSync(): String = readStringCached("cached_latest_release_json", "")
 
     suspend fun clearAllForTesting() {
         bootCachePrefs.edit().clear().commit()

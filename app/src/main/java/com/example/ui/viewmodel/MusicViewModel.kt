@@ -109,6 +109,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val userAccount: StateFlow<UserAccount?> = authManager.userAccountFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    val appUpdateRepository: com.example.update.AppUpdateRepository =
+        com.example.update.AppUpdateRepository.getInstance(application)
+
+    val updateCheckResult: StateFlow<com.example.update.UpdateCheckResult> =
+        appUpdateRepository.updateState
+
+    val updateNotificationsEnabled: StateFlow<Boolean> = preferences.updateNotificationsEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getUpdateNotificationsEnabledSync())
+
+    fun checkForUpdates(isManual: Boolean = false) {
+        viewModelScope.launch {
+            appUpdateRepository.checkForUpdates(isManual)
+        }
+    }
+
+    fun dismissUpdate(tagName: String) {
+        viewModelScope.launch {
+            appUpdateRepository.dismissRelease(tagName)
+        }
+    }
+
+    fun setUpdateNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferences.setUpdateNotificationsEnabled(enabled)
+            appUpdateRepository.syncTopicSubscription(enabled)
+        }
+    }
+
     val skipAuthPrompt: StateFlow<Boolean> = preferences.skipAuthPrompt
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -642,6 +670,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             authManager.userAccountFlow.collect { account ->
                 cloudSyncRepository.onAuthStateChanged(account?.uid)
             }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val updateEnabled = preferences.getUpdateNotificationsEnabledSync()
+            appUpdateRepository.syncTopicSubscription(updateEnabled)
         }
         viewModelScope.launch(Dispatchers.IO) {
             cloudSyncRepository.syncStatus.collect { status ->

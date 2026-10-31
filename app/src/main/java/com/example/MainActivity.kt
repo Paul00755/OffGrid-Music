@@ -33,12 +33,14 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.Song
+import com.example.ui.components.AppUpdateDialog
 import com.example.ui.components.FloatingPillNavBar
 import com.example.ui.components.MiniPlayer
 import com.example.ui.components.NavTab
 import com.example.ui.screens.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MusicViewModel
+import com.example.update.UpdateCheckResult
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -173,6 +175,7 @@ class MainActivity : ComponentActivity() {
                     val showAccountScreen by viewModel.showAccountScreen.collectAsStateWithLifecycle()
                     val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
                     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+                    val updateCheckResult by viewModel.updateCheckResult.collectAsStateWithLifecycle()
 
                     // Onboarding state is resolved at startup via UserPreferences & AppDatabase upgrade detection.
 
@@ -530,7 +533,10 @@ class MainActivity : ComponentActivity() {
                                                 onOpenAccount = { viewModel.openAccountScreen() },
                                                 onOpenAuth = { viewModel.openAuthScreen() },
                                                 onSignOut = { viewModel.signOut() },
-                                                onScreenEntered = { viewModel.onScreenEnteredForAutoScan("HOME") }
+                                                onScreenEntered = {
+                                                    viewModel.onScreenEnteredForAutoScan("HOME")
+                                                    viewModel.checkForUpdates(isManual = false)
+                                                }
                                              )
                                             NavTab.LIBRARY -> LibraryScreen(
                                                 allSongs = allSongs,
@@ -1013,6 +1019,24 @@ class MainActivity : ComponentActivity() {
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
                                 )
                             }
+
+                            val activeUpdate = (updateCheckResult as? UpdateCheckResult.UpdateAvailable)?.takeIf { !it.isDismissed }
+                            if (activeUpdate != null && !showSplash && isOnboardingCompleted) {
+                                AppUpdateDialog(
+                                    release = activeUpdate.release,
+                                    onDismiss = {
+                                        viewModel.dismissUpdate(activeUpdate.release.tag)
+                                    },
+                                    onUpdateNow = { targetUrl ->
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
+                                            startActivity(browserIntent)
+                                        } catch (_: Exception) {
+                                            android.widget.Toast.makeText(this@MainActivity, "Could not open browser", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -1049,6 +1073,18 @@ class MainActivity : ComponentActivity() {
                 val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
                 vm.dismissSplash()
                 vm.showNowPlaying.value = true
+            } catch (_: Exception) {}
+        }
+        if (intent.getBooleanExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_OPEN_UPDATE_DIALOG, false) ||
+            intent.getBooleanExtra("EXTRA_OPEN_UPDATE_DIALOG", false) ||
+            intent.getBooleanExtra("open_update_dialog", false)) {
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_OPEN_UPDATE_DIALOG)
+            intent.removeExtra("EXTRA_OPEN_UPDATE_DIALOG")
+            intent.removeExtra("open_update_dialog")
+            try {
+                val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
+                vm.dismissSplash()
+                vm.checkForUpdates(isManual = true)
             } catch (_: Exception) {}
         }
     }

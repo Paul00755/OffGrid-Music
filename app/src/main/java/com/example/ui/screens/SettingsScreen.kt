@@ -44,12 +44,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
+import com.example.BuildConfig
 import com.example.data.model.FolderInfo
 import com.example.service.SleepTimerState
 import com.example.service.transcription.AudioTranscribeMode
 import com.example.service.transcription.TranscribeLanguage
 import com.example.ui.components.*
 import com.example.ui.theme.*
+import com.example.update.UpdateCheckResult
 import com.example.util.HapticUtils
 
 enum class SettingsSection(val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
@@ -684,6 +686,11 @@ fun SettingsScreen(
     onBackClick: () -> Unit = {},
     initialTargetSection: String? = null,
     onTargetSectionConsumed: () -> Unit = {},
+    updateCheckResult: UpdateCheckResult = UpdateCheckResult.Idle,
+    updateNotificationsEnabled: Boolean = true,
+    onSetUpdateNotificationsEnabled: (Boolean) -> Unit = {},
+    onCheckForUpdates: () -> Unit = {},
+    onOpenUpdateDialog: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1687,7 +1694,13 @@ fun SettingsScreen(
             "diagnostics", "crash", "crash report", "error report", "logs", "log", "system health"
         )
     }
-    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics
+    val matchOtherUpdates = remember(searchTokens) {
+        matchesSettingsTokens(
+            searchTokens,
+            "update", "updates", "github", "version", "release", "releases", "apk", "changelog", "new version", "notification"
+        )
+    }
+    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates
 
     // Section 8: Cloud Sync granular matcher
     val matchCloudSyncItem = remember(searchTokens) {
@@ -1708,7 +1721,7 @@ fun SettingsScreen(
     val broadPlaybackMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "playback", "controls")
     val broadCacheMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "cache", "storage", "disk")
     val broadLibraryMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "library", "scan")
-    val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other")
+    val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other", "update", "github")
 
     val audioMatches = anyAudioItemMatches || broadAudioMatch
     val uiMatches = anyUiItemMatches || broadUiMatch
@@ -4578,6 +4591,207 @@ fun SettingsScreen(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("Clear", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item(key = "settings_updates_header") {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SettingsSectionHeader(
+                        title = "App Updates & GitHub Releases",
+                        subtitle = "Continuous releases, semantic version checks & update push alerts",
+                        kicker = "STABLE DISTRIBUTION & CI",
+                        icon = Icons.Default.SystemUpdate,
+                        accentColor = Color(0xFF64B5F6)
+                    )
+                }
+
+                item(key = "settings_updates_card") {
+                    SettingsCardContainer(accentGlow = Color(0xFF64B5F6)) {
+                        // Current installed version row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Installed App Version",
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = BentoPrimary.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
+                            ) {
+                                Text(
+                                    text = "v${BuildConfig.VERSION_NAME}",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        SettingsDivider()
+
+                        // Push Update Notifications toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    text = "Update Announcements",
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = "Receive notifications via GitHub & Firebase when a new stable release is published",
+                                    fontSize = 11.5.sp,
+                                    color = BentoTextSecondary,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                            Switch(
+                                checked = updateNotificationsEnabled,
+                                onCheckedChange = {
+                                    HapticUtils.performClickHaptic(context)
+                                    onSetUpdateNotificationsEnabled(it)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = BentoPrimary,
+                                    checkedTrackColor = BentoPrimary.copy(alpha = 0.35f),
+                                    uncheckedThumbColor = BentoTextSecondary,
+                                    uncheckedTrackColor = BentoCardSurface
+                                )
+                            )
+                        }
+
+                        SettingsDivider()
+
+                        // Update Status and Actions
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            val isChecking = updateCheckResult is UpdateCheckResult.Checking
+                            val availableUpdate = updateCheckResult as? UpdateCheckResult.UpdateAvailable
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Release Channel Status",
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                    val statusText = when (val res = updateCheckResult) {
+                                        is UpdateCheckResult.Checking -> "Checking api.github.com/repos/Paul00755/OffGrid-Music..."
+                                        is UpdateCheckResult.UpdateAvailable -> "🎉 New version ${res.releaseInfo.tag} ready to install"
+                                        is UpdateCheckResult.UpToDate -> "✓ Up to date with latest release (${res.currentVersion})"
+                                        is UpdateCheckResult.RateLimited -> "GitHub API rate limited (${res.message})"
+                                        is UpdateCheckResult.Offline -> "Offline - update check requires internet"
+                                        is UpdateCheckResult.Error -> "Check failed: ${res.message}"
+                                        UpdateCheckResult.Idle -> "Tap below to check for updates against GitHub"
+                                    }
+                                    val statusColor = when (updateCheckResult) {
+                                        is UpdateCheckResult.UpdateAvailable -> Color(0xFF69F0AE)
+                                        is UpdateCheckResult.UpToDate -> BentoTextSecondary
+                                        is UpdateCheckResult.Checking -> BentoPrimary
+                                        is UpdateCheckResult.RateLimited -> Color(0xFFFFB74D)
+                                        is UpdateCheckResult.Offline, is UpdateCheckResult.Error -> BentoError
+                                        UpdateCheckResult.Idle -> BentoTextSecondary
+                                    }
+                                    Text(
+                                        text = statusText,
+                                        fontSize = 11.5.sp,
+                                        color = statusColor,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onCheckForUpdates()
+                                    },
+                                    enabled = !isChecking,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoPrimary),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.5f)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    if (isChecking) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = BentoPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Checking...", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    } else {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Check for Updates", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                if (availableUpdate != null) {
+                                    Button(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onOpenUpdateDialog()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE)),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Download, contentDescription = null, tint = Color.Black, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("View Notes", fontSize = 11.5.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Paul00755/OffGrid-Music"))
+                                            context.startActivity(browserIntent)
+                                        } catch (_: Exception) {
+                                            android.widget.Toast.makeText(context, "Could not open browser", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoTextSecondary),
+                                    border = BorderStroke(1.dp, BentoBorder),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("GitHub Repo", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }

@@ -61,6 +61,15 @@
             </intent-filter>
         </service>
 
+        <!-- Firebase Cloud Messaging for Stable Release Update Announcements -->
+        <service
+            android:name=".service.notification.OffGridFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">
