@@ -655,8 +655,8 @@ class PlaybackManager(
 
     fun ensureBackgroundNotification() {
         try {
-            val isActivelyPlaying = _playbackState.value.isPlaying || player.isPlaying || player.playWhenReady
-            if (!isActivelyPlaying) return
+            val hasSong = _playbackState.value.currentSong != null || player.mediaItemCount > 0
+            if (!hasSong) return
             startMusicPlaybackService(MusicPlaybackService.ACTION_ENSURE_BACKGROUND_NOTIFICATION)
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()

@@ -2347,30 +2347,32 @@ private fun LyricsPanelContent(
             )
         }
 
-        // Top punch-hole camera black cover + smooth gradient transition for full-screen view
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-        ) {
-            Box(
+        // Top punch-hole camera black cover + smooth gradient transition for full-screen view (only when lyrics view is closed so it does not interrupt lyrics text)
+        if (!showLyricsView) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .windowInsetsTopHeight(WindowInsets.statusBars)
-                    .background(Color.Black)
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(22.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            0.0f to Color.Black,
-                            0.45f to Color.Black.copy(alpha = 0.58f),
-                            1.0f to Color.Transparent
+                    .align(Alignment.TopCenter)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsTopHeight(WindowInsets.statusBars)
+                        .background(Color.Black)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color.Black,
+                                0.45f to Color.Black.copy(alpha = 0.58f),
+                                1.0f to Color.Transparent
+                            )
                         )
-                    )
-            )
+                )
+            }
         }
     }
 }

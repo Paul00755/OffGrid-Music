@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.RemoteViews
 import com.example.MainActivity
 import com.example.R
@@ -129,9 +130,12 @@ object WidgetUpdateManager {
     }
 
     private data class LyricsStageWindow(
+        val prev2Line: String = "",
         val prevLine: String,
         val currLine: String,
         val nextLine: String,
+        val next2Line: String = "",
+        val next3Line: String = "",
         val signature: String,
         val songPrefix: String,
         val mode: LyricsDisplayMode,
@@ -947,6 +951,7 @@ object WidgetUpdateManager {
                 val isLight = cachedIsLightTheme
                 val currLyricColor = if (isLight) android.graphics.Color.parseColor("#0F172A") else android.graphics.Color.WHITE
                 val dimLyricColor = if (isLight) android.graphics.Color.parseColor("#64748B") else android.graphics.Color.parseColor("#8A94A6")
+                val extraDimLyricColor = if (isLight) android.graphics.Color.parseColor("#94A3B8") else android.graphics.Color.parseColor("#5A6275")
 
                 if (shouldAnimate) {
                     currentLyricsFlipperPage = (currentLyricsFlipperPage + 1) % 2
@@ -955,24 +960,52 @@ object WidgetUpdateManager {
 
                     for (id in lyricsIds) {
                         try {
+                            val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 500, 500)
+                            val hDp = (hPx / density).toInt()
+                            val showPrev2 = hDp >= 165
+                            val showNext2 = hDp >= 165
+                            val showNext3 = hDp >= 230
+
                             val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
                             views.setTextViewText(R.id.widget_lyrics_time_current, currentText)
                             views.setTextViewText(R.id.widget_lyrics_time_total, totalText)
                             views.setImageViewBitmap(R.id.widget_lyrics_progress, lyricsProgBmp)
                             if (currentLyricsFlipperPage == 0) {
+                                views.setTextViewText(R.id.widget_lyrics_prev2_0, window.prev2Line)
                                 views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
                                 views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
                                 views.setTextViewText(R.id.widget_lyrics_next_0, window.nextLine)
+                                views.setTextViewText(R.id.widget_lyrics_next2_0, window.next2Line)
+                                views.setTextViewText(R.id.widget_lyrics_next3_0, window.next3Line)
+
+                                views.setViewVisibility(R.id.widget_lyrics_prev2_0, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next2_0, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next3_0, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                                views.setTextColor(R.id.widget_lyrics_prev2_0, extraDimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_prev_0, dimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_curr_0, currLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_next_0, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next2_0, extraDimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next3_0, extraDimLyricColor)
                             } else {
+                                views.setTextViewText(R.id.widget_lyrics_prev2_1, window.prev2Line)
                                 views.setTextViewText(R.id.widget_lyrics_prev_1, window.prevLine)
                                 views.setTextViewText(R.id.widget_lyrics_curr_1, window.currLine)
                                 views.setTextViewText(R.id.widget_lyrics_next_1, window.nextLine)
+                                views.setTextViewText(R.id.widget_lyrics_next2_1, window.next2Line)
+                                views.setTextViewText(R.id.widget_lyrics_next3_1, window.next3Line)
+
+                                views.setViewVisibility(R.id.widget_lyrics_prev2_1, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next2_1, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next3_1, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                                views.setTextColor(R.id.widget_lyrics_prev2_1, extraDimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_prev_1, dimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_curr_1, currLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next2_1, extraDimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next3_1, extraDimLyricColor)
                             }
                             views.setDisplayedChild(R.id.widget_lyrics_flipper, currentLyricsFlipperPage)
                             appWidgetManager.partiallyUpdateAppWidget(id, views)
@@ -1013,24 +1046,52 @@ object WidgetUpdateManager {
                 } else {
                     for (id in lyricsIds) {
                         try {
+                            val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 500, 500)
+                            val hDp = (hPx / density).toInt()
+                            val showPrev2 = hDp >= 165
+                            val showNext2 = hDp >= 165
+                            val showNext3 = hDp >= 230
+
                             val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
                             views.setTextViewText(R.id.widget_lyrics_time_current, currentText)
                             views.setTextViewText(R.id.widget_lyrics_time_total, totalText)
                             views.setImageViewBitmap(R.id.widget_lyrics_progress, lyricsProgBmp)
                             if (lineChanged) {
+                                views.setTextViewText(R.id.widget_lyrics_prev2_0, window.prev2Line)
                                 views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
                                 views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
                                 views.setTextViewText(R.id.widget_lyrics_next_0, window.nextLine)
+                                views.setTextViewText(R.id.widget_lyrics_next2_0, window.next2Line)
+                                views.setTextViewText(R.id.widget_lyrics_next3_0, window.next3Line)
+
+                                views.setViewVisibility(R.id.widget_lyrics_prev2_0, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next2_0, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next3_0, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                                views.setTextColor(R.id.widget_lyrics_prev2_0, extraDimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_prev_0, dimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_curr_0, currLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_next_0, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next2_0, extraDimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next3_0, extraDimLyricColor)
 
+                                views.setTextViewText(R.id.widget_lyrics_prev2_1, window.prev2Line)
                                 views.setTextViewText(R.id.widget_lyrics_prev_1, window.prevLine)
                                 views.setTextViewText(R.id.widget_lyrics_curr_1, window.currLine)
                                 views.setTextViewText(R.id.widget_lyrics_next_1, window.nextLine)
+                                views.setTextViewText(R.id.widget_lyrics_next2_1, window.next2Line)
+                                views.setTextViewText(R.id.widget_lyrics_next3_1, window.next3Line)
+
+                                views.setViewVisibility(R.id.widget_lyrics_prev2_1, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next2_1, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                                views.setViewVisibility(R.id.widget_lyrics_next3_1, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                                views.setTextColor(R.id.widget_lyrics_prev2_1, extraDimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_prev_1, dimLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_curr_1, currLyricColor)
                                 views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next2_1, extraDimLyricColor)
+                                views.setTextColor(R.id.widget_lyrics_next3_1, extraDimLyricColor)
                             }
                             appWidgetManager.partiallyUpdateAppWidget(id, views)
                         } catch (_: Exception) {}
@@ -1565,14 +1626,20 @@ object WidgetUpdateManager {
         if (synced.isNotEmpty()) {
             val adjustedPos = (posMs + cachedLyricsOffsetMs).coerceAtLeast(0L)
             val activeIdx = synced.indexOfLast { it.first <= adjustedPos }.coerceAtLeast(0)
+            val prev2 = if (activeIdx > 1) synced[activeIdx - 2].second else ""
             val prev = if (activeIdx > 0) synced[activeIdx - 1].second else "♪ • •"
             val curr = synced[activeIdx].second.ifBlank { "♪" }
             val next = if (activeIdx + 1 < synced.size) synced[activeIdx + 1].second else ""
+            val next2 = if (activeIdx + 2 < synced.size) synced[activeIdx + 2].second else ""
+            val next3 = if (activeIdx + 3 < synced.size) synced[activeIdx + 3].second else ""
             val prefix = "sync_${song.id}_"
             return LyricsStageWindow(
+                prev2Line = prev2,
                 prevLine = prev,
                 currLine = curr,
                 nextLine = next,
+                next2Line = next2,
+                next3Line = next3,
                 signature = "${prefix}$activeIdx",
                 songPrefix = prefix,
                 mode = LyricsDisplayMode.SYNCED,
@@ -1582,13 +1649,19 @@ object WidgetUpdateManager {
         val plain = cachedPlainLines
         if (plain.isNotEmpty()) {
             val prefix = "plain_${song.id}_"
-            val firstLine = plain.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Plain lyrics available"
-            val secondLine = plain.getOrNull(1)?.takeIf { it.isNotBlank() }
+            val nonBlank = plain.filter { it.isNotBlank() }
+            val firstLine = nonBlank.firstOrNull() ?: "Plain lyrics available"
+            val secondLine = nonBlank.getOrNull(1)
                 ?: "Unsynced plain text • Tap to view in Now Playing"
+            val thirdLine = nonBlank.getOrNull(2) ?: ""
+            val fourthLine = nonBlank.getOrNull(3) ?: ""
             return LyricsStageWindow(
+                prev2Line = "",
                 prevLine = "♪ PLAIN LYRICS • STATIC",
                 currLine = firstLine,
                 nextLine = secondLine,
+                next2Line = thirdLine,
+                next3Line = fourthLine,
                 signature = "${prefix}static_${plain.hashCode()}",
                 songPrefix = prefix,
                 mode = LyricsDisplayMode.PLAIN,
@@ -1720,7 +1793,16 @@ object WidgetUpdateManager {
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 50)
         for (widgetId in appWidgetIds) {
             try {
-                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 145, 380, 220)
+                val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 145, 500, 500)
+                val hDp = (hPx / density).toInt()
+                val showPrev2 = hDp >= 165
+                val showNext2 = hDp >= 165
+                val showNext3 = hDp >= 230
+                val extraDimLyricColor = if (isLight) {
+                    android.graphics.Color.parseColor("#94A3B8")
+                } else {
+                    android.graphics.Color.parseColor("#5A6275")
+                }
                 val bgBmp = WidgetBitmapRenderer.renderCardBackground(
                     context = context,
                     widthPx = wPx,
@@ -1747,19 +1829,41 @@ object WidgetUpdateManager {
                 // Omitting setDisplayedChild in full updateAppWidget guarantees that AppWidgetServiceImpl's
                 // stored base RemoteViews does not contain a setDisplayedChild action that would re-trigger
                 // ViewFlipper's slide animation on every 1-second partial progress update.
+                views.setTextViewText(R.id.widget_lyrics_prev2_0, window.prev2Line)
                 views.setTextViewText(R.id.widget_lyrics_prev_0, window.prevLine)
                 views.setTextViewText(R.id.widget_lyrics_curr_0, window.currLine)
                 views.setTextViewText(R.id.widget_lyrics_next_0, window.nextLine)
+                views.setTextViewText(R.id.widget_lyrics_next2_0, window.next2Line)
+                views.setTextViewText(R.id.widget_lyrics_next3_0, window.next3Line)
+
+                views.setViewVisibility(R.id.widget_lyrics_prev2_0, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.widget_lyrics_next2_0, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.widget_lyrics_next3_0, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                views.setTextColor(R.id.widget_lyrics_prev2_0, extraDimLyricColor)
                 views.setTextColor(R.id.widget_lyrics_prev_0, dimLyricColor)
                 views.setTextColor(R.id.widget_lyrics_curr_0, currLyricColor)
                 views.setTextColor(R.id.widget_lyrics_next_0, dimLyricColor)
+                views.setTextColor(R.id.widget_lyrics_next2_0, extraDimLyricColor)
+                views.setTextColor(R.id.widget_lyrics_next3_0, extraDimLyricColor)
 
+                views.setTextViewText(R.id.widget_lyrics_prev2_1, window.prev2Line)
                 views.setTextViewText(R.id.widget_lyrics_prev_1, window.prevLine)
                 views.setTextViewText(R.id.widget_lyrics_curr_1, window.currLine)
                 views.setTextViewText(R.id.widget_lyrics_next_1, window.nextLine)
+                views.setTextViewText(R.id.widget_lyrics_next2_1, window.next2Line)
+                views.setTextViewText(R.id.widget_lyrics_next3_1, window.next3Line)
+
+                views.setViewVisibility(R.id.widget_lyrics_prev2_1, if (showPrev2 && window.prev2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.widget_lyrics_next2_1, if (showNext2 && window.next2Line.isNotBlank()) View.VISIBLE else View.GONE)
+                views.setViewVisibility(R.id.widget_lyrics_next3_1, if (showNext3 && window.next3Line.isNotBlank()) View.VISIBLE else View.GONE)
+
+                views.setTextColor(R.id.widget_lyrics_prev2_1, extraDimLyricColor)
                 views.setTextColor(R.id.widget_lyrics_prev_1, dimLyricColor)
                 views.setTextColor(R.id.widget_lyrics_curr_1, currLyricColor)
                 views.setTextColor(R.id.widget_lyrics_next_1, dimLyricColor)
+                views.setTextColor(R.id.widget_lyrics_next2_1, extraDimLyricColor)
+                views.setTextColor(R.id.widget_lyrics_next3_1, extraDimLyricColor)
 
                 views.setImageViewBitmap(R.id.widget_lyrics_progress, progBmp)
                 views.setTextViewText(R.id.widget_lyrics_time_current, formatTime(posMs))

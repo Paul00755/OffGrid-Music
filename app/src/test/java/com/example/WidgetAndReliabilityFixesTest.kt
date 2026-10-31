@@ -371,4 +371,81 @@ class WidgetAndReliabilityFixesTest {
         assertEquals("App Synced Line B", currProp.get(syncedAt90s))
         assertTrue(animProp.getBoolean(syncedAt10s))
     }
+
+    @Test
+    fun testLyricsWidgetLayoutExposesAdaptiveExpandedLines() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val inflater = LayoutInflater.from(context)
+        val lyricsView = inflater.inflate(R.layout.widget_lyrics, null)
+
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_prev2_0))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_prev_0))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_curr_0))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next_0))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next2_0))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next3_0))
+
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_prev2_1))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_prev_1))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_curr_1))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next_1))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next2_1))
+        assertNotNull(lyricsView.findViewById<View>(R.id.widget_lyrics_next3_1))
+    }
+
+    @Test
+    fun testLyricsWidgetResolvesExpandedContextualLines() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val song = Song(
+            id = 999_888L,
+            title = "Expanded Synced Song",
+            artist = "Expanded Artist",
+            album = "Expanded Album",
+            albumId = 88L,
+            durationMs = 300_000L,
+            path = "/storage/emulated/0/Music/expanded.mp3",
+            contentUriString = "content://media/external/audio/media/999888"
+        )
+        val resolveMethod = WidgetUpdateManager::class.java.getDeclaredMethod(
+            "resolveLyricsWindow",
+            Context::class.java,
+            Song::class.java,
+            Long::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        val syncedLyrics = com.example.data.model.Lyrics(
+            songId = song.id,
+            plainLyrics = "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5",
+            syncedLyricsJson = """[
+                {"timeMs":0,"text":"Line 0"},
+                {"timeMs":10000,"text":"Line 1"},
+                {"timeMs":20000,"text":"Line 2"},
+                {"timeMs":30000,"text":"Line 3"},
+                {"timeMs":40000,"text":"Line 4"},
+                {"timeMs":50000,"text":"Line 5"}
+            ]""",
+            isCached = true,
+            source = "Test Sync"
+        )
+        WidgetUpdateManager.syncLyricsFromApp(context, song.id, syncedLyrics)
+
+        // At 25s, active line is Line 2 (index 2).
+        // prev2 should be Line 0, prev should be Line 1, curr should be Line 2,
+        // next should be Line 3, next2 should be Line 4, next3 should be Line 5.
+        val window = resolveMethod.invoke(WidgetUpdateManager, context, song, 25_000L, 300_000L)!!
+        val prev2Prop = window.javaClass.getDeclaredField("prev2Line").apply { isAccessible = true }
+        val prevProp = window.javaClass.getDeclaredField("prevLine").apply { isAccessible = true }
+        val currProp = window.javaClass.getDeclaredField("currLine").apply { isAccessible = true }
+        val nextProp = window.javaClass.getDeclaredField("nextLine").apply { isAccessible = true }
+        val next2Prop = window.javaClass.getDeclaredField("next2Line").apply { isAccessible = true }
+        val next3Prop = window.javaClass.getDeclaredField("next3Line").apply { isAccessible = true }
+
+        assertEquals("Line 0", prev2Prop.get(window))
+        assertEquals("Line 1", prevProp.get(window))
+        assertEquals("Line 2", currProp.get(window))
+        assertEquals("Line 3", nextProp.get(window))
+        assertEquals("Line 4", next2Prop.get(window))
+        assertEquals("Line 5", next3Prop.get(window))
+    }
 }
