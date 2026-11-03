@@ -241,14 +241,31 @@ fun HomeScreen(
         onScreenEntered()
     }
 
-    // Pre-decode thumbnails for visible Home feed songs so scrolling has zero frame drops
-    LaunchedEffect(speedDialSongs, recentlyPlayed, recentlyAdded, mostPlayedFilteredSongs) {
+    // Pre-decode thumbnails for visible Home feed songs and albums so scrolling has zero frame drops
+    LaunchedEffect(speedDialSongs, recentlyPlayed, recentlyAdded, mostPlayedFilteredSongs, topAlbums) {
         val homeVisibleSongs = buildList {
             continueSong?.let { add(it) }
             addAll(speedDialSongs.take(12))
             addAll(mostPlayedFilteredSongs.take(10))
             addAll(recentlyPlayed.take(12))
             addAll(recentlyAdded.take(12))
+            topAlbums.take(8).forEach { album ->
+                if (!album.artworkUri.isNullOrBlank()) {
+                    val syntheticAlbumSongId = (album.name.hashCode().toLong() and 0x7FFFFFFFL) + 10_000_000_000L
+                    add(
+                        Song(
+                            id = syntheticAlbumSongId,
+                            title = album.name,
+                            artist = album.artist,
+                            album = album.name,
+                            durationMs = 0L,
+                            path = "album_art_${album.name}",
+                            contentUriString = "",
+                            artworkUri = album.artworkUri
+                        )
+                    )
+                }
+            }
         }.distinctBy { it.id }
         if (homeVisibleSongs.isNotEmpty()) {
             com.example.ui.components.ArtworkResolutionCache.preloadWindow(
@@ -958,7 +975,7 @@ fun HomeScreen(
 
         // Scanning Banner if active
         if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
-            item {
+            item(key = "home_scanning_banner", contentType = "scanning_banner") {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),
                     backgroundColor = BentoCardSurface
@@ -1056,7 +1073,7 @@ fun HomeScreen(
 
         // Empty state call to action when no music history is present
         if (allSongs.isEmpty() && !scanProgress.isScanning) {
-            item {
+            item(key = "home_empty_library_cta", contentType = "empty_state") {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),
                     backgroundColor = BentoCardSurface
@@ -1087,7 +1104,7 @@ fun HomeScreen(
                 }
             }
         } else if (recentlyPlayed.isEmpty()) {
-            item {
+            item(key = "home_start_listening_cta", contentType = "empty_state") {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),
                     backgroundColor = BentoCardSurface

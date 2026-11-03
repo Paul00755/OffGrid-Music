@@ -108,7 +108,7 @@ fun LazyListScope.renderHomeFeedSections(
                         playbackState.durationMs
                     }
 
-                    item(key = "section_continue_listening") {
+                    item(key = "section_continue_listening", contentType = "section_continue_listening") {
                         HomeFeedStyledHeader(
                             title = "Continue Listening",
                             studioCode = "CH // RESUME CUE",
@@ -291,7 +291,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
             }
             "quick_actions" -> {
-                item(key = "section_quick_actions") {
+                item(key = "section_quick_actions", contentType = "section_quick_actions") {
                     val context = LocalContext.current
                     HomeFeedStyledHeader(
                         title = "Quick Actions",
@@ -604,7 +604,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
             }
             "listening_stats" -> {
-                item(key = "section_listening_stats") {
+                item(key = "section_listening_stats", contentType = "section_listening_stats") {
                     HomeFeedStyledHeader(
                         title = "Listening Statistics",
                         studioCode = "CH // AUDIO TELEMETRY",
@@ -631,7 +631,7 @@ fun LazyListScope.renderHomeFeedSections(
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(StatsPeriod.values(), key = { it.name }) { period ->
+                        items(StatsPeriod.values(), key = { it.name }, contentType = { "stats_period_card" }) { period ->
                             HomeStatsPeriodCard(
                                 period = period,
                                 getDurationPlayedBetween = getDurationPlayedBetween,
@@ -645,7 +645,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
             }
             "most_played" -> {
-                item(key = "section_most_played_header") {
+                item(key = "section_most_played_header", contentType = "section_most_played_header") {
                     Column {
                         HomeFeedStyledHeader(
                             title = "Most Played",
@@ -659,7 +659,7 @@ fun LazyListScope.renderHomeFeedSections(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(vertical = 4.dp)
                         ) {
-                            items(MostPlayedFilter.values()) { filter ->
+                            items(MostPlayedFilter.values(), key = { it.name }, contentType = { "most_played_filter_chip" }) { filter ->
                                 val isSelected = filter == selectedMostPlayedFilter
                                 FilterChip(
                                     selected = isSelected,
@@ -753,7 +753,7 @@ fun LazyListScope.renderHomeFeedSections(
                         }
                     }
                 } else {
-                    item(key = "section_most_played_empty") {
+                    item(key = "section_most_played_empty", contentType = "section_most_played_empty") {
                         Text(
                             text = "No play history recorded for this period yet.",
                             fontSize = 13.sp,
@@ -766,7 +766,7 @@ fun LazyListScope.renderHomeFeedSections(
             "most_played_playlists" -> {
                 val playlistsToShow = if (mostPlayedPlaylists.isNotEmpty()) mostPlayedPlaylists else allPlaylists
                 if (playlistsToShow.isNotEmpty()) {
-                    item(key = "section_most_played_playlists") {
+                    item(key = "section_most_played_playlists", contentType = "section_most_played_playlists") {
                         HomeFeedStyledHeader(
                             title = "Most Played Playlists",
                             studioCode = "CH // TOP CRATES",
@@ -954,7 +954,7 @@ fun LazyListScope.renderHomeFeedSections(
             }
             "recently_played" -> {
                 if (recentlyPlayed.isNotEmpty()) {
-                    item(key = "section_recently_played") {
+                    item(key = "section_recently_played", contentType = "section_recently_played") {
                         HomeFeedStyledHeader(
                             title = "Recently Played",
                             studioCode = "CH // PLAYBACK LOG",
@@ -1074,7 +1074,7 @@ fun LazyListScope.renderHomeFeedSections(
             }
             "recently_added" -> {
                 if (recentlyAdded.isNotEmpty()) {
-                    item(key = "section_recently_added") {
+                    item(key = "section_recently_added", contentType = "section_recently_added") {
                         HomeFeedStyledHeader(
                             title = "Recently Added",
                             studioCode = "CH // NEW INGEST",
@@ -1082,10 +1082,11 @@ fun LazyListScope.renderHomeFeedSections(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
+                        val recentAddedSlice = remember(recentlyAdded) { recentlyAdded.take(10) }
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(recentlyAdded.take(10), key = { _, item -> "recent_added_${item.id}" }, contentType = { _, _ -> "recent_added" }) { _, song ->
+                            itemsIndexed(recentAddedSlice, key = { _, item -> "recent_added_${item.id}" }, contentType = { _, _ -> "recent_added" }) { _, song ->
                                 val cornerDp = when (feedStyle) {
                                     HomeFeedVisualStyle.HERO_SPOTLIGHT -> 22
                                     HomeFeedVisualStyle.MINIMAL_STREAM -> 18
@@ -1126,7 +1127,7 @@ fun LazyListScope.renderHomeFeedSections(
             }
             "top_artists" -> {
                 if (topArtists.isNotEmpty()) {
-                    item(key = "section_top_artists") {
+                    item(key = "section_top_artists", contentType = "section_top_artists") {
                         HomeFeedStyledHeader(
                             title = "Top Artists",
                             studioCode = "CH // VOCALISTS & PRODUCERS",
@@ -1137,7 +1138,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            itemsIndexed(topArtists, key = { idx, item -> "art_${idx}_${item.name}" }) { _, artist ->
+                            itemsIndexed(topArtists, key = { idx, item -> "art_${idx}_${item.name}" }, contentType = { _, _ -> "top_artist_card" }) { _, artist ->
                                 when (feedStyle) {
                                     HomeFeedVisualStyle.BENTO_DEFAULT -> {
                                         BentoCard(
@@ -1218,7 +1219,7 @@ fun LazyListScope.renderHomeFeedSections(
             }
             "top_albums" -> {
                 if (topAlbums.isNotEmpty()) {
-                    item(key = "section_top_albums") {
+                    item(key = "section_top_albums", contentType = "section_top_albums") {
                         HomeFeedStyledHeader(
                             title = "Top Albums",
                             studioCode = "CH // MASTER RELEASES",
@@ -1229,15 +1230,16 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(topAlbums, key = { idx, item -> "alb_${idx}_${item.name}" }) { _, album ->
+                            itemsIndexed(topAlbums, key = { idx, item -> "alb_${idx}_${item.name}" }, contentType = { _, _ -> "top_album_card" }) { _, album ->
                                 val dummySongForArt = remember(album) {
+                                    val syntheticId = (album.name.hashCode().toLong() and 0x7FFFFFFFL) + 10_000_000_000L
                                     Song(
-                                        id = 0L,
+                                        id = syntheticId,
                                         title = album.name,
                                         artist = album.artist,
                                         album = album.name,
                                         durationMs = 0L,
-                                        path = "",
+                                        path = "album_art_${album.name}",
                                         contentUriString = "",
                                         artworkUri = album.artworkUri
                                     )

@@ -803,6 +803,11 @@ fun LibraryScreen(
                 LibraryCategory.ARTISTS -> artists.size
                 LibraryCategory.FOLDERS -> folders.size
             }
+            val selectedMenuSongId = selectedSongForMenu?.id
+            val latestSearchQuery by rememberUpdatedState(searchQuery)
+            val latestOnAddRecentSearch by rememberUpdatedState(onAddRecentSearch)
+            val latestOnSongClick by rememberUpdatedState(onSongClick)
+            val latestOnFavoriteToggle by rememberUpdatedState(onFavoriteToggle)
 
             Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
@@ -839,25 +844,39 @@ fun LibraryScreen(
                                     }
 
                                     items(songsForLetter, key = { it.id }, contentType = { "song_item" }) { song ->
+                                        val isCurrentSongPlaying = currentPlayingSongId == song.id
+                                        val isMenuOpen = selectedMenuSongId == song.id
+                                        val itemOnClick = remember(song) {
+                                            {
+                                                val q = latestSearchQuery
+                                                if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                                latestOnSongClick(song)
+                                            }
+                                        }
+                                        val itemOnFavorite = remember(song) {
+                                            {
+                                                val q = latestSearchQuery
+                                                if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                                latestOnFavoriteToggle(song)
+                                            }
+                                        }
+                                        val itemOnMore = remember(song) {
+                                            {
+                                                val q = latestSearchQuery
+                                                if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                                selectedSongForMenu = song
+                                            }
+                                        }
                                         Box {
                                             SongItem(
                                                 song = song,
-                                                isPlaying = currentPlayingSongId == song.id,
-                                                onClick = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    onSongClick(song)
-                                                },
-                                                onFavoriteToggle = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    onFavoriteToggle(song)
-                                                },
-                                                onMoreClick = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    selectedSongForMenu = song
-                                                }
+                                                isPlaying = isCurrentSongPlaying,
+                                                onClick = itemOnClick,
+                                                onFavoriteToggle = itemOnFavorite,
+                                                onMoreClick = itemOnMore
                                             )
 
-                                            if (selectedSongForMenu?.id == song.id) {
+                                            if (isMenuOpen) {
                                                 SongActionMenu(
                                                     expanded = true,
                                                     song = song,
@@ -896,25 +915,39 @@ fun LibraryScreen(
                                 }
                             } else {
                                 items(processedSongs, key = { it.id }, contentType = { "song_item" }) { song ->
+                                    val isCurrentSongPlaying = currentPlayingSongId == song.id
+                                    val isMenuOpen = selectedMenuSongId == song.id
+                                    val itemOnClick = remember(song) {
+                                        {
+                                            val q = latestSearchQuery
+                                            if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                            latestOnSongClick(song)
+                                        }
+                                    }
+                                    val itemOnFavorite = remember(song) {
+                                        {
+                                            val q = latestSearchQuery
+                                            if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                            latestOnFavoriteToggle(song)
+                                        }
+                                    }
+                                    val itemOnMore = remember(song) {
+                                        {
+                                            val q = latestSearchQuery
+                                            if (q.isNotBlank()) latestOnAddRecentSearch(q)
+                                            selectedSongForMenu = song
+                                        }
+                                    }
                                     Box {
                                         SongItem(
                                             song = song,
-                                            isPlaying = currentPlayingSongId == song.id,
-                                            onClick = {
-                                                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                onSongClick(song)
-                                            },
-                                            onFavoriteToggle = {
-                                                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                onFavoriteToggle(song)
-                                            },
-                                            onMoreClick = {
-                                                if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                selectedSongForMenu = song
-                                            }
+                                            isPlaying = isCurrentSongPlaying,
+                                            onClick = itemOnClick,
+                                            onFavoriteToggle = itemOnFavorite,
+                                            onMoreClick = itemOnMore
                                         )
 
-                                        if (selectedSongForMenu?.id == song.id) {
+                                        if (isMenuOpen) {
                                             SongActionMenu(
                                                 expanded = true,
                                                 song = song,

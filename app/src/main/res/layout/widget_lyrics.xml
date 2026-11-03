@@ -13,6 +13,7 @@
         android:contentDescription="Lyrics Widget Background" />
 
     <LinearLayout
+        android:id="@+id/widget_lyrics_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
@@ -106,13 +107,13 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Center Smooth-Transition Lyrics Stage (ViewFlipper with dual lyric buffers) -->
+        <!-- Center Smooth-Transition Lyrics Stage (ViewFlipper with dual 13-line adaptive lyric buffers) -->
         <ViewFlipper
             android:id="@+id/widget_lyrics_flipper"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:layout_marginBottom="4dp"
             android:inAnimation="@anim/widget_lyric_slide_in"
             android:outAnimation="@anim/widget_lyric_slide_out">
@@ -128,12 +129,60 @@
                 android:paddingEnd="4dp">
 
                 <TextView
-                    android:id="@+id/widget_lyrics_prev2_0"
+                    android:id="@+id/widget_lyrics_prev6_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#43495A"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev5_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#4A5164"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev4_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#50586C"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev3_0"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="#5A6275"
-                    android:textSize="10.5sp"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev2_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#6B7487"
+                    android:textSize="11.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"
@@ -144,8 +193,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#7D8597"
-                    android:textSize="11.5sp"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false" />
@@ -154,11 +203,11 @@
                     android:id="@+id/widget_lyrics_curr_0"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:layout_marginBottom="3dp"
+                    android:paddingTop="3dp"
+                    android:paddingBottom="3dp"
                     android:text="♪ Play a song to view live synced lyrics"
                     android:textColor="#FFFFFF"
-                    android:textSize="14.5sp"
+                    android:textSize="15sp"
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
@@ -169,8 +218,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#7D8597"
-                    android:textSize="11.5sp"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false" />
@@ -180,8 +229,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#5A6275"
-                    android:textSize="10.5sp"
+                    android:textColor="#6B7487"
+                    android:textSize="11.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"
@@ -192,8 +241,44 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
+                    android:textColor="#5A6275"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next4_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#50586C"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next5_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#4A5164"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next6_0"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
                     android:textColor="#43495A"
-                    android:textSize="10sp"
+                    android:textSize="10.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"
@@ -211,12 +296,60 @@
                 android:paddingEnd="4dp">
 
                 <TextView
-                    android:id="@+id/widget_lyrics_prev2_1"
+                    android:id="@+id/widget_lyrics_prev6_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#43495A"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev5_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#4A5164"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev4_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#50586C"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev3_1"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="#5A6275"
-                    android:textSize="10.5sp"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_prev2_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#6B7487"
+                    android:textSize="11.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"
@@ -227,8 +360,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#7D8597"
-                    android:textSize="11.5sp"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false" />
@@ -237,11 +370,11 @@
                     android:id="@+id/widget_lyrics_curr_1"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:layout_marginBottom="3dp"
+                    android:paddingTop="3dp"
+                    android:paddingBottom="3dp"
                     android:text="♪ Play a song to view live synced lyrics"
                     android:textColor="#FFFFFF"
-                    android:textSize="14.5sp"
+                    android:textSize="15sp"
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
@@ -252,8 +385,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#7D8597"
-                    android:textSize="11.5sp"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false" />
@@ -263,8 +396,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="#5A6275"
-                    android:textSize="10.5sp"
+                    android:textColor="#6B7487"
+                    android:textSize="11.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"
@@ -275,8 +408,44 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
+                    android:textColor="#5A6275"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next4_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#50586C"
+                    android:textSize="11sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next5_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#4A5164"
+                    android:textSize="10.5sp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_lyrics_next6_1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
                     android:textColor="#43495A"
-                    android:textSize="10sp"
+                    android:textSize="10.5sp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false"

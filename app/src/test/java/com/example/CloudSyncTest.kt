@@ -21,7 +21,7 @@ import org.robolectric.annotation.Config
 import java.util.Calendar
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class CloudSyncTest {
 
     private lateinit var context: Context

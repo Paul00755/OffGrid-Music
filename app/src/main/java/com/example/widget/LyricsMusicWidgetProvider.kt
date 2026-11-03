@@ -27,7 +27,7 @@ class LyricsMusicWidgetProvider : AppWidgetProvider() {
     ) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
         val state = PlaybackManager.activeInstance?.playbackState?.value ?: PlaybackState()
-        WidgetUpdateManager.updateAllWidgets(context, state)
+        WidgetUpdateManager.onWidgetOptionsChanged(context, appWidgetId, newOptions, state)
     }
 
     override fun onReceive(context: Context, intent: Intent) {

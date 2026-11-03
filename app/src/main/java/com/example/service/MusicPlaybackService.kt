@@ -3,12 +3,17 @@ package com.example.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.annotation.OptIn
+import androidx.core.app.ServiceCompat
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
@@ -124,6 +129,11 @@ class MusicPlaybackService : MediaSessionService() {
                             Notification.FLAG_NO_CLEAR
                     mediaNotification.notification.visibility = Notification.VISIBILITY_PUBLIC
 
+                    // CRITICAL: Replace Media3's default deleteIntent (which sends KEYCODE_MEDIA_STOP and kills
+                    // the MediaSession + Control Centre player when the user clears the lockscreen notification)
+                    // with a non-destructive restore intent that keeps the Control Centre notification alive!
+                    mediaNotification.notification.deleteIntent = createDismissRestorePendingIntent()
+
                     // Ensure large icon artwork and text are directly embedded into the notification using authoritative cache
                     try {
                         val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
@@ -181,9 +191,95 @@ class MusicPlaybackService : MediaSessionService() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        registerScreenStateReceiver()
         val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession
             ?: PlaybackManager.getInstance(applicationContext).mediaSession
         safeAddSession(session)
+    }
+
+    private var screenReceiverRegistered = false
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            if (action == Intent.ACTION_SCREEN_ON ||
+                action == Intent.ACTION_SCREEN_OFF ||
+                action == Intent.ACTION_USER_PRESENT
+            ) {
+                val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession ?: return
+                val hasActiveMedia = session.player.mediaItemCount > 0 ||
+                    PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
+                if (hasActiveMedia) {
+                    safeAddSession(session)
+                    updateNotification(session, startInForegroundRequired = true, force = true)
+                }
+            }
+        }
+    }
+
+    private fun registerScreenStateReceiver() {
+        if (screenReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(screenStateReceiver, filter)
+            }
+            screenReceiverRegistered = true
+        } catch (_: Throwable) {}
+    }
+
+    private fun unregisterScreenStateReceiver() {
+        if (!screenReceiverRegistered) return
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (_: Throwable) {}
+        screenReceiverRegistered = false
+    }
+
+    private fun createDismissRestorePendingIntent(): PendingIntent {
+        val restoreIntent = Intent(applicationContext, MusicPlaybackService::class.java).apply {
+            action = ACTION_NOTIFICATION_DISMISSED
+        }
+        return PendingIntent.getService(
+            applicationContext,
+            9091,
+            restoreIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun enforcePersistentForegroundNotification(mediaNotification: MediaNotification?) {
+        val mn = mediaNotification ?: lastMediaNotification ?: return
+        try {
+            mn.notification.flags = mn.notification.flags or
+                Notification.FLAG_ONGOING_EVENT or
+                Notification.FLAG_NO_CLEAR
+            mn.notification.visibility = Notification.VISIBILITY_PUBLIC
+            mn.notification.deleteIntent = createDismissRestorePendingIntent()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    mn.notificationId,
+                    mn.notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(mn.notificationId, mn.notification)
+            }
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.notify(mn.notificationId, mn.notification)
+        } catch (_: Throwable) {
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                nm?.notify(mn.notificationId, mn.notification)
+            } catch (_: Throwable) {}
+        }
     }
 
     fun safeAddSession(session: MediaSession?) {
@@ -240,14 +336,19 @@ class MusicPlaybackService : MediaSessionService() {
             val pm = PlaybackManager.activeInstance ?: PlaybackManager.getInstance(applicationContext)
             pm.handleHeadphoneConnectedFromBroadcast()
         }
+        val isDismissRecovery = intent?.action == ACTION_NOTIFICATION_DISMISSED
+        val isForceEnsure = intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION || isDismissRecovery
         val result = super.onStartCommand(intent, flags, startId)
         val hasActiveMedia = session.player.mediaItemCount > 0 ||
             PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
         updateNotification(
             session = session,
             startInForegroundRequired = hasActiveMedia,
-            force = intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION
+            force = isForceEnsure
         )
+        if (hasActiveMedia && isForceEnsure) {
+            enforcePersistentForegroundNotification(lastMediaNotification)
+        }
         return START_STICKY
     }
 
@@ -328,10 +429,13 @@ class MusicPlaybackService : MediaSessionService() {
                 )) {
                 return
             }
-            // Keep service in foreground with active status bar notification whenever media is loaded
-            // so the notification stays active in the status bar while the app is in the background.
+            // Keep service in foreground with active status bar & Control Centre notification whenever media is loaded
+            // so the notification stays active while the app is in the background, even when paused or lockscreen is cleared.
             val shouldStartInForeground = startInForegroundRequired || isPlaying || hasActiveMedia
             super.onUpdateNotification(session, shouldStartInForeground)
+            if (hasActiveMedia) {
+                enforcePersistentForegroundNotification(lastMediaNotification)
+            }
         } catch (e: Throwable) {
             try {
                 super.onUpdateNotification(session, startInForegroundRequired)
@@ -429,6 +533,7 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        unregisterScreenStateReceiver()
         asyncArtDecodeJob?.cancel()
         notificationArtworkRequestKey = null
         serviceScope.cancel()
@@ -448,6 +553,7 @@ class MusicPlaybackService : MediaSessionService() {
         private const val ARTWORK_RETRY_INTERVAL_MS = 5 * 60 * 1_000L
         const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
         const val ACTION_ENSURE_BACKGROUND_NOTIFICATION = "com.example.service.ACTION_ENSURE_BACKGROUND_NOTIFICATION"
+        const val ACTION_NOTIFICATION_DISMISSED = "com.example.service.ACTION_NOTIFICATION_DISMISSED"
         var instance: MusicPlaybackService? = null
         var lastNotificationCallback: MediaNotification.Provider.Callback? = null
         var lastMediaNotification: MediaNotification? = null

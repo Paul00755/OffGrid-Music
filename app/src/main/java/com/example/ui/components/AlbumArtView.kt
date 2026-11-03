@@ -845,7 +845,7 @@ fun AlbumArtView(
 
     val isHighResPreferred = forceHighResOnline || preferHighResSetting
     val isCacheEnabled = cacheAlbumArtSetting && cacheSongArtSetting
-    val isThumbnail = cornerRadius <= 18 && !forceHighResOnline
+    val isThumbnail = !forceHighResOnline
 
     val songId = song?.id ?: 0L
     val songPath = song?.path
