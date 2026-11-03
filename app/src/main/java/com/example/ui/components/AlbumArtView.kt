@@ -168,6 +168,13 @@ object ArtworkResolutionCache {
         }
     }
 
+    fun isSupportedArtworkUriSyntax(uriStr: String?): Boolean {
+        if (uriStr.isNullOrBlank()) return false
+        if (uriStr.startsWith("file://")) return true
+        if (uriStr.startsWith("content://")) return !uriStr.contains("audio/albumart")
+        return uriStr.startsWith("http://") || uriStr.startsWith("https://")
+    }
+
     fun isKnownValidLocalUri(uriStr: String?): Boolean {
         if (uriStr.isNullOrBlank()) return false
         if (uriStr.startsWith("file://")) {
@@ -880,13 +887,12 @@ fun AlbumArtView(
     val initialUri = remember(trackKey, songArtwork, artworkVersion) {
         if (song == null || songId == 0L) return@remember null
         val mem = ArtworkResolutionCache.getMemory(songId, song.path)?.takeIf {
-            ArtworkResolutionCache.isKnownValidLocalUri(it)
+            ArtworkResolutionCache.isSupportedArtworkUriSyntax(it)
         }
         if (artworkVersion > 0L && !mem.isNullOrBlank()) {
             return@remember mem
         }
-        if (!songArtwork.isNullOrBlank() && ArtworkResolutionCache.isKnownValidLocalUri(songArtwork)) {
-            ArtworkResolutionCache.cacheArtwork(songId, song.path, songArtwork)
+        if (!songArtwork.isNullOrBlank() && ArtworkResolutionCache.isSupportedArtworkUriSyntax(songArtwork)) {
             return@remember songArtwork
         }
         mem
@@ -954,11 +960,14 @@ fun AlbumArtView(
         }
     }
 
-    val isManualArt = remember(songId, songPath, artworkVersion) {
-        song != null && com.example.util.ManualTagStore.isArtworkManuallyEdited(context, songId, song.path)
+    val needsHighResUpgrade = remember(forceHighResOnline, isHighResPreferred, songId, songPath, artworkVersion) {
+        if (!forceHighResOnline || !isHighResPreferred || song == null || songId <= 0L) {
+            false
+        } else {
+            !com.example.util.ManualTagStore.isArtworkManuallyEdited(context, songId, song.path) &&
+                !ArtworkResolutionCache.hasHighResArtwork(context, songId, song.path)
+        }
     }
-    val needsHighResUpgrade = forceHighResOnline && isHighResPreferred && !isManualArt &&
-        song != null && songId > 0L && !ArtworkResolutionCache.hasHighResArtwork(context, songId, song.path)
 
     val needsBackgroundWork = song != null && songId > 0L &&
         ((if (isThumbnail) resolvedThumbBmp == null else resolvedArtworkUri.isNullOrBlank()) || needsHighResUpgrade)

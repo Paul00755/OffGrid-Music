@@ -693,6 +693,15 @@ fun LazyListScope.renderHomeFeedSections(
                 if (mostPlayedFilteredSongs.isNotEmpty()) {
                     itemsIndexed(mostPlayedFilteredSongs, key = { _, item -> "most_played_${item.id}" }, contentType = { _, _ -> "song_item" }) { index, song ->
                         var showMenu by remember { mutableStateOf(false) }
+                        val onRowClick = remember(song, mostPlayedFilteredSongs, onPlaySongQueue) {
+                            { onPlaySongQueue(song, mostPlayedFilteredSongs) }
+                        }
+                        val onRowFavorite = remember(song, onFavoriteToggle) {
+                            { onFavoriteToggle(song) }
+                        }
+                        val onRowMore = remember {
+                            { showMenu = true }
+                        }
                         Box {
                             when (feedStyle) {
                                 HomeFeedVisualStyle.HERO_SPOTLIGHT -> {
@@ -700,9 +709,9 @@ fun LazyListScope.renderHomeFeedSections(
                                         rank = index + 1,
                                         song = song,
                                         isPlaying = currentPlayingSongId == song.id,
-                                        onClick = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
-                                        onFavoriteToggle = { onFavoriteToggle(song) },
-                                        onMoreClick = { showMenu = true }
+                                        onClick = onRowClick,
+                                        onFavoriteToggle = onRowFavorite,
+                                        onMoreClick = onRowMore
                                     )
                                 }
                                 HomeFeedVisualStyle.MINIMAL_STREAM -> {
@@ -710,9 +719,9 @@ fun LazyListScope.renderHomeFeedSections(
                                         rank = index + 1,
                                         song = song,
                                         isPlaying = currentPlayingSongId == song.id,
-                                        onClick = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
-                                        onFavoriteToggle = { onFavoriteToggle(song) },
-                                        onMoreClick = { showMenu = true }
+                                        onClick = onRowClick,
+                                        onFavoriteToggle = onRowFavorite,
+                                        onMoreClick = onRowMore
                                     )
                                 }
                                 HomeFeedVisualStyle.STUDIO_DECK -> {
@@ -720,18 +729,18 @@ fun LazyListScope.renderHomeFeedSections(
                                         channelIndex = index + 1,
                                         song = song,
                                         isPlaying = currentPlayingSongId == song.id,
-                                        onClick = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
-                                        onFavoriteToggle = { onFavoriteToggle(song) },
-                                        onMoreClick = { showMenu = true }
+                                        onClick = onRowClick,
+                                        onFavoriteToggle = onRowFavorite,
+                                        onMoreClick = onRowMore
                                     )
                                 }
                                 HomeFeedVisualStyle.BENTO_DEFAULT -> {
                                     SongItem(
                                         song = song,
                                         isPlaying = currentPlayingSongId == song.id,
-                                        onClick = { onPlaySongQueue(song, mostPlayedFilteredSongs) },
-                                        onFavoriteToggle = { onFavoriteToggle(song) },
-                                        onMoreClick = { showMenu = true }
+                                        onClick = onRowClick,
+                                        onFavoriteToggle = onRowFavorite,
+                                        onMoreClick = onRowMore
                                     )
                                 }
                             }

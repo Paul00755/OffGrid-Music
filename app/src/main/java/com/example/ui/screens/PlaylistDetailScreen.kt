@@ -28,7 +28,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -37,6 +39,7 @@ import com.example.data.model.Song
 import com.example.scanner.M3uParser
 import com.example.service.PlaybackState
 import com.example.ui.components.AddToPlaylistDialog
+import com.example.ui.components.AlbumArtView
 import com.example.ui.components.BentoCard
 import com.example.ui.components.FastScrollbar
 import com.example.ui.components.SongActionMenu
@@ -45,6 +48,7 @@ import com.example.ui.components.rememberReorderableLazyListState
 import com.example.ui.components.reorderableDragHandle
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
+import java.util.Locale
 
 data class PlaylistSongEntry(val stableKey: String, val song: Song)
 
@@ -104,7 +108,7 @@ fun PlaylistDetailScreen(
 
     var selectedSortOrder by remember(playlist.id) { mutableStateOf(PlaylistSortOrder.CUSTOM) }
     var isAscending by remember(playlist.id) { mutableStateOf(true) }
-    var lastSavedOrderIds by remember(playlist.id) { mutableStateOf<List<Long>?>(null) }
+    var lastCommittedOrderIds by remember(playlist.id) { mutableStateOf<List<Long>?>(null) }
     val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     // Maintain a mutable list of entries for live drag-and-drop reordering with position-independent stable composite keys
@@ -117,18 +121,20 @@ fun PlaylistDetailScreen(
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val density = LocalDensity.current
-    val itemHeightPx = with(density) { 68.dp.toPx() }
+    val itemHeightPx = with(density) { 66.dp.toPx() }
+    val headerCount = if (playlistSongs.isNotEmpty()) 3 else 2
 
     val reorderableState = rememberReorderableLazyListState(
         listState = listState,
         itemHeightPx = itemHeightPx,
+        headerItemCount = headerCount,
         onMove = { from, to ->
             if (from != to && from in localEntries.indices && to in localEntries.indices) {
                 try {
                     val item = localEntries.removeAt(from)
                     val safeTo = to.coerceIn(0, localEntries.size)
                     localEntries.add(safeTo, item)
-                    lastSavedOrderIds = localEntries.map { it.song.id }
+                    lastCommittedOrderIds = localEntries.map { it.song.id }
                     HapticUtils.performTickHaptic(context)
                 } catch (e: Exception) {
                     android.util.Log.e("PlaylistDetailScreen", "Error in onMove: from=$from to=$to", e)
@@ -138,7 +144,7 @@ fun PlaylistDetailScreen(
         onDragEnd = { _, _ ->
             try {
                 val updatedSongs = localEntries.map { it.song }
-                lastSavedOrderIds = updatedSongs.map { it.id }
+                lastCommittedOrderIds = updatedSongs.map { it.id }
                 onReorderSongs?.invoke(updatedSongs)
             } catch (e: Exception) {
                 android.util.Log.e("PlaylistDetailScreen", "Error in onDragEnd", e)
@@ -169,65 +175,37 @@ fun PlaylistDetailScreen(
 
     LaunchedEffect(playlistSongs, reorderableState.isDragging, reorderableState.isSettling) {
         if (!reorderableState.isDragging && !reorderableState.isSettling) {
-            val currentIds = localEntries.map { it.song.id }
-            val newIds = playlistSongs.map { it.id }
+            val incomingIds = playlistSongs.map { it.id }
+            val currentLocalIds = localEntries.map { it.song.id }
+            val committedIds = lastCommittedOrderIds
 
-            if (localEntries.isEmpty() && playlistSongs.isNotEmpty()) {
+            if (committedIds != null) {
+                if (incomingIds == committedIds) {
+                    lastCommittedOrderIds = null
+                } else if (incomingIds.size == currentLocalIds.size && incomingIds.toSet() == currentLocalIds.toSet()) {
+                    val updatedSongMap = playlistSongs.associateBy { it.id }
+                    for (i in localEntries.indices) {
+                        val currentEntry = localEntries[i]
+                        val updated = updatedSongMap[currentEntry.song.id]
+                        if (updated != null && updated != currentEntry.song) {
+                            localEntries[i] = currentEntry.copy(song = updated)
+                        }
+                    }
+                    return@LaunchedEffect
+                } else {
+                    lastCommittedOrderIds = null
+                }
+            }
+
+            if (currentLocalIds != incomingIds) {
                 localEntries.clear()
                 localEntries.addAll(buildPlaylistEntries(playlistSongs, playlist.id))
-            } else if (currentIds.size != newIds.size || currentIds.toSet() != newIds.toSet()) {
-                // Songs were added or deleted from playlist
-                val existingMap = localEntries.associateBy { it.song.id }
-                val remainingEntries = localEntries.filter { entry -> newIds.contains(entry.song.id) }.toMutableList()
-                val addedSongs = playlistSongs.filter { song -> !existingMap.containsKey(song.id) }
-                if (addedSongs.isNotEmpty()) {
-                    val occurrences = mutableMapOf<Long, Int>()
-                    remainingEntries.forEach { entry ->
-                        occurrences[entry.song.id] = occurrences.getOrDefault(entry.song.id, 0) + 1
-                    }
-                    val newEntries = addedSongs.map { song ->
-                        val count = occurrences.getOrDefault(song.id, 0) + 1
-                        occurrences[song.id] = count
-                        PlaylistSongEntry(
-                            stableKey = "pl_${playlist.id}_${song.id}_${count}_${song.path.hashCode()}",
-                            song = song
-                        )
-                    }
-                    val firstAddedId = addedSongs.first().id
-                    val isAddedAtTop = playlistSongs.firstOrNull()?.id == firstAddedId
-                    if (isAddedAtTop) {
-                        remainingEntries.addAll(0, newEntries)
-                    } else {
-                        remainingEntries.addAll(newEntries)
-                    }
-                }
-                localEntries.clear()
-                localEntries.addAll(remainingEntries)
             } else {
-                // Same song set: If newIds matches lastSavedOrderIds, DB write is confirmed.
-                // If user has NOT reordered locally in this session (lastSavedOrderIds == null)
-                // and DB emitted a new order (e.g. from cloud sync or initial load), sync to it.
-                if (lastSavedOrderIds != null) {
-                    if (newIds == lastSavedOrderIds) {
-                        lastSavedOrderIds = null
-                    }
-                } else if (currentIds != newIds) {
-                    localEntries.clear()
-                    localEntries.addAll(buildPlaylistEntries(playlistSongs, playlist.id))
-                    return@LaunchedEffect
-                }
-
-                // Live update song metadata (title, artist, album, artwork, favorite) in-place without changing order
                 val updatedSongMap = playlistSongs.associateBy { it.id }
                 for (i in localEntries.indices) {
                     val currentEntry = localEntries[i]
                     val updated = updatedSongMap[currentEntry.song.id]
-                    if (updated != null && (updated != currentEntry.song ||
-                            updated.title != currentEntry.song.title ||
-                            updated.artist != currentEntry.song.artist ||
-                            updated.album != currentEntry.song.album ||
-                            updated.artworkUri != currentEntry.song.artworkUri ||
-                            updated.isFavorite != currentEntry.song.isFavorite)) {
+                    if (updated != null && updated != currentEntry.song) {
                         localEntries[i] = currentEntry.copy(song = updated)
                     }
                 }
@@ -623,7 +601,7 @@ fun PlaylistDetailScreen(
                                                 localEntries.addAll(displayEntries)
                                                 selectedSortOrder = PlaylistSortOrder.CUSTOM
                                                 val updatedSongs = displayEntries.map { it.song }
-                                                lastSavedOrderIds = updatedSongs.map { it.id }
+                                                lastCommittedOrderIds = updatedSongs.map { it.id }
                                                 onReorderSongs?.invoke(updatedSongs)
                                                 Toast.makeText(context, "Saved as custom playlist order", Toast.LENGTH_SHORT).show()
                                             },
@@ -719,6 +697,7 @@ fun PlaylistDetailScreen(
                 ) { index, entry ->
                     val song = entry.song
                     val isCustomOrder = selectedSortOrder == PlaylistSortOrder.CUSTOM
+                    val isCurrentSong = currentPlayingSongId == song.id
                     val isDragging = isCustomOrder && (
                         reorderableState.draggedKey == entry.stableKey ||
                             (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
@@ -727,6 +706,7 @@ fun PlaylistDetailScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 1.dp)
                             .animateItem(
                                 fadeInSpec = null,
                                 fadeOutSpec = null,
@@ -741,8 +721,8 @@ fun PlaylistDetailScreen(
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(64.dp),
-                                shape = RoundedCornerShape(12.dp),
+                                    .height(62.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = BentoCardDarkPurple.copy(alpha = 0.25f),
                                 border = androidx.compose.foundation.BorderStroke(
                                     1.5.dp,
@@ -757,28 +737,44 @@ fun PlaylistDetailScreen(
                                 .graphicsLayer {
                                     if (isDragging) {
                                         translationY = reorderableState.dragOffsetY
-                                        scaleX = 1.03f
-                                        scaleY = 1.03f
-                                        rotationZ = (reorderableState.dragOffsetY * 0.015f).coerceIn(-2f, 2f)
+                                        scaleX = 1.02f
+                                        scaleY = 1.02f
                                         shadowElevation = 16.dp.toPx()
                                     }
+                                }
+                                .clickable(
+                                    enabled = !reorderableState.isDragging && !reorderableState.isSettling
+                                ) {
+                                    val playQueue = if (isCustomOrder) localEntries.map { it.song } else displaySongs
+                                    onSongClick(song, playQueue)
                                 },
-                            colors = CardDefaults.cardColors(containerColor = if (isDragging) BentoCardDarkPurple else Color.Transparent),
-                            border = if (isDragging) androidx.compose.foundation.BorderStroke(1.5.dp, BentoPrimary) else null,
+                            colors = CardDefaults.cardColors(
+                                containerColor = when {
+                                    isDragging -> BentoCardDarkPurple
+                                    isCurrentSong -> BentoPrimary.copy(alpha = 0.14f)
+                                    else -> Color.Transparent
+                                }
+                            ),
+                            border = when {
+                                isDragging -> androidx.compose.foundation.BorderStroke(1.5.dp, BentoPrimary)
+                                isCurrentSong -> androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f))
+                                else -> null
+                            },
                             elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 12.dp else 0.dp),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(14.dp)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(end = 16.dp),
+                                    .padding(horizontal = 8.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Interactive Reorder Drag Handle (Only active in Custom Order)
+                                // Interactive Drag Handle (exact Up-Next Queue technique)
                                 if (isCustomOrder) {
                                     Box(
                                         modifier = Modifier
-                                            .size(44.dp)
+                                            .size(40.dp)
+                                            .testTag("playlist_drag_handle_${song.id}")
                                             .reorderableDragHandle(
                                                 state = reorderableState,
                                                 getIndex = {
@@ -797,23 +793,92 @@ fun PlaylistDetailScreen(
                                             imageVector = Icons.Default.DragHandle,
                                             contentDescription = "Drag to reorder",
                                             tint = if (isDragging) BentoPrimary else BentoTextSecondary,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+
+                                // Track index / Playing Equalizer badge
+                                Box(
+                                    modifier = Modifier.width(26.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isCurrentSong) {
+                                        Icon(
+                                            imageVector = Icons.Default.GraphicEq,
+                                            contentDescription = "Currently Playing",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "${index + 1}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoTextSecondary
                                         )
                                     }
                                 }
 
-                                Box(modifier = Modifier.weight(1f)) {
-                                    SongItem(
-                                        song = song,
-                                        isPlaying = currentPlayingSongId == song.id,
-                                        onClick = {
-                                            if (!reorderableState.isDragging && !reorderableState.isSettling) {
-                                                onSongClick(song, displaySongs)
-                                            }
-                                        },
-                                        onFavoriteToggle = { onFavoriteToggle(song) },
-                                        onMoreClick = { selectedSongForMenu = song }
+                                Spacer(modifier = Modifier.width(6.dp))
+
+                                AlbumArtView(
+                                    song = song,
+                                    modifier = Modifier.size(46.dp),
+                                    cornerRadius = 10
+                                )
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = song.displayTitle,
+                                        fontSize = 14.5.sp,
+                                        fontWeight = if (isCurrentSong) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (isCurrentSong) BentoPrimary else BentoTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    val formattedDur = remember(song.durationMs) {
+                                        val totalSec = (song.durationMs.coerceAtLeast(0L)) / 1000L
+                                        String.format(Locale.US, "%d:%02d", totalSec / 60L, totalSec % 60L)
+                                    }
+                                    Text(
+                                        text = "${song.displayArtist} • $formattedDur",
+                                        fontSize = 12.sp,
+                                        color = BentoTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { onFavoriteToggle(song) },
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                        contentDescription = "Toggle Favorite",
+                                        tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Box {
+                                    IconButton(
+                                        onClick = { selectedSongForMenu = song },
+                                        modifier = Modifier.size(38.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "Track Options",
+                                            tint = BentoTextSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
 
                                     if (selectedSongForMenu?.id == song.id) {
                                         SongActionMenu(

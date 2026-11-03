@@ -207,44 +207,54 @@ class AudioFocusManager(
         return false
     }
 
+    private fun isDeviceScreenInteractive(): Boolean {
+        return try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            pm?.isInteractive ?: true
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
     private fun hasExternalVideoOrMediaPlaying(): Boolean {
         try {
             externalVideoOrMediaActiveProvider?.let { return it.invoke() }
         } catch (_: Throwable) {}
 
+        // When the phone screen is off / idle and no explicit test provider is set, the user is not
+        // watching a video or playing a foreground game. Background focus losses while idle come from
+        // notifications, hotspot client events, or download alerts.
+        if (!isDeviceScreenInteractive()) {
+            return false
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val configs = try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
             if (configs.isEmpty()) return false
-
-            val ownMediaCount = try { ownActiveMediaPlayerCountProvider().coerceAtLeast(0) } catch (_: Throwable) { 0 }
-            var musicMediaCount = 0
 
             for (config in configs) {
                 val attrs = config.audioAttributes ?: continue
                 val usage = attrs.usage
                 val contentType = attrs.contentType
 
-                // Any movie or game stream is definitely external video/game playback
+                // Ignore notification, ringtone, alarm, and sonification streams here
+                // (calls/ringtones/alarms are handled by isCallOrRingtoneActive(),
+                // and notifications are handled by hasActiveNotificationOrSystemStream()).
+                if (contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION ||
+                    contentType == AudioAttributes.CONTENT_TYPE_UNKNOWN
+                ) {
+                    continue
+                }
+
+                // Explicit movie or game stream is external video/game playback
                 if (contentType == AudioAttributes.CONTENT_TYPE_MOVIE || usage == AudioAttributes.USAGE_GAME) {
                     return true
                 }
 
-                if (usage == AudioAttributes.USAGE_MEDIA || usage == AudioAttributes.USAGE_UNKNOWN) {
-                    if (contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION) {
-                        continue
-                    }
-                    // Our ExoPlayer exclusively sets USAGE_MEDIA + CONTENT_TYPE_MUSIC.
-                    // Any other content type on USAGE_MEDIA/USAGE_UNKNOWN is an external media/video player.
-                    if (usage == AudioAttributes.USAGE_MEDIA && contentType == AudioAttributes.CONTENT_TYPE_MUSIC) {
-                        musicMediaCount++
-                    } else {
-                        return true
-                    }
+                // Speech content on USAGE_MEDIA (e.g., voice message, podcast, or video player using speech attr)
+                if (usage == AudioAttributes.USAGE_MEDIA && contentType == AudioAttributes.CONTENT_TYPE_SPEECH) {
+                    return true
                 }
-            }
-
-            if (musicMediaCount > ownMediaCount) {
-                return true
             }
         }
         return false
@@ -267,9 +277,23 @@ class AudioFocusManager(
             Log.d(TAG, "Notification/hotspot focus loss detected: ducking volume without pausing")
             wasDuckedByTransientFocus = true
             try { onDuckRequested(0.25f) } catch (_: Throwable) {}
+            scheduleDuckRestoreSafetyFallbackLocked()
         } else {
             Log.d(TAG, "Notification/hotspot focus loss detected with ducking disabled: continuing playback without pause")
         }
+    }
+
+    private fun scheduleDuckRestoreSafetyFallbackLocked() {
+        val restoreSafetyRunnable = Runnable {
+            synchronized(this@AudioFocusManager) {
+                if (wasDuckedByTransientFocus && activeInterruptions.isEmpty() && !hasActiveNotificationOrSystemStream()) {
+                    wasDuckedByTransientFocus = false
+                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+                }
+            }
+        }
+        pendingTransientCheckRunnables.add(restoreSafetyRunnable)
+        mainHandler.postDelayed(restoreSafetyRunnable, 2200L)
     }
 
     private fun scheduleTransientVideoOrCallVerificationLocked() {
@@ -281,7 +305,8 @@ class AudioFocusManager(
                 synchronized(this@AudioFocusManager) {
                     if (hasAudioFocus || activeInterruptions.isNotEmpty()) return@synchronized
                     val callNowActive = isCallOrRingtoneActive()
-                    val videoNowActive = hasExternalVideoOrMediaPlaying()
+                    val notificationStreamActive = hasActiveNotificationOrSystemStream()
+                    val videoNowActive = !notificationStreamActive && hasExternalVideoOrMediaPlaying()
                     if (callNowActive) {
                         if (wasDuckedByTransientFocus) {
                             wasDuckedByTransientFocus = false
@@ -307,16 +332,7 @@ class AudioFocusManager(
 
         // Safety fallback: if a hotspot/system notification never dispatches AUDIOFOCUS_GAIN after its chime ends,
         // restore ducked volume once no notification stream remains active.
-        val restoreSafetyRunnable = Runnable {
-            synchronized(this@AudioFocusManager) {
-                if (wasDuckedByTransientFocus && activeInterruptions.isEmpty() && !hasActiveNotificationOrSystemStream()) {
-                    wasDuckedByTransientFocus = false
-                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                }
-            }
-        }
-        pendingTransientCheckRunnables.add(restoreSafetyRunnable)
-        mainHandler.postDelayed(restoreSafetyRunnable, 2800L)
+        scheduleDuckRestoreSafetyFallbackLocked()
     }
 
     /**
@@ -354,7 +370,9 @@ class AudioFocusManager(
             AudioManager.AUDIOFOCUS_LOSS -> {
                 cancelTransientVerificationChecksLocked()
                 hasAudioFocus = false
-                if (hasActiveNotificationOrSystemStream() && !hasExternalVideoOrMediaPlaying() && !isCallOrRingtoneActive()) {
+                val ownMediaCount = try { ownActiveMediaPlayerCountProvider() } catch (_: Throwable) { 0 }
+                val isIdleNotificationLoss = !isDeviceScreenInteractive() && ownMediaCount > 0 && !isCallOrRingtoneActive() && !hasExternalVideoOrMediaPlaying()
+                if ((hasActiveNotificationOrSystemStream() || isIdleNotificationLoss) && !hasExternalVideoOrMediaPlaying() && !isCallOrRingtoneActive()) {
                     handleNotificationDuckOrContinueLocked()
                     scheduleTransientVideoOrCallVerificationLocked()
                     return
@@ -420,6 +438,7 @@ class AudioFocusManager(
                     Log.d(TAG, "Ducking volume for notification alert")
                     wasDuckedByTransientFocus = true
                     try { onDuckRequested(0.25f) } catch (_: Throwable) {}
+                    scheduleDuckRestoreSafetyFallbackLocked()
                 }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {

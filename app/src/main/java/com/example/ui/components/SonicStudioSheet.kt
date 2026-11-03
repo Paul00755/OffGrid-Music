@@ -213,9 +213,34 @@ fun SonicStudioBottomSheet(
 
             if (selectedTab == 0) {
                 // TAB 0: Precision A-B Looper & Timestamped Audio Bookmarks
+                val effectiveDurationMs = remember(durationMs, song.durationMs) {
+                    if (durationMs > 0L) durationMs else song.durationMs.coerceAtLeast(0L)
+                }
+                val formattedMaxDuration = remember(effectiveDurationMs) {
+                    if (effectiveDurationMs > 0L) SonicStudioEngine.formatDurationMs(effectiveDurationMs) else "--:--"
+                }
                 val isLoopForThisSong = abLoopState.songId == song.id
                 val pointAText = if (isLoopForThisSong) abLoopState.formatPoint(abLoopState.startMs) else "--:--"
                 val pointBText = if (isLoopForThisSong) abLoopState.formatPoint(abLoopState.endMs) else "--:--"
+                val currentLoopCount = abLoopState.maxLoopCount.coerceIn(
+                    com.example.util.AbLoopState.MIN_LOOP_COUNT,
+                    com.example.util.AbLoopState.MAX_LOOP_COUNT
+                )
+
+                var manualPointAInput by remember(song.id, abLoopState.startMs, isLoopForThisSong) {
+                    mutableStateOf(
+                        if (isLoopForThisSong && abLoopState.startMs != null) {
+                            abLoopState.formatPoint(abLoopState.startMs)
+                        } else ""
+                    )
+                }
+                var manualPointBInput by remember(song.id, abLoopState.endMs, isLoopForThisSong) {
+                    mutableStateOf(
+                        if (isLoopForThisSong && abLoopState.endMs != null) {
+                            abLoopState.formatPoint(abLoopState.endMs)
+                        } else ""
+                    )
+                }
 
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -235,7 +260,8 @@ fun SonicStudioBottomSheet(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Loop,
@@ -243,18 +269,35 @@ fun SonicStudioBottomSheet(
                                     tint = Color(0xFF00E5FF),
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Text(
-                                    text = "Precision A–B Section Looper",
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
-                                )
+                                Column {
+                                    Text(
+                                        text = "Precision A–B Section Looper",
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                    val statusText = when {
+                                        isLoopForThisSong && abLoopState.isActive ->
+                                            "Looping ${abLoopState.completedLoops}/${currentLoopCount} • Max $formattedMaxDuration"
+                                        isLoopForThisSong && abLoopState.isLoopCountExhausted ->
+                                            "Finished ${currentLoopCount}x loops • Playing normally"
+                                        else ->
+                                            "Track length: $formattedMaxDuration • Default 3x (Max 15x)"
+                                    }
+                                    Text(
+                                        text = statusText,
+                                        fontSize = 10.5.sp,
+                                        color = if (isLoopForThisSong && abLoopState.isActive) Color(0xFF00E5FF) else BentoTextSecondary
+                                    )
+                                }
                             }
                             if (isLoopForThisSong && (abLoopState.startMs != null || abLoopState.endMs != null)) {
                                 TextButton(
                                     onClick = {
                                         HapticUtils.performClickHaptic(context)
                                         SonicStudioEngine.clearAbLoop()
+                                        manualPointAInput = ""
+                                        manualPointBInput = ""
                                     },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                     modifier = Modifier.height(28.dp)
@@ -266,6 +309,7 @@ fun SonicStudioBottomSheet(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        // Live Capture Buttons
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -274,7 +318,7 @@ fun SonicStudioBottomSheet(
                                 onClick = {
                                     HapticUtils.performClickHaptic(context)
                                     val nowPos = posState?.value ?: fallbackPositionMs
-                                    SonicStudioEngine.setLoopPointA(song.id, nowPos, durationMs)
+                                    SonicStudioEngine.setLoopPointA(song.id, nowPos, effectiveDurationMs)
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isLoopForThisSong && abLoopState.startMs != null)
@@ -298,7 +342,7 @@ fun SonicStudioBottomSheet(
                                 onClick = {
                                     HapticUtils.performClickHaptic(context)
                                     val nowPos = posState?.value ?: fallbackPositionMs
-                                    val ok = SonicStudioEngine.setLoopPointB(song.id, nowPos, durationMs)
+                                    val ok = SonicStudioEngine.setLoopPointB(song.id, nowPos, effectiveDurationMs)
                                     if (!ok) {
                                         Toast.makeText(context, "Point B must be after Point A", Toast.LENGTH_SHORT).show()
                                     }
@@ -319,6 +363,246 @@ fun SonicStudioBottomSheet(
                                     fontWeight = FontWeight.Bold,
                                     color = if (isLoopForThisSong && abLoopState.endMs != null) Color(0xFF00E5FF) else Color.White
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Manual Point A & Point B Timestamp Entry Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = manualPointAInput,
+                                onValueChange = { if (it.length <= 9) manualPointAInput = it },
+                                singleLine = true,
+                                placeholder = { Text("A (0:00)", fontSize = 11.5.sp, color = BentoTextSecondary) },
+                                label = { Text("Point A", fontSize = 10.5.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF00E5FF),
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
+                                    focusedTextColor = BentoTextPrimary,
+                                    unfocusedTextColor = BentoTextPrimary,
+                                    focusedLabelColor = Color(0xFF00E5FF),
+                                    unfocusedLabelColor = BentoTextSecondary
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("manual_point_a_input")
+                            )
+
+                            OutlinedTextField(
+                                value = manualPointBInput,
+                                onValueChange = { if (it.length <= 9) manualPointBInput = it },
+                                singleLine = true,
+                                placeholder = { Text("B ($formattedMaxDuration)", fontSize = 11.5.sp, color = BentoTextSecondary) },
+                                label = { Text("Point B", fontSize = 10.5.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF00E5FF),
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
+                                    focusedTextColor = BentoTextPrimary,
+                                    unfocusedTextColor = BentoTextPrimary,
+                                    focusedLabelColor = Color(0xFF00E5FF),
+                                    unfocusedLabelColor = BentoTextSecondary
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("manual_point_b_input")
+                            )
+
+                            Button(
+                                onClick = {
+                                    HapticUtils.performClickHaptic(context)
+                                    val parsedA = if (manualPointAInput.isNotBlank()) {
+                                        SonicStudioEngine.parseTimestampToMs(manualPointAInput)
+                                    } else {
+                                        if (isLoopForThisSong) abLoopState.startMs else 0L
+                                    }
+                                    val parsedB = if (manualPointBInput.isNotBlank()) {
+                                        SonicStudioEngine.parseTimestampToMs(manualPointBInput)
+                                    } else {
+                                        if (isLoopForThisSong) abLoopState.endMs else null
+                                    }
+
+                                    if (manualPointAInput.isNotBlank() && parsedA == null) {
+                                        Toast.makeText(context, "Enter Point A as m:ss (e.g. 0:30)", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (manualPointBInput.isNotBlank() && parsedB == null) {
+                                        Toast.makeText(context, "Enter Point B as m:ss (e.g. 1:15)", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (effectiveDurationMs > 0L) {
+                                        if ((parsedA != null && parsedA > effectiveDurationMs) ||
+                                            (parsedB != null && parsedB > effectiveDurationMs)
+                                        ) {
+                                            Toast.makeText(
+                                                context,
+                                                "Clamped to track duration ($formattedMaxDuration)",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+
+                                    val result = SonicStudioEngine.setManualLoopPoints(
+                                        songId = song.id,
+                                        rawStartMs = parsedA,
+                                        rawEndMs = parsedB,
+                                        durationMs = effectiveDurationMs,
+                                        loopCount = currentLoopCount
+                                    )
+                                    if (!result.success) {
+                                        Toast.makeText(
+                                            context,
+                                            result.errorMessage ?: "Point B must be after Point A",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        manualPointAInput = result.state.formatPoint(result.state.startMs)
+                                        manualPointBInput = if (result.state.endMs != null) {
+                                            result.state.formatPoint(result.state.endMs)
+                                        } else ""
+                                        result.state.startMs?.let { startTarget ->
+                                            val curPos = posState?.value ?: fallbackPositionMs
+                                            val endTarget = result.state.endMs
+                                            if (curPos < startTarget || (endTarget != null && curPos >= endTarget)) {
+                                                onSeekTo(startTarget)
+                                            }
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .height(50.dp)
+                                    .testTag("apply_manual_loop_points_button")
+                            ) {
+                                Text(
+                                    text = "Set",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF06151F)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Loop Count Selector (Default 3, Min 1, Max 15)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Loop Repeat Count: ${currentLoopCount}x",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = "Resumes normal playback after ${currentLoopCount}x",
+                                    fontSize = 10.5.sp,
+                                    color = BentoTextSecondary
+                                )
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    onClick = {
+                                        if (currentLoopCount > com.example.util.AbLoopState.MIN_LOOP_COUNT) {
+                                            HapticUtils.performClickHaptic(context)
+                                            SonicStudioEngine.setLoopCount(currentLoopCount - 1)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White.copy(alpha = 0.08f),
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("loop_count_decrease_button")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = "Decrease loop count",
+                                            tint = if (currentLoopCount > com.example.util.AbLoopState.MIN_LOOP_COUNT) Color.White else BentoTextSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "${currentLoopCount}",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF00E5FF),
+                                    modifier = Modifier
+                                        .padding(horizontal = 4.dp)
+                                        .testTag("loop_count_value_text")
+                                )
+
+                                Surface(
+                                    onClick = {
+                                        if (currentLoopCount < com.example.util.AbLoopState.MAX_LOOP_COUNT) {
+                                            HapticUtils.performClickHaptic(context)
+                                            SonicStudioEngine.setLoopCount(currentLoopCount + 1)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White.copy(alpha = 0.08f),
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("loop_count_increase_button")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Increase loop count",
+                                            tint = if (currentLoopCount < com.example.util.AbLoopState.MAX_LOOP_COUNT) Color.White else BentoTextSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                listOf(3, 5, 10, 15).forEach { presetCount ->
+                                    val isPresetSelected = currentLoopCount == presetCount
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            SonicStudioEngine.setLoopCount(presetCount)
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isPresetSelected) Color(0xFF00E5FF).copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isPresetSelected) Color(0xFF00E5FF).copy(alpha = 0.7f) else Color.Transparent
+                                        ),
+                                        modifier = Modifier
+                                            .height(28.dp)
+                                            .testTag("loop_count_preset_${presetCount}")
+                                    ) {
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.padding(horizontal = 7.dp)
+                                        ) {
+                                            Text(
+                                                text = "${presetCount}x",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isPresetSelected) Color(0xFF00E5FF) else BentoTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

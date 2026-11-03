@@ -44,12 +44,14 @@ class ReorderableLazyListState(
     val listState: LazyListState,
     private val scope: CoroutineScope,
     itemHeightPx: Float,
+    headerItemCount: Int = 0,
     onMove: (fromIndex: Int, toIndex: Int) -> Unit,
     onDragEndCallback: (fromIndex: Int, toIndex: Int) -> Unit
 ) {
     var onMove: (fromIndex: Int, toIndex: Int) -> Unit = onMove
     var onDragEndCallback: (fromIndex: Int, toIndex: Int) -> Unit = onDragEndCallback
     var itemHeightPx: Float = itemHeightPx
+    var configuredHeaderCount: Int = headerItemCount.coerceAtLeast(0)
 
     var draggedIndex by mutableStateOf<Int?>(null)
         private set
@@ -88,7 +90,7 @@ class ReorderableLazyListState(
         private set
     var maxItemIndex: Int = 0
         private set
-    private var headerOffsetCount: Int = 0
+    private var headerOffsetCount: Int = headerItemCount.coerceAtLeast(0)
     private var autoScrollJob: Job? = null
     private var edgeZoneHoldStartMs: Long = 0L
 
@@ -113,7 +115,9 @@ class ReorderableLazyListState(
         val matched = draggedKey?.let { k -> visible.firstOrNull { it.key == k } }
         val curr = currentDraggedIndex
         if (matched != null && curr != null) {
-            headerOffsetCount = (matched.index - curr).coerceAtLeast(0)
+            headerOffsetCount = (matched.index - curr).coerceAtLeast(configuredHeaderCount)
+        } else if (configuredHeaderCount > 0) {
+            headerOffsetCount = configuredHeaderCount
         }
 
         val firstVisibleDataIdx = (visible.first().index - headerOffsetCount).coerceIn(minIndex, maxIndex)
@@ -515,6 +519,7 @@ class ReorderableLazyListState(
 fun rememberReorderableLazyListState(
     listState: LazyListState,
     itemHeightPx: Float,
+    headerItemCount: Int = 0,
     onMove: (fromIndex: Int, toIndex: Int) -> Unit,
     onDragEnd: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> }
 ): ReorderableLazyListState {
@@ -524,11 +529,13 @@ fun rememberReorderableLazyListState(
             listState = listState,
             scope = scope,
             itemHeightPx = itemHeightPx,
+            headerItemCount = headerItemCount,
             onMove = onMove,
             onDragEndCallback = onDragEnd
         )
     }
     state.itemHeightPx = itemHeightPx
+    state.configuredHeaderCount = headerItemCount.coerceAtLeast(0)
     state.onMove = onMove
     state.onDragEndCallback = onDragEnd
 

@@ -94,9 +94,25 @@ class PlaybackManager(
         },
         onPauseRequested = { pauseFromAudioFocus() },
         onResumeRequested = { resumeFromInterruption() },
-        onDuckRequested = { duckVol -> try { player.volume = duckVol } catch (_: Throwable) {} },
-        onRestoreVolumeRequested = { try { player.volume = 1.0f } catch (_: Throwable) {} }
+        onDuckRequested = { duckVol ->
+            isAudioFocusDucked = true
+            duckTargetVolume = duckVol.coerceIn(0.05f, 1.0f)
+            try { player.volume = duckTargetVolume } catch (_: Throwable) {}
+        },
+        onRestoreVolumeRequested = {
+            isAudioFocusDucked = false
+            try {
+                if (!isFadingOutToPause && !isCrossfadeTransitioning) {
+                    player.volume = 1.0f
+                }
+            } catch (_: Throwable) {}
+        }
     )
+
+    @Volatile
+    var isAudioFocusDucked: Boolean = false
+    @Volatile
+    private var duckTargetVolume: Float = 0.25f
     val stereoBalanceProcessor = StereoBalanceAudioProcessor()
     val audioNormalizerProcessor = AudioNormalizerProcessor()
 
@@ -1317,25 +1333,54 @@ class PlaybackManager(
     var wasPausedByZeroVolume = false
 
     private var lastVolumeChangeTime = 0L
-    fun checkVolume(explicitVolume: Int? = null) {
+    private var zeroVolumeVerifyJob: Job? = null
+    fun checkVolume(explicitVolume: Int? = null, fromBroadcast: Boolean = false) {
         scope.launch(Dispatchers.Main) {
             try {
+                if (isAudioFocusDucked || audioFocusManager.hasActiveInterruption()) {
+                    return@launch
+                }
                 val streamVol = audioManager?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
-                val currentVol = explicitVolume ?: streamVol
+                val currentVol = if (streamVol >= 0) {
+                    // If AudioManager reports non-zero STREAM_MUSIC volume, never trust a transient 0 broadcast extra
+                    if (explicitVolume == 0 && streamVol > 0) streamVol else (explicitVolume ?: streamVol)
+                } else {
+                    explicitVolume ?: streamVol
+                }
                 if (currentVol == 0 && (explicitVolume != null || streamVol == 0)) {
                     val isPlayingNow = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
                     val currentTrackPos = player.currentPosition
                     val isInitialStartup = currentTrackPos in 0L..2500L && explicitVolume == null
-                    if (isPlayingNow && pauseOnZeroVolume && !isInitialStartup && !audioFocusManager.hasActiveInterruption()) {
-                        wasPausedByZeroVolume = true
-                        if (fadeOutMs > 0) {
-                            pauseWithFade(fromZeroVolume = true)
+                    if (isPlayingNow && pauseOnZeroVolume && !isInitialStartup && !audioFocusManager.hasActiveInterruption() && !isAudioFocusDucked) {
+                        if (fromBroadcast && audioManager != null) {
+                            zeroVolumeVerifyJob?.cancel()
+                            zeroVolumeVerifyJob = scope.launch(Dispatchers.Main) {
+                                delay(220L)
+                                val verifiedVol = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                                val stillPlaying = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
+                                if (verifiedVol == 0 && stillPlaying && pauseOnZeroVolume && !audioFocusManager.hasActiveInterruption() && !isAudioFocusDucked) {
+                                    wasPausedByZeroVolume = true
+                                    if (fadeOutMs > 0) {
+                                        pauseWithFade(fromZeroVolume = true)
+                                    } else {
+                                        pauseInternal()
+                                        wasPausedByZeroVolume = true
+                                    }
+                                }
+                            }
                         } else {
-                            pauseInternal()
+                            zeroVolumeVerifyJob?.cancel()
                             wasPausedByZeroVolume = true
+                            if (fadeOutMs > 0) {
+                                pauseWithFade(fromZeroVolume = true)
+                            } else {
+                                pauseInternal()
+                                wasPausedByZeroVolume = true
+                            }
                         }
                     }
                 } else if (currentVol > 0) {
+                    zeroVolumeVerifyJob?.cancel()
                     if (wasPausedByZeroVolume) {
                         wasPausedByZeroVolume = false
                         if (autoResumeOnVolumeIncrease &&
@@ -1362,13 +1407,14 @@ class PlaybackManager(
         override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
             val streamType = intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) ?: -1
             if (streamType != android.media.AudioManager.STREAM_MUSIC) return
+            if (isAudioFocusDucked || audioFocusManager.hasActiveInterruption()) return
             val now = System.currentTimeMillis()
             if (now - lastVolumeChangeTime < 100) return
             lastVolumeChangeTime = now
 
             val streamValue = intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1) ?: -1
             if (streamValue >= 0) {
-                checkVolume(streamValue)
+                checkVolume(streamValue, fromBroadcast = true)
             }
         }
     }
@@ -2503,6 +2549,7 @@ class PlaybackManager(
 
     private fun pauseInternal() {
         isFadingOutToPause = false
+        isAudioFocusDucked = false
         wasPausedByZeroVolume = false
         cancelCrossfade(resetVolume = true)
         fadeJob?.cancel()
@@ -2562,6 +2609,7 @@ class PlaybackManager(
         }
         val wasFadingOut = isFadingOutToPause
         isFadingOutToPause = false
+        isAudioFocusDucked = false
         if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
             audioFocusManager.requestAudioFocus()
         }
@@ -2607,6 +2655,7 @@ class PlaybackManager(
         val wasFadingOut = isFadingOutToPause
         val currentVolBeforeResume = player.volume.coerceIn(0f, 1f)
         isFadingOutToPause = false
+        isAudioFocusDucked = false
         if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
             audioFocusManager.requestAudioFocus()
         }
@@ -2928,11 +2977,10 @@ class PlaybackManager(
                     if (player.isPlaying) {
                         var currentPos = player.currentPosition.coerceAtLeast(0L)
                         val activeSongId = _playbackState.value.currentSong?.id ?: 0L
-                        val abLoop = com.example.util.SonicStudioEngine.abLoopState.value
-                        if (abLoop.shouldLoopBack(activeSongId, currentPos)) {
-                            val targetStart = (abLoop.startMs ?: 0L).coerceAtLeast(0L)
-                            player.seekTo(targetStart)
-                            currentPos = targetStart
+                        val loopTargetStart = com.example.util.SonicStudioEngine.checkAndConsumeLoopTrigger(activeSongId, currentPos)
+                        if (loopTargetStart != null) {
+                            player.seekTo(loopTargetStart)
+                            currentPos = loopTargetStart
                         }
                         val rawDur = player.duration
                         val totalDur = if (rawDur > 0L && rawDur != androidx.media3.common.C.TIME_UNSET) rawDur else 0L
@@ -2974,7 +3022,7 @@ class PlaybackManager(
                             }
                         } else if (crossfadeMs > 0L && reliableDur > (crossfadeMs + 1000L) && (reliableDur - currentPos) > crossfadeMs) {
                             hasTriggeredCrossfadeTransition = false
-                            if (!isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
+                            if (!isCrossfadeTransitioning && crossfadeJob?.isActive != true && !isAudioFocusDucked && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
                             }
                         } else if (crossfadeMs <= 0L) {
@@ -2982,8 +3030,8 @@ class PlaybackManager(
                             if (inTrackEndFadeOut && (fadeJob == null || !fadeJob!!.isActive)) {
                                 val rem = (reliableDur - currentPos - 80L).coerceAtLeast(0L)
                                 val targetVol = (rem.toFloat() / effectiveEndFadeWindowMs.toFloat()).coerceIn(0.0f, 1.0f)
-                                player.volume = targetVol
-                            } else if (!inTrackEndFadeOut && !isCrossfadeTransitioning && crossfadeJob?.isActive != true && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
+                                player.volume = if (isAudioFocusDucked) minOf(targetVol, duckTargetVolume) else targetVol
+                            } else if (!inTrackEndFadeOut && !isCrossfadeTransitioning && crossfadeJob?.isActive != true && !isAudioFocusDucked && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
                             }
                         }

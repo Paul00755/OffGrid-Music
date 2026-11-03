@@ -30,6 +30,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +73,7 @@ fun ListeningStatsDetailScreen(
     loadWrappedData: (suspend (Long, Long) -> WrappedData)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var selectedPeriod by remember { mutableStateOf(DetailedStatsPeriod.SEVEN_DAYS) }
     var currentStoryRange by remember { mutableStateOf(StoryTimeRange.LAST_7_DAYS) }
     var showWrappedDialog by remember { mutableStateOf(false) }
@@ -286,6 +291,18 @@ fun ListeningStatsDetailScreen(
             )
         }
     ) { paddingValues ->
+        LaunchedEffect(topSongs) {
+            if (topSongs.isNotEmpty()) {
+                com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                    context = context,
+                    songs = topSongs,
+                    firstVisibleIndex = 0,
+                    windowAhead = 25,
+                    windowBehind = 0
+                )
+            }
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -295,7 +312,7 @@ fun ListeningStatsDetailScreen(
             contentPadding = PaddingValues(bottom = 100.dp, top = 8.dp)
         ) {
             // Executive Wrapped & Lifetime Summary Card
-            item {
+            item(key = "stats_wrapped_summary", contentType = "stats_wrapped_summary") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 0) {
                     WrappedSummaryShowcaseCard(
                         lifetimePlaytimeMs = lifetimeDurationMs,
@@ -313,7 +330,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Time Period Filter Chips
-            item {
+            item(key = "stats_period_chips", contentType = "stats_period_chips") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 70) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -357,7 +374,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Period Visual Summary Bar Chart
-            item {
+            item(key = "stats_bar_chart", contentType = "stats_bar_chart") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 140) {
                     val chartTitle = remember(selectedPeriod) {
                         when (selectedPeriod) {
@@ -416,7 +433,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Listening Activity Heatmap (GitHub-style contribution grid)
-            item {
+            item(key = "stats_heatmap", contentType = "stats_heatmap") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 175) {
                     ListeningActivityHeatmapCard(
                         dailyStats = heatmapStats,
@@ -426,7 +443,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Key Metrics Grid
-            item {
+            item(key = "stats_key_metrics", contentType = "stats_key_metrics") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 210) {
                     Column {
                         Text(
@@ -572,7 +589,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Listening Clock / Time of Day Breakdown
-            item {
+            item(key = "stats_time_of_day", contentType = "stats_time_of_day") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 280) {
                     BentoCard(
                         modifier = Modifier.fillMaxWidth(),
@@ -635,7 +652,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Top Songs Section
-            item {
+            item(key = "stats_top_songs_header", contentType = "stats_section_header") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 350) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -658,73 +675,75 @@ fun ListeningStatsDetailScreen(
             }
 
             if (topSongs.isNotEmpty()) {
-                itemsIndexed(topSongs, key = { _, s -> "top_${s.id}" }) { index, song ->
-                    AnimatedStatsSection(
-                        visible = screenEntered,
-                        delayMs = (370 + index * 30).coerceAtMost(600)
+                itemsIndexed(
+                    items = topSongs,
+                    key = { _, s -> "top_${s.id}" },
+                    contentType = { _, _ -> "stats_top_song_item" }
+                ) { index, song ->
+                    val onTopSongClick = remember(song, topSongs, onPlayQueue) {
+                        { onPlayQueue(song, topSongs) }
+                    }
+                    BentoCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onTopSongClick),
+                        backgroundColor = BentoCardSurface
                     ) {
-                        BentoCard(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onPlayQueue(song, topSongs) },
-                            backgroundColor = BentoCardSurface
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            Text(
+                                text = "#${index + 1}",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (index < 3) BentoPrimary else BentoTextSecondary,
+                                modifier = Modifier.width(32.dp)
+                            )
+                            AlbumArtView(
+                                song = song,
+                                modifier = Modifier.size(46.dp),
+                                cornerRadius = 8
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "#${index + 1}",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (index < 3) BentoPrimary else BentoTextSecondary,
-                                    modifier = Modifier.width(32.dp)
+                                    text = song.displayTitle,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                AlbumArtView(
-                                    song = song,
-                                    modifier = Modifier.size(46.dp),
-                                    cornerRadius = 8
+                                Text(
+                                    text = "${song.displayArtist} • ${song.displayAlbum}",
+                                    fontSize = 12.sp,
+                                    color = BentoTextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
+                            }
+                            if (song.playCount > 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = BentoPrimary.copy(alpha = 0.15f)
+                                ) {
                                     Text(
-                                        text = song.displayTitle,
-                                        fontSize = 14.sp,
+                                        text = "${song.playCount} plays",
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = BentoTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        color = BentoPrimary,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
-                                    Text(
-                                        text = "${song.displayArtist} • ${song.displayAlbum}",
-                                        fontSize = 12.sp,
-                                        color = BentoTextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                if (song.playCount > 0) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = BentoPrimary.copy(alpha = 0.15f)
-                                    ) {
-                                        Text(
-                                            text = "${song.playCount} plays",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = BentoPrimary,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
                                 }
                             }
                         }
                     }
                 }
             } else {
-                item {
+                item(key = "stats_top_songs_empty", contentType = "stats_empty") {
                     Text(
                         text = "No songs played during this period yet.",
                         fontSize = 13.sp,
@@ -736,7 +755,7 @@ fun ListeningStatsDetailScreen(
 
             // Top Artists
             if (topArtists.isNotEmpty()) {
-                item {
+                item(key = "stats_top_artists", contentType = "stats_top_artists") {
                     AnimatedStatsSection(visible = screenEntered, delayMs = 450) {
                         Column {
                             Spacer(modifier = Modifier.height(6.dp))
@@ -801,7 +820,7 @@ fun ListeningStatsDetailScreen(
             }
 
             // Jump to Recently Played Button
-            item {
+            item(key = "stats_history_button", contentType = "stats_history_button") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 500) {
                     Column {
                         Spacer(modifier = Modifier.height(10.dp))
@@ -838,26 +857,10 @@ private fun AnimatedStatsSection(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(
-            animationSpec = tween(
-                durationMillis = 380,
-                delayMillis = delayMs,
-                easing = FastOutSlowInEasing
-            )
-        ) + slideInVertically(
-            initialOffsetY = { 35 },
-            animationSpec = tween(
-                durationMillis = 420,
-                delayMillis = delayMs,
-                easing = FastOutSlowInEasing
-            )
-        ),
-        exit = fadeOut(animationSpec = tween(150)),
-        modifier = modifier
-    ) {
-        content()
+    if (visible) {
+        Box(modifier = modifier) {
+            content()
+        }
     }
 }
 
@@ -1439,36 +1442,47 @@ private fun ListeningActivityHeatmapCard(
                     }
                 }
 
-                // Horizontally scrollable weeks grid with month headers on top
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(scrollState),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
+                // Horizontally scrollable weeks grid with month headers on top and single-Canvas 7x53 cell matrix
+                val weekHeaders = remember(weeksData) {
                     var lastShownMonth = ""
-                    weeksData.forEach { week ->
+                    weeksData.map { week ->
                         val firstStatInWeek = week.firstOrNull { it != null }
                         val monthName = firstStatInWeek?.fullDate?.substringBefore(' ') ?: ""
                         val dayNum = firstStatInWeek?.fullDate?.substringAfter(' ')?.toIntOrNull() ?: 99
                         val showMonthHeader = monthName.isNotEmpty() && monthName != lastShownMonth && dayNum <= 14
                         if (showMonthHeader) {
                             lastShownMonth = monthName
+                            monthName
+                        } else {
+                            ""
                         }
+                    }
+                }
 
-                        Column(
-                            horizontalAlignment = Alignment.Start,
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
+                val totalGridWidthDp = remember(weeksData.size) {
+                    val count = weeksData.size.coerceAtLeast(1)
+                    (count * 12 + (count - 1) * 3).dp
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(scrollState)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier.height(15.dp)
+                    ) {
+                        weekHeaders.forEach { monthLabel ->
                             Box(
                                 modifier = Modifier
                                     .height(15.dp)
                                     .width(12.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
-                                if (showMonthHeader) {
+                                if (monthLabel.isNotEmpty()) {
                                     Text(
-                                        text = monthName,
+                                        text = monthLabel,
                                         fontSize = 9.sp,
                                         color = BentoTextSecondary,
                                         maxLines = 1,
@@ -1477,39 +1491,78 @@ private fun ListeningActivityHeatmapCard(
                                     )
                                 }
                             }
+                        }
+                    }
 
-                            week.forEach { dayStat ->
-                                val isSelected = dayStat != null && selectedDay?.dayStartMs == dayStat.dayStartMs
-                                val cellColor = when {
-                                    dayStat == null -> Color.Transparent
-                                    dayStat.durationMs <= 0L -> Color(0xFF1E2230)
-                                    else -> {
-                                        val ratio = (dayStat.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
-                                        when {
-                                            ratio < 0.25f -> accentColor.copy(alpha = 0.30f)
-                                            ratio < 0.50f -> accentColor.copy(alpha = 0.52f)
-                                            ratio < 0.75f -> accentColor.copy(alpha = 0.76f)
-                                            else -> accentColor
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    val emptyCellColor = Color(0xFF1E2230)
+                    val tier1Color = accentColor.copy(alpha = 0.30f)
+                    val tier2Color = accentColor.copy(alpha = 0.52f)
+                    val tier3Color = accentColor.copy(alpha = 0.76f)
+                    val selectedDayStartMs = selectedDay?.dayStartMs
+                    val density = LocalDensity.current
+                    val cellPx = with(density) { 12.dp.toPx() }
+                    val gapPx = with(density) { 3.dp.toPx() }
+                    val stepPx = cellPx + gapPx
+
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier
+                            .width(totalGridWidthDp)
+                            .height(102.dp) // 7 * 12.dp + 6 * 3.dp
+                            .pointerInput(weeksData, stepPx) {
+                                detectTapGestures { tapOffset ->
+                                    val col = (tapOffset.x / stepPx).toInt()
+                                    val row = (tapOffset.y / stepPx).toInt()
+                                    if (col in weeksData.indices && row in 0..6) {
+                                        val tappedStat = weeksData[col].getOrNull(row)
+                                        if (tappedStat != null) {
+                                            selectedDay = tappedStat
                                         }
                                     }
                                 }
+                            }
+                    ) {
+                        val cellPx = 12.dp.toPx()
+                        val gapPx = 3.dp.toPx()
+                        val stepPx = cellPx + gapPx
+                        val corner = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                        val cellSize = androidx.compose.ui.geometry.Size(cellPx, cellPx)
+                        val borderStroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
 
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(cellColor)
-                                        .then(
-                                            if (isSelected) {
-                                                Modifier.border(1.dp, Color.White, RoundedCornerShape(3.dp))
-                                            } else Modifier
-                                        )
-                                        .then(
-                                            if (dayStat != null) {
-                                                Modifier.clickable { selectedDay = dayStat }
-                                            } else Modifier
-                                        )
+                        for (col in weeksData.indices) {
+                            val week = weeksData[col]
+                            val x = col * stepPx
+                            for (row in 0 until minOf(7, week.size)) {
+                                val dayStat = week[row] ?: continue
+                                val y = row * stepPx
+                                val cellColor = if (dayStat.durationMs <= 0L) {
+                                    emptyCellColor
+                                } else {
+                                    val ratio = (dayStat.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
+                                    when {
+                                        ratio < 0.25f -> tier1Color
+                                        ratio < 0.50f -> tier2Color
+                                        ratio < 0.75f -> tier3Color
+                                        else -> accentColor
+                                    }
+                                }
+                                val topLeft = androidx.compose.ui.geometry.Offset(x, y)
+                                drawRoundRect(
+                                    color = cellColor,
+                                    topLeft = topLeft,
+                                    size = cellSize,
+                                    cornerRadius = corner
                                 )
+                                if (selectedDayStartMs == dayStat.dayStartMs) {
+                                    drawRoundRect(
+                                        color = Color.White,
+                                        topLeft = topLeft,
+                                        size = cellSize,
+                                        cornerRadius = corner,
+                                        style = borderStroke
+                                    )
+                                }
                             }
                         }
                     }

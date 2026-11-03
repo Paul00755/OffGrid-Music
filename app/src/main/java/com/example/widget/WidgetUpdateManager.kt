@@ -156,19 +156,23 @@ object WidgetUpdateManager {
         availableNextLines: Int,
         density: Float = 1f
     ): AdaptiveLyricsLayoutSpec {
-        val safeH = heightDp.coerceIn(90, 650)
+        val safeH = heightDp.coerceIn(70, 650)
         val safeW = widthDp.coerceIn(140, 650)
 
+        // Height thresholds calibrated to real Android launcher cell dp reporting
+        // (including compact-grid launchers like OplusLauncher/ColorOS, OneUI, and Pixel Launcher):
+        // - 1 row (4x1 Shrunk): ~75–115dp
+        // - 2 rows (4x2 Standard/Medium): ~116–158dp (default 145dp)
+        // - 3 rows (4x3 Expanded): ~159–197dp (9 to 11 lines)
+        // - 4+ rows (4x4+ Extra-Expanded): >= 198dp (13 lines)
         val (basePrev, baseNext) = when {
-            safeH < 112 -> 0 to 0   // Shrunk ultra-compact: current line only
-            safeH < 128 -> 0 to 1   // Very compact: current + 1 upcoming
-            safeH < 155 -> 1 to 1   // Compact: 1 prev + current + 1 next (3 lines)
-            safeH < 185 -> 2 to 2   // Standard: 2 prev + current + 2 next (5 lines)
-            safeH < 218 -> 2 to 3   // Medium: 2 prev + current + 3 next (6 lines)
-            safeH < 252 -> 3 to 3   // Medium-Tall: 3 prev + current + 3 next (7 lines)
-            safeH < 292 -> 4 to 4   // Tall: 4 prev + current + 4 next (9 lines)
-            safeH < 338 -> 5 to 5   // Expanded: 5 prev + current + 5 next (11 lines)
-            else -> 6 to 6          // Extra-Expanded: 6 prev + current + 6 next (13 lines)
+            safeH < 96 -> 0 to 0    // Shrunk ultra-compact: current line only (1 line)
+            safeH < 116 -> 1 to 1   // Shrunk 4x1: 1 prev + current + 1 next (3 lines)
+            safeH < 136 -> 2 to 2   // Compact 4x2: 2 prev + current + 2 next (5 lines)
+            safeH < 159 -> 2 to 3   // Standard / Medium 4x2: 2 prev + current + 3 next (6 lines)
+            safeH < 180 -> 4 to 4   // Expanded 4x3: 4 prev + current + 4 next (9 lines)
+            safeH < 198 -> 5 to 5   // Tall Expanded 4x3: 5 prev + current + 5 next (11 lines)
+            else -> 6 to 6          // Extra-Expanded 4x4+: 6 prev + current + 6 next (13 lines)
         }
 
         val availPrev = availablePrevLines.coerceAtLeast(0)
@@ -191,46 +195,69 @@ object WidgetUpdateManager {
         }
 
         val containerPadDp = when {
-            safeH < 120 -> 8
-            safeH < 165 -> 10
-            safeH < 250 -> 12
+            safeH < 116 -> 8
+            safeH < 159 -> 10
+            safeH < 198 -> 12
             else -> 14
         }
 
-        // Header (~38dp) + bottom progress strip (~16dp) + flipper margins (~8dp) + container top/bottom padding
         val chromeDp = (containerPadDp * 2) + 62
-        val stageHeightDp = (safeH - chromeDp).coerceAtLeast(32)
+        val rawStageHeightDp = (safeH - chromeDp).coerceAtLeast(32)
+        // Many launchers report cell heights in compact dp units (~175dp for 4x3 which is ~260dp on screen,
+        // and ~210dp for 4x4 which is ~355dp on screen). Ensure expanded tiers use realistic stage height.
+        val stageHeightDp = when {
+            safeH >= 198 -> maxOf(rawStageHeightDp, 255)
+            safeH >= 159 -> maxOf(rawStageHeightDp, 185)
+            else -> rawStageHeightDp
+        }
+
         val visibleLineCount = (1 + actualPrev + actualNext).coerceAtLeast(1)
         val dpPerLine = stageHeightDp.toFloat() / visibleLineCount.toFloat()
 
         val widthBoostSp = if (safeW >= 340) 0.5f else 0f
         val currSp = when {
-            safeH < 118 -> 14.0f + widthBoostSp
-            dpPerLine >= 34f -> 17.0f + widthBoostSp
-            dpPerLine >= 28f -> 16.2f + widthBoostSp
+            safeH < 116 -> 14.0f + widthBoostSp
+            safeH >= 198 -> 16.2f + widthBoostSp
+            safeH >= 159 -> 15.8f + widthBoostSp
+            dpPerLine >= 34f -> 16.6f + widthBoostSp
+            dpPerLine >= 28f -> 16.0f + widthBoostSp
             dpPerLine >= 23f -> 15.4f + widthBoostSp
-            else -> 14.5f + widthBoostSp
-        }.coerceIn(14.0f, 17.8f)
+            else -> 14.6f + widthBoostSp
+        }.coerceIn(14.0f, 17.5f)
 
-        val nearSp = (currSp - 2.3f).coerceIn(11.2f, 14.2f)
-        val midSp = (currSp - 3.0f).coerceIn(10.8f, 13.4f)
-        val farSp = (currSp - 3.6f).coerceIn(10.2f, 12.6f)
+        val nearSp = when {
+            safeH >= 198 -> (currSp - 2.6f).coerceIn(13.0f, 14.2f)
+            safeH >= 159 -> (currSp - 2.5f).coerceIn(12.6f, 13.8f)
+            else -> (currSp - 2.3f).coerceIn(11.2f, 14.0f)
+        }
+        val midSp = when {
+            safeH >= 198 -> (currSp - 3.3f).coerceIn(12.2f, 13.4f)
+            safeH >= 159 -> (currSp - 3.2f).coerceIn(12.0f, 13.0f)
+            else -> (currSp - 3.0f).coerceIn(10.8f, 13.2f)
+        }
+        val farSp = when {
+            safeH >= 198 -> (currSp - 4.0f).coerceIn(11.6f, 12.6f)
+            safeH >= 159 -> (currSp - 3.8f).coerceIn(11.4f, 12.4f)
+            else -> (currSp - 3.6f).coerceIn(10.2f, 12.4f)
+        }
 
         val surroundingCount = actualPrev + actualNext
-        val estTextHeightDp = (currSp * 1.45f) + (surroundingCount * (midSp * 1.30f))
+        val estTextHeightDp = (currSp * 1.42f) + (surroundingCount * (midSp * 1.28f))
         val slackDp = (stageHeightDp.toFloat() - estTextHeightDp).coerceAtLeast(0f)
 
         // Distribute vertical slack across lines so expanded widgets have balanced breathing room
         // instead of clustering in the center with empty black gaps at top and bottom.
         val perSlotSlackDp = slackDp / (visibleLineCount + 1).toFloat()
-        val linePadVerticalDp = (perSlotSlackDp * 0.45f).coerceIn(
-            if (safeH < 135) 0.5f else 1.5f,
-            6.5f
-        )
-        val currPadVerticalDp = (linePadVerticalDp + 2.0f).coerceIn(
-            if (safeH < 125) 1.5f else 3.0f,
-            9.0f
-        )
+        val linePadVerticalDp = when {
+            safeH >= 198 -> (perSlotSlackDp * 0.55f).coerceIn(3.0f, 4.8f)
+            safeH >= 159 -> (perSlotSlackDp * 0.55f).coerceIn(2.8f, 4.4f)
+            else -> (perSlotSlackDp * 0.45f).coerceIn(if (safeH < 135) 0.5f else 1.5f, 5.5f)
+        }
+        val currPadVerticalDp = when {
+            safeH >= 198 -> (linePadVerticalDp + 2.2f).coerceIn(5.2f, 7.5f)
+            safeH >= 159 -> (linePadVerticalDp + 2.0f).coerceIn(4.8f, 6.8f)
+            else -> (linePadVerticalDp + 2.0f).coerceIn(if (safeH < 125) 1.5f else 3.0f, 7.5f)
+        }
 
         val safeDensity = density.coerceAtLeast(0.75f)
         return AdaptiveLyricsLayoutSpec(
@@ -247,6 +274,7 @@ object WidgetUpdateManager {
     }
 
     private val cachedWidgetOptions = java.util.concurrent.ConcurrentHashMap<Int, Bundle>()
+    private val cachedWidgetOptionsTimestamp = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     fun onWidgetOptionsChanged(
         context: Context,
@@ -256,7 +284,9 @@ object WidgetUpdateManager {
     ) {
         if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID && newOptions != null) {
             cachedWidgetOptions[appWidgetId] = Bundle(newOptions)
+            cachedWidgetOptionsTimestamp[appWidgetId] = System.currentTimeMillis()
         }
+        lastLyricsLineSignature = ""
         updateAllWidgets(context, state)
     }
 
@@ -1224,6 +1254,80 @@ object WidgetUpdateManager {
         }
     }
 
+    private fun extractOptionsDimensionsDp(
+        options: Bundle?,
+        isLandscape: Boolean
+    ): Pair<Int, Int> {
+        if (options == null) return 0 to 0
+
+        var sizesW = 0
+        var sizesH = 0
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            val sizes = try {
+                options.getParcelableArrayList<android.util.SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+            } catch (_: Exception) {
+                null
+            }
+            val validSizes = sizes?.filter { it.width > 40f && it.height > 40f }.orEmpty()
+            if (validSizes.isNotEmpty()) {
+                val chosen = if (isLandscape) {
+                    validSizes.maxByOrNull { it.width }
+                } else {
+                    val minW = validSizes.minOf { it.width }
+                    val portraitCandidates = validSizes.filter { it.width <= minW * 1.18f }
+                    portraitCandidates.maxByOrNull { it.height } ?: validSizes.maxByOrNull { it.height }
+                }
+                if (chosen != null) {
+                    sizesW = chosen.width.toInt()
+                    sizesH = chosen.height.toInt()
+                }
+            }
+        }
+
+        val minW = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+        val maxW = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 0)
+        val minH = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
+        val maxH = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)
+
+        val boundsW = if (isLandscape) {
+            if (maxW > 40) maxW else minW
+        } else {
+            if (minW > 40) minW else maxW
+        }
+        val boundsH = if (isLandscape) {
+            if (minH > 40) minH else maxH
+        } else {
+            maxOf(minH, maxH)
+        }
+
+        val resolvedW = when {
+            sizesW > 40 && boundsW > 40 -> maxOf(sizesW, boundsW)
+            sizesW > 40 -> sizesW
+            else -> boundsW
+        }
+
+        // Combine OPTION_APPWIDGET_SIZES height with MIN_HEIGHT/MAX_HEIGHT:
+        // Some OEM launchers keep OPTION_APPWIDGET_SIZES at the initial 4x2 height (~130-155dp)
+        // while updating MAX_HEIGHT/MIN_HEIGHT on resize (or vice versa).
+        val resolvedH = when {
+            sizesH > 40 && boundsH > 40 -> {
+                val sizesIsDefault2Row = sizesH in 125..158
+                val boundsIsDefault2Row = boundsH in 125..158
+                when {
+                    sizesIsDefault2Row && !boundsIsDefault2Row -> boundsH
+                    boundsIsDefault2Row && !sizesIsDefault2Row -> sizesH
+                    sizesH < 120 || boundsH < 120 -> minOf(sizesH, boundsH)
+                    else -> maxOf(sizesH, boundsH)
+                }
+            }
+            sizesH > 40 -> sizesH
+            else -> boundsH
+        }
+
+        return resolvedW to resolvedH
+    }
+
     private fun resolveWidgetDimensionsPx(
         context: Context,
         appWidgetManager: AppWidgetManager,
@@ -1235,63 +1339,33 @@ object WidgetUpdateManager {
     ): Pair<Int, Int> {
         val density = WidgetBitmapRenderer.getRenderDensity(context)
         return try {
-            val liveOptions = appWidgetManager.getAppWidgetOptions(widgetId)
-            val options: Bundle? = if (liveOptions != null &&
-                (liveOptions.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0) > 0 ||
-                    liveOptions.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0) > 0)
-            ) {
-                cachedWidgetOptions[widgetId] = liveOptions
-                liveOptions
-            } else {
-                cachedWidgetOptions[widgetId] ?: liveOptions
-            }
-
             val isLandscape = context.resources?.configuration?.orientation ==
                 android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-            var resolvedWidthDp = 0
-            var resolvedHeightDp = 0
+            val liveOptions = try { appWidgetManager.getAppWidgetOptions(widgetId) } catch (_: Exception) { null }
+            val cachedOptions = cachedWidgetOptions[widgetId]
+            val cachedAt = cachedWidgetOptionsTimestamp[widgetId] ?: 0L
+            val isRecentCache = (System.currentTimeMillis() - cachedAt) in 0L..5000L
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && options != null) {
-                @Suppress("DEPRECATION")
-                val sizes = options.getParcelableArrayList<android.util.SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
-                if (!sizes.isNullOrEmpty()) {
-                    val chosen = if (isLandscape) {
-                        sizes.maxByOrNull { it.width }
-                    } else {
-                        sizes.maxByOrNull { it.height }
-                    }
-                    if (chosen != null && chosen.width > 40f && chosen.height > 40f) {
-                        resolvedWidthDp = chosen.width.toInt()
-                        resolvedHeightDp = chosen.height.toInt()
-                    }
-                }
-            }
+            val (liveW, liveH) = extractOptionsDimensionsDp(liveOptions, isLandscape)
+            val (cachedW, cachedH) = extractOptionsDimensionsDp(cachedOptions, isLandscape)
 
-            if (resolvedWidthDp <= 40 || resolvedHeightDp <= 40) {
-                val minW = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0) ?: 0
-                val maxW = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 0) ?: 0
-                val minH = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0
-                val maxH = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0) ?: 0
-
-                // In Android AppWidgets:
-                // Portrait width = MIN_WIDTH, Portrait height = MAX_HEIGHT
-                // Landscape width = MAX_WIDTH, Landscape height = MIN_HEIGHT
-                resolvedWidthDp = if (isLandscape) {
-                    if (maxW > 40) maxW else minW
-                } else {
-                    if (minW > 40) minW else maxW
+            val (resolvedWidthDp, resolvedHeightDp) = if (isRecentCache && cachedW > 40 && cachedH > 40) {
+                cachedW to cachedH
+            } else if (liveW > 40 && liveH > 40) {
+                if (liveOptions != null) {
+                    cachedWidgetOptions[widgetId] = Bundle(liveOptions)
                 }
-                resolvedHeightDp = if (isLandscape) {
-                    if (minH > 40) minH else maxH
-                } else {
-                    maxOf(minH, maxH)
-                }
+                val bestH = if (cachedH > 40 && liveH in 125..158 && cachedH !in 125..158) cachedH else liveH
+                val bestW = if (cachedW > 40 && liveW <= 40) cachedW else liveW
+                bestW to bestH
+            } else {
+                cachedW to cachedH
             }
 
             val wDp = (if (resolvedWidthDp > 40) resolvedWidthDp else defaultWidthDp).coerceIn(110, maxWidthDp)
-            val hDp = (if (resolvedHeightDp > 40) resolvedHeightDp else defaultHeightDp).coerceIn(95, maxHeightDp)
-            Pair((wDp * density).toInt().coerceAtLeast(100), (hDp * density).toInt().coerceAtLeast(95))
+            val hDp = (if (resolvedHeightDp > 40) resolvedHeightDp else defaultHeightDp).coerceIn(75, maxHeightDp)
+            Pair((wDp * density).toInt().coerceAtLeast(100), (hDp * density).toInt().coerceAtLeast(75))
         } catch (_: Exception) {
             Pair((defaultWidthDp * density).toInt(), (defaultHeightDp * density).toInt())
         }

@@ -151,28 +151,19 @@ fun LibraryScreen(
     val firstVisibleItemIndex by remember {
         derivedStateOf { songsListState.firstVisibleItemIndex }
     }
-    val firstVisibleItemScrollOffset by remember {
-        derivedStateOf { songsListState.firstVisibleItemScrollOffset }
-    }
     val isAtTopOfList by remember {
         derivedStateOf {
             songsListState.firstVisibleItemIndex == 0 && songsListState.firstVisibleItemScrollOffset <= 12
         }
     }
-    val canListScrollDown by remember {
-        derivedStateOf {
-            songsListState.canScrollForward ||
-                songsListState.firstVisibleItemIndex > 0 ||
-                songsListState.firstVisibleItemScrollOffset > 0
+
+    val scrollAcc = remember {
+        object {
+            var downward: Float = 0f
+            var upward: Float = 0f
+            var lastTransitionMs: Long = 0L
         }
     }
-    val hasLibraryListItems by remember {
-        derivedStateOf { songsListState.layoutInfo.totalItemsCount > 0 }
-    }
-
-    var downwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
-    var upwardScrollAccumulator by remember { mutableFloatStateOf(0f) }
-    var lastHeaderTransitionTimeMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         onScreenEntered()
@@ -185,49 +176,52 @@ fun LibraryScreen(
                 if (deltaY == 0f) return Offset.Zero
 
                 val nowMs = android.os.SystemClock.uptimeMillis()
-                val inTransitionCooldown = (nowMs - lastHeaderTransitionTimeMs) in 1..220L
-                val firstIndex = firstVisibleItemIndex
-                val firstOffset = firstVisibleItemScrollOffset
-                val isAtTop = isAtTopOfList
+                val inTransitionCooldown = (nowMs - scrollAcc.lastTransitionMs) in 1..220L
+                val firstIndex = songsListState.firstVisibleItemIndex
+                val firstOffset = songsListState.firstVisibleItemScrollOffset
+                val isAtTop = firstIndex == 0 && firstOffset <= 12
 
                 if (deltaY < 0f) {
-                    val canScrollDown = canListScrollDown ||
-                        (headerState != LibraryHeaderState.HIDDEN && hasLibraryListItems)
+                    val hasItems = songsListState.layoutInfo.totalItemsCount > 0
+                    val canScrollDown = songsListState.canScrollForward ||
+                        firstIndex > 0 ||
+                        firstOffset > 0 ||
+                        (headerState != LibraryHeaderState.HIDDEN && hasItems)
                     if (!canScrollDown && isAtTop) {
                         return Offset.Zero
                     }
-                    upwardScrollAccumulator = 0f
-                    downwardScrollAccumulator += -deltaY
+                    scrollAcc.upward = 0f
+                    scrollAcc.downward += -deltaY
                     val collapseThreshold = if (inTransitionCooldown) 40f else 18f
                     val nextState = resolveLibraryHeaderStateOnScroll(
                         currentState = headerState,
                         deltaY = deltaY,
                         firstVisibleItemIndex = firstIndex,
                         firstVisibleItemScrollOffset = firstOffset,
-                        downwardAccumulatedPx = downwardScrollAccumulator,
-                        upwardAccumulatedPx = upwardScrollAccumulator,
+                        downwardAccumulatedPx = scrollAcc.downward,
+                        upwardAccumulatedPx = scrollAcc.upward,
                         collapseThresholdPx = collapseThreshold
                     )
                     if (nextState != headerState) {
                         headerState = nextState
-                        lastHeaderTransitionTimeMs = nowMs
+                        scrollAcc.lastTransitionMs = nowMs
                     }
                 } else if (deltaY > 0f) {
-                    downwardScrollAccumulator = 0f
-                    upwardScrollAccumulator += deltaY
+                    scrollAcc.downward = 0f
+                    scrollAcc.upward += deltaY
                     val revealThreshold = if (inTransitionCooldown) 40f else 18f
                     val nextState = resolveLibraryHeaderStateOnScroll(
                         currentState = headerState,
                         deltaY = deltaY,
                         firstVisibleItemIndex = firstIndex,
                         firstVisibleItemScrollOffset = firstOffset,
-                        downwardAccumulatedPx = downwardScrollAccumulator,
-                        upwardAccumulatedPx = upwardScrollAccumulator,
+                        downwardAccumulatedPx = scrollAcc.downward,
+                        upwardAccumulatedPx = scrollAcc.upward,
                         revealCompactThresholdPx = revealThreshold
                     )
                     if (nextState != headerState) {
                         headerState = nextState
-                        lastHeaderTransitionTimeMs = nowMs
+                        scrollAcc.lastTransitionMs = nowMs
                     }
                 }
                 return Offset.Zero
@@ -238,12 +232,13 @@ fun LibraryScreen(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                val isScrollingUpwardToTop = consumed.y > 0f || (available.y > 12f && downwardScrollAccumulator == 0f)
-                if (isAtTopOfList && isScrollingUpwardToTop && downwardScrollAccumulator < 18f) {
+                val isScrollingUpwardToTop = consumed.y > 0f || (available.y > 12f && scrollAcc.downward == 0f)
+                val isAtTop = songsListState.firstVisibleItemIndex == 0 && songsListState.firstVisibleItemScrollOffset <= 12
+                if (isAtTop && isScrollingUpwardToTop && scrollAcc.downward < 18f) {
                     if (headerState != LibraryHeaderState.FULL) {
                         headerState = LibraryHeaderState.FULL
-                        upwardScrollAccumulator = 0f
-                        lastHeaderTransitionTimeMs = android.os.SystemClock.uptimeMillis()
+                        scrollAcc.upward = 0f
+                        scrollAcc.lastTransitionMs = android.os.SystemClock.uptimeMillis()
                     }
                 }
                 return Offset.Zero
@@ -256,10 +251,10 @@ fun LibraryScreen(
             .distinctUntilChanged()
             .collect { atTop ->
                 if (atTop) {
-                    if (downwardScrollAccumulator == 0f && upwardScrollAccumulator > 0f) {
+                    if (scrollAcc.downward == 0f && scrollAcc.upward > 0f) {
                         if (headerState != LibraryHeaderState.FULL) {
                             headerState = LibraryHeaderState.FULL
-                            lastHeaderTransitionTimeMs = android.os.SystemClock.uptimeMillis()
+                            scrollAcc.lastTransitionMs = android.os.SystemClock.uptimeMillis()
                         }
                     }
                 }
@@ -268,8 +263,8 @@ fun LibraryScreen(
 
     LaunchedEffect(searchQuery) {
         if (searchQuery.isBlank() && isAtTopOfList) {
-            downwardScrollAccumulator = 0f
-            upwardScrollAccumulator = 0f
+            scrollAcc.downward = 0f
+            scrollAcc.upward = 0f
             headerState = LibraryHeaderState.FULL
         }
     }

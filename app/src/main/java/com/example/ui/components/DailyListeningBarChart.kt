@@ -227,18 +227,9 @@ fun DailyListeningBarChart(
             ) {
                 buckets.forEachIndexed { index, bucket ->
                     val isSelected = selectedIndex == index
-                    val heightRatio = if (maxDurationMs > 0) {
+                    val animatedHeightRatio = if (maxDurationMs > 0) {
                         (bucket.durationMs.toFloat() / maxDurationMs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
-
-                    val animatedHeightRatio by animateFloatAsState(
-                        targetValue = heightRatio,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        label = "barHeight_$index"
-                    )
 
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,

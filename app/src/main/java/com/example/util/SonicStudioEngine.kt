@@ -37,16 +37,33 @@ data class AbLoopState(
     val songId: Long = 0L,
     val startMs: Long? = null,
     val endMs: Long? = null,
-    val isActive: Boolean = false
+    val isActive: Boolean = false,
+    val maxLoopCount: Int = DEFAULT_LOOP_COUNT,
+    val completedLoops: Int = 0,
+    val songDurationMs: Long = 0L
 ) {
+    companion object {
+        const val DEFAULT_LOOP_COUNT = 3
+        const val MIN_LOOP_COUNT = 1
+        const val MAX_LOOP_COUNT = 15
+        const val MIN_LOOP_SPAN_MS = 500L
+    }
+
+    val remainingLoops: Int
+        get() = (maxLoopCount - completedLoops).coerceAtLeast(0)
+
+    val isLoopCountExhausted: Boolean
+        get() = startMs != null && endMs != null && completedLoops >= maxLoopCount
+
     fun isConfiguredForSong(targetSongId: Long): Boolean =
         songId == targetSongId && startMs != null
 
     fun shouldLoopBack(targetSongId: Long, currentPositionMs: Long): Boolean {
         if (!isActive || songId != targetSongId) return false
+        if (completedLoops >= maxLoopCount) return false
         val a = startMs ?: return false
         val b = endMs ?: return false
-        return b > a + 500L && currentPositionMs >= b
+        return b > a + MIN_LOOP_SPAN_MS && currentPositionMs >= b
     }
 
     fun formatPoint(ms: Long?): String {
@@ -57,6 +74,14 @@ data class AbLoopState(
 }
 
 @Immutable
+data class ManualLoopUpdateResult(
+    val success: Boolean,
+    val state: AbLoopState,
+    val wasClampedToDuration: Boolean = false,
+    val errorMessage: String? = null
+)
+
+@Immutable
 data class SonicDnaMatch(
     val song: Song,
     val score: Int,
@@ -65,7 +90,8 @@ data class SonicDnaMatch(
 
 /**
  * Studio-grade audiophile & discovery engine for OffGrid Music:
- * 1. Precision A-B Loop controller with real-time loop-back triggers.
+ * 1. Precision A-B Loop controller with manual timestamp entry, duration bounds validation,
+ *    configurable loop count (default 3, max 15), and automatic continuation after completion.
  * 2. Timestamped Audio Bookmarks persisted per track.
  * 3. "Sonic DNA" Instant Track Radio matcher (multi-factor local library vibe matching).
  * 4. Cached 52-bar Acoustic Waveform Envelope generator.
@@ -85,45 +111,222 @@ object SonicStudioEngine {
 
     // --- A-B Looper ---
 
+    private fun resolveMaxDuration(durationMs: Long, fallbackDurationMs: Long = 0L): Long {
+        return when {
+            durationMs > 0L && durationMs != Long.MAX_VALUE -> durationMs
+            fallbackDurationMs > 0L && fallbackDurationMs != Long.MAX_VALUE -> fallbackDurationMs
+            else -> Long.MAX_VALUE
+        }
+    }
+
+    fun clampToSongDuration(positionMs: Long, durationMs: Long): Long {
+        val maxDur = resolveMaxDuration(durationMs)
+        return positionMs.coerceIn(0L, maxDur.coerceAtLeast(0L))
+    }
+
+    /**
+     * Parses a user-entered timestamp string into milliseconds.
+     * Supports formats: "m:ss", "mm:ss", "hh:mm:ss", "mm:ss.d", or raw seconds like "75" / "75.5".
+     */
+    fun parseTimestampToMs(rawInput: String): Long? {
+        val cleaned = rawInput.trim()
+        if (cleaned.isEmpty() || cleaned == "--:--") return null
+        if (cleaned.startsWith("-")) return null
+
+        val parts = cleaned.split(":")
+        return try {
+            when (parts.size) {
+                1 -> {
+                    val seconds = parts[0].toDoubleOrNull() ?: return null
+                    if (seconds < 0.0 || seconds.isNaN() || seconds.isInfinite()) return null
+                    (seconds * 1000.0).toLong()
+                }
+                2 -> {
+                    val minutes = parts[0].trim().toLongOrNull() ?: return null
+                    val seconds = parts[1].trim().toDoubleOrNull() ?: return null
+                    if (minutes < 0L || seconds < 0.0 || seconds >= 60.0 || seconds.isNaN()) return null
+                    (minutes * 60_000L) + (seconds * 1000.0).toLong()
+                }
+                3 -> {
+                    val hours = parts[0].trim().toLongOrNull() ?: return null
+                    val minutes = parts[1].trim().toLongOrNull() ?: return null
+                    val seconds = parts[2].trim().toDoubleOrNull() ?: return null
+                    if (hours < 0L || minutes !in 0L..59L || seconds < 0.0 || seconds >= 60.0 || seconds.isNaN()) return null
+                    (hours * 3_600_000L) + (minutes * 60_000L) + (seconds * 1000.0).toLong()
+                }
+                else -> null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun formatDurationMs(ms: Long): String {
+        val safeSec = (ms.coerceAtLeast(0L)) / 1000L
+        return String.format(Locale.US, "%d:%02d", safeSec / 60L, safeSec % 60L)
+    }
+
+    fun setLoopCount(count: Int) {
+        val safeCount = count.coerceIn(AbLoopState.MIN_LOOP_COUNT, AbLoopState.MAX_LOOP_COUNT)
+        val current = _abLoopState.value
+        val hasBothPoints = current.startMs != null && current.endMs != null &&
+            current.endMs > current.startMs + AbLoopState.MIN_LOOP_SPAN_MS
+        _abLoopState.value = current.copy(
+            maxLoopCount = safeCount,
+            completedLoops = 0,
+            isActive = if (hasBothPoints) true else current.isActive
+        )
+    }
+
     fun setLoopPointA(songId: Long, positionMs: Long, durationMs: Long = Long.MAX_VALUE) {
         if (songId <= 0L) return
-        val safeA = positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L))
         val current = _abLoopState.value
-        val existingEnd = if (current.songId == songId) current.endMs else null
-        val validEnd = if (existingEnd != null && existingEnd > safeA + 500L) existingEnd else null
+        val maxDur = resolveMaxDuration(durationMs, if (current.songId == songId) current.songDurationMs else 0L)
+        val safeA = positionMs.coerceIn(0L, maxDur.coerceAtLeast(0L))
+        val existingEnd = if (current.songId == songId) current.endMs?.coerceIn(0L, maxDur.coerceAtLeast(0L)) else null
+        val validEnd = if (existingEnd != null && existingEnd > safeA + AbLoopState.MIN_LOOP_SPAN_MS) existingEnd else null
+        val preservedLoopCount = current.maxLoopCount.coerceIn(AbLoopState.MIN_LOOP_COUNT, AbLoopState.MAX_LOOP_COUNT)
         _abLoopState.value = AbLoopState(
             songId = songId,
             startMs = safeA,
             endMs = validEnd,
-            isActive = validEnd != null
+            isActive = validEnd != null,
+            maxLoopCount = preservedLoopCount,
+            completedLoops = 0,
+            songDurationMs = if (maxDur != Long.MAX_VALUE) maxDur else 0L
         )
     }
 
     fun setLoopPointB(songId: Long, positionMs: Long, durationMs: Long = Long.MAX_VALUE): Boolean {
         if (songId <= 0L) return false
         val current = _abLoopState.value
-        val start = if (current.songId == songId && current.startMs != null) current.startMs else 0L
-        val safeB = positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L))
-        if (safeB <= start + 500L) return false
+        val maxDur = resolveMaxDuration(durationMs, if (current.songId == songId) current.songDurationMs else 0L)
+        val start = if (current.songId == songId && current.startMs != null) {
+            current.startMs.coerceIn(0L, maxDur.coerceAtLeast(0L))
+        } else 0L
+        val safeB = positionMs.coerceIn(0L, maxDur.coerceAtLeast(0L))
+        if (safeB <= start + AbLoopState.MIN_LOOP_SPAN_MS) return false
+        val preservedLoopCount = current.maxLoopCount.coerceIn(AbLoopState.MIN_LOOP_COUNT, AbLoopState.MAX_LOOP_COUNT)
         _abLoopState.value = AbLoopState(
             songId = songId,
             startMs = start,
             endMs = safeB,
-            isActive = true
+            isActive = true,
+            maxLoopCount = preservedLoopCount,
+            completedLoops = 0,
+            songDurationMs = if (maxDur != Long.MAX_VALUE) maxDur else 0L
         )
         return true
+    }
+
+    fun setManualLoopPoints(
+        songId: Long,
+        rawStartMs: Long?,
+        rawEndMs: Long?,
+        durationMs: Long,
+        loopCount: Int = _abLoopState.value.maxLoopCount
+    ): ManualLoopUpdateResult {
+        val current = _abLoopState.value
+        if (songId <= 0L) {
+            return ManualLoopUpdateResult(false, current, errorMessage = "Invalid track")
+        }
+        val maxDur = resolveMaxDuration(durationMs, if (current.songId == songId) current.songDurationMs else 0L)
+        val hasKnownDuration = maxDur > 0L && maxDur != Long.MAX_VALUE
+        val safeLoopCount = loopCount.coerceIn(AbLoopState.MIN_LOOP_COUNT, AbLoopState.MAX_LOOP_COUNT)
+
+        val candidateStart = rawStartMs ?: (if (current.songId == songId) current.startMs else null) ?: 0L
+        val candidateEnd = rawEndMs ?: (if (current.songId == songId) current.endMs else null)
+
+        val clampedStart = if (hasKnownDuration) candidateStart.coerceIn(0L, maxDur) else candidateStart.coerceAtLeast(0L)
+        val clampedEnd = candidateEnd?.let {
+            if (hasKnownDuration) it.coerceIn(0L, maxDur) else it.coerceAtLeast(0L)
+        }
+        val wasClamped = hasKnownDuration && (
+            (rawStartMs != null && (rawStartMs > maxDur || rawStartMs < 0L)) ||
+            (rawEndMs != null && (rawEndMs > maxDur || rawEndMs < 0L))
+        )
+
+        if (clampedEnd != null && clampedEnd <= clampedStart + AbLoopState.MIN_LOOP_SPAN_MS) {
+            return ManualLoopUpdateResult(
+                success = false,
+                state = current,
+                wasClampedToDuration = wasClamped,
+                errorMessage = if (wasClamped) {
+                    "Timestamps cannot exceed track duration (${formatDurationMs(maxDur)}) and Point B must be after Point A"
+                } else {
+                    "Point B must be after Point A"
+                }
+            )
+        }
+
+        val updated = AbLoopState(
+            songId = songId,
+            startMs = clampedStart,
+            endMs = clampedEnd,
+            isActive = clampedEnd != null,
+            maxLoopCount = safeLoopCount,
+            completedLoops = 0,
+            songDurationMs = if (hasKnownDuration) maxDur else 0L
+        )
+        _abLoopState.value = updated
+        return ManualLoopUpdateResult(
+            success = true,
+            state = updated,
+            wasClampedToDuration = wasClamped
+        )
+    }
+
+    /**
+     * Atomically evaluates whether playback at [currentPositionMs] should loop back to Point A.
+     * - While completedLoops < maxLoopCount, increments completedLoops and returns Point A (in ms).
+     * - Once the user-set loop count finishes, sets isActive = false and returns null so the
+     *   song continues playing normally past Point B.
+     */
+    @Synchronized
+    fun checkAndConsumeLoopTrigger(targetSongId: Long, currentPositionMs: Long): Long? {
+        val current = _abLoopState.value
+        if (!current.isActive || current.songId != targetSongId) return null
+        val a = current.startMs ?: return null
+        val b = current.endMs ?: return null
+        if (b <= a + AbLoopState.MIN_LOOP_SPAN_MS || currentPositionMs < b) return null
+
+        val maxLoops = current.maxLoopCount.coerceIn(AbLoopState.MIN_LOOP_COUNT, AbLoopState.MAX_LOOP_COUNT)
+        return if (current.completedLoops < maxLoops) {
+            val nextCompleted = current.completedLoops + 1
+            _abLoopState.value = current.copy(
+                completedLoops = nextCompleted,
+                maxLoopCount = maxLoops
+            )
+            a.coerceAtLeast(0L)
+        } else {
+            _abLoopState.value = current.copy(
+                isActive = false,
+                completedLoops = maxLoops,
+                maxLoopCount = maxLoops
+            )
+            null
+        }
     }
 
     fun toggleAbLoopActive(songId: Long) {
         val current = _abLoopState.value
         if (current.songId == songId && current.startMs != null && current.endMs != null) {
-            _abLoopState.value = current.copy(isActive = !current.isActive)
+            val activating = !current.isActive
+            _abLoopState.value = current.copy(
+                isActive = activating,
+                completedLoops = if (activating && current.completedLoops >= current.maxLoopCount) 0 else current.completedLoops
+            )
         }
     }
 
     fun clearAbLoop() {
-        if (_abLoopState.value != AbLoopState()) {
-            _abLoopState.value = AbLoopState()
+        val preservedCount = _abLoopState.value.maxLoopCount.coerceIn(
+            AbLoopState.MIN_LOOP_COUNT,
+            AbLoopState.MAX_LOOP_COUNT
+        )
+        val cleared = AbLoopState(maxLoopCount = preservedCount)
+        if (_abLoopState.value != cleared) {
+            _abLoopState.value = cleared
         }
     }
 

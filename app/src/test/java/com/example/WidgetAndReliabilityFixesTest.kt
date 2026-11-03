@@ -448,4 +448,74 @@ class WidgetAndReliabilityFixesTest {
         assertEquals("Line 4", next2Prop.get(window))
         assertEquals("Line 5", next3Prop.get(window))
     }
+
+    @Test
+    fun testAdaptiveLyricsLayoutScalesAcrossShrunkStandardExpandedAndExtraExpandedSizes() {
+        // 1. Shrunk 4x1 (~90dp): current line only (1 line)
+        val shrunkUltra = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 90,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(0, shrunkUltra.prevCount)
+        assertEquals(0, shrunkUltra.nextCount)
+
+        // 2. Shrunk 4x1 (~105dp): 1 prev + 1 curr + 1 next (3 lines)
+        val shrunkCompact = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 105,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(1, shrunkCompact.prevCount)
+        assertEquals(1, shrunkCompact.nextCount)
+
+        // 3. Standard/Medium 4x2 (~145dp): 2 prev + 1 curr + 3 next (6 lines)
+        val standardMedium = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 145,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(2, standardMedium.prevCount)
+        assertEquals(3, standardMedium.nextCount)
+
+        // 4. Expanded 4x3 (~175dp on launcher grid): 4 prev + 1 curr + 4 next (9 lines)
+        val expanded4x3 = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 175,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(4, expanded4x3.prevCount)
+        assertEquals(4, expanded4x3.nextCount)
+        assertTrue("Expanded 4x3 must have larger vertical line padding than Standard", expanded4x3.linePadVerticalPx > standardMedium.linePadVerticalPx)
+
+        // 5. Tall Expanded (~190dp): 5 prev + 1 curr + 5 next (11 lines)
+        val tallExpanded = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 190,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(5, tallExpanded.prevCount)
+        assertEquals(5, tallExpanded.nextCount)
+
+        // 6. Extra-Expanded 4x4 (~210dp on launcher grid): 6 prev + 1 curr + 6 next (13 lines)
+        val extraExpanded4x4 = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 320,
+            heightDp = 210,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 3.0f
+        )
+        assertEquals(6, extraExpanded4x4.prevCount)
+        assertEquals(6, extraExpanded4x4.nextCount)
+    }
 }

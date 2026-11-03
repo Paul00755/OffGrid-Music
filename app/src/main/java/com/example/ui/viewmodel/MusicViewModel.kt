@@ -1397,7 +1397,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (savedRepeat != 0) {
                         playbackManager.setRepeatMode(savedRepeat)
                     }
-                    if (playbackManager.playbackState.value.queue.isEmpty() || !playbackManager.playbackState.value.isPlaying) {
+                    if (playbackManager.playbackState.value.queue.isEmpty() && !playbackManager.player.isPlaying && !playbackManager.player.playWhenReady) {
                         playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
                     }
                     val pendingAction = pendingWidgetAction

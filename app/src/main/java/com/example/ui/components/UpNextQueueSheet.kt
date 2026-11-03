@@ -218,6 +218,23 @@ fun UpNextQueueSheet(
         }
     }
 
+    // Viewport-driven thumbnail preloader for zero-jank scrolling in Up-Next Queue
+    val firstVisibleQueueBucket by remember {
+        derivedStateOf { listState.firstVisibleItemIndex / 6 }
+    }
+    LaunchedEffect(firstVisibleQueueBucket, localQueue.size) {
+        if (localQueue.isNotEmpty()) {
+            val queueSongs = localQueue.map { it.song }
+            ArtworkResolutionCache.preloadWindow(
+                context = context,
+                songs = queueSongs,
+                firstVisibleIndex = listState.firstVisibleItemIndex,
+                windowAhead = 32,
+                windowBehind = 10
+            )
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             try {
