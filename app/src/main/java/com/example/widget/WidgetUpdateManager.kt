@@ -140,14 +140,15 @@ object WidgetUpdateManager {
         val currTextSizeSp: Float,
         val nearTextSizeSp: Float,
         val midTextSizeSp: Float,
-        val farTextSizeSp: Float
+        val farTextSizeSp: Float,
+        val keepSymmetricCenter: Boolean = false
     )
 
     /**
      * Computes how many previous and upcoming lyric lines should be displayed for a given
-     * widget width/height in dp, rebalancing unused slots at the start/end of a song and
-     * scaling typography + vertical spacing so the lyrics fill the widget cleanly without
-     * leaving vertical gaps or overflowing when shrunk.
+     * widget width/height in dp, keeping the active line vertically centered in Standard (4x2)
+     * and Horizontally Shrunk (3x2/2x2) widgets while preserving Expanded (4x3) and
+     * Extra-Expanded (4x4+) layouts untouched.
      */
     internal fun computeAdaptiveLyricsLayout(
         widthDp: Int,
@@ -156,23 +157,21 @@ object WidgetUpdateManager {
         availableNextLines: Int,
         density: Float = 1f
     ): AdaptiveLyricsLayoutSpec {
-        val safeH = heightDp.coerceIn(70, 650)
+        // Minimum vertical height for the Lyrics widget is the 2-row standard footprint (130dp).
+        val safeH = heightDp.coerceIn(130, 650)
         val safeW = widthDp.coerceIn(140, 650)
+        val isStandardTwoRow = safeH < 180
+        val isHorizontallyShrunk = safeW < 255
 
         // Height thresholds calibrated to real Android launcher cell dp reporting
         // (including compact-grid launchers like OplusLauncher/ColorOS, OneUI, and Pixel Launcher):
-        // - 1 row (4x1 Shrunk): ~75–115dp
-        // - 2 rows (4x2 Standard/Medium): ~116–158dp (default 145dp)
-        // - 3 rows (4x3 Expanded): ~159–197dp (9 to 11 lines)
-        // - 4+ rows (4x4+ Extra-Expanded): >= 198dp (13 lines)
+        // - 2 rows (4x2 Standard & 3x2/2x2 Horizontally Shrunk): 130..179dp (2 prev + 1 curr + 2 next = 5 lines, centered)
+        // - 3 rows (4x3 Expanded): 180..197dp (5 prev + 1 curr + 5 next = 11 lines)
+        // - 4+ rows (4x4+ Extra-Expanded): >= 198dp (6 prev + 1 curr + 6 next = 13 lines)
         val (basePrev, baseNext) = when {
-            safeH < 96 -> 0 to 0    // Shrunk ultra-compact: current line only (1 line)
-            safeH < 116 -> 1 to 1   // Shrunk 4x1: 1 prev + current + 1 next (3 lines)
-            safeH < 136 -> 2 to 2   // Compact 4x2: 2 prev + current + 2 next (5 lines)
-            safeH < 159 -> 2 to 3   // Standard / Medium 4x2: 2 prev + current + 3 next (6 lines)
-            safeH < 180 -> 4 to 4   // Expanded 4x3: 4 prev + current + 4 next (9 lines)
-            safeH < 198 -> 5 to 5   // Tall Expanded 4x3: 5 prev + current + 5 next (11 lines)
-            else -> 6 to 6          // Extra-Expanded 4x4+: 6 prev + current + 6 next (13 lines)
+            isStandardTwoRow -> 2 to 2 // Standard 4x2 & Horizontally Shrunk: 2 prev + current + 2 next (5 lines)
+            safeH < 198 -> 5 to 5      // Expanded 4x3: 5 prev + current + 5 next (11 lines)
+            else -> 6 to 6             // Extra-Expanded 4x4+: 6 prev + current + 6 next (13 lines)
         }
 
         val availPrev = availablePrevLines.coerceAtLeast(0)
@@ -181,82 +180,81 @@ object WidgetUpdateManager {
         var actualPrev = minOf(basePrev, availPrev)
         var actualNext = minOf(baseNext, availNext)
 
-        // Smart slot rebalancing: if near the beginning of a song (fewer previous lines than target),
-        // allocate unused previous slots to upcoming lines so the expanded widget stays full!
-        val unusedPrev = basePrev - actualPrev
-        if (unusedPrev > 0 && availNext > actualNext) {
-            actualNext = minOf(MAX_SURROUNDING_LYRIC_LINES, minOf(availNext, actualNext + unusedPrev))
-        }
-        // Similarly, if near the end of a song (fewer upcoming lines than target),
-        // allocate unused upcoming slots to previous lines!
-        val unusedNext = baseNext - actualNext
-        if (unusedNext > 0 && availPrev > actualPrev) {
-            actualPrev = minOf(MAX_SURROUNDING_LYRIC_LINES, minOf(availPrev, actualPrev + unusedNext))
+        if (!isStandardTwoRow) {
+            // Smart slot rebalancing for Expanded and Extra-Expanded widgets:
+            // if near the beginning or end of a song, allocate unused slots so expanded widgets stay full.
+            val unusedPrev = basePrev - actualPrev
+            if (unusedPrev > 0 && availNext > actualNext) {
+                actualNext = minOf(MAX_SURROUNDING_LYRIC_LINES, minOf(availNext, actualNext + unusedPrev))
+            }
+            val unusedNext = baseNext - actualNext
+            if (unusedNext > 0 && availPrev > actualPrev) {
+                actualPrev = minOf(MAX_SURROUNDING_LYRIC_LINES, minOf(availPrev, actualPrev + unusedNext))
+            }
         }
 
         val containerPadDp = when {
-            safeH < 116 -> 8
-            safeH < 159 -> 10
+            isStandardTwoRow -> 10
             safeH < 198 -> 12
             else -> 14
         }
 
         val chromeDp = (containerPadDp * 2) + 62
         val rawStageHeightDp = (safeH - chromeDp).coerceAtLeast(32)
-        // Many launchers report cell heights in compact dp units (~175dp for 4x3 which is ~260dp on screen,
-        // and ~210dp for 4x4 which is ~355dp on screen). Ensure expanded tiers use realistic stage height.
         val stageHeightDp = when {
             safeH >= 198 -> maxOf(rawStageHeightDp, 255)
-            safeH >= 159 -> maxOf(rawStageHeightDp, 185)
+            safeH >= 180 -> maxOf(rawStageHeightDp, 185)
             else -> rawStageHeightDp
         }
 
-        val visibleLineCount = (1 + actualPrev + actualNext).coerceAtLeast(1)
-        val dpPerLine = stageHeightDp.toFloat() / visibleLineCount.toFloat()
+        val visibleLineCount = if (isStandardTwoRow) {
+            5
+        } else {
+            (1 + actualPrev + actualNext).coerceAtLeast(1)
+        }
 
         val widthBoostSp = if (safeW >= 340) 0.5f else 0f
         val currSp = when {
-            safeH < 116 -> 14.0f + widthBoostSp
             safeH >= 198 -> 16.2f + widthBoostSp
-            safeH >= 159 -> 15.8f + widthBoostSp
-            dpPerLine >= 34f -> 16.6f + widthBoostSp
-            dpPerLine >= 28f -> 16.0f + widthBoostSp
-            dpPerLine >= 23f -> 15.4f + widthBoostSp
-            else -> 14.6f + widthBoostSp
-        }.coerceIn(14.0f, 17.5f)
+            safeH >= 180 -> 15.8f + widthBoostSp
+            isHorizontallyShrunk -> 13.6f
+            else -> 14.4f + (widthBoostSp * 0.4f)
+        }.coerceIn(13.4f, 17.5f)
 
         val nearSp = when {
             safeH >= 198 -> (currSp - 2.6f).coerceIn(13.0f, 14.2f)
-            safeH >= 159 -> (currSp - 2.5f).coerceIn(12.6f, 13.8f)
-            else -> (currSp - 2.3f).coerceIn(11.2f, 14.0f)
+            safeH >= 180 -> (currSp - 2.5f).coerceIn(12.6f, 13.8f)
+            isHorizontallyShrunk -> 11.1f
+            else -> 11.6f
         }
         val midSp = when {
             safeH >= 198 -> (currSp - 3.3f).coerceIn(12.2f, 13.4f)
-            safeH >= 159 -> (currSp - 3.2f).coerceIn(12.0f, 13.0f)
-            else -> (currSp - 3.0f).coerceIn(10.8f, 13.2f)
+            safeH >= 180 -> (currSp - 3.2f).coerceIn(12.0f, 13.0f)
+            isHorizontallyShrunk -> 10.6f
+            else -> 11.0f
         }
         val farSp = when {
             safeH >= 198 -> (currSp - 4.0f).coerceIn(11.6f, 12.6f)
-            safeH >= 159 -> (currSp - 3.8f).coerceIn(11.4f, 12.4f)
-            else -> (currSp - 3.6f).coerceIn(10.2f, 12.4f)
+            safeH >= 180 -> (currSp - 3.8f).coerceIn(11.4f, 12.4f)
+            else -> 10.2f
         }
 
-        val surroundingCount = actualPrev + actualNext
+        val surroundingCount = if (isStandardTwoRow) 4 else (actualPrev + actualNext)
         val estTextHeightDp = (currSp * 1.42f) + (surroundingCount * (midSp * 1.28f))
         val slackDp = (stageHeightDp.toFloat() - estTextHeightDp).coerceAtLeast(0f)
 
-        // Distribute vertical slack across lines so expanded widgets have balanced breathing room
-        // instead of clustering in the center with empty black gaps at top and bottom.
         val perSlotSlackDp = slackDp / (visibleLineCount + 1).toFloat()
         val linePadVerticalDp = when {
             safeH >= 198 -> (perSlotSlackDp * 0.55f).coerceIn(3.0f, 4.8f)
-            safeH >= 159 -> (perSlotSlackDp * 0.55f).coerceIn(2.8f, 4.4f)
-            else -> (perSlotSlackDp * 0.45f).coerceIn(if (safeH < 135) 0.5f else 1.5f, 5.5f)
+            safeH >= 180 -> (perSlotSlackDp * 0.55f).coerceIn(2.8f, 4.4f)
+            isHorizontallyShrunk -> 0.8f
+            else -> 1.2f
         }
         val currPadVerticalDp = when {
             safeH >= 198 -> (linePadVerticalDp + 2.2f).coerceIn(5.2f, 7.5f)
-            safeH >= 159 -> (linePadVerticalDp + 2.0f).coerceIn(4.8f, 6.8f)
-            else -> (linePadVerticalDp + 2.0f).coerceIn(if (safeH < 125) 1.5f else 3.0f, 7.5f)
+            safeH >= 180 -> (linePadVerticalDp + 2.0f).coerceIn(4.8f, 6.8f)
+            isHorizontallyShrunk -> 1.6f
+            else -> 2.2f
         }
 
         val safeDensity = density.coerceAtLeast(0.75f)
@@ -269,7 +267,8 @@ object WidgetUpdateManager {
             currTextSizeSp = currSp,
             nearTextSizeSp = nearSp,
             midTextSizeSp = midSp,
-            farTextSizeSp = farSp
+            farTextSizeSp = farSp,
+            keepSymmetricCenter = isStandardTwoRow
         )
     }
 
@@ -1133,7 +1132,7 @@ object WidgetUpdateManager {
                         try {
                             val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 600, 650)
                             val wDp = (wPx / density).toInt()
-                            val hDp = (hPx / density).toInt()
+                            val hDp = (hPx / density).toInt().coerceAtLeast(130)
                             val layoutSpec = computeAdaptiveLyricsLayout(
                                 widthDp = wDp,
                                 heightDp = hDp,
@@ -1197,7 +1196,7 @@ object WidgetUpdateManager {
                         try {
                             val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 600, 650)
                             val wDp = (wPx / density).toInt()
-                            val hDp = (hPx / density).toInt()
+                            val hDp = (hPx / density).toInt().coerceAtLeast(130)
                             val layoutSpec = computeAdaptiveLyricsLayout(
                                 widthDp = wDp,
                                 heightDp = hDp,
@@ -1974,27 +1973,38 @@ object WidgetUpdateManager {
         val nextIds = if (pageIndex == 0) NEXT_VIEW_IDS_PAGE_0 else NEXT_VIEW_IDS_PAGE_1
         val currId = if (pageIndex == 0) R.id.widget_lyrics_curr_0 else R.id.widget_lyrics_curr_1
 
+        val reserveSymmetricSlots = spec.keepSymmetricCenter && window.mode == LyricsDisplayMode.SYNCED
+
         // Bind previous lines (index 0 = nearest prev1, index 5 = farthest prev6)
         for (i in 0 until MAX_SURROUNDING_LYRIC_LINES) {
             val viewId = prevIds[i]
             val lineText = window.prevLines.getOrNull(i).orEmpty()
             val shouldShow = i < spec.prevCount && lineText.isNotBlank()
-            views.setTextViewText(viewId, lineText)
-            views.setViewVisibility(viewId, if (shouldShow) View.VISIBLE else View.GONE)
+            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < 2
+            val sizeSp = when (i) {
+                0 -> spec.nearTextSizeSp
+                1, 2 -> spec.midTextSizeSp
+                else -> spec.farTextSizeSp
+            }
             if (shouldShow) {
                 val color = when (i) {
                     0 -> nearColor
                     1, 2 -> midColor
                     else -> farColor
                 }
-                val sizeSp = when (i) {
-                    0 -> spec.nearTextSizeSp
-                    1, 2 -> spec.midTextSizeSp
-                    else -> spec.farTextSizeSp
-                }
+                views.setTextViewText(viewId, lineText)
+                views.setViewVisibility(viewId, View.VISIBLE)
                 views.setTextColor(viewId, color)
                 views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
+            } else if (reserveEmptySlot) {
+                views.setTextViewText(viewId, " ")
+                views.setViewVisibility(viewId, View.INVISIBLE)
+                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
+            } else {
+                views.setTextViewText(viewId, "")
+                views.setViewVisibility(viewId, View.GONE)
             }
         }
 
@@ -2010,22 +2020,31 @@ object WidgetUpdateManager {
             val viewId = nextIds[i]
             val lineText = window.nextLines.getOrNull(i).orEmpty()
             val shouldShow = i < spec.nextCount && lineText.isNotBlank()
-            views.setTextViewText(viewId, lineText)
-            views.setViewVisibility(viewId, if (shouldShow) View.VISIBLE else View.GONE)
+            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < 2
+            val sizeSp = when (i) {
+                0 -> spec.nearTextSizeSp
+                1, 2 -> spec.midTextSizeSp
+                else -> spec.farTextSizeSp
+            }
             if (shouldShow) {
                 val color = when (i) {
                     0 -> nearColor
                     1, 2 -> midColor
                     else -> farColor
                 }
-                val sizeSp = when (i) {
-                    0 -> spec.nearTextSizeSp
-                    1, 2 -> spec.midTextSizeSp
-                    else -> spec.farTextSizeSp
-                }
+                views.setTextViewText(viewId, lineText)
+                views.setViewVisibility(viewId, View.VISIBLE)
                 views.setTextColor(viewId, color)
                 views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
+            } else if (reserveEmptySlot) {
+                views.setTextViewText(viewId, " ")
+                views.setViewVisibility(viewId, View.INVISIBLE)
+                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
+            } else {
+                views.setTextViewText(viewId, "")
+                views.setViewVisibility(viewId, View.GONE)
             }
         }
     }
@@ -2143,7 +2162,7 @@ object WidgetUpdateManager {
             try {
                 val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 145, 600, 650)
                 val wDp = (wPx / density).toInt()
-                val hDp = (hPx / density).toInt()
+                val hDp = (hPx / density).toInt().coerceAtLeast(130)
                 val layoutSpec = computeAdaptiveLyricsLayout(
                     widthDp = wDp,
                     heightDp = hDp,

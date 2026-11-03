@@ -451,52 +451,80 @@ class WidgetAndReliabilityFixesTest {
 
     @Test
     fun testAdaptiveLyricsLayoutScalesAcrossShrunkStandardExpandedAndExtraExpandedSizes() {
-        // 1. Shrunk 4x1 (~90dp): current line only (1 line)
-        val shrunkUltra = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Verify widget_lyrics_info.xml prevents vertical shrinking below standard 2-row height (130dp)
+        // while still allowing horizontal shrinking down to 180dp.
+        val parser = context.resources.getXml(R.xml.widget_lyrics_info)
+        var minHeightAttr = ""
+        var minResizeHeightAttr = ""
+        var minResizeWidthAttr = ""
+        while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "appwidget-provider") {
+                for (i in 0 until parser.attributeCount) {
+                    when (parser.getAttributeName(i)) {
+                        "minHeight" -> minHeightAttr = parser.getAttributeValue(i)
+                        "minResizeHeight" -> minResizeHeightAttr = parser.getAttributeValue(i)
+                        "minResizeWidth" -> minResizeWidthAttr = parser.getAttributeValue(i)
+                    }
+                }
+            }
+        }
+        assertTrue("minHeight must be 130dp (was $minHeightAttr)", minHeightAttr.startsWith("130"))
+        assertTrue("minResizeHeight must be 130dp to prevent 1-row vertical shrinking (was $minResizeHeightAttr)", minResizeHeightAttr.startsWith("130"))
+        assertTrue("minResizeWidth must remain 180dp for horizontal shrinking (was $minResizeWidthAttr)", minResizeWidthAttr.startsWith("180"))
+
+        // 2. Any height input below 130dp is clamped to standard 2-row layout (2 prev + 1 curr + 2 next, centered)
+        val clampedBelowMin = WidgetUpdateManager.computeAdaptiveLyricsLayout(
             widthDp = 320,
             heightDp = 90,
             availablePrevLines = 6,
             availableNextLines = 6,
             density = 3.0f
         )
-        assertEquals(0, shrunkUltra.prevCount)
-        assertEquals(0, shrunkUltra.nextCount)
+        assertEquals(2, clampedBelowMin.prevCount)
+        assertEquals(2, clampedBelowMin.nextCount)
+        assertTrue(clampedBelowMin.keepSymmetricCenter)
 
-        // 2. Shrunk 4x1 (~105dp): 1 prev + 1 curr + 1 next (3 lines)
-        val shrunkCompact = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+        // 3. Standard 4x2 (~145dp and ~173dp physical 2-row height): 2 prev + 1 curr + 2 next (5 lines, centered)
+        for (stdH in listOf(145, 173)) {
+            val standard = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+                widthDp = 320,
+                heightDp = stdH,
+                availablePrevLines = 6,
+                availableNextLines = 6,
+                density = 3.0f
+            )
+            assertEquals("Standard 4x2 ($stdH dp) must show 2 previous lines", 2, standard.prevCount)
+            assertEquals("Standard 4x2 ($stdH dp) must show 2 upcoming lines", 2, standard.nextCount)
+            assertTrue("Standard 4x2 ($stdH dp) must keep symmetric center", standard.keepSymmetricCenter)
+        }
+
+        // 4. Horizontally Shrunk 3x2 / 2x2 (~210dp width, ~145..173dp height): 2 prev + 1 curr + 2 next (centered)
+        for (stdH in listOf(145, 173)) {
+            val horizontallyShrunk = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+                widthDp = 210,
+                heightDp = stdH,
+                availablePrevLines = 6,
+                availableNextLines = 6,
+                density = 3.0f
+            )
+            assertEquals("Horizontally shrunk ($stdH dp) must show 2 previous lines", 2, horizontallyShrunk.prevCount)
+            assertEquals("Horizontally shrunk ($stdH dp) must show 2 upcoming lines", 2, horizontallyShrunk.nextCount)
+            assertTrue("Horizontally shrunk ($stdH dp) must keep symmetric center", horizontallyShrunk.keepSymmetricCenter)
+        }
+
+        // 5. Verify symmetric center slot reservation at song start (0 previous lines available)
+        val startOfSongStandard = WidgetUpdateManager.computeAdaptiveLyricsLayout(
             widthDp = 320,
-            heightDp = 105,
-            availablePrevLines = 6,
+            heightDp = 173,
+            availablePrevLines = 0,
             availableNextLines = 6,
             density = 3.0f
         )
-        assertEquals(1, shrunkCompact.prevCount)
-        assertEquals(1, shrunkCompact.nextCount)
+        assertEquals("At song start in standard size, nextCount must not rebalance to push curr off-center", 2, startOfSongStandard.nextCount)
 
-        // 3. Standard/Medium 4x2 (~145dp): 2 prev + 1 curr + 3 next (6 lines)
-        val standardMedium = WidgetUpdateManager.computeAdaptiveLyricsLayout(
-            widthDp = 320,
-            heightDp = 145,
-            availablePrevLines = 6,
-            availableNextLines = 6,
-            density = 3.0f
-        )
-        assertEquals(2, standardMedium.prevCount)
-        assertEquals(3, standardMedium.nextCount)
-
-        // 4. Expanded 4x3 (~175dp on launcher grid): 4 prev + 1 curr + 4 next (9 lines)
-        val expanded4x3 = WidgetUpdateManager.computeAdaptiveLyricsLayout(
-            widthDp = 320,
-            heightDp = 175,
-            availablePrevLines = 6,
-            availableNextLines = 6,
-            density = 3.0f
-        )
-        assertEquals(4, expanded4x3.prevCount)
-        assertEquals(4, expanded4x3.nextCount)
-        assertTrue("Expanded 4x3 must have larger vertical line padding than Standard", expanded4x3.linePadVerticalPx > standardMedium.linePadVerticalPx)
-
-        // 5. Tall Expanded (~190dp): 5 prev + 1 curr + 5 next (11 lines)
+        // 6. Expanded 4x3 (~190dp): 5 prev + 1 curr + 5 next (11 lines, preserved untouched)
         val tallExpanded = WidgetUpdateManager.computeAdaptiveLyricsLayout(
             widthDp = 320,
             heightDp = 190,
@@ -506,8 +534,9 @@ class WidgetAndReliabilityFixesTest {
         )
         assertEquals(5, tallExpanded.prevCount)
         assertEquals(5, tallExpanded.nextCount)
+        assertFalse(tallExpanded.keepSymmetricCenter)
 
-        // 6. Extra-Expanded 4x4 (~210dp on launcher grid): 6 prev + 1 curr + 6 next (13 lines)
+        // 7. Extra-Expanded 4x4 (~210dp on launcher grid): 6 prev + 1 curr + 6 next (13 lines, preserved untouched)
         val extraExpanded4x4 = WidgetUpdateManager.computeAdaptiveLyricsLayout(
             widthDp = 320,
             heightDp = 210,
@@ -517,5 +546,7 @@ class WidgetAndReliabilityFixesTest {
         )
         assertEquals(6, extraExpanded4x4.prevCount)
         assertEquals(6, extraExpanded4x4.nextCount)
+        assertFalse(extraExpanded4x4.keepSymmetricCenter)
     }
 }
+
