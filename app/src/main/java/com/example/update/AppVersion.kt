@@ -1,7 +1,5 @@
 package com.example.update
 
-import java.util.Locale
-
 /**
  * Represents a semantic application version with optional build number.
  * Guarantees reliable non-string-based version comparisons (e.g. 1.0.10 > 1.0.9).
@@ -11,17 +9,24 @@ data class AppVersion(
     val minor: Int,
     val patch: Int,
     val buildNumber: Long = 0L,
-    val raw: String
+    val raw: String = "",
+    val isPreRelease: Boolean = false
 ) : Comparable<AppVersion> {
+
+    val isValid: Boolean
+        get() = major > 0 || minor > 0 || patch > 0
 
     override fun compareTo(other: AppVersion): Int {
         if (major != other.major) return major.compareTo(other.major)
         if (minor != other.minor) return minor.compareTo(other.minor)
         if (patch != other.patch) return patch.compareTo(other.patch)
+        if (isPreRelease != other.isPreRelease) {
+            return if (isPreRelease) -1 else 1
+        }
         return buildNumber.compareTo(other.buildNumber)
     }
 
-    fun isNewerThan(other: AppVersion): Boolean = this > other
+    fun isNewerThan(other: AppVersion): Boolean = this.isValid && !this.isPreRelease && this > other
 
     val displayString: String get() = toDisplayString()
 
@@ -36,42 +41,37 @@ data class AppVersion(
     override fun toString(): String = toDisplayString()
 
     companion object {
-        private val BUILD_REGEX = Regex("(?i)build[.\\s_-]*(\\d+)")
-        private val DIGITS_ONLY_REGEX = Regex("\\d+")
+        private val BUILD_REGEX = Regex("(?i)(?:build|run)[.#\\s_-]*(\\d+)")
+        private val SEMVER_REGEX = Regex("(?i)v?(\\d+)\\.(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?")
+        private val PRERELEASE_REGEX = Regex("(?i)(?:^|[-._\\s])(alpha|beta|rc\\d*|dev|nightly|canary|prerelease)(?:$|[-._\\s\\d])")
 
-        fun parse(versionString: String, fallbackBuildNumber: Long = 0L): AppVersion {
-            val clean = versionString.trim()
+        fun parse(versionString: String?, fallbackBuildNumber: Long = 0L): AppVersion {
+            val clean = versionString?.trim().orEmpty()
             if (clean.isBlank()) {
-                return AppVersion(0, 0, 0, fallbackBuildNumber, versionString)
+                return AppVersion(0, 0, 0, fallbackBuildNumber, clean, isPreRelease = false)
             }
 
-            // Extract build number if present (e.g. "v1.0.4-build.15", "1.0.4 (Build 5)")
+            val isPre = PRERELEASE_REGEX.containsMatchIn(clean)
+
+            // Extract build number if present (e.g. "v1.0.4-build.15", "1.0.4 (Build #5)")
             var detectedBuild: Long = fallbackBuildNumber
             val buildMatch = BUILD_REGEX.find(clean)
             if (buildMatch != null) {
                 detectedBuild = buildMatch.groupValues[1].toLongOrNull() ?: fallbackBuildNumber
             }
 
-            // Strip prefix ('v', 'V', 'release-', 'version-')
-            var normalized = clean
-                .replace(Regex("(?i)^v(ersion)?[-_\\s]*"), "")
-                .replace(Regex("(?i)^release[-_\\s]*"), "")
-
-            // Separate version core from pre-release / build metadata (e.g., "-build.15")
-            val corePart = normalized.split('-', '+', ' ', '_').firstOrNull().orEmpty()
-
-            // Extract numeric tokens from core part
-            val parts = corePart.split('.').mapNotNull { part ->
-                DIGITS_ONLY_REGEX.find(part)?.value?.toIntOrNull()
+            val semverMatch = SEMVER_REGEX.find(clean)
+            if (semverMatch == null) {
+                return AppVersion(0, 0, 0, detectedBuild, clean, isPreRelease = isPre)
             }
 
-            val major = parts.getOrNull(0) ?: 0
-            val minor = parts.getOrNull(1) ?: 0
-            val patch = parts.getOrNull(2) ?: 0
+            val major = semverMatch.groupValues[1].toIntOrNull() ?: 0
+            val minor = semverMatch.groupValues[2].toIntOrNull() ?: 0
+            val patch = semverMatch.groupValues[3].takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
+            val fourth = semverMatch.groupValues[4].takeIf { it.isNotEmpty() }?.toLongOrNull()
 
-            // If a 4th numeric segment exists and no build was detected, treat it as build number
-            if (detectedBuild == 0L && parts.size >= 4) {
-                detectedBuild = parts[3].toLong()
+            if (detectedBuild == 0L && fourth != null) {
+                detectedBuild = fourth
             }
 
             return AppVersion(
@@ -79,8 +79,10 @@ data class AppVersion(
                 minor = minor,
                 patch = patch,
                 buildNumber = detectedBuild,
-                raw = clean
+                raw = clean,
+                isPreRelease = isPre
             )
         }
     }
 }
+

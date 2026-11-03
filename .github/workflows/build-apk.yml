@@ -126,8 +126,10 @@ jobs:
 
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           COMMIT_MSG=$(git log -1 --pretty=%s)
+          RECENT_CHANGES=$(git log -n 5 --pretty=format:"- %s" || echo "- $COMMIT_MSG")
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           VERSION_TAG="v1.0.4-build.${{ github.run_number }}"
+          echo "TAG=$VERSION_TAG" >> "$GITHUB_ENV"
 
           # ------------------------------------------------------------------------------
           # 1. Create a permanent versioned release on the Releases page so ALL older
@@ -135,6 +137,9 @@ jobs:
           # ------------------------------------------------------------------------------
           cat << EOF > release_notes_versioned.md
           ## 🎵 OffGrid Music — v1.0.4 (Build #${{ github.run_number }})
+
+          ### ✨ What's New
+          ${RECENT_CHANGES}
 
           ### 📥 Direct APK Downloads
           - **[⬇️ Download OffGrid-Music.apk (Universal Direct Link)](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music.apk)**
@@ -187,6 +192,9 @@ jobs:
           cat << EOF > release_notes_latest.md
           ## 🚀 OffGrid Music — Latest Automated Release (Build #${{ github.run_number }})
 
+          ### ✨ What's New
+          ${RECENT_CHANGES}
+
           ### 📥 One-Click Direct Download
           - **[⬇️ Download Latest APK (OffGrid-Music.apk)](https://github.com/${{ github.repository }}/releases/latest/download/OffGrid-Music.apk)**
 
@@ -224,3 +232,12 @@ jobs:
 
           # Explicitly ensure the newest versioned release holds the official 'Latest' badge
           gh release edit "$VERSION_TAG" --latest || true
+
+      - name: Broadcast FCM Update Notification to Subscribers
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/send_fcm_release_notification.py

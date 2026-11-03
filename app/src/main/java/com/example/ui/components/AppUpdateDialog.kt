@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -192,7 +193,8 @@ fun AppUpdateDialog(
                         onClick = onDismiss,
                         modifier = Modifier
                             .weight(1f)
-                            .height(46.dp),
+                            .height(46.dp)
+                            .testTag("update_later_button"),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, BentoBorder),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -208,12 +210,15 @@ fun AppUpdateDialog(
 
                     Button(
                         onClick = {
-                            val targetUrl = release.htmlUrl.ifBlank { release.apkDownloadUrl ?: AppUpdateRepository.GITHUB_REPO_URL }
+                            val targetUrl = release.htmlUrl.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
+                                ?: release.apkDownloadUrl?.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
+                                ?: "${AppUpdateRepository.GITHUB_REPO_URL}/releases/tag/${release.tagName}"
                             onUpdateNow(targetUrl)
                         },
                         modifier = Modifier
                             .weight(1.3f)
-                            .height(46.dp),
+                            .height(46.dp)
+                            .testTag("update_now_button"),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = BentoPrimary,
@@ -222,7 +227,7 @@ fun AppUpdateDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.OpenInNew,
-                            contentDescription = null,
+                            contentDescription = "Open GitHub release page",
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -237,3 +242,4 @@ fun AppUpdateDialog(
         }
     }
 }
+

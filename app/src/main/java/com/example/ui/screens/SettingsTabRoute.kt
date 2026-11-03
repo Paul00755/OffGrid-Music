@@ -271,6 +271,7 @@ fun SettingsTabRoute(
         updateNotificationsEnabled = viewModel.updateNotificationsEnabled.collectAsState().value,
         onSetUpdateNotificationsEnabled = { viewModel.setUpdateNotificationsEnabled(it) },
         onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
-        onOpenUpdateDialog = { viewModel.checkForUpdates(isManual = true) }
+        onOpenUpdateDialog = { viewModel.reopenOrCheckForUpdates() }
     )
 }
+

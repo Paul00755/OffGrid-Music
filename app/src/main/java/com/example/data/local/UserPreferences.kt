@@ -2281,6 +2281,12 @@ class UserPreferencesRepository(private val context: Context) {
 
     fun getCachedLatestReleaseJsonSync(): String = readStringCached("cached_latest_release_json", "")
 
+    fun getLastNotifiedUpdateTagSync(): String = readStringCached("last_notified_update_tag", "")
+
+    fun setLastNotifiedUpdateTagSync(tag: String) {
+        writeStringCached("last_notified_update_tag", tag)
+    }
+
     suspend fun clearAllForTesting() {
         bootCachePrefs.edit().clear().commit()
         context.dataStore.edit { it.clear() }

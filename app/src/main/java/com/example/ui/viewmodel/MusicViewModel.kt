@@ -115,16 +115,52 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val updateCheckResult: StateFlow<com.example.update.UpdateCheckResult> =
         appUpdateRepository.updateState
 
+    val forceShowUpdateDialog = MutableStateFlow(false)
+
     val updateNotificationsEnabled: StateFlow<Boolean> = preferences.updateNotificationsEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getUpdateNotificationsEnabledSync())
 
     fun checkForUpdates(isManual: Boolean = false) {
+        if (isManual) {
+            forceShowUpdateDialog.value = true
+        }
         viewModelScope.launch {
             appUpdateRepository.checkForUpdates(isManual)
         }
     }
 
+    fun reopenOrCheckForUpdates() {
+        forceShowUpdateDialog.value = true
+        viewModelScope.launch {
+            appUpdateRepository.reopenOrCheckForUpdates()
+        }
+    }
+
+    fun onUpdateNotificationTapped(
+        releaseTag: String,
+        title: String,
+        notes: String,
+        releaseUrl: String,
+        apkUrl: String? = null
+    ) {
+        forceShowUpdateDialog.value = true
+        val populated = appUpdateRepository.onRemoteReleaseNotification(
+            tagName = releaseTag,
+            title = title,
+            notes = notes,
+            releaseUrl = releaseUrl,
+            apkUrl = apkUrl,
+            forceShowDialog = true
+        )
+        viewModelScope.launch {
+            if (!populated || notes.isBlank()) {
+                appUpdateRepository.checkForUpdates(isManual = true)
+            }
+        }
+    }
+
     fun dismissUpdate(tagName: String) {
+        forceShowUpdateDialog.value = false
         viewModelScope.launch {
             appUpdateRepository.dismissRelease(tagName)
         }

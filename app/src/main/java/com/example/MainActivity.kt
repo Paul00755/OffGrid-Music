@@ -176,6 +176,7 @@ class MainActivity : ComponentActivity() {
                     val authUiState by viewModel.authUiState.collectAsStateWithLifecycle()
                     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
                     val updateCheckResult by viewModel.updateCheckResult.collectAsStateWithLifecycle()
+                    val forceShowUpdateDialog by viewModel.forceShowUpdateDialog.collectAsStateWithLifecycle()
 
                     // Onboarding state is resolved at startup via UserPreferences & AppDatabase upgrade detection.
 
@@ -259,6 +260,9 @@ class MainActivity : ComponentActivity() {
                                     (currentTab == NavTab.HOME || currentTab == NavTab.LIBRARY)
                                 ) {
                                     viewModel.onScreenEnteredForAutoScan(currentTab.name)
+                                    if (currentTab == NavTab.HOME) {
+                                        viewModel.checkForUpdates(isManual = false)
+                                    }
                                 }
                             }
                         }
@@ -1021,13 +1025,24 @@ class MainActivity : ComponentActivity() {
                             }
 
                             val activeUpdate = (updateCheckResult as? UpdateCheckResult.UpdateAvailable)?.takeIf { !it.isDismissed }
-                            if (activeUpdate != null && !showSplash && isOnboardingCompleted) {
+                            val isEligibleForUpdateDialog = forceShowUpdateDialog ||
+                                (selectedTab == NavTab.HOME && !showNowPlaying && !showAuthScreen && !showAccountScreen)
+                            if (activeUpdate != null && !showSplash && isOnboardingCompleted && isEligibleForUpdateDialog) {
                                 AppUpdateDialog(
                                     release = activeUpdate.release,
                                     onDismiss = {
+                                        try {
+                                            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                                            nm.cancel(com.example.service.notification.OffGridFirebaseMessagingService.NOTIFICATION_ID)
+                                        } catch (_: Exception) {}
                                         viewModel.dismissUpdate(activeUpdate.release.tag)
                                     },
                                     onUpdateNow = { targetUrl ->
+                                        viewModel.forceShowUpdateDialog.value = false
+                                        try {
+                                            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                                            nm.cancel(com.example.service.notification.OffGridFirebaseMessagingService.NOTIFICATION_ID)
+                                        } catch (_: Exception) {}
                                         try {
                                             val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
                                             startActivity(browserIntent)
@@ -1075,16 +1090,71 @@ class MainActivity : ComponentActivity() {
                 vm.showNowPlaying.value = true
             } catch (_: Exception) {}
         }
-        if (intent.getBooleanExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_OPEN_UPDATE_DIALOG, false) ||
+
+        val hasExplicitUpdateFlag =
+            intent.getBooleanExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_OPEN_UPDATE_DIALOG, false) ||
             intent.getBooleanExtra("EXTRA_OPEN_UPDATE_DIALOG", false) ||
-            intent.getBooleanExtra("open_update_dialog", false)) {
+            intent.getBooleanExtra("open_update_dialog", false)
+
+        val fcmReleaseTag = intent.getStringExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_TAG)
+            ?: intent.getStringExtra("release_tag")
+            ?: intent.getStringExtra("version")
+            ?: ""
+
+        val fcmReleaseUrl = intent.getStringExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_URL)
+            ?: intent.getStringExtra("release_url")
+            ?: intent.getStringExtra("url")
+            ?: ""
+
+        val fcmTitle = intent.getStringExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_TITLE)
+            ?: intent.getStringExtra("title")
+            ?: ""
+
+        val fcmNotes = intent.getStringExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_NOTES)
+            ?: intent.getStringExtra("body")
+            ?: intent.getStringExtra("release_notes")
+            ?: ""
+
+        val fcmApkUrl = intent.getStringExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_APK_URL)
+            ?: intent.getStringExtra("apk_url")
+
+        if (hasExplicitUpdateFlag || fcmReleaseTag.isNotBlank() || fcmReleaseUrl.isNotBlank()) {
             intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_OPEN_UPDATE_DIALOG)
             intent.removeExtra("EXTRA_OPEN_UPDATE_DIALOG")
             intent.removeExtra("open_update_dialog")
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_TAG)
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_URL)
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_TITLE)
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_RELEASE_NOTES)
+            intent.removeExtra(com.example.service.notification.OffGridFirebaseMessagingService.EXTRA_UPDATE_APK_URL)
+            intent.removeExtra("release_tag")
+            intent.removeExtra("version")
+            intent.removeExtra("release_url")
+            intent.removeExtra("url")
+            intent.removeExtra("title")
+            intent.removeExtra("body")
+            intent.removeExtra("release_notes")
+            intent.removeExtra("apk_url")
+
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(com.example.service.notification.OffGridFirebaseMessagingService.NOTIFICATION_ID)
+            } catch (_: Exception) {}
+
             try {
                 val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
                 vm.dismissSplash()
-                vm.checkForUpdates(isManual = true)
+                if (fcmReleaseTag.isNotBlank() || fcmReleaseUrl.isNotBlank()) {
+                    vm.onUpdateNotificationTapped(
+                        releaseTag = fcmReleaseTag,
+                        title = fcmTitle,
+                        notes = fcmNotes,
+                        releaseUrl = fcmReleaseUrl,
+                        apkUrl = fcmApkUrl
+                    )
+                } else {
+                    vm.checkForUpdates(isManual = true)
+                }
             } catch (_: Exception) {}
         }
     }
