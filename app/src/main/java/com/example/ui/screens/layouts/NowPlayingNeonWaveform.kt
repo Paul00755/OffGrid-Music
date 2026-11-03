@@ -294,7 +294,8 @@ fun NowPlayingNeonWaveform(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(CircleShape),
-                                    cornerRadius = 200
+                                    cornerRadius = 200,
+                                    forceHighResOnline = true
                                 )
                             }
                         }

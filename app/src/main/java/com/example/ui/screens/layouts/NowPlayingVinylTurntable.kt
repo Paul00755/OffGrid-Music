@@ -355,7 +355,8 @@ fun NowPlayingVinylTurntable(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(CircleShape),
-                                    cornerRadius = 100
+                                    cornerRadius = 100,
+                                    forceHighResOnline = true
                                 )
                                 // Center Spindle Adapter Ring & Hole
                                 Surface(

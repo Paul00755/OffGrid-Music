@@ -678,7 +678,8 @@ fun NowPlayingScreen(
                                     .size(135.dp)
                                     .clip(RoundedCornerShape(16.dp))
                                     .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp)),
-                                cornerRadius = 16
+                                cornerRadius = 16,
+                                forceHighResOnline = true
                             )
                         }
                     }
@@ -945,7 +946,8 @@ fun NowPlayingScreen(
                                 AlbumArtView(
                                     song = song,
                                     modifier = Modifier.fillMaxSize(),
-                                    cornerRadius = 0
+                                    cornerRadius = 0,
+                                    forceHighResOnline = true
                                 )
                             }
 

@@ -365,7 +365,8 @@ fun HomeScreenHeroSpotlight(
                                     AlbumArtView(
                                         song = featuredSong,
                                         modifier = Modifier.fillMaxSize(),
-                                        cornerRadius = 100
+                                        cornerRadius = 100,
+                                        forceHighResOnline = true
                                     )
                                 }
 

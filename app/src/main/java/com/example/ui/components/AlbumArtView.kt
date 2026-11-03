@@ -386,7 +386,7 @@ object ArtworkResolutionCache {
             manualCoverCache.remove(songId)
         }
         manualPathCache.clear()
-        preloadedKeys.removeIf { it.startsWith("art_id:$songId") }
+        preloadedKeys.removeIf { it.startsWith("art_id:$songId") || it.startsWith("art_thumb_id:$songId") || it.startsWith("art_full_id:$songId") }
         try {
             ArtworkManager.invalidateNotificationArtwork(songId, path)
         } catch (_: Throwable) {}
@@ -517,7 +517,7 @@ object ArtworkResolutionCache {
                     }
                     val identity = trackIdentity(song.id, song.path)
                     val version = getSongArtworkVersion(song.id, song.path)
-                    val cacheKey = "art_${identity}_${uri.hashCode()}_$version"
+                    val cacheKey = "art_thumb_${identity}_${uri.hashCode()}_$version"
                     if (preloadedKeys.add(cacheKey)) {
                         try {
                             val request = ImageRequest.Builder(appCtx)
@@ -784,12 +784,12 @@ object ArtworkResolutionCache {
         songArtworkVersions.keys.removeIf { it.startsWith("id:$songId:") || it == "id:$songId" }
         failedLookupAt.keys.removeIf { it.startsWith("id:$songId:") || it == "id:$songId" }
         manualPathCache.clear()
-        preloadedKeys.removeIf { it.startsWith("art_id:$songId") }
+        preloadedKeys.removeIf { it.startsWith("art_id:$songId") || it.startsWith("art_thumb_id:$songId") || it.startsWith("art_full_id:$songId") }
         try {
             val ctx = com.example.service.PlaybackManager.activeInstance?.context
             if (ctx != null) {
                 val loader = coil.Coil.imageLoader(ctx)
-                loader.memoryCache?.keys?.filter { it.key.contains("art_id:$songId") }?.forEach { key ->
+                loader.memoryCache?.keys?.filter { it.key.contains("id:$songId") }?.forEach { key ->
                     loader.memoryCache?.remove(key)
                 }
             }
@@ -970,16 +970,27 @@ fun AlbumArtView(
     }
 
     val needsBackgroundWork = song != null && songId > 0L &&
-        ((if (isThumbnail) resolvedThumbBmp == null else resolvedArtworkUri.isNullOrBlank()) || needsHighResUpgrade)
+        (!isThumbnail || resolvedThumbBmp == null || needsHighResUpgrade)
 
     if (needsBackgroundWork && song != null && songId > 0L) {
-        LaunchedEffect(trackKey, isHighResPreferred, isCacheEnabled, songArtwork, artworkVersion) {
+        LaunchedEffect(trackKey, isThumbnail, isHighResPreferred, isCacheEnabled, songArtwork, artworkVersion) {
             val currentSongSnapshot = song
             val fastPair = withContext(Dispatchers.IO) {
                 if (!isActive || currentSongSnapshot.trackIdentityKey != latestTrackKey) return@withContext null
                 var candidateUri = resolvedArtworkUri?.takeIf { ArtworkResolutionCache.isKnownValidLocalUri(it) }
                 if (candidateUri.isNullOrBlank()) {
                     candidateUri = ArtworkResolutionCache.getAuthoritativeArtwork(context, currentSongSnapshot, isHighResPreferred)
+                }
+                if (!isThumbnail && !candidateUri.isNullOrBlank()) {
+                    val upgradedEmbedded = ArtworkManager.upgradeEmbeddedArtworkToFullResIfNeeded(
+                        context = context,
+                        songId = songId,
+                        filePath = currentSongSnapshot.path,
+                        currentUri = candidateUri
+                    )
+                    if (!upgradedEmbedded.isNullOrBlank()) {
+                        candidateUri = upgradedEmbedded
+                    }
                 }
                 if (!candidateUri.isNullOrBlank()) {
                     var decodedThumb = if (isThumbnail) {
@@ -1023,11 +1034,14 @@ fun AlbumArtView(
             if (!isActive || latestTrackKey != trackKey) return@LaunchedEffect
 
             if (fastPair != null) {
-                resolvedArtworkUri = fastPair.first
+                if (resolvedArtworkUri != fastPair.first) {
+                    resolvedArtworkUri = fastPair.first
+                }
                 if (fastPair.second != null) {
                     resolvedThumbBmp = fastPair.second
                 }
-                if (!needsHighResUpgrade && (!isThumbnail || fastPair.second != null)) {
+                val hasHighResNow = ArtworkResolutionCache.hasHighResArtwork(context, songId, currentSongSnapshot.path)
+                if ((!needsHighResUpgrade || hasHighResNow) && (!isThumbnail || fastPair.second != null)) {
                     return@LaunchedEffect
                 }
             }
@@ -1097,8 +1111,9 @@ fun AlbumArtView(
                 contentScale = ContentScale.Crop
             )
         } else if (!uri.isNullOrBlank()) {
-            val imageReq = remember(uri, cornerRadius, context, artworkVersion, trackKey) {
-                val cacheKey = "art_${trackKey}_${uri.hashCode()}_$artworkVersion"
+            val imageReq = remember(uri, cornerRadius, context, artworkVersion, trackKey, isThumbnail) {
+                val sizeTag = if (isThumbnail) "thumb" else "full"
+                val cacheKey = "art_${sizeTag}_${trackKey}_${uri.hashCode()}_$artworkVersion"
                 ImageRequest.Builder(context)
                     .data(uri)
                     .memoryCacheKey(cacheKey)
@@ -1111,6 +1126,10 @@ fun AlbumArtView(
                         if (isThumbnail) {
                             size(160, 160)
                             precision(coil.size.Precision.INEXACT)
+                        } else {
+                            size(1440, 1440)
+                            precision(coil.size.Precision.INEXACT)
+                            bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                         }
                     }
                     .build()

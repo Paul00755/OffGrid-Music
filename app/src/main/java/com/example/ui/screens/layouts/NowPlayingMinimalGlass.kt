@@ -139,7 +139,8 @@ fun NowPlayingMinimalGlass(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(RoundedCornerShape(20.dp)),
-                                    cornerRadius = 20
+                                    cornerRadius = 20,
+                                    forceHighResOnline = true
                                 )
                             }
                         }

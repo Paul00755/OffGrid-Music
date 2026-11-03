@@ -575,11 +575,130 @@ object ArtworkManager {
             }
             try {
                 val loader = coil.Coil.imageLoader(context)
-                loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") }?.forEach { key ->
+                loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") || it.key.contains("id:$songId") }?.forEach { key ->
                     loader.memoryCache?.remove(key)
                 }
             } catch (_: Throwable) {}
+            fullResEmbeddedCheckedKeys.removeIf { it.startsWith("id:$songId:") || it == "id:$songId" }
         } catch (_: Exception) {}
+    }
+
+    private val fullResEmbeddedCheckedKeys = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    /**
+     * Checks if a previously cached local artwork file was downsampled (e.g. <= 600px from legacy 512x512 extraction)
+     * while the underlying audio file contains a higher-resolution embedded cover. If so, re-extracts at full
+     * resolution (up to 1440x1440, ARGB_8888, quality 95) and atomically updates the cache and UI.
+     */
+    suspend fun upgradeEmbeddedArtworkToFullResIfNeeded(
+        context: Context,
+        songId: Long,
+        filePath: String,
+        currentUri: String?
+    ): String? = withContext(Dispatchers.IO) {
+        if (songId <= 0L && filePath.isBlank()) return@withContext null
+        val trackKey = ArtworkResolutionCache.trackIdentity(songId, filePath)
+        if (!fullResEmbeddedCheckedKeys.add(trackKey)) return@withContext null
+        if (ManualTagStore.isArtworkManuallyEdited(context, songId, filePath)) return@withContext null
+
+        try {
+            val localFile = if (!currentUri.isNullOrBlank() && currentUri.startsWith("file://")) {
+                Uri.parse(currentUri).path?.let(::File)
+            } else {
+                val persistentDir = File(context.filesDir, CACHE_DIR_NAME)
+                File(persistentDir, ArtworkResolutionCache.trackFileName(songId, filePath)).takeIf { it.exists() }
+                    ?: File(persistentDir, "$songId.jpg").takeIf { it.exists() }
+            }
+
+            if (localFile != null && localFile.exists() && localFile.length() > 256L) {
+                val cachedBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(localFile.absolutePath, cachedBounds)
+                // If cached file is already high resolution (> 600px), no upgrade needed
+                if (cachedBounds.outWidth > 600 && cachedBounds.outHeight > 600) {
+                    return@withContext null
+                }
+                val existingMaxDim = maxOf(cachedBounds.outWidth, cachedBounds.outHeight)
+
+                mmrSemaphore.withPermit {
+                    val mmr = MediaMetadataRetriever()
+                    try {
+                        var artBytes: ByteArray? = null
+                        if (filePath.isNotBlank()) {
+                            val audioFile = File(filePath)
+                            if (audioFile.exists() && audioFile.length() > 1024L) {
+                                try {
+                                    mmr.setDataSource(filePath)
+                                    artBytes = mmr.embeddedPicture
+                                } catch (_: Exception) {}
+                                if (artBytes?.isEmpty() != false) {
+                                    try {
+                                        java.io.FileInputStream(audioFile).use { fis ->
+                                            mmr.setDataSource(fis.fd)
+                                            artBytes = mmr.embeddedPicture
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                        if (artBytes?.isEmpty() != false && songId in 1L until 1_000_000_000_000L) {
+                            try {
+                                val songContentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
+                                mmr.setDataSource(context, songContentUri)
+                                artBytes = mmr.embeddedPicture
+                            } catch (_: Exception) {}
+                        }
+
+                        val validBytes = artBytes
+                        if (validBytes != null && validBytes.isNotEmpty()) {
+                            val embBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, embBounds)
+                            val embMaxDim = maxOf(embBounds.outWidth, embBounds.outHeight)
+                            if (embMaxDim > existingMaxDim && embMaxDim > 0) {
+                                val sampleSize = calculateInSampleSize(embBounds, 1440, 1440)
+                                val decodeOpts = BitmapFactory.Options().apply {
+                                    inSampleSize = sampleSize
+                                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                                }
+                                val fullBmp = BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, decodeOpts)
+                                if (fullBmp != null) {
+                                    val persistentDir = File(context.filesDir, CACHE_DIR_NAME)
+                                    if (!persistentDir.exists()) persistentDir.mkdirs()
+                                    val targetFile = if (localFile.parentFile?.name == CACHE_DIR_NAME || localFile.parentFile?.name == SONG_ARTWORKS_DIR_NAME) {
+                                        localFile
+                                    } else {
+                                        File(persistentDir, ArtworkResolutionCache.trackFileName(songId, filePath))
+                                    }
+                                    val savedBytes = writeBitmapAtomically(targetFile, fullBmp, 95, songId)
+                                    if (savedBytes != null) {
+                                        putNotificationArtwork(songId, savedBytes, fullBmp, filePath)
+                                        val upgradedUri = Uri.fromFile(targetFile).toString()
+                                        ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, upgradedUri)
+                                        ArtworkResolutionCache.cacheArtwork(songId, filePath, upgradedUri)
+                                        try {
+                                            val loader = coil.Coil.imageLoader(context)
+                                            loader.memoryCache?.keys?.filter {
+                                                it.key.contains(trackKey) || it.key.contains("id:$songId")
+                                            }?.forEach { key ->
+                                                loader.memoryCache?.remove(key)
+                                            }
+                                        } catch (_: Throwable) {}
+                                        ArtworkResolutionCache.notifyArtworkChanged(songId, upgradedUri, filePath)
+                                        return@withPermit upgradedUri
+                                    }
+                                }
+                            }
+                        }
+                    } finally {
+                        try { mmr.release() } catch (_: Throwable) {}
+                    }
+                    null
+                }
+            } else null
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
@@ -690,14 +809,14 @@ object ArtworkManager {
                     if (artBytes != null && artBytes.isNotEmpty()) {
                         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, boundsOpts)
-                        val sampleSize = calculateInSampleSize(boundsOpts, 512, 512)
+                        val sampleSize = calculateInSampleSize(boundsOpts, 1440, 1440)
                         val opts = BitmapFactory.Options().apply {
                             inSampleSize = sampleSize
                             inPreferredConfig = Bitmap.Config.ARGB_8888
                         }
                         val decodedBmp = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, opts)
                         if (decodedBmp != null) {
-                            val cleanJpeg = writeBitmapAtomically(persistentFile, decodedBmp, 90, songId)
+                            val cleanJpeg = writeBitmapAtomically(persistentFile, decodedBmp, 95, songId)
                             putCachedNotificationBitmap(songId, decodedBmp, filePath)
                             return cleanJpeg ?: artBytes
                         }
@@ -815,17 +934,20 @@ object ArtworkManager {
                         if (validBytes != null && validBytes.isNotEmpty()) {
                             val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                             BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, boundsOpts)
-                            val sampleSize = calculateInSampleSize(boundsOpts, 512, 512)
+                            val sampleSize = calculateInSampleSize(boundsOpts, 1440, 1440)
                             val opts = BitmapFactory.Options().apply {
                                 inSampleSize = sampleSize
                                 inPreferredConfig = Bitmap.Config.ARGB_8888
                             }
                             val bitmap = BitmapFactory.decodeByteArray(validBytes, 0, validBytes.size, opts)
                             if (bitmap != null) {
-                                val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 90, songId)
+                                val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 95, songId)
                                 if (savedBytes != null) {
                                     putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                     val uriStr = Uri.fromFile(persistentFile).toString()
+                                    if (bitmap.width >= 600 || bitmap.height >= 600) {
+                                        ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, uriStr)
+                                    }
                                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                     ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                     return@withPermit uriStr
@@ -850,17 +972,20 @@ object ArtworkManager {
                     if (artBytes != null && artBytes.isNotEmpty()) {
                         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, boundsOpts)
-                        val sampleSize = calculateInSampleSize(boundsOpts, 512, 512)
+                        val sampleSize = calculateInSampleSize(boundsOpts, 1440, 1440)
                         val opts = BitmapFactory.Options().apply {
                             inSampleSize = sampleSize
                             inPreferredConfig = Bitmap.Config.ARGB_8888
                         }
                         val bitmap = BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size, opts)
                         if (bitmap != null) {
-                            val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 90, songId)
+                            val savedBytes = writeBitmapAtomically(persistentFile, bitmap, 95, songId)
                             if (savedBytes != null) {
                                 putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                 val uriStr = Uri.fromFile(persistentFile).toString()
+                                if (bitmap.width >= 600 || bitmap.height >= 600) {
+                                    ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, uriStr)
+                                }
                                 ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                 ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                 return@withPermit uriStr
@@ -958,7 +1083,7 @@ object ArtworkManager {
             if (rawBytes != null && rawBytes.isNotEmpty()) {
                 val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
-                val sampleSize = calculateInSampleSize(boundsOpts, 800, 800)
+                val sampleSize = calculateInSampleSize(boundsOpts, 1440, 1440)
                 val opts = BitmapFactory.Options().apply {
                     inSampleSize = sampleSize
                     inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -1050,11 +1175,11 @@ object ArtworkManager {
 
                     try {
                         val loader = coil.Coil.imageLoader(context)
-                        loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") || it.key.contains("art_id:$songId") }?.forEach { key ->
+                        loader.memoryCache?.keys?.filter { it.key.contains("art_${songId}_") || it.key.contains("id:$songId") }?.forEach { key ->
                             loader.memoryCache?.remove(key)
                         }
                         // Pre-warm Coil memory cache with the new cover immediately
-                        val cacheKey = "art_${songId}_${newUri.hashCode()}"
+                        val cacheKey = "art_full_${ArtworkResolutionCache.trackIdentity(songId, songPath)}_${newUri.hashCode()}"
                         val warmReq = coil.request.ImageRequest.Builder(context)
                             .data(newUri)
                             .memoryCacheKey(cacheKey)

@@ -628,4 +628,33 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertTrue("Global artworkUpdateSignal must increment for observers and playlists", globalSignal2 > globalSignal1)
         assertNotNull("Updated thumbnail must be immediately available in memory without null flash", thumb2)
     }
+
+    @Test
+    fun testHighResolutionCoverPreservedForNowPlayingWhileThumbnailRemainsLightweight() = runBlocking {
+        val songId = 4001L
+        val songPath = File(tempDir, "HighResNowPlayingTrack.mp3").apply { writeBytes(ByteArray(128)) }.absolutePath
+
+        val hdSource = createValidJpegFile(File(tempDir, "hd_cover_1200.jpg"), Color.CYAN, 1200)
+        val persistedUri = ArtworkManager.persistSongCover(
+            context = context,
+            songId = songId,
+            uriString = Uri.fromFile(hdSource).toString(),
+            songPath = songPath
+        )
+        assertNotNull(persistedUri)
+
+        // 1. Verify the persisted file on disk retains full 1200x1200 resolution for Now Playing
+        val persistedFile = File(Uri.parse(persistedUri!!).path!!)
+        assertTrue(persistedFile.exists())
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(persistedFile.absolutePath, bounds)
+        assertEquals("Now Playing cover file must preserve full 1200px width", 1200, bounds.outWidth)
+        assertEquals("Now Playing cover file must preserve full 1200px height", 1200, bounds.outHeight)
+
+        // 2. Verify list thumbnail cache still stores a fast 128x128 thumbnail
+        val thumbBmp = ArtworkResolutionCache.getThumbnailBitmap(songId, songPath)
+        assertNotNull(thumbBmp)
+        assertTrue("List thumbnail must remain compact (<= 160px)", thumbBmp!!.width <= 160 && thumbBmp.height <= 160)
+    }
 }
+
