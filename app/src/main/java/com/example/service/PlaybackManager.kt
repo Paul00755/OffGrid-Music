@@ -2926,7 +2926,14 @@ class PlaybackManager(
                     inCrossfadeZone = false
                     inTrackEndFadeOut = false
                     if (player.isPlaying) {
-                        val currentPos = player.currentPosition.coerceAtLeast(0L)
+                        var currentPos = player.currentPosition.coerceAtLeast(0L)
+                        val activeSongId = _playbackState.value.currentSong?.id ?: 0L
+                        val abLoop = com.example.util.SonicStudioEngine.abLoopState.value
+                        if (abLoop.shouldLoopBack(activeSongId, currentPos)) {
+                            val targetStart = (abLoop.startMs ?: 0L).coerceAtLeast(0L)
+                            player.seekTo(targetStart)
+                            currentPos = targetStart
+                        }
                         val rawDur = player.duration
                         val totalDur = if (rawDur > 0L && rawDur != androidx.media3.common.C.TIME_UNSET) rawDur else 0L
 

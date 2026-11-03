@@ -37,6 +37,7 @@ fun NowPlayingActionMenu(
     onChooseLrc: () -> Unit,
     onSearchOnlineLyrics: () -> Unit,
     onEditTags: (() -> Unit)? = null,
+    onOpenSonicStudio: (() -> Unit)? = null,
     onDeleteSong: () -> Unit
 ) {
     if (!expanded) return
@@ -109,6 +110,18 @@ fun NowPlayingActionMenu(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Action Items
+            if (onOpenSonicStudio != null) {
+                NowPlayingMenuOptionRow(
+                    icon = Icons.Default.AutoAwesome,
+                    title = "Sonic Studio (A–B Loop, Pins & DNA Radio)",
+                    iconTint = Color(0xFF00E5FF),
+                    onClick = {
+                        onDismissRequest()
+                        onOpenSonicStudio()
+                    }
+                )
+            }
+
             NowPlayingMenuOptionRow(
                 icon = Icons.Default.Bedtime,
                 title = "Sleep Timer",

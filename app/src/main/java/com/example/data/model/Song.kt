@@ -106,6 +106,7 @@ data class Playlist(
     val artworkUri: String? = null
 )
 
+@Immutable
 data class ListeningStats(
     val periodName: String,
     val totalDurationMs: Long = 0L,
@@ -128,6 +129,7 @@ data class AlbumStat(
     val playCount: Int
 )
 
+@Immutable
 data class Lyrics(
     val songId: Long,
     val plainLyrics: String? = null,
@@ -135,10 +137,16 @@ data class Lyrics(
     val isCached: Boolean = false,
     val source: String = "local"
 ) {
-    fun parseSyncedLines(): List<Pair<Long, String>> {
+    private val cachedSyncedLines: List<Pair<Long, String>> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        computeSyncedLines()
+    }
+
+    fun parseSyncedLines(): List<Pair<Long, String>> = cachedSyncedLines
+
+    private fun computeSyncedLines(): List<Pair<Long, String>> {
         val target = if (!syncedLyricsJson.isNullOrBlank()) {
             syncedLyricsJson
-        } else if (!plainLyrics.isNullOrBlank() && plainLyrics.contains(Regex("""\[\d{2}:\d{2}"""))) {
+        } else if (!plainLyrics.isNullOrBlank() && LRC_TIMESTAMP_DETECT_REGEX.containsMatchIn(plainLyrics)) {
             plainLyrics
         } else {
             return emptyList()
@@ -170,8 +178,34 @@ data class Lyrics(
         val lrcLines = com.example.util.LrcParser.parseLrcToLines(target)
         return lrcLines.map { Pair(it.timeMs, it.text) }
     }
+
+    companion object {
+        private val LRC_TIMESTAMP_DETECT_REGEX = Regex("""\[\d{2}:\d{2}""")
+
+        /**
+         * O(log N) binary search to find the active lyric line index for [positionMs].
+         * Matches the exact semantics of `lines.indexOfLast { positionMs >= it.first }.coerceAtLeast(0)`.
+         */
+        fun findActiveLineIndex(lines: List<Pair<Long, String>>, positionMs: Long): Int {
+            if (lines.isEmpty()) return 0
+            var low = 0
+            var high = lines.lastIndex
+            var result = 0
+            while (low <= high) {
+                val mid = (low + high) ushr 1
+                if (lines[mid].first <= positionMs) {
+                    result = mid
+                    low = mid + 1
+                } else {
+                    high = mid - 1
+                }
+            }
+            return result
+        }
+    }
 }
 
+@Immutable
 data class DailyListeningStat(
     val dayStartMs: Long,
     val dayLabel: String,
@@ -181,6 +215,7 @@ data class DailyListeningStat(
     val isToday: Boolean = false
 )
 
+@Immutable
 data class TimeOfDayDistribution(
     val morningDurationMs: Long = 0L,
     val afternoonDurationMs: Long = 0L,
@@ -201,6 +236,7 @@ data class TimeOfDayDistribution(
         }
 }
 
+@Immutable
 data class WrappedData(
     val totalMinutes: Long = 0L,
     val totalTracks: Int = 0,

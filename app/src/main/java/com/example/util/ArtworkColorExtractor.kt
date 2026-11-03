@@ -10,34 +10,81 @@ import com.example.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 object ArtworkColorExtractor {
-    private val colorCache = object : android.util.LruCache<String, Color>(150) {}
-    private val failedCache = object : android.util.LruCache<String, Boolean>(150) {}
+    private const val PREFS_NAME = "artwork_palette_cache_v1"
+    private val colorCache = object : android.util.LruCache<String, Color>(500) {}
+    private val failedCache = object : android.util.LruCache<String, Boolean>(250) {}
+    private val diskColorMemoryMirror = ConcurrentHashMap<String, Int>()
+    @Volatile
+    private var isDiskMirrorLoaded = false
 
     @Synchronized
     fun clearCache() {
         colorCache.evictAll()
         failedCache.evictAll()
+        diskColorMemoryMirror.clear()
+    }
+
+    private fun ensureDiskMirrorLoaded(context: Context) {
+        if (isDiskMirrorLoaded) return
+        synchronized(this) {
+            if (isDiskMirrorLoaded) return
+            isDiskMirrorLoaded = true
+            try {
+                val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                for ((k, v) in prefs.all) {
+                    if (v is Int) {
+                        diskColorMemoryMirror[k] = v
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun getCachedColor(context: Context, key: String): Color? {
+        synchronized(this) {
+            colorCache.get(key)?.let { return it }
+        }
+        ensureDiskMirrorLoaded(context)
+        val argb = diskColorMemoryMirror[key] ?: return null
+        val color = Color(argb)
+        synchronized(this) {
+            colorCache.put(key, color)
+        }
+        return color
+    }
+
+    private fun saveCachedColor(context: Context, key: String, color: Color) {
+        val argb = color.toArgb()
+        synchronized(this) {
+            colorCache.put(key, color)
+        }
+        if (diskColorMemoryMirror.put(key, argb) != argb) {
+            try {
+                context.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(key, argb)
+                    .apply()
+            } catch (_: Throwable) {}
+        }
     }
 
     suspend fun extractPrimaryColorForSong(context: Context, song: Song?): Color? {
         if (song == null) return null
-        val cacheKey = "song_${com.example.ui.components.ArtworkResolutionCache.trackIdentity(song.id, song.path)}_${song.artworkUri ?: ""}"
-        synchronized(this) {
-            colorCache.get(cacheKey)?.let { return it }
-        }
+        val cacheKey = "song_${song.trackIdentityKey}_${song.artworkUri ?: ""}"
+        getCachedColor(context, cacheKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
             try {
-                // 1. Try fast in-memory bitmap from ArtworkManager
+                // 1. Try fast in-memory bitmap from ArtworkManager or ThumbnailBitmapCache
                 val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
                 if (cachedBmp != null && !cachedBmp.isRecycled) {
                     val color = findProminentColor(cachedBmp)
                     if (color != null) {
-                        synchronized(this@ArtworkColorExtractor) {
-                            colorCache.put(cacheKey, color)
-                        }
+                        saveCachedColor(context, cacheKey, color)
                         return@withContext color
                     }
                 }
@@ -50,9 +97,7 @@ object ArtworkColorExtractor {
                 if (!effectiveUri.isNullOrBlank()) {
                     val uriColor = extractPrimaryColor(context, effectiveUri)
                     if (uriColor != null) {
-                        synchronized(this@ArtworkColorExtractor) {
-                            colorCache.put(cacheKey, uriColor)
-                        }
+                        saveCachedColor(context, cacheKey, uriColor)
                         return@withContext uriColor
                     }
                 }
@@ -66,15 +111,13 @@ object ArtworkColorExtractor {
                     song.artworkUri
                 )
                 if (rawBytes != null && rawBytes.isNotEmpty()) {
-                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 8 }
                     val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
                     if (bmp != null) {
                         val color = findProminentColor(bmp)
                         bmp.recycle()
                         if (color != null) {
-                            synchronized(this@ArtworkColorExtractor) {
-                                colorCache.put(cacheKey, color)
-                            }
+                            saveCachedColor(context, cacheKey, color)
                             return@withContext color
                         }
                     }
@@ -90,8 +133,8 @@ object ArtworkColorExtractor {
         if (artworkUriStr.isNullOrBlank()) return null
         synchronized(this) {
             if (failedCache.get(artworkUriStr) == true) return null
-            colorCache.get(artworkUriStr)?.let { return it }
         }
+        getCachedColor(context, artworkUriStr)?.let { return it }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -104,10 +147,10 @@ object ArtworkColorExtractor {
                 }
                 val extractedColor = findProminentColor(bitmap)
                 bitmap.recycle()
-                synchronized(this@ArtworkColorExtractor) {
-                    if (extractedColor != null) {
-                        colorCache.put(artworkUriStr, extractedColor)
-                    } else {
+                if (extractedColor != null) {
+                    saveCachedColor(context, artworkUriStr, extractedColor)
+                } else {
+                    synchronized(this@ArtworkColorExtractor) {
                         failedCache.put(artworkUriStr, true)
                     }
                 }
@@ -126,6 +169,7 @@ object ArtworkColorExtractor {
             val uri = Uri.parse(uriStr)
             val options = BitmapFactory.Options().apply {
                 inSampleSize = 8
+                inPreferredConfig = Bitmap.Config.RGB_565
             }
             if (uriStr.startsWith("content://") || uriStr.startsWith("file://")) {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -142,38 +186,56 @@ object ArtworkColorExtractor {
         }
     }
 
-    private fun findProminentColor(bitmap: Bitmap): Color? {
-        val width = bitmap.width
-        val height = bitmap.height
-        if (width <= 0 || height <= 0) return null
+    /**
+     * Ultra-fast prominent color extractor:
+     * - Downsamples source bitmaps larger than 64x64 to a 48x48 grid (eliminates 4MB pixel array allocations).
+     * - Uses inline pure-Kotlin RGB-to-HSV math inside the pixel loop (zero JNI calls per pixel).
+     */
+    internal fun findProminentColor(bitmap: Bitmap): Color? {
+        val rawWidth = bitmap.width
+        val rawHeight = bitmap.height
+        if (rawWidth <= 0 || rawHeight <= 0 || bitmap.isRecycled) return null
 
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-        val hsv = FloatArray(3)
-
-        // 12 Hue Buckets (30 degrees each)
-        class HueBucket {
-            var count = 0
-            var totalWeight = 0f
-            var sumR = 0L
-            var sumG = 0L
-            var sumB = 0L
+        val sampleBmp = if (rawWidth > 64 || rawHeight > 64) {
+            try {
+                Bitmap.createScaledBitmap(bitmap, 48, 48, false)
+            } catch (_: Throwable) {
+                bitmap
+            }
+        } else {
+            bitmap
         }
 
-        val buckets = Array(12) { HueBucket() }
+        val width = sampleBmp.width
+        val height = sampleBmp.height
+        val pixels = IntArray(width * height)
+        try {
+            sampleBmp.getPixels(pixels, 0, width, 0, 0, width, height)
+        } finally {
+            if (sampleBmp !== bitmap && !sampleBmp.isRecycled) {
+                sampleBmp.recycle()
+            }
+        }
+
+        // 12 Hue Buckets (30 degrees each)
+        val bucketCount = IntArray(12)
+        val bucketWeight = FloatArray(12)
+        val bucketSumR = LongArray(12)
+        val bucketSumG = LongArray(12)
+        val bucketSumB = LongArray(12)
+
         var fallbackR = 0L
         var fallbackG = 0L
         var fallbackB = 0L
         var fallbackCount = 0
 
-        for (i in pixels.indices step 2) {
+        for (i in pixels.indices) {
             val colorInt = pixels[i]
-            val alpha = (colorInt shr 24) and 0xFF
+            val alpha = (colorInt ushr 24) and 0xFF
             if (alpha < 128) continue
 
-            val r = (colorInt shr 16) and 0xFF
-            val g = (colorInt shr 8) and 0xFF
+            val r = (colorInt ushr 16) and 0xFF
+            val g = (colorInt ushr 8) and 0xFF
             val b = colorInt and 0xFF
 
             fallbackR += r
@@ -181,33 +243,42 @@ object ArtworkColorExtractor {
             fallbackB += b
             fallbackCount++
 
-            android.graphics.Color.colorToHSV(colorInt, hsv)
-            val hue = hsv[0] // 0.0 .. 360.0
-            val saturation = hsv[1] // 0.0 .. 1.0
-            val value = hsv[2] // 0.0 .. 1.0
+            // Inline RGB -> HSV calculation (avoids per-pixel JNI call to android.graphics.Color.colorToHSV)
+            val maxC = maxOf(r, g, b)
+            val minC = minOf(r, g, b)
+            val delta = maxC - minC
+
+            val value = maxC / 255f
+            val saturation = if (maxC == 0) 0f else delta.toFloat() / maxC.toFloat()
 
             // Skip dull grays/whites/blacks for hue bucket classification
             if (value < 0.12f || (value > 0.95f && saturation < 0.08f) || saturation < 0.12f) continue
 
+            var hue = when {
+                delta == 0 -> 0f
+                maxC == r -> 60f * (((g - b).toFloat() / delta.toFloat()) % 6f)
+                maxC == g -> 60f * (((b - r).toFloat() / delta.toFloat()) + 2f)
+                else -> 60f * (((r - g).toFloat() / delta.toFloat()) + 4f)
+            }
+            if (hue < 0f) hue += 360f
+
             val bucketIdx = ((hue / 30f).toInt()).coerceIn(0, 11)
-            // Weight bucket by saturation and medium-high brightness
             val weight = saturation * saturation * (if (value in 0.30f..0.85f) 1.5f else 0.8f)
 
-            val bucket = buckets[bucketIdx]
-            bucket.count++
-            bucket.totalWeight += weight
-            bucket.sumR += r
-            bucket.sumG += g
-            bucket.sumB += b
+            bucketCount[bucketIdx]++
+            bucketWeight[bucketIdx] += weight
+            bucketSumR[bucketIdx] += r
+            bucketSumG[bucketIdx] += g
+            bucketSumB[bucketIdx] += b
         }
 
-        var winningBucket: HueBucket? = null
+        var winningIdx = -1
         var maxWeight = -1f
 
-        for (b in buckets) {
-            if (b.count > 0 && b.totalWeight > maxWeight) {
-                maxWeight = b.totalWeight
-                winningBucket = b
+        for (idx in 0 until 12) {
+            if (bucketCount[idx] > 0 && bucketWeight[idx] > maxWeight) {
+                maxWeight = bucketWeight[idx]
+                winningIdx = idx
             }
         }
 
@@ -215,10 +286,11 @@ object ArtworkColorExtractor {
         val avgG: Int
         val avgB: Int
 
-        if (winningBucket != null && winningBucket.count > 0) {
-            avgR = (winningBucket.sumR / winningBucket.count).toInt().coerceIn(0, 255)
-            avgG = (winningBucket.sumG / winningBucket.count).toInt().coerceIn(0, 255)
-            avgB = (winningBucket.sumB / winningBucket.count).toInt().coerceIn(0, 255)
+        if (winningIdx >= 0 && bucketCount[winningIdx] > 0) {
+            val cnt = bucketCount[winningIdx]
+            avgR = (bucketSumR[winningIdx] / cnt).toInt().coerceIn(0, 255)
+            avgG = (bucketSumG[winningIdx] / cnt).toInt().coerceIn(0, 255)
+            avgB = (bucketSumB[winningIdx] / cnt).toInt().coerceIn(0, 255)
         } else if (fallbackCount > 0) {
             avgR = (fallbackR / fallbackCount).toInt().coerceIn(0, 255)
             avgG = (fallbackG / fallbackCount).toInt().coerceIn(0, 255)
@@ -227,11 +299,11 @@ object ArtworkColorExtractor {
             return null
         }
 
+        val hsv = FloatArray(3)
         val rawColorInt = android.graphics.Color.rgb(avgR, avgG, avgB)
         android.graphics.Color.colorToHSV(rawColorInt, hsv)
 
         // Convert to clean, soft pastel colors: gentle saturation (0.28f - 0.52f) and high brightness (0.80f - 0.95f)
-        // Eliminates murky/dark colors during dynamic theming and ensures clean UI with high text legibility
         hsv[1] = hsv[1].coerceIn(0.28f, 0.52f)
         hsv[2] = hsv[2].coerceIn(0.80f, 0.95f)
 
@@ -239,3 +311,4 @@ object ArtworkColorExtractor {
         return Color(adjustedColorInt)
     }
 }
+

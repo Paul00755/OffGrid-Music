@@ -23,7 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.theme.BentoPrimary
+import com.example.util.SonicStudioEngine
 import kotlinx.coroutines.flow.StateFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.util.Locale
@@ -39,19 +41,38 @@ fun NowPlayingWaveformVisualizer(
     accentColor: Color = BentoPrimary,
     onSeekTo: (Long) -> Unit,
     playbackPositionFlow: StateFlow<Long>? = null,
+    loopStartMs: Long? = null,
+    loopEndMs: Long? = null,
+    bookmarksMs: List<Long> = emptyList(),
+    waveformAmplitudes: FloatArray? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val waveformColor = if (isDarkTheme) Color.White else Color.Black
     val inactiveTrackColor = waveformColor.copy(alpha = 0.22f)
 
-    val livePosition = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = progressMs)?.value ?: progressMs
-    val actualProgress = if (durationMs > 0) (livePosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+    val abLoopState by SonicStudioEngine.abLoopState.collectAsStateWithLifecycle()
+    val effectiveLoopStartMs = loopStartMs ?: if (trackId != null && abLoopState.songId == trackId) abLoopState.startMs else null
+    val effectiveLoopEndMs = loopEndMs ?: if (trackId != null && abLoopState.songId == trackId) abLoopState.endMs else null
 
+    val bookmarkSignal = SonicStudioEngine.bookmarksUpdateSignal.longValue
+    val effectiveBookmarksMs = remember(trackId, bookmarksMs, bookmarkSignal) {
+        if (bookmarksMs.isNotEmpty()) {
+            bookmarksMs
+        } else if (trackId != null && trackId > 0L) {
+            SonicStudioEngine.getBookmarks(context, trackId).map { it.timestampMs }
+        } else {
+            emptyList()
+        }
+    }
+
+    val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = progressMs)
     var isDragging by remember(trackId) { mutableStateOf(false) }
     var dragProgress by remember(trackId) { mutableFloatStateOf(0f) }
 
-    val displayProgress = if (isDragging) dragProgress else actualProgress
+    // Reusable Path instance to avoid 60-120fps heap allocations inside Canvas onDraw
+    val reusablePath = remember { Path() }
 
     val activePhase = if (isPlaying && !isDragging) {
         val infiniteTransition = rememberInfiniteTransition(label = "waveform")
@@ -111,16 +132,56 @@ fun NowPlayingWaveformVisualizer(
         val width = size.width
         val height = size.height
         val centerY = height / 2f
+
+        // Read high-frequency playback position inside DrawScope to avoid parent recompositions
+        val currentPositionMs = livePositionState?.value ?: progressMs
+        val actualProgress = if (durationMs > 0) {
+            (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        } else 0f
+        val displayProgress = if (isDragging) dragProgress else actualProgress
         val activeWidth = (width * displayProgress).coerceIn(0f, width)
 
-        val trackStroke = 4.dp.toPx() // ~14px thick horizontal line
-        val waveAmplitude = 6.dp.toPx() // ~24-28px peak-to-peak wave height
-        val thumbWidth = 6.dp.toPx() // ~18px wide
-        val thumbHeight = 24.dp.toPx() // ~72px high vertical pill
+        val trackStroke = 4.dp.toPx()
+        val waveAmplitude = 6.dp.toPx()
+        val thumbWidth = 6.dp.toPx()
+        val thumbHeight = 24.dp.toPx()
+
+        // Optional A-B Loop Highlight Region
+        if (durationMs > 0L && effectiveLoopStartMs != null && effectiveLoopStartMs >= 0L) {
+            val startX = ((effectiveLoopStartMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)) * width
+            val endX = if (effectiveLoopEndMs != null && effectiveLoopEndMs > effectiveLoopStartMs) {
+                ((effectiveLoopEndMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)) * width
+            } else {
+                activeWidth.coerceAtLeast(startX)
+            }
+            if (endX > startX) {
+                drawRoundRect(
+                    color = accentColor.copy(alpha = 0.16f),
+                    topLeft = Offset(startX, centerY - 16.dp.toPx()),
+                    size = Size((endX - startX).coerceAtLeast(2.dp.toPx()), 32.dp.toPx()),
+                    cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+                )
+            }
+            drawLine(
+                color = Color(0xFF00E5FF),
+                start = Offset(startX, centerY - 15.dp.toPx()),
+                end = Offset(startX, centerY + 15.dp.toPx()),
+                strokeWidth = 2.5.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            if (effectiveLoopEndMs != null && effectiveLoopEndMs > effectiveLoopStartMs) {
+                drawLine(
+                    color = Color(0xFF00E5FF),
+                    start = Offset(endX, centerY - 15.dp.toPx()),
+                    end = Offset(endX, centerY + 15.dp.toPx()),
+                    strokeWidth = 2.5.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
 
         when (style.uppercase()) {
             "SLEEK_LINE", "SLEEK", "LINE", "MINIMAL" -> {
-                // Background Track
                 drawLine(
                     color = inactiveTrackColor,
                     start = Offset(0f, centerY),
@@ -128,7 +189,6 @@ fun NowPlayingWaveformVisualizer(
                     strokeWidth = 3.5.dp.toPx(),
                     cap = StrokeCap.Round
                 )
-                // Active Played Line
                 if (activeWidth > 0f) {
                     drawLine(
                         color = accentColor,
@@ -138,13 +198,11 @@ fun NowPlayingWaveformVisualizer(
                         cap = StrokeCap.Round
                     )
                 }
-                // Ambient Seeker Glow
                 drawCircle(
                     color = accentColor.copy(alpha = 0.35f),
                     radius = 10.dp.toPx(),
                     center = Offset(activeWidth, centerY)
                 )
-                // Seeker Head Thumb
                 drawCircle(
                     color = waveformColor,
                     radius = 6.dp.toPx(),
@@ -153,7 +211,6 @@ fun NowPlayingWaveformVisualizer(
             }
 
             "SNAKE", "CURVED" -> {
-                // 1. Remaining unplayed background track line (only drawn from current position to end, hiding it under the active wave)
                 if (activeWidth < width) {
                     val inactiveStart = activeWidth.coerceAtLeast(0f)
                     drawLine(
@@ -165,35 +222,31 @@ fun NowPlayingWaveformVisualizer(
                     )
                 }
 
-                // 2. Continuous smooth sine waveform for played portion
                 if (activeWidth > 0f) {
-                    val pathActive = Path()
+                    reusablePath.rewind()
                     val steps = (activeWidth / 2f).toInt().coerceIn(40, 200)
                     val dx = activeWidth / steps.toFloat()
-                    
-                    // ~7-8 smooth wave cycles across played portion
                     val cycleFreq = (8.0 * Math.PI) / activeWidth.toDouble()
 
-                    pathActive.moveTo(0f, centerY)
+                    reusablePath.moveTo(0f, centerY)
 
                     for (i in 0..steps) {
                         val x = (i * dx).coerceAtMost(activeWidth)
                         val progressRatio = (x / activeWidth).coerceIn(0f, 1f)
-                        // Smooth envelope factor so wave starts at centerY (x=0) and ends at centerY (x=activeWidth)
                         val envelope = kotlin.math.sin(progressRatio * Math.PI).toFloat()
 
                         val waveVal = sin(x.toDouble() * cycleFreq + activePhase.toDouble()).toFloat()
                         val y = centerY + (waveVal * waveAmplitude * envelope)
 
                         if (i == 0) {
-                            pathActive.moveTo(x, y)
+                            reusablePath.moveTo(x, y)
                         } else {
-                            pathActive.lineTo(x, y)
+                            reusablePath.lineTo(x, y)
                         }
                     }
 
                     drawPath(
-                        path = pathActive,
+                        path = reusablePath,
                         color = waveformColor,
                         style = Stroke(
                             width = trackStroke,
@@ -203,7 +256,6 @@ fun NowPlayingWaveformVisualizer(
                     )
                 }
 
-                // 3. Playback Position Marker: Vertical rounded pill (centered on current playback position)
                 drawRoundRect(
                     color = waveformColor,
                     topLeft = Offset(activeWidth - (thumbWidth / 2f), centerY - (thumbHeight / 2f)),
@@ -216,15 +268,22 @@ fun NowPlayingWaveformVisualizer(
                 val barCount = 52
                 val barWidth = (width / (barCount * 1.4f)).coerceIn(2.5.dp.toPx(), 6.dp.toPx())
                 val stepX = width / barCount.toFloat()
+                val amps = waveformAmplitudes
 
                 for (i in 0 until barCount) {
                     val x = i * stepX + (stepX / 2f)
                     val isActive = x <= activeWidth
 
-                    val normPos = i.toFloat() / (barCount - 1).toFloat()
-                    val envelope = kotlin.math.sin(normPos * Math.PI).toFloat()
-                    val microvibe = if (isPlaying) (sin(i * 0.45f + activePhase).toFloat() * 0.18f) else 0f
-                    val factor = (0.15f + 0.85f * envelope + microvibe).coerceIn(0.12f, 1.0f)
+                    val baseFactor = if (amps != null && amps.isNotEmpty()) {
+                        val ampIdx = ((i.toFloat() / barCount.toFloat()) * amps.size).toInt().coerceIn(0, amps.lastIndex)
+                        amps[ampIdx].coerceIn(0.15f, 0.96f)
+                    } else {
+                        val normPos = i.toFloat() / (barCount - 1).toFloat()
+                        val envelope = kotlin.math.sin(normPos * Math.PI).toFloat()
+                        0.15f + 0.85f * envelope
+                    }
+                    val microvibe = if (isPlaying) (sin(i * 0.45f + activePhase).toFloat() * 0.14f) else 0f
+                    val factor = (baseFactor + microvibe).coerceIn(0.12f, 1.0f)
                     val barH = (height * 0.88f) * factor
 
                     val top = centerY - (barH / 2f)
@@ -250,7 +309,6 @@ fun NowPlayingWaveformVisualizer(
                     val x = i * stepX + (stepX / 2f)
                     val isActive = x <= activeWidth
 
-                    // Classic equalizer bouncing frequency spectrum effect
                     val freq1 = sin(i * 0.65f + activePhase * 1.4f).toFloat()
                     val freq2 = sin(i * 1.2f - activePhase * 0.8f).toFloat()
                     val bounce = if (isPlaying) ((freq1 * 0.4f + freq2 * 0.3f) + 0.3f).coerceIn(0.15f, 0.95f) else 0.25f
@@ -288,26 +346,22 @@ fun NowPlayingWaveformVisualizer(
                     val r = baseRadius * pulseFactor
 
                     if (isActive) {
-                        // Outer halo glow
                         drawCircle(
                             color = accentColor.copy(alpha = 0.25f),
                             radius = r * 1.8f,
                             center = Offset(x, y)
                         )
-                        // Core dot
                         drawCircle(
                             color = accentColor,
                             radius = r,
                             center = Offset(x, y)
                         )
-                        // Inner bright dot
                         drawCircle(
                             color = waveformColor,
                             radius = r * 0.4f,
                             center = Offset(x, y)
                         )
                     } else {
-                        // Clean inactive dotted wave track
                         drawCircle(
                             color = inactiveTrackColor,
                             radius = r,
@@ -316,7 +370,6 @@ fun NowPlayingWaveformVisualizer(
                     }
                 }
 
-                // Seeker head node
                 val seekerProgressRatio = (activeWidth / width).coerceIn(0f, 1f)
                 val seekerEnvelope = kotlin.math.sin(seekerProgressRatio * Math.PI).toFloat()
                 val seekerWaveOffset = sin((activeWidth / dx) * 0.45f + activePhase.toDouble()).toFloat() * maxWaveAmp * (0.35f + 0.65f * seekerEnvelope)
@@ -356,6 +409,19 @@ fun NowPlayingWaveformVisualizer(
                 )
             }
         }
+
+        // Draw Bookmark Marker Dots along the seekbar
+        if (durationMs > 0L && effectiveBookmarksMs.isNotEmpty()) {
+            val markerRadius = 3.5.dp.toPx()
+            for (bookmarkMs in effectiveBookmarksMs) {
+                val bx = ((bookmarkMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)) * width
+                drawCircle(
+                    color = Color(0xFFFFD54F),
+                    radius = markerRadius,
+                    center = Offset(bx, height - 4.dp.toPx())
+                )
+            }
+        }
     }
 }
 
@@ -368,11 +434,19 @@ fun PlaybackPositionText(
     fontSize: TextUnit = 11.sp,
     color: Color
 ) {
-    val livePosition = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)?.value ?: positionMs
-    val safePosition = livePosition.coerceIn(0L, durationMs.coerceAtLeast(0L))
-    val totalSeconds = safePosition / 1000L
+    val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
+    val totalSeconds by remember(livePositionState, positionMs, durationMs) {
+        derivedStateOf {
+            val rawPos = livePositionState?.value ?: positionMs
+            val safePosition = rawPos.coerceIn(0L, durationMs.coerceAtLeast(0L))
+            safePosition / 1000L
+        }
+    }
+    val formattedText = remember(totalSeconds) {
+        String.format(Locale.US, "%d:%02d", totalSeconds / 60L, totalSeconds % 60L)
+    }
     Text(
-        text = String.format(Locale.US, "%d:%02d", totalSeconds / 60L, totalSeconds % 60L),
+        text = formattedText,
         modifier = modifier,
         fontSize = fontSize,
         color = color,
@@ -380,4 +454,5 @@ fun PlaybackPositionText(
         overflow = TextOverflow.Clip
     )
 }
+
 

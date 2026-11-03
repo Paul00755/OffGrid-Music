@@ -81,6 +81,22 @@ object ArtworkResolutionCache {
     private val songArtworkVersions = ConcurrentHashMap<String, Long>()
     private val artworkUpdateSignals = ConcurrentHashMap<String, androidx.compose.runtime.MutableLongState>()
 
+    private val HEX_CHARS = "0123456789abcdef".toCharArray()
+    private val sha256ThreadLocal = object : ThreadLocal<java.security.MessageDigest>() {
+        override fun initialValue(): java.security.MessageDigest =
+            java.security.MessageDigest.getInstance("SHA-256")
+    }
+
+    private fun bytesToHexFast(bytes: ByteArray): String {
+        val hexChars = CharArray(bytes.size * 2)
+        for (i in bytes.indices) {
+            val v = bytes[i].toInt() and 0xFF
+            hexChars[i * 2] = HEX_CHARS[v ushr 4]
+            hexChars[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+        }
+        return String(hexChars)
+    }
+
     private fun normalizedTrackPath(path: String?): String = path.orEmpty().trim().replace('\\', '/')
 
     fun trackIdentity(songId: Long, path: String?): String {
@@ -91,9 +107,9 @@ object ArtworkResolutionCache {
                 if (cachedPath == normalizedPath) return identity
             }
         }
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(normalizedPath.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+        val md = sha256ThreadLocal.get() ?: java.security.MessageDigest.getInstance("SHA-256")
+        md.reset()
+        val digest = bytesToHexFast(md.digest(normalizedPath.toByteArray(Charsets.UTF_8)))
         val identity = "id:$songId:$digest"
         synchronized(trackIdentityCache) {
             trackIdentityCache.put(songId, normalizedPath to identity)
@@ -839,8 +855,8 @@ fun AlbumArtView(
     val gradientIndex = (songId.toInt() % PRECOMPUTED_ARTWORK_BRUSHES.size).let { if (it < 0) -it else it }
     val backgroundBrush = PRECOMPUTED_ARTWORK_BRUSHES[gradientIndex]
 
-    val globalArtworkSignal = ArtworkResolutionCache.artworkUpdateSignal.longValue
-    val artworkVersion = remember(trackKey, globalArtworkSignal) {
+    val perSongArtworkSignal = ArtworkResolutionCache.getArtworkUpdateVersion(songId, songPath)
+    val artworkVersion = remember(trackKey, perSongArtworkSignal) {
         ArtworkResolutionCache.getSongArtworkVersion(songId, songPath)
     }
     val songArtwork = song?.artworkUri?.takeIf { it.isNotBlank() }
@@ -1097,12 +1113,13 @@ fun AlbumArtView(
                 contentScale = ContentScale.Crop,
                 onSuccess = { state ->
                     asyncImageLoaded = true
-                    if (isThumbnail && songId > 0L) {
+                    if (isThumbnail && songId > 0L && resolvedThumbBmp == null) {
                         val bmp = (state.result.drawable as? BitmapDrawable)?.bitmap
                         if (bmp != null && !bmp.isRecycled) {
-                            val imgBmp = bmp.asImageBitmap()
-                            ArtworkResolutionCache.putThumbnailBitmap(songId, imgBmp, songPath)
-                            resolvedThumbBmp = imgBmp
+                            val imgBmp = ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, songPath)
+                            if (imgBmp != null) {
+                                resolvedThumbBmp = imgBmp
+                            }
                         }
                     }
                 },

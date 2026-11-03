@@ -10,7 +10,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,8 +29,8 @@ import java.util.Locale
 
 /**
  * Isolated real-time progress indicator.
- * By isolating collection of [playbackPositionFlow] within this leaf composable,
- * parent screens and lists do NOT recompose during playback, ensuring zero UI lag.
+ * By deferring [playbackPositionFlow] reads into the progress lambda and gating timestamp text
+ * to 1-second intervals, parent screens and lists do NOT recompose during playback ticks.
  */
 @Composable
 fun RealtimeTrackProgressBar(
@@ -44,14 +46,14 @@ fun RealtimeTrackProgressBar(
 ) {
     if (durationMs <= 0L) return
 
-    val currentPos = if (isActive && playbackPositionFlow != null) {
-        val pos by playbackPositionFlow.collectAsStateWithLifecycle()
-        pos
-    } else 0L
+    val posState = if (isActive && playbackPositionFlow != null) {
+        playbackPositionFlow.collectAsStateWithLifecycle()
+    } else null
 
     Column(modifier = modifier) {
         LinearProgressIndicator(
             progress = {
+                val currentPos = posState?.value ?: 0L
                 (currentPos.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
             },
             modifier = Modifier
@@ -64,10 +66,14 @@ fun RealtimeTrackProgressBar(
 
         if (showTimestamps && isActive) {
             Spacer(modifier = Modifier.height(3.dp))
-            val durSec = (durationMs / 1000).coerceAtLeast(0)
-            val posSec = (currentPos / 1000).coerceIn(0L, durSec)
-            val posStr = String.format(Locale.US, "%d:%02d", posSec / 60, posSec % 60)
-            val durStr = String.format(Locale.US, "%d:%02d", durSec / 60, durSec % 60)
+            val durSec = (durationMs / 1000L).coerceAtLeast(0L)
+            val posSec by remember(posState, durSec) {
+                derivedStateOf {
+                    ((posState?.value ?: 0L) / 1000L).coerceIn(0L, durSec)
+                }
+            }
+            val posStr = remember(posSec) { String.format(Locale.US, "%d:%02d", posSec / 60L, posSec % 60L) }
+            val durStr = remember(durSec) { String.format(Locale.US, "%d:%02d", durSec / 60L, durSec % 60L) }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -78,3 +84,4 @@ fun RealtimeTrackProgressBar(
         }
     }
 }
+

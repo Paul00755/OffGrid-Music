@@ -195,6 +195,7 @@ fun NowPlayingScreen(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showSearchLyricsDialog by remember { mutableStateOf(false) }
     var showAudioOutputSheet by remember { mutableStateOf(false) }
+    var showSonicStudioSheet by remember { mutableStateOf(false) }
     var userIsScrollingLyrics by rememberSaveable { mutableStateOf(false) }
 
     val configuration = LocalConfiguration.current
@@ -1416,10 +1417,31 @@ fun NowPlayingScreen(
                         onEditTags(song)
                     }
                 } else null,
+                onOpenSonicStudio = {
+                    showOptionsMenu = false
+                    showSonicStudioSheet = true
+                },
                 onDeleteSong = {
                     showOptionsMenu = false
                     showDeleteConfirmDialog = true
                 }
+            )
+        }
+
+        if (showSonicStudioSheet && song != null) {
+            com.example.ui.components.SonicStudioBottomSheet(
+                song = song,
+                durationMs = effectiveDurationMs,
+                fallbackPositionMs = livePositionMs,
+                playbackPositionFlow = playbackPositionFlow,
+                candidateSongs = playbackState.queue,
+                onSeekTo = onSeekTo,
+                onLaunchSonicDnaRadio = { radioQueue ->
+                    if (radioQueue.isNotEmpty()) {
+                        onUpdateQueue(radioQueue)
+                    }
+                },
+                onDismiss = { showSonicStudioSheet = false }
             )
         }
 
@@ -1651,7 +1673,7 @@ private fun LyricsPanelContent(
     onUndoLyricsChanges: (Long) -> Unit = {},
     onClearTranscribeError: () -> Unit = {}
 ) {
-    val livePositionMs = playbackPositionFlow?.collectAsStateWithLifecycle()?.value ?: positionMs
+    val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
     val context = LocalContext.current
     var syncOffsetMs by remember(song.id) {
         mutableLongStateOf(onGetLyricsOffset?.invoke(song.id) ?: 0L)
@@ -1663,7 +1685,6 @@ private fun LyricsPanelContent(
     var showTranscribeDialog by remember { mutableStateOf(false) }
     var transcribeDialogInitialMode by remember { mutableStateOf(AudioTranscribeMode.TRANSLATE) }
 
-    val effectivePositionMs = (livePositionMs + syncOffsetMs).coerceAtLeast(0L)
     val syncedLines = remember(currentLyrics) {
         try {
             currentLyrics?.parseSyncedLines() ?: emptyList()
@@ -1902,7 +1923,13 @@ private fun LyricsPanelContent(
                 val listState = rememberLazyListState()
                 var userHasManuallyScrolled by remember(song.id) { mutableStateOf(false) }
                 val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
-                val activeIndex = syncedLines.indexOfLast { effectivePositionMs >= it.first }.coerceAtLeast(0)
+                val activeIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
+                    derivedStateOf {
+                        val rawPos = livePositionState?.value ?: positionMs
+                        val effectivePos = (rawPos + syncOffsetMs).coerceAtLeast(0L)
+                        Lyrics.findActiveLineIndex(syncedLines, effectivePos)
+                    }
+                }
 
                 // Track manually viewed lyric index (closest to vertical center of list)
                 val manuallyViewedIndex by remember {
@@ -1948,17 +1975,23 @@ private fun LyricsPanelContent(
                     }
                 }
 
-                // Re-sync to currently playing line when seeking or track changes occur
-                var lastPositionMs by remember(song.id) { mutableLongStateOf(effectivePositionMs) }
-                LaunchedEffect(effectivePositionMs) {
-                    if (kotlin.math.abs(effectivePositionMs - lastPositionMs) > 2500L) {
-                        userHasManuallyScrolled = false
-                        onUserIsScrollingChange(false)
-                        if (lyricsAutoScroll && activeIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(activeIndex)
+                // Re-sync to currently playing line when seeking (>2.5s jump) occurs, without recomposing on every tick
+                LaunchedEffect(song.id, playbackPositionFlow, syncOffsetMs) {
+                    var lastPos = ((playbackPositionFlow?.value ?: positionMs) + syncOffsetMs).coerceAtLeast(0L)
+                    if (playbackPositionFlow != null) {
+                        playbackPositionFlow.collect { rawPos ->
+                            val effPos = (rawPos + syncOffsetMs).coerceAtLeast(0L)
+                            if (kotlin.math.abs(effPos - lastPos) > 2500L) {
+                                userHasManuallyScrolled = false
+                                onUserIsScrollingChange(false)
+                                val idx = Lyrics.findActiveLineIndex(syncedLines, effPos)
+                                if (lyricsAutoScroll && idx in syncedLines.indices) {
+                                    listState.animateScrollToItem(idx)
+                                }
+                            }
+                            lastPos = effPos
                         }
                     }
-                    lastPositionMs = effectivePositionMs
                 }
 
                 // Sync button visibility logic:
@@ -1998,7 +2031,10 @@ private fun LyricsPanelContent(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        itemsIndexed(syncedLines) { index, (timeMs, lineText) ->
+                        itemsIndexed(
+                            items = syncedLines,
+                            key = { index, pair -> "${index}_${pair.first}" }
+                        ) { index, (timeMs, lineText) ->
                             val isCurrentLine = index == activeIndex
                             val lineScale by androidx.compose.animation.core.animateFloatAsState(
                                 targetValue = if (isCurrentLine) 1.05f else 0.95f,
