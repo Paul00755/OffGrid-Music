@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -100,16 +101,18 @@ fun UpNextQueueSheet(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { 66.dp.toPx() }
 
-    val currentActualIndex = remember(localQueue.toList(), playingEntryKey, currentSong?.id, currentIndex) {
-        val byKey = if (playingEntryKey != null) {
-            localQueue.indexOfFirst { it.stableKey == playingEntryKey }
-        } else -1
-        when {
-            byKey >= 0 -> byKey
-            currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id) -> currentIndex
-            currentSong != null -> localQueue.indexOfFirst { it.song.id == currentSong.id }.let { if (it >= 0) it else 0 }
-            currentIndex in localQueue.indices -> currentIndex
-            else -> 0
+    val currentActualIndex by remember(playingEntryKey, currentSong?.id, currentIndex) {
+        derivedStateOf {
+            val byKey = if (playingEntryKey != null) {
+                localQueue.indexOfFirst { it.stableKey == playingEntryKey }
+            } else -1
+            when {
+                byKey >= 0 -> byKey
+                currentIndex in localQueue.indices && (currentSong == null || localQueue[currentIndex].song.id == currentSong.id) -> currentIndex
+                currentSong != null -> localQueue.indexOfFirst { it.song.id == currentSong.id }.let { if (it >= 0) it else 0 }
+                currentIndex in localQueue.indices -> currentIndex
+                else -> 0
+            }
         }
     }
 
@@ -129,10 +132,17 @@ fun UpNextQueueSheet(
         onMove = { from, to ->
             if (from != to && from in localQueue.indices && to in localQueue.indices) {
                 try {
-                    val item = localQueue.removeAt(from)
-                    val safeTo = to.coerceIn(0, localQueue.size)
-                    localQueue.add(safeTo, item)
-                    lastCommittedOrderIds = localQueue.map { it.song.id }
+                    androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                        if (kotlin.math.abs(from - to) == 1) {
+                            val tmp = localQueue[from]
+                            localQueue[from] = localQueue[to]
+                            localQueue[to] = tmp
+                        } else {
+                            val item = localQueue.removeAt(from)
+                            val safeTo = to.coerceIn(0, localQueue.size)
+                            localQueue.add(safeTo, item)
+                        }
+                    }
                     HapticUtils.performTickHaptic(context)
                 } catch (e: Exception) {
                     android.util.Log.e("UpNextQueueSheet", "Error in onMove: from=$from to=$to", e)
@@ -235,12 +245,15 @@ fun UpNextQueueSheet(
         }
     }
 
+    val latestQueue by rememberUpdatedState(queue)
+    val latestOnUpdateQueue by rememberUpdatedState(onUpdateQueue)
+
     DisposableEffect(Unit) {
         onDispose {
             try {
                 val currentSongs = localQueue.map { it.song }
-                if (currentSongs.isNotEmpty() && currentSongs != queue) {
-                    onUpdateQueue?.invoke(currentSongs)
+                if (currentSongs.isNotEmpty() && currentSongs != latestQueue) {
+                    latestOnUpdateQueue?.invoke(currentSongs)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("UpNextQueueSheet", "Error in onDispose queue persistence", e)
@@ -506,15 +519,23 @@ fun UpNextQueueSheet(
                             val isDragging = (reorderableState.draggedKey != null && reorderableState.draggedKey == entry.stableKey) ||
                                     (reorderableState.draggedKey == null && reorderableState.draggedIndex == index)
 
+                            val isAutoScrolling = reorderableState.autoScrollDirection != AutoScrollDirection.NONE
+                            val rowShape = remember { RoundedCornerShape(12.dp) }
+                            val rowBgColor = when {
+                                isDragging -> BentoCardDarkPurple
+                                isCurrent -> BentoCardDarkPurple.copy(alpha = 0.85f)
+                                else -> BentoCardSurface
+                            }
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .animateItem(
                                         fadeInSpec = null,
                                         fadeOutSpec = null,
-                                        placementSpec = if (isDragging) null else spring(
+                                        placementSpec = if (!reorderableState.isDragging || isDragging || isAutoScrolling) null else spring(
                                             dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMediumLow
+                                            stiffness = Spring.StiffnessMedium
                                         )
                                     )
                                     .zIndex(if (isDragging) 100f else 0f)
@@ -524,7 +545,7 @@ fun UpNextQueueSheet(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(58.dp),
-                                        shape = RoundedCornerShape(12.dp),
+                                        shape = rowShape,
                                         color = BentoCardDarkPurple.copy(alpha = 0.20f),
                                         border = BorderStroke(
                                             1.5.dp,
@@ -533,7 +554,7 @@ fun UpNextQueueSheet(
                                     ) {}
                                 }
 
-                                Card(
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer {
@@ -544,6 +565,15 @@ fun UpNextQueueSheet(
                                                 shadowElevation = 16.dp.toPx()
                                             }
                                         }
+                                        .clip(rowShape)
+                                        .background(rowBgColor)
+                                        .then(
+                                            when {
+                                                isDragging -> Modifier.border(1.5.dp, BentoPrimary, rowShape)
+                                                isCurrent -> Modifier.border(1.dp, BentoPrimary.copy(alpha = 0.5f), rowShape)
+                                                else -> Modifier
+                                            }
+                                        )
                                         .clickable {
                                             if (!reorderableState.isDragging && !reorderableState.isSettling) {
                                                 if (index in localQueue.indices) {
@@ -551,28 +581,10 @@ fun UpNextQueueSheet(
                                                     onSongClick(index)
                                                 }
                                             }
-                                        },
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = when {
-                                            isDragging -> BentoCardDarkPurple
-                                            isCurrent -> BentoCardDarkPurple.copy(alpha = 0.85f)
-                                            else -> BentoCardSurface
                                         }
-                                    ),
-                                    border = when {
-                                        isDragging -> BorderStroke(1.5.dp, BentoPrimary)
-                                        isCurrent -> BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.5f))
-                                        else -> null
-                                    },
-                                    elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 12.dp else 0.dp),
-                                    shape = RoundedCornerShape(12.dp)
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
                                         // Drag Handle
                                         Box(
                                             modifier = Modifier
@@ -721,9 +733,8 @@ fun UpNextQueueSheet(
                                 }
                             }
                         }
-                    }
 
-                    FastScrollbar(
+                        FastScrollbar(
                         listState = listState,
                         totalItems = localQueue.size,
                         bottomPadding = 24.dp,

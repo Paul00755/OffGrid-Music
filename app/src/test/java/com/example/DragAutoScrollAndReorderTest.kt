@@ -446,5 +446,68 @@ class DragAutoScrollAndReorderTest {
         reorderState.onDragEnd()
         assertEquals(listOf("1", "4", "2", "3", "5"), items)
     }
+
+    @Test
+    fun testLongPositionChange_topToBottomAndBottomToTop_maintainsFingerAnchorWithoutSpeedDecay() {
+        val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+        val listState = LazyListState()
+        val items = (0 until 40).map { "Track_$it" }.toMutableList()
+
+        var committedFrom = -1
+        var committedTo = -1
+
+        val reorderState = ReorderableLazyListState(
+            listState = listState,
+            scope = scope,
+            itemHeightPx = 100f,
+            headerItemCount = 3,
+            onMove = { from, to ->
+                if (kotlin.math.abs(from - to) == 1) {
+                    val tmp = items[from]
+                    items[from] = items[to]
+                    items[to] = tmp
+                } else {
+                    val item = items.removeAt(from)
+                    items.add(to, item)
+                }
+            },
+            onDragEndCallback = { from, to ->
+                committedFrom = from
+                committedTo = to
+            }
+        )
+
+        // 1. Top-to-Bottom long drag (index 0 -> index 39)
+        reorderState.onDragStart(index = 0, minIndex = 0, maxIndex = items.size - 1, key = "key_0")
+        val startViewportY = reorderState.draggedItemViewportY
+        var expectedViewportY = startViewportY
+        for (step in 1..39) {
+            reorderState.onDrag(100f, minIndex = 0, maxIndex = items.size - 1)
+            expectedViewportY += 100f
+            // Finger-anchored viewport Y must match exact finger delta without drifting back on swaps
+            assertEquals("Top-to-bottom finger Y must not drift at step $step", expectedViewportY, reorderState.draggedItemViewportY, 0.01f)
+            assertEquals(step, reorderState.draggedIndex)
+        }
+        reorderState.onDragEnd()
+        assertEquals(0, committedFrom)
+        assertEquals(39, committedTo)
+        assertEquals("Track_0", items.last())
+
+        // 2. Bottom-to-Top long drag (index 39 -> index 0)
+        reorderState.onDragStart(index = 39, minIndex = 0, maxIndex = items.size - 1, key = "key_0")
+        val bottomStartViewportY = reorderState.draggedItemViewportY
+        var expectedUpViewportY = bottomStartViewportY
+        for (step in 1..39) {
+            reorderState.onDrag(-100f, minIndex = 0, maxIndex = items.size - 1)
+            expectedUpViewportY -= 100f
+            assertEquals("Bottom-to-top finger Y must not drift at step $step", expectedUpViewportY, reorderState.draggedItemViewportY, 0.01f)
+            assertEquals(39 - step, reorderState.draggedIndex)
+        }
+        reorderState.onDragEnd()
+        assertEquals(39, committedFrom)
+        assertEquals(0, committedTo)
+        assertEquals("Track_0", items.first())
+    }
 }
+
 

@@ -335,8 +335,8 @@ fun LibraryScreen(
                         context = context,
                         songs = processedSongs,
                         firstVisibleIndex = firstVisible,
-                        windowAhead = 40,
-                        windowBehind = 12
+                        windowAhead = 64,
+                        windowBehind = 20
                     )
                 }
         }
@@ -582,17 +582,7 @@ fun LibraryScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            AnimatedVisibility(
-                visible = areLibraryControlsVisible,
-                enter = expandVertically(
-                    expandFrom = Alignment.Top,
-                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-                ) + fadeIn(animationSpec = tween(durationMillis = 200)),
-                exit = shrinkVertically(
-                    shrinkTowards = Alignment.Top,
-                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                ) + fadeOut(animationSpec = tween(durationMillis = 160))
-            ) {
+            if (areLibraryControlsVisible) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -707,17 +697,7 @@ fun LibraryScreen(
                 }
             }
 
-            AnimatedVisibility(
-                visible = isLibrarySearchVisible,
-                enter = expandVertically(
-                    expandFrom = Alignment.Top,
-                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-                ) + fadeIn(animationSpec = tween(durationMillis = 200)),
-                exit = shrinkVertically(
-                    shrinkTowards = Alignment.Top,
-                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing)
-                ) + fadeOut(animationSpec = tween(durationMillis = 150))
-            ) {
+            if (isLibrarySearchVisible) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -798,7 +778,6 @@ fun LibraryScreen(
                 LibraryCategory.ARTISTS -> artists.size
                 LibraryCategory.FOLDERS -> folders.size
             }
-            val selectedMenuSongId = selectedSongForMenu?.id
             val latestSearchQuery by rememberUpdatedState(searchQuery)
             val latestOnAddRecentSearch by rememberUpdatedState(onAddRecentSearch)
             val latestOnSongClick by rememberUpdatedState(onSongClick)
@@ -840,7 +819,6 @@ fun LibraryScreen(
 
                                     items(songsForLetter, key = { it.id }, contentType = { "song_item" }) { song ->
                                         val isCurrentSongPlaying = currentPlayingSongId == song.id
-                                        val isMenuOpen = selectedMenuSongId == song.id
                                         val itemOnClick = remember(song) {
                                             {
                                                 val q = latestSearchQuery
@@ -862,56 +840,18 @@ fun LibraryScreen(
                                                 selectedSongForMenu = song
                                             }
                                         }
-                                        Box {
-                                            SongItem(
-                                                song = song,
-                                                isPlaying = isCurrentSongPlaying,
-                                                onClick = itemOnClick,
-                                                onFavoriteToggle = itemOnFavorite,
-                                                onMoreClick = itemOnMore
-                                            )
-
-                                            if (isMenuOpen) {
-                                                SongActionMenu(
-                                                    expanded = true,
-                                                    song = song,
-                                                    isInPlaylist = false,
-                                                    onDismissRequest = { selectedSongForMenu = null },
-                                                    onPlayNext = {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        onPlayNext(song)
-                                                    },
-                                                    onAddToQueue = {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        onAddToQueue(song)
-                                                    },
-                                                    onAddToPlaylist = {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        songForAddToPlaylist = song
-                                                    },
-                                                    onOpenRemoveFromPlaylist = {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        songForRemoveFromPlaylist = song
-                                                    },
-                                                    onEditTags = if (onEditTags != null) {
-                                                        {
-                                                            if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                            onEditTags(song)
-                                                        }
-                                                    } else null,
-                                                    onDeleteSong = {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        onDeleteSong(song)
-                                                    }
-                                                )
-                                            }
-                                        }
+                                        SongItem(
+                                            song = song,
+                                            isPlaying = isCurrentSongPlaying,
+                                            onClick = itemOnClick,
+                                            onFavoriteToggle = itemOnFavorite,
+                                            onMoreClick = itemOnMore
+                                        )
                                     }
                                 }
                             } else {
                                 items(processedSongs, key = { it.id }, contentType = { "song_item" }) { song ->
                                     val isCurrentSongPlaying = currentPlayingSongId == song.id
-                                    val isMenuOpen = selectedMenuSongId == song.id
                                     val itemOnClick = remember(song) {
                                         {
                                             val q = latestSearchQuery
@@ -933,50 +873,13 @@ fun LibraryScreen(
                                             selectedSongForMenu = song
                                         }
                                     }
-                                    Box {
-                                        SongItem(
-                                            song = song,
-                                            isPlaying = isCurrentSongPlaying,
-                                            onClick = itemOnClick,
-                                            onFavoriteToggle = itemOnFavorite,
-                                            onMoreClick = itemOnMore
-                                        )
-
-                                        if (isMenuOpen) {
-                                            SongActionMenu(
-                                                expanded = true,
-                                                song = song,
-                                                isInPlaylist = false,
-                                                onDismissRequest = { selectedSongForMenu = null },
-                                                onPlayNext = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    onPlayNext(song)
-                                                },
-                                                onAddToQueue = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    onAddToQueue(song)
-                                                },
-                                                onAddToPlaylist = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    songForAddToPlaylist = song
-                                                },
-                                                onOpenRemoveFromPlaylist = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    songForRemoveFromPlaylist = song
-                                                },
-                                                onEditTags = if (onEditTags != null) {
-                                                    {
-                                                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                        onEditTags(song)
-                                                    }
-                                                } else null,
-                                                onDeleteSong = {
-                                                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                    onDeleteSong(song)
-                                                }
-                                            )
-                                        }
-                                    }
+                                    SongItem(
+                                        song = song,
+                                        isPlaying = isCurrentSongPlaying,
+                                        onClick = itemOnClick,
+                                        onFavoriteToggle = itemOnFavorite,
+                                        onMoreClick = itemOnMore
+                                    )
                                 }
                             }
                         }
@@ -1105,6 +1008,41 @@ fun LibraryScreen(
                     )
                 }
             }
+        }
+
+        selectedSongForMenu?.let { menuSong ->
+            SongActionMenu(
+                expanded = true,
+                song = menuSong,
+                isInPlaylist = false,
+                onDismissRequest = { selectedSongForMenu = null },
+                onPlayNext = {
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onPlayNext(menuSong)
+                },
+                onAddToQueue = {
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onAddToQueue(menuSong)
+                },
+                onAddToPlaylist = {
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    songForAddToPlaylist = menuSong
+                },
+                onOpenRemoveFromPlaylist = {
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    songForRemoveFromPlaylist = menuSong
+                },
+                onEditTags = if (onEditTags != null) {
+                    {
+                        if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                        onEditTags(menuSong)
+                    }
+                } else null,
+                onDeleteSong = {
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onDeleteSong(menuSong)
+                }
+            )
         }
 
         songForAddToPlaylist?.let { targetSong ->

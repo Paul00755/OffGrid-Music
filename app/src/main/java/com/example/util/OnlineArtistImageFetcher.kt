@@ -338,6 +338,35 @@ object OnlineArtistImageFetcher {
         } catch (_: Exception) {}
     }
 
+    fun getCachedArtistImageUrl(context: Context, artistName: String): String? {
+        val trimmed = artistName.trim()
+        if (trimmed.isBlank() || trimmed.equals("<unknown>", ignoreCase = true) || trimmed.equals("Unknown Artist", ignoreCase = true)) {
+            return null
+        }
+        val cacheKey = trimmed.lowercase()
+        artistCache[cacheKey]?.let { return it }
+        if (negativeArtistCache.contains(cacheKey)) return null
+        return try {
+            val prefs = context.applicationContext.getSharedPreferences("artist_images_cache", Context.MODE_PRIVATE)
+            val savedUrl = prefs.getString(cacheKey, null)
+            if (!savedUrl.isNullOrBlank()) {
+                artistCache[cacheKey] = savedUrl
+                savedUrl
+            } else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun isArtistLookupCachedOrNegative(artistName: String): Boolean {
+        val trimmed = artistName.trim()
+        if (trimmed.isBlank() || trimmed.equals("<unknown>", ignoreCase = true) || trimmed.equals("Unknown Artist", ignoreCase = true)) {
+            return true
+        }
+        val cacheKey = trimmed.lowercase()
+        return artistCache.containsKey(cacheKey) || negativeArtistCache.contains(cacheKey)
+    }
+
     suspend fun getArtistImageUrl(context: Context, artistName: String): String? {
         val trimmed = artistName.trim()
         if (trimmed.isBlank() || trimmed.equals("<unknown>", ignoreCase = true) || trimmed.equals("Unknown Artist", ignoreCase = true)) {

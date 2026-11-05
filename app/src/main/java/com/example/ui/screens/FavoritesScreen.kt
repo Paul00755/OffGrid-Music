@@ -133,18 +133,7 @@ fun FavoritesScreen(
         if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m ${seconds}s"
     }
     val uniqueArtistsCount = remember(favoriteSongs) { favoriteSongs.map { it.artist.trim().lowercase() }.distinct().size }
-
-    // Heart Pulse Animation
-    val infiniteTransition = rememberInfiniteTransition(label = "HeartPulse")
-    val heartScale by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "HeartScale"
-    )
+    val currentPlayingSongId = remember(playbackState.currentSong?.id) { playbackState.currentSong?.id }
 
     if (showClearConfirmDialog) {
         AlertDialog(
@@ -231,6 +220,20 @@ fun FavoritesScreen(
             contentAlignment = Alignment.TopCenter
         ) {
             val listState = rememberLazyListState()
+            val firstVisibleFavBucket by remember {
+                derivedStateOf { listState.firstVisibleItemIndex / 8 }
+            }
+            LaunchedEffect(filteredSongs, firstVisibleFavBucket) {
+                if (filteredSongs.isNotEmpty()) {
+                    com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                        context = context,
+                        songs = filteredSongs,
+                        firstVisibleIndex = listState.firstVisibleItemIndex,
+                        windowAhead = 48,
+                        windowBehind = 16
+                    )
+                }
+            }
 
             LazyColumn(
                 state = listState,
@@ -289,7 +292,6 @@ fun FavoritesScreen(
                                     Box(
                                         modifier = Modifier
                                             .size(52.dp)
-                                            .scale(if (favoriteSongs.isNotEmpty()) heartScale else 1f)
                                             .clip(CircleShape)
                                             .background(
                                                 Brush.radialGradient(
@@ -664,31 +666,14 @@ fun FavoritesScreen(
                     items = filteredSongs,
                     key = { idx, song -> "${song.id}_$idx" },
                     contentType = { _, _ -> "favorite_song_item" }
-                ) { index, song ->
-                    Box {
-                        SongItem(
-                            song = song,
-                            isPlaying = playbackState.currentSong?.id == song.id,
-                            onClick = { onSongClick(song) },
-                            onFavoriteToggle = { onFavoriteToggle(song) },
-                            onMoreClick = { selectedSongForMenu = song }
-                        )
-
-                        if (selectedSongForMenu?.id == song.id) {
-                            SongActionMenu(
-                                expanded = true,
-                                song = song,
-                                onDismissRequest = { selectedSongForMenu = null },
-                                onPlayNow = { onSongClick(song) },
-                                onPlayNext = { onPlayNext(song) },
-                                onAddToQueue = { onAddToQueue(song) },
-                                onAddToPlaylist = { onAddToPlaylist(song) },
-                                onFavoriteToggle = { onFavoriteToggle(song) },
-                                onEditTags = if (onEditTags != null) { { onEditTags(song) } } else null,
-                                onDeleteSong = { onDeleteSong(song) }
-                            )
-                        }
-                    }
+                ) { _, song ->
+                    SongItem(
+                        song = song,
+                        isPlaying = currentPlayingSongId == song.id,
+                        onClick = { onSongClick(song) },
+                        onFavoriteToggle = { onFavoriteToggle(song) },
+                        onMoreClick = { selectedSongForMenu = song }
+                    )
                 }
             }
         }
@@ -715,6 +700,21 @@ fun FavoritesScreen(
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
+        }
+
+        selectedSongForMenu?.let { menuSong ->
+            SongActionMenu(
+                expanded = true,
+                song = menuSong,
+                onDismissRequest = { selectedSongForMenu = null },
+                onPlayNow = { onSongClick(menuSong) },
+                onPlayNext = { onPlayNext(menuSong) },
+                onAddToQueue = { onAddToQueue(menuSong) },
+                onAddToPlaylist = { onAddToPlaylist(menuSong) },
+                onFavoriteToggle = { onFavoriteToggle(menuSong) },
+                onEditTags = if (onEditTags != null) { { onEditTags(menuSong) } } else null,
+                onDeleteSong = { onDeleteSong(menuSong) }
+            )
         }
     }
 }

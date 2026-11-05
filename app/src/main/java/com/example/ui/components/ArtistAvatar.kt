@@ -30,12 +30,23 @@ fun ArtistAvatar(
     fallbackArtworkUri: String? = null
 ) {
     val context = LocalContext.current
-    var imageUrl by remember(artistName) { mutableStateOf<String?>(fallbackArtworkUri) }
+    val initialCachedUrl = remember(artistName, fallbackArtworkUri) {
+        OnlineArtistImageFetcher.getCachedArtistImageUrl(context, artistName) ?: fallbackArtworkUri
+    }
+    var imageUrl by remember(artistName, fallbackArtworkUri) {
+        mutableStateOf<String?>(initialCachedUrl)
+    }
 
-    LaunchedEffect(artistName) {
-        val fetched = OnlineArtistImageFetcher.getArtistImageUrl(context, artistName)
-        if (!fetched.isNullOrBlank()) {
-            imageUrl = fetched
+    val needsNetworkFetch = remember(artistName, initialCachedUrl) {
+        !OnlineArtistImageFetcher.isArtistLookupCachedOrNegative(artistName)
+    }
+
+    if (needsNetworkFetch) {
+        LaunchedEffect(artistName) {
+            val fetched = OnlineArtistImageFetcher.getArtistImageUrl(context, artistName)
+            if (!fetched.isNullOrBlank() && imageUrl != fetched) {
+                imageUrl = fetched
+            }
         }
     }
 
@@ -45,12 +56,22 @@ fun ArtistAvatar(
             .background(BentoCardDarkPurple),
         contentAlignment = Alignment.Center
     ) {
-        if (!imageUrl.isNullOrBlank()) {
+        val activeUrl = imageUrl
+        if (!activeUrl.isNullOrBlank()) {
+            val imageReq = remember(activeUrl, context) {
+                val key = "artist_avatar_${activeUrl.hashCode()}"
+                ImageRequest.Builder(context)
+                    .data(activeUrl)
+                    .memoryCacheKey(key)
+                    .diskCacheKey(key)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .size(160, 160)
+                    .precision(coil.size.Precision.INEXACT)
+                    .build()
+            }
             AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(imageUrl)
-                    .crossfade(true)
-                    .build(),
+                model = imageReq,
                 contentDescription = artistName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

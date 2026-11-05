@@ -79,12 +79,7 @@ fun ListeningStatsDetailScreen(
     var showWrappedDialog by remember { mutableStateOf(false) }
     var showSharePeriodDialog by remember { mutableStateOf(false) }
     var showShareStatsCardDialog by remember { mutableStateOf(false) }
-    var screenEntered by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        delay(40)
-        screenEntered = true
-    }
+    var screenEntered by remember { mutableStateOf(true) }
 
     // Calculate start timestamp for selected filter using strict midnight boundaries
     val filterStartTimeMs = remember(selectedPeriod) {
@@ -145,6 +140,18 @@ fun ListeningStatsDetailScreen(
 
     val topSongsFlow = remember(filterStartTimeMs) { getMostPlayedSongsSince(filterStartTimeMs, 20) }
     val topSongs by topSongsFlow.collectAsState(initial = emptyList())
+
+    LaunchedEffect(topSongs) {
+        if (topSongs.isNotEmpty()) {
+            com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                context = context,
+                songs = topSongs,
+                firstVisibleIndex = 0,
+                windowAhead = 20,
+                windowBehind = 0
+            )
+        }
+    }
 
     val mostPlayedLifetimeSong = lifetimeTopSongs.firstOrNull() ?: topSongs.firstOrNull()
 

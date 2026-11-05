@@ -60,10 +60,10 @@ object ArtworkResolutionCache {
     private val backgroundWarmerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(4))
     val onlineArtworkDispatcher = Dispatchers.IO.limitedParallelism(2)
 
-    // Pre-decoded 112x112 ImageBitmap cache (~24MB max, holds ~450 song thumbnails in RAM for 0ms synchronous rendering)
-    private val thumbnailBitmapCache = object : android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(24 * 1024 * 1024) {
+    // Pre-decoded 128x128 RGB_565 ImageBitmap cache (~48MB max, holds ~750+ song thumbnails in RAM for 0ms synchronous rendering)
+    private val thumbnailBitmapCache = object : android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(48 * 1024 * 1024) {
         override fun sizeOf(key: String, value: androidx.compose.ui.graphics.ImageBitmap): Int {
-            return (value.width * value.height * 4).coerceAtLeast(1024)
+            return (value.width * value.height * 2).coerceAtLeast(1024)
         }
     }
 
@@ -71,6 +71,14 @@ object ArtworkResolutionCache {
     private var isDiskIndexWarm: Boolean = false
     private val diskIndexLock = Any()
     @Volatile private var diskIndexWarmJob: Job? = null
+
+    fun ensureDiskIndexWarmAsync(context: Context) {
+        if (isDiskIndexWarm || diskIndexWarmJob?.isActive == true) return
+        val appCtx = context.applicationContext
+        diskIndexWarmJob = backgroundWarmerScope.launch {
+            ensureDiskIndexWarm(appCtx)
+        }
+    }
 
     @Volatile
     private var activePreloadJob: Job? = null
@@ -255,7 +263,18 @@ object ArtworkResolutionCache {
                 null
             }
             if (bmp != null && !bmp.isRecycled) {
-                val imgBmp = bmp.asImageBitmap()
+                val compactBmp = if (bmp.width > 128 || bmp.height > 128) {
+                    try {
+                        val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, 112, 112, true)
+                        if (scaled !== bmp) bmp.recycle()
+                        scaled
+                    } catch (_: Throwable) {
+                        bmp
+                    }
+                } else {
+                    bmp
+                }
+                val imgBmp = compactBmp.asImageBitmap()
                 putThumbnailBitmap(songId, imgBmp, path)
                 if (!path.isNullOrBlank()) {
                     putThumbnailBitmap(songId, imgBmp, null)
@@ -347,7 +366,7 @@ object ArtworkResolutionCache {
         activeWarmAllJob?.cancel()
         activeWarmAllJob = backgroundWarmerScope.launch {
             ensureDiskIndexWarm(appCtx)
-            // Pass 1: Pre-decode 128x128 thumbnails for the first 220 songs that already have local artwork on disk
+            // Pass 1: Pre-decode compact thumbnails for the first 600 songs that already have local artwork on disk
             var decodedCount = 0
             for (song in songs) {
                 if (!isActive) return@launch
@@ -356,14 +375,12 @@ object ArtworkResolutionCache {
                     ?: song.artworkUri?.takeIf { it.isNotBlank() && !it.contains("audio/albumart") }
                 if (!existingUri.isNullOrBlank()) {
                     cacheArtwork(song.id, song.path, existingUri)
-                    if (decodedCount < 220 && getThumbnailBitmap(song.id, song.path) == null) {
+                    if (decodedCount < 600 && getThumbnailBitmap(song.id, song.path) == null) {
                         decodeAndCacheThumbnail(appCtx, song.id, existingUri, song.path)
                         decodedCount++
                     }
                 }
             }
-            // Missing artwork is resolved lazily for visible tiles. Extracting every track during
-            // startup creates avoidable disk and MediaMetadataRetriever work on large libraries.
         }
     }
 
@@ -512,26 +529,28 @@ object ArtworkResolutionCache {
                 }
 
                 if (!uri.isNullOrBlank()) {
-                    if (getThumbnailBitmap(song.id, song.path) == null) {
-                        decodeAndCacheThumbnail(appCtx, song.id, uri, song.path)
-                    }
-                    val identity = trackIdentity(song.id, song.path)
-                    val version = getSongArtworkVersion(song.id, song.path)
-                    val cacheKey = "art_thumb_${identity}_${uri.hashCode()}_$version"
-                    if (preloadedKeys.add(cacheKey)) {
-                        try {
-                            val request = ImageRequest.Builder(appCtx)
-                                .data(uri)
-                                .memoryCacheKey(cacheKey)
-                                .diskCacheKey(cacheKey)
-                                .size(180, 180)
-                                .precision(coil.size.Precision.INEXACT)
-                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                                .allowHardware(true)
-                                .build()
-                            imageLoader.enqueue(request)
-                        } catch (_: Throwable) {}
+                    val thumb = getThumbnailBitmap(song.id, song.path)
+                        ?: decodeAndCacheThumbnail(appCtx, song.id, uri, song.path)
+                    // Only enqueue Coil ImageRequest when thumbnailBitmapCache could not decode directly (e.g. remote http/https URLs)
+                    if (thumb == null) {
+                        val identity = trackIdentity(song.id, song.path)
+                        val version = getSongArtworkVersion(song.id, song.path)
+                        val cacheKey = "art_thumb_${identity}_${uri.hashCode()}_$version"
+                        if (preloadedKeys.add(cacheKey)) {
+                            try {
+                                val request = ImageRequest.Builder(appCtx)
+                                    .data(uri)
+                                    .memoryCacheKey(cacheKey)
+                                    .diskCacheKey(cacheKey)
+                                    .size(160, 160)
+                                    .precision(coil.size.Precision.INEXACT)
+                                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                    .allowHardware(true)
+                                    .build()
+                                imageLoader.enqueue(request)
+                            } catch (_: Throwable) {}
+                        }
                     }
                 }
             }
@@ -843,7 +862,7 @@ fun AlbumArtView(
 ) {
     val context = LocalContext.current
     val prefsRepo = remember(context) {
-        ArtworkResolutionCache.ensureDiskIndexWarm(context)
+        ArtworkResolutionCache.ensureDiskIndexWarmAsync(context)
         UserPreferencesRepository.getInstance(context)
     }
     val preferHighResSetting = prefsRepo.cachedFetchOnlineArtworkHighRes
@@ -972,9 +991,16 @@ fun AlbumArtView(
     val needsBackgroundWork = song != null && songId > 0L &&
         (!isThumbnail || resolvedThumbBmp == null || needsHighResUpgrade)
 
+    var localDecodeAttempted by remember(trackKey, resolvedArtworkUri) { mutableStateOf(false) }
+
     if (needsBackgroundWork && song != null && songId > 0L) {
         LaunchedEffect(trackKey, isThumbnail, isHighResPreferred, isCacheEnabled, songArtwork, artworkVersion) {
             val currentSongSnapshot = song
+            if (isThumbnail && resolvedArtworkUri.isNullOrBlank()) {
+                // Tiny yield when URI is not yet in memory so items flung past at 120Hz cancel before touching disk I/O
+                kotlinx.coroutines.delay(12L)
+                if (!isActive || latestTrackKey != trackKey) return@LaunchedEffect
+            }
             val fastPair = withContext(Dispatchers.IO) {
                 if (!isActive || currentSongSnapshot.trackIdentityKey != latestTrackKey) return@withContext null
                 var candidateUri = resolvedArtworkUri?.takeIf { ArtworkResolutionCache.isKnownValidLocalUri(it) }
@@ -1033,6 +1059,7 @@ fun AlbumArtView(
 
             if (!isActive || latestTrackKey != trackKey) return@LaunchedEffect
 
+            localDecodeAttempted = true
             if (fastPair != null) {
                 if (resolvedArtworkUri != fastPair.first) {
                     resolvedArtworkUri = fastPair.first
@@ -1110,7 +1137,7 @@ fun AlbumArtView(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-        } else if (!uri.isNullOrBlank()) {
+        } else if (!uri.isNullOrBlank() && (!isThumbnail || !uri.startsWith("file://") || localDecodeAttempted)) {
             val imageReq = remember(uri, cornerRadius, context, artworkVersion, trackKey, isThumbnail) {
                 val sizeTag = if (isThumbnail) "thumb" else "full"
                 val cacheKey = "art_${sizeTag}_${trackKey}_${uri.hashCode()}_$artworkVersion"

@@ -133,6 +133,21 @@ fun RecentlyPlayedScreen(
         }
     }
 
+    val firstVisibleRecentBucket by remember {
+        derivedStateOf { listState.firstVisibleItemIndex / 8 }
+    }
+    LaunchedEffect(filteredSongs, firstVisibleRecentBucket) {
+        if (filteredSongs.isNotEmpty()) {
+            com.example.ui.components.ArtworkResolutionCache.preloadWindow(
+                context = context,
+                songs = filteredSongs,
+                firstVisibleIndex = listState.firstVisibleItemIndex,
+                windowAhead = 48,
+                windowBehind = 16
+            )
+        }
+    }
+
     // Total listening statistics
     val totalDurationMs = remember(uniqueLimitedSongs) {
         uniqueLimitedSongs.sumOf { it.durationMs }

@@ -764,15 +764,34 @@ class PlaybackManager(
                     currentCounts == newCounts)
 
             if (isSameMultiset) {
-                val currentTaggedMutable = currentTagged.toMutableList()
+                val firstDiff = currentTagged.indices.firstOrNull { currentTagged[it] != newTagged[it] }
+                val lastDiff = currentTagged.indices.lastOrNull { currentTagged[it] != newTagged[it] }
 
-                for (targetIdx in newTagged.indices) {
-                    val targetToken = newTagged[targetIdx]
-                    val currIdx = currentTaggedMutable.indexOf(targetToken)
-                    if (currIdx != -1 && currIdx != targetIdx) {
-                        currentTaggedMutable.removeAt(currIdx)
-                        currentTaggedMutable.add(targetIdx, targetToken)
-                        player.moveMediaItem(currIdx, targetIdx)
+                if (firstDiff != null && lastDiff != null && firstDiff < lastDiff) {
+                    val isSingleMoveDown = currentTagged[firstDiff] == newTagged[lastDiff] &&
+                        (firstDiff until lastDiff).all { i -> currentTagged[i + 1] == newTagged[i] }
+                    val isSingleMoveUp = currentTagged[lastDiff] == newTagged[firstDiff] &&
+                        (firstDiff until lastDiff).all { i -> currentTagged[i] == newTagged[i + 1] }
+
+                    when {
+                        isSingleMoveDown -> {
+                            player.moveMediaItem(firstDiff, lastDiff)
+                        }
+                        isSingleMoveUp -> {
+                            player.moveMediaItem(lastDiff, firstDiff)
+                        }
+                        else -> {
+                            val currentTaggedMutable = currentTagged.toMutableList()
+                            for (targetIdx in newTagged.indices) {
+                                val targetToken = newTagged[targetIdx]
+                                val currIdx = currentTaggedMutable.indexOf(targetToken)
+                                if (currIdx != -1 && currIdx != targetIdx) {
+                                    currentTaggedMutable.removeAt(currIdx)
+                                    currentTaggedMutable.add(targetIdx, targetToken)
+                                    player.moveMediaItem(currIdx, targetIdx)
+                                }
+                            }
+                        }
                     }
                 }
             } else {
