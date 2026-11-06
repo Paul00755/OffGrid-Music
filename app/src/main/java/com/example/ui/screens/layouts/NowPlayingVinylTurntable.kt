@@ -105,12 +105,15 @@ fun NowPlayingVinylTurntable(
         modifier = modifier
             .fillMaxSize()
             .background(BentoBackground)
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
+        if (LocalGlassThemeConfig.current.enabled) {
+            GlassGradientBackdrop()
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 18.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween

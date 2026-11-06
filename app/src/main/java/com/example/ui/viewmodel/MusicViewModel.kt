@@ -547,6 +547,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAccentColorPresetSync())
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomAccentColorSync())
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDynamicArtworkThemeSync())
+    val isGradientGlassEffect: StateFlow<Boolean> = preferences.isGradientGlassEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGradientGlassEffectSync())
+
+    fun setGradientGlassEffect(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setGradientGlassEffect(enabled)
+        }
+    }
 
     private val _dynamicArtworkColor = MutableStateFlow<androidx.compose.ui.graphics.Color?>(null)
     val dynamicArtworkColor: StateFlow<androidx.compose.ui.graphics.Color?> = _dynamicArtworkColor.asStateFlow()
@@ -787,11 +794,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             kotlinx.coroutines.flow.combine(
                 playbackState.map { it.currentSong }.distinctUntilChanged(),
-                isDynamicArtworkTheme
-            ) { song, isDynamic ->
-                Pair(song, isDynamic)
-            }.collect { (song, isDynamic) ->
-                if (isDynamic && song != null) {
+                recentlyPlayedSongs.map { it.firstOrNull() }.distinctUntilChanged(),
+                isDynamicArtworkTheme,
+                isGradientGlassEffect
+            ) { currentSong, recentSong, isDynamic, isGlass ->
+                val targetSong = currentSong ?: recentSong ?: allSongs.value.firstOrNull()
+                Pair(targetSong, isDynamic || isGlass)
+            }.collect { (song, shouldExtract) ->
+                if (shouldExtract && song != null) {
                     val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(getApplication(), song)
                     _dynamicArtworkColor.value = extracted
                 } else {

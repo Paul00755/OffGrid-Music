@@ -87,7 +87,7 @@ fun SmartPlaylistDetailScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(BentoBackground),
+            .background(BentoScreenBackground),
         contentAlignment = Alignment.TopCenter
     ) {
         Column(

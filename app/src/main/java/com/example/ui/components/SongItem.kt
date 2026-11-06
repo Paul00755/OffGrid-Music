@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,12 +37,27 @@ fun SongItem(
     onMoreClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val glassConfig = LocalGlassThemeConfig.current
+    val rowBgColor = if (isPlaying) BentoCardDarkPurple else BentoCardSurface
+    val rowBorderColor = if (glassConfig.enabled) {
+        if (isPlaying) BentoPrimary.copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.28f)
+    } else {
+        Color.Transparent
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .clip(SongItemRowShape)
-            .background(if (isPlaying) BentoCardDarkPurple else BentoCardSurface)
+            .background(rowBgColor)
+            .then(
+                if (glassConfig.enabled) {
+                    Modifier.border(0.8.dp, rowBorderColor, SongItemRowShape)
+                } else {
+                    Modifier
+                }
+            )
             .clickable(onClick = onClick)
             .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
             .testTag("song_item_${song.id}"),

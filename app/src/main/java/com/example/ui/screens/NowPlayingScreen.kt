@@ -523,18 +523,24 @@ fun NowPlayingScreen(
         String.format("%d:%02d", min, sec)
     }
 
+    val glassConfig = LocalGlassThemeConfig.current
     val currentBg = BentoBackground
-    val isDarkNowPlayingBg = (currentBg.red * 0.299f + currentBg.green * 0.587f + currentBg.blue * 0.114f) < 0.5f
-    val topPunchHoleCover = if (isDarkNowPlayingBg) Color.Black else currentBg
-    val ambientThemeColor = dynamicArtworkColor ?: BentoPrimary
-    val bgBrush = remember(ambientThemeColor, currentBg, topPunchHoleCover) {
-        androidx.compose.ui.graphics.Brush.verticalGradient(
-            0.0f to topPunchHoleCover,
-            0.05f to topPunchHoleCover,
-            0.16f to ambientThemeColor.copy(alpha = 0.42f),
-            0.52f to ambientThemeColor.copy(alpha = 0.18f),
-            1.0f to currentBg
-        )
+    val ambientThemeColor = dynamicArtworkColor ?: glassConfig.tintColor
+    val bgBrush = remember(ambientThemeColor, currentBg, glassConfig.enabled, glassConfig.secondaryTintColor) {
+        if (glassConfig.enabled) {
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                0.0f to ambientThemeColor.copy(alpha = 0.48f),
+                0.45f to glassConfig.secondaryTintColor.copy(alpha = 0.24f),
+                0.82f to ambientThemeColor.copy(alpha = 0.16f),
+                1.0f to currentBg
+            )
+        } else {
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                0.0f to ambientThemeColor.copy(alpha = 0.42f),
+                0.50f to ambientThemeColor.copy(alpha = 0.18f),
+                1.0f to currentBg
+            )
+        }
     }
 
     Box(
@@ -789,13 +795,31 @@ fun NowPlayingScreen(
 
                 // RIGHT HALF (50%): High-Visibility Lyrics Container
                 val isLandscapeDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                val landscapeLyricsBaseBg = if (isLandscapeDark) Color(0xFF09090E) else Color.White
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(20.dp))
-                        .background(if (isLandscapeDark) Color(0xFF09090E) else Color.White)
-                        .border(1.dp, if (isLandscapeDark) BentoBorder.copy(alpha = 0.35f) else Color(0xFFE2E8F0), RoundedCornerShape(20.dp))
+                        .background(landscapeLyricsBaseBg)
+                        .then(
+                            if (glassConfig.enabled) {
+                                Modifier.background(
+                                    Brush.verticalGradient(
+                                        0.0f to ambientThemeColor.copy(alpha = if (isLandscapeDark) 0.28f else 0.16f),
+                                        0.50f to glassConfig.secondaryTintColor.copy(alpha = if (isLandscapeDark) 0.16f else 0.10f),
+                                        1.0f to ambientThemeColor.copy(alpha = if (isLandscapeDark) 0.22f else 0.12f)
+                                    )
+                                )
+                            } else Modifier
+                        )
+                        .border(
+                            1.dp,
+                            if (glassConfig.enabled) ambientThemeColor.copy(alpha = 0.45f)
+                            else if (isLandscapeDark) BentoBorder.copy(alpha = 0.35f)
+                            else Color(0xFFE2E8F0),
+                            RoundedCornerShape(20.dp)
+                        )
                         .padding(12.dp)
                 ) {
                     LyricsPanelContent(
@@ -951,16 +975,13 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            // Top punch-hole black cover + smooth multi-stop gradient fade from artwork into lower controls
+                            // Smooth gradient fade from lower artwork into lower controls (no top black gradient)
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
                                         Brush.verticalGradient(
-                                            0.0f to Color.Black,
-                                            0.07f to Color.Black.copy(alpha = 0.94f),
-                                            0.15f to ambientThemeColor.copy(alpha = 0.22f),
-                                            0.26f to Color.Transparent,
+                                            0.0f to Color.Transparent,
                                             0.54f to Color.Transparent,
                                             0.78f to bottomScrimColor.copy(alpha = 0.72f),
                                             1.0f to bottomScrimColor
@@ -1464,11 +1485,24 @@ fun NowPlayingScreen(
     ) {
         val isCurrentDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
         val lyricsBg = if (isCurrentDark) Color(0xFF09090E) else Color.White
+        val lyricsGlassBrush = remember(glassConfig.enabled, ambientThemeColor, glassConfig.secondaryTintColor, isCurrentDark, lyricsBg) {
+            if (glassConfig.enabled) {
+                Brush.verticalGradient(
+                    0.0f to androidx.compose.ui.graphics.lerp(lyricsBg, ambientThemeColor, if (isCurrentDark) 0.34f else 0.20f),
+                    0.45f to androidx.compose.ui.graphics.lerp(lyricsBg, glassConfig.secondaryTintColor, if (isCurrentDark) 0.20f else 0.12f),
+                    0.80f to lyricsBg,
+                    1.0f to androidx.compose.ui.graphics.lerp(lyricsBg, ambientThemeColor, if (isCurrentDark) 0.24f else 0.14f)
+                )
+            } else null
+        }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(lyricsBg)
+                .then(
+                    if (lyricsGlassBrush != null) Modifier.background(lyricsGlassBrush) else Modifier
+                )
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
@@ -1695,9 +1729,15 @@ private fun LyricsPanelContent(
         }
     }
 
+    val glassConfig = LocalGlassThemeConfig.current
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val panelBaseBg = if (isDarkTheme) Color(0xFF09090E) else Color.White
 
-    Box(modifier = Modifier.fillMaxSize().background(if (isDarkTheme) Color(0xFF09090E) else Color.White)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (glassConfig.enabled) Color.Transparent else panelBaseBg)
+    ) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -2047,10 +2087,24 @@ private fun LyricsPanelContent(
                                 label = "lyricScale"
                             )
 
-                            val activeLineBg = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.32f) else ambientThemeColor.copy(alpha = 0.15f)
-                            val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.65f) else ambientThemeColor.copy(alpha = 0.75f)
+                            val activeLineBg = if (isDarkTheme) {
+                                ambientThemeColor.copy(alpha = if (glassConfig.enabled) 0.36f else 0.32f)
+                            } else {
+                                ambientThemeColor.copy(alpha = if (glassConfig.enabled) 0.20f else 0.15f)
+                            }
+                            val inactiveGlassBg = if (glassConfig.enabled) {
+                                if (isDarkTheme) Color.White.copy(alpha = 0.045f) else Color.Black.copy(alpha = 0.03f)
+                            } else {
+                                Color.Transparent
+                            }
+                            val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.72f) else ambientThemeColor.copy(alpha = 0.78f)
+                            val inactiveLineBorder = if (glassConfig.enabled) {
+                                if (isDarkTheme) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f)
+                            } else {
+                                Color.Transparent
+                            }
                             val currentLineTextColor = if (isDarkTheme) Color.White else Color(0xFF0F172A)
-                            val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.65f) else Color(0xFF334155).copy(alpha = 0.60f)
+                            val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.78f) else Color(0xFF1E293B).copy(alpha = 0.75f)
                             val cleanDisplayText = remember(lineText) { cleanLyricDisplayText(lineText) }
 
                             Box(
@@ -2058,11 +2112,11 @@ private fun LyricsPanelContent(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(
-                                        if (isCurrentLine) activeLineBg else Color.Transparent
+                                        if (isCurrentLine) activeLineBg else inactiveGlassBg
                                     )
                                     .border(
-                                        width = if (isCurrentLine) 1.5.dp else 0.dp,
-                                        color = if (isCurrentLine) activeLineBorder else Color.Transparent,
+                                        width = if (isCurrentLine) 1.5.dp else if (glassConfig.enabled) 0.8.dp else 0.dp,
+                                        color = if (isCurrentLine) activeLineBorder else inactiveLineBorder,
                                         shape = RoundedCornerShape(14.dp)
                                     )
                                     .clickable {
@@ -2383,34 +2437,6 @@ private fun LyricsPanelContent(
                 },
                 onDismiss = { showOffsetDialog = false }
             )
-        }
-
-        // Top punch-hole camera black cover + smooth gradient transition for full-screen view (only when lyrics view is closed so it does not interrupt lyrics text)
-        if (!showLyricsView) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopCenter)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsTopHeight(WindowInsets.statusBars)
-                        .background(Color.Black)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(22.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to Color.Black,
-                                0.45f to Color.Black.copy(alpha = 0.58f),
-                                1.0f to Color.Transparent
-                            )
-                        )
-                )
-            }
         }
     }
 }

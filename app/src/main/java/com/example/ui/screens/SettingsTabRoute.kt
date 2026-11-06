@@ -122,6 +122,8 @@ fun SettingsTabRoute(
         onSetPlaylistsLayout = { viewModel.setPlaylistsLayout(it) },
         isDynamicArtworkTheme = isDynamicArtworkTheme,
         onSetDynamicArtworkTheme = { viewModel.setDynamicArtworkTheme(it) },
+        isGradientGlassEffect = viewModel.isGradientGlassEffect.collectAsState().value,
+        onSetGradientGlassEffect = { viewModel.setGradientGlassEffect(it) },
         fetchOnlineArtworkHighRes = viewModel.fetchOnlineArtworkHighRes.collectAsState().value,
         onSetFetchOnlineArtworkHighRes = { viewModel.setFetchOnlineArtworkHighRes(it) },
         cacheLyricsEnabled = viewModel.cacheLyricsEnabled.collectAsState().value,

@@ -263,6 +263,8 @@ fun UpNextQueueSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val glassConfig = LocalGlassThemeConfig.current
+
     ModalBottomSheet(
         sheetState = sheetState,
         onDismissRequest = {
@@ -276,16 +278,23 @@ fun UpNextQueueSheet(
             }
             onDismiss()
         },
-        containerColor = BentoCardSurface,
+        containerColor = glassConfig.solidSurface,
         scrimColor = Color.Black.copy(alpha = 0.65f)
     ) {
-        Column(
+        Box(
             modifier = modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.88f)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp)
         ) {
+            if (glassConfig.enabled) {
+                GlassGradientBackdrop()
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 20.dp)
+            ) {
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -570,7 +579,8 @@ fun UpNextQueueSheet(
                                         .then(
                                             when {
                                                 isDragging -> Modifier.border(1.5.dp, BentoPrimary, rowShape)
-                                                isCurrent -> Modifier.border(1.dp, BentoPrimary.copy(alpha = 0.5f), rowShape)
+                                                isCurrent -> Modifier.border(1.dp, BentoPrimary.copy(alpha = 0.55f), rowShape)
+                                                glassConfig.enabled -> Modifier.border(0.8.dp, BentoBorder.copy(alpha = 0.30f), rowShape)
                                                 else -> Modifier
                                             }
                                         )
@@ -735,13 +745,14 @@ fun UpNextQueueSheet(
                         }
 
                         FastScrollbar(
-                        listState = listState,
-                        totalItems = localQueue.size,
-                        bottomPadding = 24.dp,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .offset(x = 12.dp)
-                    )
+                            listState = listState,
+                            totalItems = localQueue.size,
+                            bottomPadding = 24.dp,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .offset(x = 12.dp)
+                        )
+                    }
                 }
             }
         }

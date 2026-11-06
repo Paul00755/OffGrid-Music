@@ -81,7 +81,7 @@ fun AuthScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = BentoBackground,
+        containerColor = BentoScreenBackground,
         topBar = {
             TopAppBar(
                 title = {},

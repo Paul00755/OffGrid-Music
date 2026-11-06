@@ -234,6 +234,48 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertEquals(2, resumeCount)
     }
 
+    @Test
+    fun testReelsAndShortsTransientFocusLossPausesImmediatelyInProductionConfig() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var currentVolume = 1.0f
+
+        // Matches production PlaybackManager initialization:
+        // ownActiveMediaPlayerCountProvider returns 1 when playing, externalVideoOrMediaActiveProvider is null.
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            },
+            onDuckRequested = { vol -> currentVolume = vol },
+            onRestoreVolumeRequested = { currentVolume = 1.0f }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.reduceVolumeOnNotification = true
+
+        // 1. Instagram Reels / YouTube Shorts requests AUDIOFOCUS_GAIN_TRANSIENT -> we receive AUDIOFOCUS_LOSS_TRANSIENT.
+        // Even if ExoPlayer in Reels/Shorts hasn't emitted its first audio buffer into activePlaybackConfigurations yet,
+        // OffGrid Music must pause immediately (NOT merely duck for 2.2s and resume on top of the video).
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Instagram Reels / YouTube Shorts transient focus loss must immediately pause music", isPlaying)
+        assertEquals(1, pauseCount)
+        assertEquals(1.0f, currentVolume, 0.001f)
+
+        // 2. When the user closes the video and focus returns, playback auto-resumes.
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Playback must auto-resume when video releases audio focus", isPlaying)
+        assertEquals(1, resumeCount)
+    }
+
     // =========================================================================
     // Priority 2 & 6: Startup Disk Cache Warmup & High-Res On-Demand Tracking
     // =========================================================================

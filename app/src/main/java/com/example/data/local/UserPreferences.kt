@@ -128,6 +128,7 @@ class UserPreferencesRepository(private val context: Context) {
         val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
         val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
+        val GRADIENT_GLASS_EFFECT = booleanPreferencesKey("gradient_glass_effect")
         val LYRICS_FETCH_MODE = stringPreferencesKey("lyrics_fetch_mode") // "ALWAYS", "WIFI_ONLY", "OFF"
         val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "SONGS"
         val SLEEP_TIMER_FINISH_LAST_SONG = booleanPreferencesKey("sleep_timer_finish_last_song")
@@ -957,6 +958,20 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
     }
     fun getDynamicArtworkThemeSync(): Boolean = readBoolCached("dynamic_artwork_theme", true)
+
+    val isGradientGlassEffect: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] ?: readBoolCached("gradient_glass_effect", true)
+    }
+    fun getGradientGlassEffectSync(): Boolean = readBoolCached("gradient_glass_effect", true)
+
+    suspend fun setGradientGlassEffect(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("gradient_glass_effect", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
 
     val customAccentColor: Flow<Int> = safeData.map { prefs ->
         prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0)

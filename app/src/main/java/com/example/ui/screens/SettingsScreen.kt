@@ -541,6 +541,8 @@ fun SettingsScreen(
     onSetPlaylistsLayout: (String) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
+    isGradientGlassEffect: Boolean = true,
+    onSetGradientGlassEffect: (Boolean) -> Unit = {},
     fetchOnlineArtworkHighRes: Boolean = false,
     onSetFetchOnlineArtworkHighRes: (Boolean) -> Unit = {},
     cacheLyricsEnabled: Boolean = true,
@@ -1509,6 +1511,13 @@ fun SettingsScreen(
             "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric", "adaptive color"
         )
     }
+    val matchUiGradientGlass = remember(searchTokens) {
+        matchesSettingsTokens(
+            searchTokens,
+            "gradient", "glass", "gradient & glass", "gradient and glass", "glass effect",
+            "frosted", "frosted glass", "glassmorphism", "blur", "ambient gradient", "aurora"
+        )
+    }
     val matchUiHighResArtwork = remember(searchTokens) {
         matchesSettingsTokens(
             searchTokens,
@@ -1540,8 +1549,8 @@ fun SettingsScreen(
         )
     }
     val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
-        matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiHighResArtwork ||
-        matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
+        matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiGradientGlass ||
+        matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
 
     // Section 3: Home Feed granular matcher
     val matchHomeFeedItem = remember(searchTokens) {
@@ -3183,6 +3192,19 @@ fun SettingsScreen(
                                 checked = isDynamicArtworkTheme,
                                 onCheckedChange = onSetDynamicArtworkTheme,
                                 icon = Icons.Default.AutoAwesome,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
+
+                        // 5b. Gradient & Glass Effect (App-Wide)
+                        if (!isSearching || matchUiGradientGlass || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Gradient & Glass Effect",
+                                subtitle = "Apply frosted glass cards and dynamic artwork/theme ambient gradients across Home, Now Playing, Library, Lyrics, Playlists, Search, Stats, and Queue",
+                                checked = isGradientGlassEffect,
+                                onCheckedChange = onSetGradientGlassEffect,
+                                icon = Icons.Default.BlurOn,
                                 accentColor = Color(0xFFBB86FC)
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()

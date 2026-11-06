@@ -65,25 +65,35 @@ fun NowPlayingMinimalGlass(
         return "%d:%02d".format(mins, secs)
     }
 
+    val glassConfig = LocalGlassThemeConfig.current
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(BentoBackground)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        BentoBackground,
-                        BentoCardSurface,
-                        BentoBackground
-                    )
-                )
-            )
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
+        if (glassConfig.enabled) {
+            GlassGradientBackdrop()
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                BentoBackground,
+                                BentoCardSurface,
+                                BentoBackground
+                            )
+                        )
+                    )
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween

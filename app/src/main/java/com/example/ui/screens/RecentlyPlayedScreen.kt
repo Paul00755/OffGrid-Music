@@ -162,8 +162,8 @@ fun RecentlyPlayedScreen(
     Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(BentoBackground),
-        containerColor = BentoBackground,
+            .background(BentoScreenBackground),
+        containerColor = BentoScreenBackground,
         topBar = {
             TopAppBar(
                 title = {

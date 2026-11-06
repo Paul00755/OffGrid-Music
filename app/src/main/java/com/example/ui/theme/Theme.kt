@@ -1,12 +1,94 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+
+/**
+ * Global configuration for the app-wide Gradient & Frosted Glass Effect.
+ * Reflects the active song's artwork color or the selected UI theme palette,
+ * while guaranteeing high text & artwork legibility in both dark and light modes.
+ */
+data class GlassThemeConfig(
+    val enabled: Boolean = false,
+    val tintColor: Color = Color(0xFFFF9100),
+    val secondaryTintColor: Color = Color(0xFF7C4DFF),
+    val isDark: Boolean = true,
+    val solidBackground: Color = Color(0xFF0D0D15),
+    val solidSurface: Color = Color(0xFF161622),
+    val solidSurfaceVariant: Color = Color(0xFF1E1C2C)
+)
+
+val LocalGlassThemeConfig = staticCompositionLocalOf { GlassThemeConfig() }
+
+/**
+ * Full-screen production-grade ambient Aurora & Frosted Glass gradient backdrop.
+ * Reflects the song's artwork color or active theme palette while preserving high text contrast.
+ */
+@Composable
+fun GlassGradientBackdrop(
+    modifier: Modifier = Modifier,
+    tintOverride: Color? = null,
+    secondaryOverride: Color? = null
+) {
+    val glassConfig = LocalGlassThemeConfig.current
+    val baseBg = glassConfig.solidBackground
+    if (!glassConfig.enabled) {
+        Box(modifier = modifier.fillMaxSize().background(baseBg))
+        return
+    }
+
+    val primaryTint = tintOverride ?: glassConfig.tintColor
+    val secondaryTint = secondaryOverride ?: glassConfig.secondaryTintColor
+    val isDark = glassConfig.isDark
+
+    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark) {
+        val topGlow = lerp(baseBg, primaryTint, if (isDark) 0.34f else 0.20f)
+        val midGlow = lerp(baseBg, secondaryTint, if (isDark) 0.22f else 0.14f)
+        val lowerGlow = lerp(baseBg, primaryTint, if (isDark) 0.18f else 0.12f)
+        Brush.verticalGradient(
+            0.0f to topGlow,
+            0.38f to midGlow,
+            0.72f to baseBg,
+            1.0f to lowerGlow
+        )
+    }
+
+    val diagonalAurora = remember(primaryTint, secondaryTint, isDark) {
+        Brush.linearGradient(
+            colors = listOf(
+                primaryTint.copy(alpha = if (isDark) 0.22f else 0.14f),
+                Color.Transparent,
+                secondaryTint.copy(alpha = if (isDark) 0.18f else 0.11f),
+                primaryTint.copy(alpha = if (isDark) 0.15f else 0.09f)
+            ),
+            start = Offset(0f, 0f),
+            end = Offset(1400f, 2400f)
+        )
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(baseBg)
+            .background(verticalWash)
+            .background(diagonalAurora)
+    )
+}
 
 enum class AppUiTheme(
     val id: String,
@@ -198,6 +280,8 @@ fun MyApplicationTheme(
     themeMode: String = "DARK",
     accentColorPreset: String = "ORANGE",
     accentColor: Color? = null,
+    isGradientGlassEffect: Boolean = false,
+    dynamicArtworkColor: Color? = null,
     content: @Composable () -> Unit
 ) {
     val isSystemInDark = isSystemInDarkTheme()
@@ -522,9 +606,37 @@ fun MyApplicationTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = baseColorScheme,
-        typography = Typography,
-        content = content
-    )
+    val glassTintColor = dynamicArtworkColor ?: primaryColor
+    val glassSecondaryTint = if (dynamicArtworkColor != null) {
+        lerp(dynamicArtworkColor, baseColorScheme.secondary, 0.45f)
+    } else {
+        baseColorScheme.secondary
+    }
+    val glassConfig = remember(
+        isGradientGlassEffect,
+        glassTintColor,
+        glassSecondaryTint,
+        isDark,
+        baseColorScheme.background,
+        baseColorScheme.surface,
+        baseColorScheme.surfaceVariant
+    ) {
+        GlassThemeConfig(
+            enabled = isGradientGlassEffect,
+            tintColor = glassTintColor,
+            secondaryTintColor = glassSecondaryTint,
+            isDark = isDark,
+            solidBackground = baseColorScheme.background,
+            solidSurface = baseColorScheme.surface,
+            solidSurfaceVariant = baseColorScheme.surfaceVariant
+        )
+    }
+
+    CompositionLocalProvider(LocalGlassThemeConfig provides glassConfig) {
+        MaterialTheme(
+            colorScheme = baseColorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
 }

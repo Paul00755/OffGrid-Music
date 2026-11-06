@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
             val accentColorPreset by viewModel.accentColorPreset.collectAsStateWithLifecycle()
             val customAccentColor by viewModel.customAccentColor.collectAsStateWithLifecycle()
             val isDynamicArtworkTheme by viewModel.isDynamicArtworkTheme.collectAsStateWithLifecycle()
+            val isGradientGlassEffect by viewModel.isGradientGlassEffect.collectAsStateWithLifecycle()
             val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsStateWithLifecycle()
 
             val effectiveAccentColor: Color? = when {
@@ -115,7 +116,9 @@ class MainActivity : ComponentActivity() {
                     uiTheme = uiTheme,
                     themeMode = themeMode,
                     accentColorPreset = accentColorPreset,
-                    accentColor = effectiveAccentColor
+                    accentColor = effectiveAccentColor,
+                    isGradientGlassEffect = isGradientGlassEffect,
+                    dynamicArtworkColor = dynamicArtworkColor
                 ) {
                     val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()
                     val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()
@@ -309,6 +312,7 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .background(BentoBackground)
                         ) {
+                            com.example.ui.theme.GlassGradientBackdrop()
                             val highRefreshRateSetting by viewModel.highRefreshRate.collectAsStateWithLifecycle()
                             LaunchedEffect(highRefreshRateSetting) {
                                 applyHighRefreshRate(highRefreshRateSetting)
@@ -338,7 +342,7 @@ class MainActivity : ComponentActivity() {
 
                             Scaffold(
                                 modifier = Modifier.fillMaxSize(),
-                                containerColor = BentoBackground,
+                                containerColor = com.example.ui.theme.BentoScreenBackground,
                                 bottomBar = {
                                     Box(
                                         modifier = Modifier
