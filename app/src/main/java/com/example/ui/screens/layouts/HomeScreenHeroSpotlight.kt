@@ -103,36 +103,11 @@ fun HomeScreenHeroSpotlight(
         }
     }
 
-    val glassConfig = com.example.ui.theme.LocalGlassThemeConfig.current
-    val isDarkBg = (BentoBackground.red * 0.299f + BentoBackground.green * 0.587f + BentoBackground.blue * 0.114f) < 0.5f
-    val topCoverColor = if (glassConfig.enabled) {
-        glassConfig.tintColor.copy(alpha = if (isDarkBg) 0.28f else 0.16f)
-    } else if (isDarkBg) {
-        Color.Black
-    } else {
-        BentoBackground
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(com.example.ui.theme.BentoScreenBackground)
     ) {
-        // Top atmospheric spotlight glow
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(360.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to topCoverColor,
-                        0.05f to if (glassConfig.enabled) Color.Transparent else BentoBackground,
-                        0.22f to BentoPrimary.copy(alpha = 0.18f),
-                        0.60f to BentoAccentPinkText.copy(alpha = 0.06f),
-                        1.0f to Color.Transparent
-                    )
-                )
-        )
 
         LazyColumn(
             state = listState,
@@ -575,21 +550,6 @@ fun HomeScreenHeroSpotlight(
                 feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT
             )
         }
-
-        // Seamless top feather so scrolled items fade into the top black cover without a hard edge
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(14.dp)
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to topCoverColor,
-                        0.45f to topCoverColor.copy(alpha = 0.55f),
-                        1.0f to Color.Transparent
-                    )
-                )
-        )
     }
 }
 

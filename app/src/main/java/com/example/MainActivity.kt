@@ -75,6 +75,15 @@ class MainActivity : ComponentActivity() {
         isActivityAlive = true
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+        }
         handleWidgetLaunchIntent(intent)
 
         setContent {
@@ -329,6 +338,26 @@ class MainActivity : ComponentActivity() {
 
                             val selectedPlaylist by viewModel.selectedPlaylist.collectAsStateWithLifecycle()
                             val selectedSmartPlaylist by viewModel.selectedSmartPlaylist.collectAsStateWithLifecycle()
+                            if (selectedTab == NavTab.HOME &&
+                                selectedPlaylist == null &&
+                                selectedSmartPlaylist == null &&
+                                !showAccountScreen &&
+                                !showAuthScreen &&
+                                com.example.ui.theme.HomeScreenLayout.fromId(homeScreenLayout) == com.example.ui.theme.HomeScreenLayout.HERO_SPOTLIGHT
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(400.dp)
+                                        .background(
+                                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                                0.0f to BentoPrimary.copy(alpha = 0.22f),
+                                                0.45f to BentoAccentPinkText.copy(alpha = 0.08f),
+                                                1.0f to Color.Transparent
+                                            )
+                                        )
+                                )
+                            }
                             val smartPlaylists by viewModel.smartPlaylists.collectAsStateWithLifecycle()
                             val selectedPlaylistSongs by remember(selectedPlaylist) {
                                 val cur = selectedPlaylist
@@ -791,36 +820,6 @@ class MainActivity : ComponentActivity() {
                                             onBackClick = { viewModel.closeAccountScreen() }
                                         )
                                     }
-                                    }
-
-                                    // Top punch-hole camera black cover that merges the cutout into the black display
-                                    // while smoothly transitioning into the gradient below it
-                                    if (isDarkMainBg) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .align(Alignment.TopCenter)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .windowInsetsTopHeight(WindowInsets.statusBars)
-                                                    .background(Color.Black)
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(10.dp)
-                                                    .background(
-                                                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                                                            listOf(
-                                                                Color.Black,
-                                                                Color.Transparent
-                                                            )
-                                                        )
-                                                    )
-                                            )
-                                        }
                                     }
                                 }
                             }

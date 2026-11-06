@@ -3,6 +3,7 @@
 
     <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">#07070B</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="s">#07070B</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="s">@drawable/ic_launcher_foreground</item>
         <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="s">200</item>

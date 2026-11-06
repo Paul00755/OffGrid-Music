@@ -2092,17 +2092,7 @@ private fun LyricsPanelContent(
                             } else {
                                 ambientThemeColor.copy(alpha = if (glassConfig.enabled) 0.20f else 0.15f)
                             }
-                            val inactiveGlassBg = if (glassConfig.enabled) {
-                                if (isDarkTheme) Color.White.copy(alpha = 0.045f) else Color.Black.copy(alpha = 0.03f)
-                            } else {
-                                Color.Transparent
-                            }
                             val activeLineBorder = if (isDarkTheme) ambientThemeColor.copy(alpha = 0.72f) else ambientThemeColor.copy(alpha = 0.78f)
-                            val inactiveLineBorder = if (glassConfig.enabled) {
-                                if (isDarkTheme) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f)
-                            } else {
-                                Color.Transparent
-                            }
                             val currentLineTextColor = if (isDarkTheme) Color.White else Color(0xFF0F172A)
                             val inactiveLineTextColor = if (isDarkTheme) Color.White.copy(alpha = 0.78f) else Color(0xFF1E293B).copy(alpha = 0.75f)
                             val cleanDisplayText = remember(lineText) { cleanLyricDisplayText(lineText) }
@@ -2112,11 +2102,11 @@ private fun LyricsPanelContent(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(
-                                        if (isCurrentLine) activeLineBg else inactiveGlassBg
+                                        if (isCurrentLine) activeLineBg else Color.Transparent
                                     )
                                     .border(
-                                        width = if (isCurrentLine) 1.5.dp else if (glassConfig.enabled) 0.8.dp else 0.dp,
-                                        color = if (isCurrentLine) activeLineBorder else inactiveLineBorder,
+                                        width = if (isCurrentLine) 1.5.dp else 0.dp,
+                                        color = if (isCurrentLine) activeLineBorder else Color.Transparent,
                                         shape = RoundedCornerShape(14.dp)
                                     )
                                     .clickable {
