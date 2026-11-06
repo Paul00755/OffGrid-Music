@@ -122,7 +122,7 @@ fun DuplicateFinderSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = BentoBackground,
+        containerColor = BentoCardSurface,
         dragHandle = {
             BottomSheetDefaults.DragHandle(
                 color = BentoTextSecondary.copy(alpha = 0.5f)

@@ -252,8 +252,10 @@ fun ListeningStatsDetailScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = BentoScreenBackground,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Column {
                         Text(
@@ -294,7 +296,10 @@ fun ListeningStatsDetailScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BentoBackground)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent
+                )
             )
         }
     ) { paddingValues ->
@@ -932,33 +937,48 @@ fun WrappedSummaryShowcaseCard(
     onShareStats: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val glassConfig = com.example.ui.theme.LocalGlassThemeConfig.current
+    val cardBaseColor = if (glassConfig.glassEnabled) BentoCardSurface else Color(0xFF140F22)
+    val cardGradientColors = if (glassConfig.gradientEnabled || glassConfig.glassEnabled) {
+        val alphaTop = if (glassConfig.glassEnabled) 0.42f else 0.90f
+        val alphaMid = if (glassConfig.glassEnabled) 0.28f else 0.92f
+        val alphaBot = if (glassConfig.glassEnabled) 0.35f else 0.96f
+        listOf(
+            androidx.compose.ui.graphics.lerp(Color(0xFF181226), glassConfig.tintColor, 0.32f).copy(alpha = alphaTop),
+            androidx.compose.ui.graphics.lerp(Color(0xFF120E1E), glassConfig.secondaryTintColor, 0.22f).copy(alpha = alphaMid),
+            Color(0xFF0E0B18).copy(alpha = alphaBot)
+        )
+    } else {
+        listOf(
+            Color(0xFF2E1340),
+            Color(0xFF1B142F),
+            Color(0xFF100D1E)
+        )
+    }
+
     Surface(
         shape = RoundedCornerShape(24.dp),
-        color = Color(0xFF140F22),
+        color = cardBaseColor,
         border = BorderStroke(
             width = 1.5.dp,
             brush = Brush.horizontalGradient(
                 colors = listOf(
                     BentoAccentPinkText.copy(alpha = 0.85f),
                     BentoPrimary.copy(alpha = 0.75f),
-                    Color(0xFFAB47BC).copy(alpha = 0.6f)
+                    BentoPrimary.copy(alpha = 0.45f)
                 )
             )
         ),
         modifier = modifier
             .fillMaxWidth()
-            .shadow(16.dp, RoundedCornerShape(24.dp))
+            .shadow(if (glassConfig.glassEnabled) 0.dp else 16.dp, RoundedCornerShape(24.dp))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF2E1340),
-                            Color(0xFF1B142F),
-                            Color(0xFF100D1E)
-                        )
+                        colors = cardGradientColors
                     )
                 )
                 .padding(20.dp)

@@ -164,8 +164,10 @@ fun RecentlyPlayedScreen(
             .fillMaxSize()
             .background(BentoScreenBackground),
         containerColor = BentoScreenBackground,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -234,7 +236,8 @@ fun RecentlyPlayedScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = BentoBackground,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                     titleContentColor = BentoTextPrimary
                 )
             )

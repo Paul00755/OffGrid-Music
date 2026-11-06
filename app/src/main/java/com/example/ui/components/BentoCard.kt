@@ -53,24 +53,24 @@ fun BentoCard(
             glassConfig.glassEnabled
         ) {
             val topAlpha = if (glassConfig.glassEnabled) {
-                if (glassConfig.isDark) 0.62f else 0.76f
+                if (glassConfig.isDark) 0.72f else 0.84f
             } else {
                 1.0f
             }
             val bottomAlpha = if (glassConfig.glassEnabled) {
-                if (glassConfig.isDark) 0.52f else 0.70f
+                if (glassConfig.isDark) 0.64f else 0.78f
             } else {
                 1.0f
             }
             val topLeftTint = lerp(
                 backgroundColor,
                 glassConfig.tintColor,
-                if (glassConfig.isDark) 0.16f else 0.10f
+                if (glassConfig.isDark) 0.13f else 0.08f
             ).copy(alpha = topAlpha)
             val bottomRightTint = lerp(
                 backgroundColor,
                 glassConfig.secondaryTintColor,
-                if (glassConfig.isDark) 0.10f else 0.06f
+                if (glassConfig.isDark) 0.08f else 0.05f
             ).copy(alpha = bottomAlpha)
             Brush.linearGradient(
                 colors = listOf(topLeftTint, backgroundColor, bottomRightTint)

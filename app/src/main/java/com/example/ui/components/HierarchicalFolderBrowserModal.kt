@@ -114,7 +114,7 @@ fun HierarchicalFolderBrowserModal(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = BentoBackground,
+        containerColor = BentoCardSurface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         dragHandle = {
             BottomSheetDefaults.DragHandle(color = BentoTextSecondary.copy(alpha = 0.4f))

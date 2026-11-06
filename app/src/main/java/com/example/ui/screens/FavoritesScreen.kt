@@ -70,9 +70,9 @@ fun FavoritesScreen(
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     val primaryColor = MaterialTheme.colorScheme.primary
-    val surfaceColor = MaterialTheme.colorScheme.surface
-    val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
-    val outlineColor = MaterialTheme.colorScheme.outline
+    val surfaceColor = BentoCardSurface
+    val surfaceVariantColor = BentoCardPurple
+    val outlineColor = BentoBorder
     val pinkAccent = BentoAccentPinkText
 
     val m3uExportLauncher = rememberLauncherForActivityResult(

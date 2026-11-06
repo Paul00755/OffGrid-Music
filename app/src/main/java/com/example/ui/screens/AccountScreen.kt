@@ -109,8 +109,10 @@ fun AccountScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = BentoScreenBackground,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Text(
                         text = "Account",

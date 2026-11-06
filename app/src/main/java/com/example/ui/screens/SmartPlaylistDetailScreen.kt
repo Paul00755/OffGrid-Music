@@ -93,7 +93,6 @@ fun SmartPlaylistDetailScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
         ) {
             // Top Bar
             Row(
