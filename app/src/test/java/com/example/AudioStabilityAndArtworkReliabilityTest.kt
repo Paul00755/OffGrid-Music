@@ -698,5 +698,77 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertNotNull(thumbBmp)
         assertTrue("List thumbnail must remain compact (<= 160px)", thumbBmp!!.width <= 160 && thumbBmp.height <= 160)
     }
+
+    @Test
+    fun testPalePinkArtworkExtractsPinkNotBlueAndHeroSpotlightDefault() = runBlocking {
+        // 1. Default Home Screen Layout must be HERO_SPOTLIGHT
+        assertEquals(
+            com.example.ui.theme.HomeScreenLayout.HERO_SPOTLIGHT,
+            com.example.ui.theme.HomeScreenLayout.fromId(null)
+        )
+        val prefs = com.example.data.local.UserPreferencesRepository(context)
+        assertEquals("HERO_SPOTLIGHT", prefs.getHomeScreenLayoutSync())
+
+        // 2. Gradient Effect and Glass Effect toggles must work independently
+        prefs.setGradientEffect(true)
+        prefs.setGlassEffect(false)
+        assertTrue(prefs.getGradientEffectSync())
+        assertFalse(prefs.getGlassEffectSync())
+
+        prefs.setGradientEffect(false)
+        prefs.setGlassEffect(true)
+        assertFalse(prefs.getGradientEffectSync())
+        assertTrue(prefs.getGlassEffectSync())
+
+        // 3. Pale pink artwork with dark navy/shadow pixels must extract Pink/Rose hue, NEVER Blue
+        com.example.util.ArtworkColorExtractor.clearCache()
+        val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 64) {
+            for (x in 0 until 64) {
+                if (x < 14 && y < 14) {
+                    // Dark blue-black shadow corner (high HSV saturation artifact at low value)
+                    bmp.setPixel(x, y, Color.rgb(22, 28, 46))
+                } else if (x in 20..44 && y in 20..44) {
+                    // Warm rose-pink subject
+                    bmp.setPixel(x, y, Color.rgb(218, 128, 162))
+                } else {
+                    // Pale pastel pink background across the cover
+                    bmp.setPixel(x, y, Color.rgb(238, 188, 208))
+                }
+            }
+        }
+        val pinkFile = File(tempDir, "pale_pink_cover.jpg")
+        FileOutputStream(pinkFile).use { out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+        }
+        val songFile = File(tempDir, "KaadhalEnKaviye.mp3").apply { writeBytes(ByteArray(64)) }
+        val song = com.example.data.model.Song(
+            id = 5005L,
+            title = "Kaadhal En Kaviye",
+            artist = "Sid Sriram",
+            album = "Salmon 3D",
+            albumId = 505L,
+            durationMs = 240_000L,
+            contentUriString = Uri.fromFile(songFile).toString(),
+            path = songFile.absolutePath,
+            artworkUri = Uri.fromFile(pinkFile).toString()
+        )
+        val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(context, song)
+        assertNotNull("Pale pink artwork must extract a non-null color", extracted)
+        val argb = android.graphics.Color.argb(
+            255,
+            (extracted!!.red * 255).toInt(),
+            (extracted.green * 255).toInt(),
+            (extracted.blue * 255).toInt()
+        )
+        val hsv = FloatArray(3)
+        Color.colorToHSV(argb, hsv)
+        val hue = hsv[0]
+        assertTrue(
+            "Expected Pink/Rose hue (310..360 or 0..25), but got hue=$hue",
+            hue >= 310f || hue <= 25f
+        )
+    }
 }
+
 

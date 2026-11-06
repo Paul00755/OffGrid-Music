@@ -264,6 +264,25 @@ fun UpNextQueueSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val glassConfig = LocalGlassThemeConfig.current
+    val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val sheetGradientBrush = remember(
+        glassConfig.gradientEnabled,
+        glassConfig.glassEnabled,
+        glassConfig.tintColor,
+        glassConfig.secondaryTintColor,
+        glassConfig.isDark
+    ) {
+        if (glassConfig.gradientEnabled) {
+            val topAlpha = if (glassConfig.glassEnabled) (if (glassConfig.isDark) 0.28f else 0.18f) else (if (glassConfig.isDark) 0.34f else 0.22f)
+            val midAlpha = if (glassConfig.glassEnabled) (if (glassConfig.isDark) 0.14f else 0.10f) else (if (glassConfig.isDark) 0.20f else 0.12f)
+            val botAlpha = if (glassConfig.glassEnabled) (if (glassConfig.isDark) 0.18f else 0.12f) else (if (glassConfig.isDark) 0.24f else 0.14f)
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                0.0f to glassConfig.tintColor.copy(alpha = topAlpha),
+                0.48f to glassConfig.secondaryTintColor.copy(alpha = midAlpha),
+                1.0f to glassConfig.tintColor.copy(alpha = botAlpha)
+            )
+        } else null
+    }
 
     ModalBottomSheet(
         sheetState = sheetState,
@@ -278,23 +297,50 @@ fun UpNextQueueSheet(
             }
             onDismiss()
         },
-        containerColor = glassConfig.solidSurface,
-        scrimColor = Color.Black.copy(alpha = 0.65f)
+        shape = sheetShape,
+        containerColor = BentoCardSurface,
+        scrimColor = Color.Black.copy(alpha = if (glassConfig.glassEnabled) 0.42f else 0.65f),
+        dragHandle = null
     ) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.88f)
+                .then(
+                    if (sheetGradientBrush != null) Modifier.background(sheetGradientBrush) else Modifier
+                )
+                .then(
+                    if (glassConfig.glassEnabled || glassConfig.gradientEnabled) {
+                        Modifier.border(
+                            width = 1.dp,
+                            color = BentoCardBorder.copy(alpha = if (glassConfig.glassEnabled) 0.45f else 0.32f),
+                            shape = sheetShape
+                        )
+                    } else Modifier
+                )
         ) {
-            if (glassConfig.enabled) {
-                GlassGradientBackdrop()
-            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 20.dp)
                     .padding(bottom = 20.dp)
             ) {
+                // Unified Drag Handle Pill inside sheet so there is never a separate black top bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp, bottom = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(38.dp)
+                            .height(4.dp)
+                            .clip(CircleShape)
+                            .background(BentoTextSecondary.copy(alpha = 0.45f))
+                    )
+                }
+
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -421,7 +467,11 @@ fun UpNextQueueSheet(
 
                     BentoCard(
                         modifier = Modifier.fillMaxWidth(),
-                        backgroundColor = BentoCardDarkPurple
+                        backgroundColor = if (glassConfig.glassEnabled) {
+                            BentoPrimary.copy(alpha = if (glassConfig.isDark) 0.16f else 0.12f)
+                        } else {
+                            BentoCardDarkPurple
+                        }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -532,7 +582,23 @@ fun UpNextQueueSheet(
                             val rowShape = remember { RoundedCornerShape(12.dp) }
                             val rowBgColor = when {
                                 isDragging -> BentoCardDarkPurple
-                                isCurrent -> BentoCardDarkPurple.copy(alpha = 0.85f)
+                                isCurrent -> if (glassConfig.glassEnabled) {
+                                    BentoPrimary.copy(alpha = if (glassConfig.isDark) 0.18f else 0.14f)
+                                } else {
+                                    BentoCardDarkPurple.copy(alpha = 0.85f)
+                                }
+                                glassConfig.glassEnabled -> {
+                                    val baseChip = if (glassConfig.gradientEnabled) {
+                                        androidx.compose.ui.graphics.lerp(
+                                            if (glassConfig.isDark) Color.White else Color.Black,
+                                            glassConfig.tintColor,
+                                            0.35f
+                                        )
+                                    } else {
+                                        if (glassConfig.isDark) Color.White else Color.Black
+                                    }
+                                    baseChip.copy(alpha = if (glassConfig.isDark) 0.065f else 0.045f)
+                                }
                                 else -> BentoCardSurface
                             }
 

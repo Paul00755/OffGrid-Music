@@ -93,6 +93,8 @@ class MainActivity : ComponentActivity() {
             val accentColorPreset by viewModel.accentColorPreset.collectAsStateWithLifecycle()
             val customAccentColor by viewModel.customAccentColor.collectAsStateWithLifecycle()
             val isDynamicArtworkTheme by viewModel.isDynamicArtworkTheme.collectAsStateWithLifecycle()
+            val isGradientEffect by viewModel.isGradientEffect.collectAsStateWithLifecycle()
+            val isGlassEffect by viewModel.isGlassEffect.collectAsStateWithLifecycle()
             val isGradientGlassEffect by viewModel.isGradientGlassEffect.collectAsStateWithLifecycle()
             val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsStateWithLifecycle()
 
@@ -127,6 +129,8 @@ class MainActivity : ComponentActivity() {
                     accentColorPreset = accentColorPreset,
                     accentColor = effectiveAccentColor,
                     isGradientGlassEffect = isGradientGlassEffect,
+                    isGradientEffect = isGradientEffect,
+                    isGlassEffect = isGlassEffect,
                     dynamicArtworkColor = dynamicArtworkColor
                 ) {
                     val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()

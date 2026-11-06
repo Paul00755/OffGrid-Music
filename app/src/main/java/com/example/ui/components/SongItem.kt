@@ -39,8 +39,8 @@ fun SongItem(
 ) {
     val glassConfig = LocalGlassThemeConfig.current
     val rowBgColor = if (isPlaying) BentoCardDarkPurple else BentoCardSurface
-    val rowBorderColor = if (glassConfig.enabled) {
-        if (isPlaying) BentoPrimary.copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.28f)
+    val rowBorderColor = if (glassConfig.glassEnabled || glassConfig.gradientEnabled) {
+        if (isPlaying) BentoPrimary.copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.30f)
     } else {
         Color.Transparent
     }
@@ -52,7 +52,7 @@ fun SongItem(
             .clip(SongItemRowShape)
             .background(rowBgColor)
             .then(
-                if (glassConfig.enabled) {
+                if (glassConfig.glassEnabled || glassConfig.gradientEnabled) {
                     Modifier.border(0.8.dp, rowBorderColor, SongItemRowShape)
                 } else {
                     Modifier

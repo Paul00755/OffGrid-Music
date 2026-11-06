@@ -178,7 +178,7 @@ fun HomeScreen(
     getMostPlayedSongsSince: (Long, Int) -> kotlinx.coroutines.flow.Flow<List<Song>>,
     getTopArtistsSince: (Long, Int) -> kotlinx.coroutines.flow.Flow<List<ArtistStat>>,
     getTopAlbumsSince: (Long, Int) -> kotlinx.coroutines.flow.Flow<List<AlbumStat>>,
-    homeScreenLayout: String = "BENTO_DYNAMIC",
+    homeScreenLayout: String = "HERO_SPOTLIGHT",
     speedDialSongs: List<Song> = emptyList(),
     onRefreshSpeedDial: () -> Unit = {},
     homeSections: List<String> = listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),

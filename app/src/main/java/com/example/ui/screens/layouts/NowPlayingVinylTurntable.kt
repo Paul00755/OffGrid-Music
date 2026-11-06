@@ -106,7 +106,7 @@ fun NowPlayingVinylTurntable(
             .fillMaxSize()
             .background(BentoBackground)
     ) {
-        if (LocalGlassThemeConfig.current.enabled) {
+        if (LocalGlassThemeConfig.current.gradientEnabled) {
             GlassGradientBackdrop()
         }
         Column(

@@ -96,7 +96,7 @@ fun NowPlayingNeonWaveform(
             .fillMaxSize()
             .background(BentoBackground)
     ) {
-        if (LocalGlassThemeConfig.current.enabled) {
+        if (LocalGlassThemeConfig.current.gradientEnabled) {
             GlassGradientBackdrop()
         }
         // Holographic Neon Laser & Concentric Aura Stage Canvas (Frameless, Non-Boxy)

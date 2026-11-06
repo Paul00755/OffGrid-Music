@@ -86,6 +86,7 @@ object ArtworkResolutionCache {
     private var activeWarmAllJob: Job? = null
 
     val artworkUpdateSignal = mutableLongStateOf(0L)
+    val thumbnailDecodedSignal = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val songArtworkVersions = ConcurrentHashMap<String, Long>()
     private val artworkUpdateSignals = ConcurrentHashMap<String, androidx.compose.runtime.MutableLongState>()
 
@@ -154,6 +155,7 @@ object ArtworkResolutionCache {
                 }
             }
         }
+        thumbnailDecodedSignal.value = songId
     }
 
     fun cacheDecodedBitmapAsThumbnail(

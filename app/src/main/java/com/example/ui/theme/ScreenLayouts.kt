@@ -22,17 +22,17 @@ enum class HomeScreenLayout(
     val subtitle: String,
     val icon: ImageVector
 ) {
-    BENTO_DYNAMIC(
-        id = "BENTO_DYNAMIC",
-        displayName = "Bento Mosaic",
-        subtitle = "Dynamic modular tiles, stats bento & quick shortcuts",
-        icon = Icons.Default.Dashboard
-    ),
     HERO_SPOTLIGHT(
         id = "HERO_SPOTLIGHT",
         displayName = "Hero Spotlight",
         subtitle = "Grand glowing album hero banner & magazine stream",
         icon = Icons.Default.Star
+    ),
+    BENTO_DYNAMIC(
+        id = "BENTO_DYNAMIC",
+        displayName = "Bento Mosaic",
+        subtitle = "Dynamic modular tiles, stats bento & quick shortcuts",
+        icon = Icons.Default.Dashboard
     ),
     MINIMAL_FEED(
         id = "MINIMAL_FEED",
@@ -49,7 +49,7 @@ enum class HomeScreenLayout(
 
     companion object {
         fun fromId(id: String?): HomeScreenLayout {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: BENTO_DYNAMIC
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: HERO_SPOTLIGHT
         }
     }
 }

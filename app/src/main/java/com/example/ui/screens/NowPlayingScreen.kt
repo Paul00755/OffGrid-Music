@@ -526,8 +526,8 @@ fun NowPlayingScreen(
     val glassConfig = LocalGlassThemeConfig.current
     val currentBg = BentoBackground
     val ambientThemeColor = dynamicArtworkColor ?: glassConfig.tintColor
-    val bgBrush = remember(ambientThemeColor, currentBg, glassConfig.enabled, glassConfig.secondaryTintColor) {
-        if (glassConfig.enabled) {
+    val bgBrush = remember(ambientThemeColor, currentBg, glassConfig.gradientEnabled, glassConfig.secondaryTintColor) {
+        if (glassConfig.gradientEnabled) {
             androidx.compose.ui.graphics.Brush.verticalGradient(
                 0.0f to ambientThemeColor.copy(alpha = 0.48f),
                 0.45f to glassConfig.secondaryTintColor.copy(alpha = 0.24f),
@@ -1484,14 +1484,22 @@ fun NowPlayingScreen(
         exit = slideOutVertically { it }
     ) {
         val isCurrentDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        val lyricsBg = if (isCurrentDark) Color(0xFF09090E) else Color.White
-        val lyricsGlassBrush = remember(glassConfig.enabled, ambientThemeColor, glassConfig.secondaryTintColor, isCurrentDark, lyricsBg) {
-            if (glassConfig.enabled) {
+        val baseLyricsColor = if (isCurrentDark) Color(0xFF09090E) else Color.White
+        val lyricsBg = if (glassConfig.glassEnabled) {
+            baseLyricsColor.copy(alpha = if (isCurrentDark) 0.78f else 0.85f)
+        } else {
+            baseLyricsColor
+        }
+        val lyricsGlassBrush = remember(glassConfig.gradientEnabled, glassConfig.glassEnabled, ambientThemeColor, glassConfig.secondaryTintColor, isCurrentDark, baseLyricsColor) {
+            if (glassConfig.gradientEnabled) {
+                val topAlpha = if (glassConfig.glassEnabled) 0.36f else 1f
+                val midAlpha = if (glassConfig.glassEnabled) 0.22f else 1f
+                val botAlpha = if (glassConfig.glassEnabled) 0.26f else 1f
                 Brush.verticalGradient(
-                    0.0f to androidx.compose.ui.graphics.lerp(lyricsBg, ambientThemeColor, if (isCurrentDark) 0.34f else 0.20f),
-                    0.45f to androidx.compose.ui.graphics.lerp(lyricsBg, glassConfig.secondaryTintColor, if (isCurrentDark) 0.20f else 0.12f),
-                    0.80f to lyricsBg,
-                    1.0f to androidx.compose.ui.graphics.lerp(lyricsBg, ambientThemeColor, if (isCurrentDark) 0.24f else 0.14f)
+                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.36f else 0.22f).copy(alpha = topAlpha),
+                    0.45f to androidx.compose.ui.graphics.lerp(baseLyricsColor, glassConfig.secondaryTintColor, if (isCurrentDark) 0.22f else 0.14f).copy(alpha = midAlpha),
+                    0.80f to if (glassConfig.glassEnabled) Color.Transparent else baseLyricsColor,
+                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.26f else 0.16f).copy(alpha = botAlpha)
                 )
             } else null
         }

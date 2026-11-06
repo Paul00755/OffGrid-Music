@@ -3,7 +3,7 @@ package com.example.data.sync
 data class CloudUserSettings(
     val themeMode: String = "DARK",
     val uiTheme: String = "MIDNIGHT_OBSIDIAN",
-    val homeScreenLayout: String = "BENTO_DYNAMIC",
+    val homeScreenLayout: String = "HERO_SPOTLIGHT",
     val nowPlayingLayout: String = "MINIMAL_GLASS",
     val playlistsLayout: String = "GLOW_CARDS",
     val accentColorPreset: String = "ORANGE",
@@ -175,7 +175,7 @@ data class CloudUserSettings(
                     if (!savedMode.equals("LIGHT", ignoreCase = true) && map["amoledMode"] as? Boolean == true) "AMOLED" else savedMode
                 },
                 uiTheme = map["uiTheme"] as? String ?: "MIDNIGHT_OBSIDIAN",
-                homeScreenLayout = map["homeScreenLayout"] as? String ?: "BENTO_DYNAMIC",
+                homeScreenLayout = map["homeScreenLayout"] as? String ?: "HERO_SPOTLIGHT",
                 nowPlayingLayout = map["nowPlayingLayout"] as? String ?: "MINIMAL_GLASS",
                 playlistsLayout = map["playlistsLayout"] as? String ?: "GLOW_CARDS",
                 accentColorPreset = map["accentColorPreset"] as? String ?: "ORANGE",

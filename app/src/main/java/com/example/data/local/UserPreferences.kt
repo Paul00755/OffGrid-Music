@@ -129,6 +129,8 @@ class UserPreferencesRepository(private val context: Context) {
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
         val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
         val GRADIENT_GLASS_EFFECT = booleanPreferencesKey("gradient_glass_effect")
+        val GRADIENT_EFFECT = booleanPreferencesKey("gradient_effect")
+        val GLASS_EFFECT = booleanPreferencesKey("glass_effect")
         val LYRICS_FETCH_MODE = stringPreferencesKey("lyrics_fetch_mode") // "ALWAYS", "WIFI_ONLY", "OFF"
         val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode") // "TIME", "SONGS"
         val SLEEP_TIMER_FINISH_LAST_SONG = booleanPreferencesKey("sleep_timer_finish_last_song")
@@ -422,7 +424,7 @@ class UserPreferencesRepository(private val context: Context) {
         return com.example.data.sync.CloudUserSettings(
             themeMode = effectiveThemeMode,
             uiTheme = prefs[PreferenceKeys.UI_THEME] ?: readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN"),
-            homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "BENTO_DYNAMIC"),
+            homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "HERO_SPOTLIGHT"),
             nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS"),
             playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "GLOW_CARDS"),
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
@@ -940,9 +942,9 @@ class UserPreferencesRepository(private val context: Context) {
     fun getDisplayScaleSync(): String = readStringCached("display_scale", "DEFAULT")
 
     val homeScreenLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "BENTO_DYNAMIC")
+        prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "HERO_SPOTLIGHT")
     }
-    fun getHomeScreenLayoutSync(): String = readStringCached("home_screen_layout", "BENTO_DYNAMIC")
+    fun getHomeScreenLayoutSync(): String = readStringCached("home_screen_layout", "HERO_SPOTLIGHT")
 
     val nowPlayingLayout: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS")
@@ -959,16 +961,60 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getDynamicArtworkThemeSync(): Boolean = readBoolCached("dynamic_artwork_theme", true)
 
-    val isGradientGlassEffect: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] ?: readBoolCached("gradient_glass_effect", true)
+    val isGradientEffect: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.GRADIENT_EFFECT]
+            ?: prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT]
+            ?: readBoolCached("gradient_effect", readBoolCached("gradient_glass_effect", true))
     }
-    fun getGradientGlassEffectSync(): Boolean = readBoolCached("gradient_glass_effect", true)
+    fun getGradientEffectSync(): Boolean =
+        readBoolCached("gradient_effect", readBoolCached("gradient_glass_effect", true))
+
+    suspend fun setGradientEffect(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("gradient_effect", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.GRADIENT_EFFECT] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    val isGlassEffect: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.GLASS_EFFECT]
+            ?: prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT]
+            ?: readBoolCached("glass_effect", readBoolCached("gradient_glass_effect", true))
+    }
+    fun getGlassEffectSync(): Boolean =
+        readBoolCached("glass_effect", readBoolCached("gradient_glass_effect", true))
+
+    suspend fun setGlassEffect(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("glass_effect", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.GLASS_EFFECT] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    val isGradientGlassEffect: Flow<Boolean> = safeData.map { prefs ->
+        val grad = prefs[PreferenceKeys.GRADIENT_EFFECT]
+            ?: prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT]
+            ?: readBoolCached("gradient_effect", readBoolCached("gradient_glass_effect", true))
+        val glass = prefs[PreferenceKeys.GLASS_EFFECT]
+            ?: prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT]
+            ?: readBoolCached("glass_effect", readBoolCached("gradient_glass_effect", true))
+        grad || glass
+    }
+    fun getGradientGlassEffectSync(): Boolean = getGradientEffectSync() || getGlassEffectSync()
 
     suspend fun setGradientGlassEffect(enabled: Boolean) {
         val now = System.currentTimeMillis()
         writeBoolCached("gradient_glass_effect", enabled, now)
+        writeBoolCached("gradient_effect", enabled, now)
+        writeBoolCached("glass_effect", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] = enabled
+            prefs[PreferenceKeys.GRADIENT_EFFECT] = enabled
+            prefs[PreferenceKeys.GLASS_EFFECT] = enabled
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }

@@ -533,7 +533,7 @@ fun SettingsScreen(
     onSetUiTheme: (String) -> Unit = {},
     displayScale: String = "DEFAULT",
     onSetDisplayScale: (String) -> Unit = {},
-    homeScreenLayout: String = "BENTO_MOSAIC",
+    homeScreenLayout: String = "HERO_SPOTLIGHT",
     onSetHomeScreenLayout: (String) -> Unit = {},
     nowPlayingLayout: String = "MODERN_BENTO",
     onSetNowPlayingLayout: (String) -> Unit = {},
@@ -541,6 +541,10 @@ fun SettingsScreen(
     onSetPlaylistsLayout: (String) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
+    isGradientEffect: Boolean = true,
+    onSetGradientEffect: (Boolean) -> Unit = {},
+    isGlassEffect: Boolean = true,
+    onSetGlassEffect: (Boolean) -> Unit = {},
     isGradientGlassEffect: Boolean = true,
     onSetGradientGlassEffect: (Boolean) -> Unit = {},
     fetchOnlineArtworkHighRes: Boolean = false,
@@ -1511,13 +1515,19 @@ fun SettingsScreen(
             "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric", "adaptive color"
         )
     }
-    val matchUiGradientGlass = remember(searchTokens) {
+    val matchUiGradientEffect = remember(searchTokens) {
         matchesSettingsTokens(
             searchTokens,
-            "gradient", "glass", "gradient & glass", "gradient and glass", "glass effect",
-            "frosted", "frosted glass", "glassmorphism", "blur", "ambient gradient", "aurora"
+            "gradient", "gradient effect", "ambient gradient", "aurora", "color wash", "background gradient"
         )
     }
+    val matchUiGlassEffect = remember(searchTokens) {
+        matchesSettingsTokens(
+            searchTokens,
+            "glass", "glass effect", "frosted", "frosted glass", "glassmorphism", "blur", "translucent", "see through"
+        )
+    }
+    val matchUiGradientGlass = matchUiGradientEffect || matchUiGlassEffect
     val matchUiHighResArtwork = remember(searchTokens) {
         matchesSettingsTokens(
             searchTokens,
@@ -3197,13 +3207,26 @@ fun SettingsScreen(
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
 
-                        // 5b. Gradient & Glass Effect (App-Wide)
-                        if (!isSearching || matchUiGradientGlass || broadUiMatch) {
+                        // 5b. Gradient Effect (App-Wide)
+                        if (!isSearching || matchUiGradientEffect || matchUiGradientGlass || broadUiMatch) {
                             SettingsToggleRow(
-                                title = "Gradient & Glass Effect",
-                                subtitle = "Apply frosted glass cards and dynamic artwork/theme ambient gradients across Home, Now Playing, Library, Lyrics, Playlists, Search, Stats, and Queue",
-                                checked = isGradientGlassEffect,
-                                onCheckedChange = onSetGradientGlassEffect,
+                                title = "Gradient Effect",
+                                subtitle = "Apply dynamic artwork and theme ambient color gradients across Home, Now Playing, Library, Lyrics, Playlists, Search, Stats, and Queue",
+                                checked = isGradientEffect,
+                                onCheckedChange = onSetGradientEffect,
+                                icon = Icons.Default.Gradient,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
+
+                        // 5c. Glass Effect (App-Wide)
+                        if (!isSearching || matchUiGlassEffect || matchUiGradientGlass || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Glass Effect",
+                                subtitle = "Apply translucent see-through frosted glass surfaces and specular borders to cards, menus, bottom sheets, and Up Next queue",
+                                checked = isGlassEffect,
+                                onCheckedChange = onSetGlassEffect,
                                 icon = Icons.Default.BlurOn,
                                 accentColor = Color(0xFFBB86FC)
                             )

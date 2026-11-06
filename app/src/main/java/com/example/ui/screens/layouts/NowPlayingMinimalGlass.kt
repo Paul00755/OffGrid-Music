@@ -72,7 +72,7 @@ fun NowPlayingMinimalGlass(
             .fillMaxSize()
             .background(BentoBackground)
     ) {
-        if (glassConfig.enabled) {
+        if (glassConfig.gradientEnabled) {
             GlassGradientBackdrop()
         } else {
             Box(

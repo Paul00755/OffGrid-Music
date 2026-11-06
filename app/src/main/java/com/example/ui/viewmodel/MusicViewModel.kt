@@ -547,7 +547,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAccentColorPresetSync())
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomAccentColorSync())
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDynamicArtworkThemeSync())
+    val isGradientEffect: StateFlow<Boolean> = preferences.isGradientEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGradientEffectSync())
+    val isGlassEffect: StateFlow<Boolean> = preferences.isGlassEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGlassEffectSync())
     val isGradientGlassEffect: StateFlow<Boolean> = preferences.isGradientGlassEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGradientGlassEffectSync())
+
+    fun setGradientEffect(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setGradientEffect(enabled)
+        }
+    }
+
+    fun setGlassEffect(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setGlassEffect(enabled)
+        }
+    }
 
     fun setGradientGlassEffect(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
@@ -792,14 +806,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.flow.combine(
+            val targetSongFlow = kotlinx.coroutines.flow.combine(
                 playbackState.map { it.currentSong }.distinctUntilChanged(),
                 recentlyPlayedSongs.map { it.firstOrNull() }.distinctUntilChanged(),
+                allSongs.map { it.firstOrNull() }.distinctUntilChanged()
+            ) { currentSong, recentSong, firstLibrarySong ->
+                currentSong ?: recentSong ?: firstLibrarySong
+            }.distinctUntilChanged()
+
+            val shouldExtractFlow = kotlinx.coroutines.flow.combine(
                 isDynamicArtworkTheme,
-                isGradientGlassEffect
-            ) { currentSong, recentSong, isDynamic, isGlass ->
-                val targetSong = currentSong ?: recentSong ?: allSongs.value.firstOrNull()
-                Pair(targetSong, isDynamic || isGlass)
+                isGradientEffect,
+                isGlassEffect
+            ) { isDynamic, isGradient, isGlass ->
+                isDynamic || isGradient || isGlass
+            }.distinctUntilChanged()
+
+            kotlinx.coroutines.flow.combine(
+                targetSongFlow,
+                shouldExtractFlow,
+                com.example.ui.components.ArtworkResolutionCache.thumbnailDecodedSignal
+            ) { targetSong, shouldExtract, _ ->
+                Pair(targetSong, shouldExtract)
             }.collect { (song, shouldExtract) ->
                 if (shouldExtract && song != null) {
                     val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(getApplication(), song)

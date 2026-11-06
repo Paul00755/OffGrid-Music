@@ -44,18 +44,34 @@ fun BentoCard(
 
     val effectiveGlassBrush = if (gradient != null) {
         gradient
-    } else if (glassConfig.enabled) {
-        remember(backgroundColor, glassConfig.tintColor, glassConfig.secondaryTintColor, glassConfig.isDark) {
+    } else if (glassConfig.gradientEnabled) {
+        remember(
+            backgroundColor,
+            glassConfig.tintColor,
+            glassConfig.secondaryTintColor,
+            glassConfig.isDark,
+            glassConfig.glassEnabled
+        ) {
+            val topAlpha = if (glassConfig.glassEnabled) {
+                if (glassConfig.isDark) 0.62f else 0.76f
+            } else {
+                1.0f
+            }
+            val bottomAlpha = if (glassConfig.glassEnabled) {
+                if (glassConfig.isDark) 0.52f else 0.70f
+            } else {
+                1.0f
+            }
             val topLeftTint = lerp(
                 backgroundColor,
                 glassConfig.tintColor,
                 if (glassConfig.isDark) 0.16f else 0.10f
-            ).copy(alpha = if (glassConfig.isDark) 0.76f else 0.86f)
+            ).copy(alpha = topAlpha)
             val bottomRightTint = lerp(
                 backgroundColor,
                 glassConfig.secondaryTintColor,
                 if (glassConfig.isDark) 0.10f else 0.06f
-            ).copy(alpha = if (glassConfig.isDark) 0.64f else 0.78f)
+            ).copy(alpha = bottomAlpha)
             Brush.linearGradient(
                 colors = listOf(topLeftTint, backgroundColor, bottomRightTint)
             )

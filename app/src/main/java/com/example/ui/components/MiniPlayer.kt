@@ -72,7 +72,7 @@ fun MiniPlayer(
             .fillMaxWidth()
             .then(cardPadding)
             .clip(cardShape)
-            .background(BentoCardSurface.copy(alpha = 0.98f))
+            .background(BentoCardSurface)
             .border(
                 border = BorderStroke(1.dp, BentoBorder),
                 shape = cardShape

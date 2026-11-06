@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.luminance
  */
 data class GlassThemeConfig(
     val enabled: Boolean = false,
+    val gradientEnabled: Boolean = enabled,
+    val glassEnabled: Boolean = enabled,
     val tintColor: Color = Color(0xFFFF9100),
     val secondaryTintColor: Color = Color(0xFF7C4DFF),
     val isDark: Boolean = true,
@@ -47,7 +49,7 @@ fun GlassGradientBackdrop(
 ) {
     val glassConfig = LocalGlassThemeConfig.current
     val baseBg = glassConfig.solidBackground
-    if (!glassConfig.enabled) {
+    if (!glassConfig.gradientEnabled) {
         Box(modifier = modifier.fillMaxSize().background(baseBg))
         return
     }
@@ -281,6 +283,8 @@ fun MyApplicationTheme(
     accentColorPreset: String = "ORANGE",
     accentColor: Color? = null,
     isGradientGlassEffect: Boolean = false,
+    isGradientEffect: Boolean = isGradientGlassEffect,
+    isGlassEffect: Boolean = isGradientGlassEffect,
     dynamicArtworkColor: Color? = null,
     content: @Composable () -> Unit
 ) {
@@ -608,12 +612,15 @@ fun MyApplicationTheme(
 
     val glassTintColor = dynamicArtworkColor ?: primaryColor
     val glassSecondaryTint = if (dynamicArtworkColor != null) {
-        lerp(dynamicArtworkColor, baseColorScheme.secondary, 0.45f)
+        lerp(dynamicArtworkColor, primaryColor, 0.22f)
     } else {
         baseColorScheme.secondary
     }
+    val anyEffectEnabled = isGradientEffect || isGlassEffect
     val glassConfig = remember(
-        isGradientGlassEffect,
+        anyEffectEnabled,
+        isGradientEffect,
+        isGlassEffect,
         glassTintColor,
         glassSecondaryTint,
         isDark,
@@ -622,7 +629,9 @@ fun MyApplicationTheme(
         baseColorScheme.surfaceVariant
     ) {
         GlassThemeConfig(
-            enabled = isGradientGlassEffect,
+            enabled = anyEffectEnabled,
+            gradientEnabled = isGradientEffect,
+            glassEnabled = isGlassEffect,
             tintColor = glassTintColor,
             secondaryTintColor = glassSecondaryTint,
             isDark = isDark,
