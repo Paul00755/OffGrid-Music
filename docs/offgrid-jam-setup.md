@@ -21,14 +21,11 @@ Local audio sharing is opt-in per Jam. Transfers are capped at 25 MB, kept in a 
 
 ## Configure invitation links
 
-Invitation codes work without a web domain and can be entered from the Jam screen. Firebase Hosting provides the `offgrid-music.web.app` and `offgrid-music.firebaseapp.com` hosts, so buying a custom domain is optional.
+Invitation codes work without a web domain and can be entered from the Jam screen. To use shareable HTTPS links:
 
-To use shareable HTTPS links:
+1. Add a Firebase Hosting domain and point its DNS records at Firebase Hosting.
+2. Build Android with `JAM_INVITE_HOST=your-host.example` as a Gradle property or environment variable. The manifest accepts only `https://your-host.example/jam/...` links.
+3. Publish `/.well-known/assetlinks.json` for `com.aistudio.offgridmusic.player`, using the SHA-256 signing-certificate fingerprint for the release key distributed to users. Do not use the debug key fingerprint for a release build.
+4. Deploy Hosting. The Jam fallback page displays the code and provides an Android app link when the app is installed.
 
-1. Deploy Hosting with `firebase deploy --only hosting --project offgrid-music`, or connect a custom domain in Firebase Hosting and wait for its DNS and SSL setup to finish.
-2. Set the exact chosen host at Android build time. For the default host, run `./gradlew -PJAM_INVITE_HOST=offgrid-music.web.app assembleRelease` (on Windows, use `./gradlew.bat`). The manifest accepts only `https://<chosen-host>/jam/...` links; rebuild the app after changing the host.
-3. Create `public/.well-known/assetlinks.json` with an Android App Links statement for package `com.aistudio.offgridmusic.player` and the SHA-256 certificate fingerprint of the app users will install. For Play releases, use the Play App Signing certificate. For sideloaded releases, use the certificate that signs those APKs. Include multiple fingerprints if you distribute builds signed with different keys.
-4. The Hosting ignore list must allow `.well-known` through. Verify `https://<chosen-host>/.well-known/assetlinks.json` returns the JSON file, then deploy Hosting.
-5. Install the rebuilt app and test a Jam invitation URL. Without the App Links association, the web fallback and invite code can still be used, but Android may not open the app directly.
-
-The checked-in Hosting target uses the `offgrid-music` Firebase project. This source change does not include a signing-certificate fingerprint or a Firebase deployment.
+The checked-in Hosting target uses the `offgrid-music` Firebase project, but no production domain, release signing fingerprint, or Firebase deployment is configured by this source change.

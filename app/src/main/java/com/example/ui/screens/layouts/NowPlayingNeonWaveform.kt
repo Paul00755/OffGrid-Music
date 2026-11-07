@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -483,9 +484,9 @@ fun NowPlayingNeonWaveform(
                         modifier = Modifier.size(42.dp)
                     ) {
                         Icon(
-                            Icons.Default.Shuffle,
+                            if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
-                            tint = if (isShuffleActive) Color(0xFF43A047) else Color(0xFFE53935),
+                            tint = BentoTextPrimary,
                             modifier = Modifier.size(21.dp)
                         )
                     }
