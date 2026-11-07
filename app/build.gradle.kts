@@ -33,6 +33,19 @@ val jamInviteHostCandidate = providers.gradleProperty("JAM_INVITE_HOST")
   ?.trim()
   .orEmpty()
 val jamInviteHost = jamInviteHostCandidate.takeIf { it.matches(Regex("^[A-Za-z0-9.-]+$")) }.orEmpty()
+val jamTurnUri = providers.gradleProperty("JAM_TURN_URI").orElse(providers.environmentVariable("JAM_TURN_URI")).orNull.orEmpty()
+val jamTurnUsername = providers.gradleProperty("JAM_TURN_USERNAME").orElse(providers.environmentVariable("JAM_TURN_USERNAME")).orNull.orEmpty()
+val jamTurnCredential = providers.gradleProperty("JAM_TURN_CREDENTIAL").orElse(providers.environmentVariable("JAM_TURN_CREDENTIAL")).orNull.orEmpty()
+fun asBuildConfigString(value: String) = "\"" + value.map { char ->
+  when (char) {
+    '\\' -> "\\\\"
+    '"' -> "\\\""
+    '\n' -> "\\n"
+    '\r' -> "\\r"
+    '$' -> "\\$"
+    else -> char.toString()
+  }
+}.joinToString("") + "\""
 
 android {
   namespace = "com.example"
@@ -48,6 +61,9 @@ android {
     versionCode = 5
     versionName = "1.0.4$ciVersionSuffix"
     buildConfigField("String", "JAM_INVITE_HOST", "\"$jamInviteHost\"")
+    buildConfigField("String", "JAM_TURN_URI", asBuildConfigString(jamTurnUri))
+    buildConfigField("String", "JAM_TURN_USERNAME", asBuildConfigString(jamTurnUsername))
+    buildConfigField("String", "JAM_TURN_CREDENTIAL", asBuildConfigString(jamTurnCredential))
     manifestPlaceholders["jamInviteHost"] = jamInviteHost.ifBlank { "not-configured.invalid" }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -153,6 +169,7 @@ dependencies {
   implementation(platform(libs.firebase.bom))
 
   implementation("com.google.firebase:firebase-analytics")
+  implementation("io.github.webrtc-sdk:android:150.7871.04")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
@@ -184,8 +201,6 @@ dependencies {
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
   implementation(libs.firebase.firestore)
-  implementation("com.google.firebase:firebase-functions")
-  implementation("com.google.firebase:firebase-storage")
   implementation("com.google.firebase:firebase-appcheck-playintegrity")
 
   // Firebase Auth and Google Sign-In via Credential Manager

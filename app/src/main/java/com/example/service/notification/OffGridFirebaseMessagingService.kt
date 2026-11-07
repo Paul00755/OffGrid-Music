@@ -29,13 +29,6 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
         val prefs = UserPreferencesRepository.getInstance(applicationContext)
         val enabled = prefs.getUpdateNotificationsEnabledSync()
         AppUpdateRepository.getInstance(applicationContext).syncTopicSubscription(enabled)
-        runCatching {
-            if (com.example.util.FirebaseInitializer.getAuth(applicationContext)?.currentUser != null) {
-                com.google.firebase.functions.FirebaseFunctions.getInstance()
-                    .getHttpsCallable("registerJamDeviceToken")
-                    .call(mapOf("token" to token))
-            }
-        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {

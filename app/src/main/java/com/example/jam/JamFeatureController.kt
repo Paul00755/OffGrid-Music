@@ -110,7 +110,6 @@ class JamFeatureController(
                 if (uid == null) restoredForUid = null
                 if (uid != null && restoredForUid != uid) {
                     restoredForUid = uid
-                    registerDeviceToken()
                     val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
                     val savedSession = prefs.getString(KEY_ACTIVE_SESSION, null)
                     if (_sessionId.value == null && prefs.getString(KEY_ACTIVE_UID, null) == uid && !savedSession.isNullOrBlank()) {
@@ -427,7 +426,7 @@ class JamFeatureController(
         heartbeatJob = scope.launch {
             while (_sessionId.value == id) {
                 heartbeatNow()
-                delay(45_000L)
+                delay(120_000L)
             }
         }
         driftJob = scope.launch {
@@ -560,22 +559,17 @@ class JamFeatureController(
         UserAccount(uid = it.uid, email = it.email, displayName = it.displayName, photoUrl = it.photoUrl?.toString())
     }
 
-    private fun registerDeviceToken() {
-        runCatching {
-            com.google.firebase.messaging.FirebaseMessaging.getInstance().token
-                .addOnSuccessListener { token ->
-                    if (token.isNotBlank()) scope.launch { runCatching { repository.registerDeviceToken(token) } }
-                }
-        }
-    }
-
     private fun syncLocalTransfers(recommendations: List<JamRecommendation>) {
         val uid = authManager.currentUser?.uid ?: return
         val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
         val sessionId = _sessionId.value ?: return
         recommendations.forEach { recommendation ->
             if (recommendation.type != JamRecommendationType.LOCAL_SONG) return@forEach
-            if (recommendation.proposerUid == uid && recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING")) {
+            if (recommendation.proposerUid == uid && recommendation.status == "READY") {
+                prefs.edit().remove("source:${recommendation.id}").remove("mime:${recommendation.id}").apply()
+            }
+            if (recommendation.proposerUid == uid && (recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") ||
+                    recommendation.uploadStatus == "RETRY_REQUIRED")) {
                 val uri = prefs.getString("source:${recommendation.id}", null)?.let { Uri.parse(it) }
                 val mime = prefs.getString("mime:${recommendation.id}", null)
                 if (uri != null && !mime.isNullOrBlank()) {
@@ -583,9 +577,11 @@ class JamFeatureController(
                 }
             }
             val ownDownload = recommendation.downloads[uid]
-            if (recommendation.status == "DOWNLOADING" && ownDownload?.status in setOf("WAITING_TO_DOWNLOAD", "DOWNLOADING")) {
+            if (uid != recommendation.proposerUid && recommendation.status in setOf("UPLOADING", "DOWNLOADING") &&
+                recommendation.votes[uid] == JamVote.ACCEPT && (ownDownload == null || ownDownload.status in setOf("WAITING_TO_DOWNLOAD", "DOWNLOADING", "WAITING_FOR_UPLOAD"))) {
                 val checksum = recommendation.checksum ?: return@forEach
-                JamTransferWork.enqueueDownload(context, sessionId, recommendation.id, checksum, recommendation.track, recommendation.contentType)
+                if (recommendation.fileSize <= 0L) return@forEach
+                JamTransferWork.enqueueDownload(context, sessionId, recommendation.id, checksum, recommendation.track, recommendation.fileSize, recommendation.contentType)
             }
         }
     }

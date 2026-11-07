@@ -99,6 +99,7 @@ import coil.compose.AsyncImage
 import com.example.data.model.Song
 import com.example.jam.JamAccessMode
 import com.example.jam.JamFeatureController
+import com.example.jam.JamDownloadState
 import com.example.jam.JamPage
 import com.example.jam.JamParticipant
 import com.example.jam.JamPermissionKind
@@ -733,9 +734,9 @@ private fun RecommendationCard(
     val required = recommendation.requiredApprovalCount
     val resultText = when (recommendation.status) {
         "VOTING" -> "${((recommendation.deadlineAtMs - nowMs).coerceAtLeast(0L) + 999L) / 1000L}s left · ${recommendation.approvalCount}/$required approvals"
-        "APPROVED_PENDING_UPLOAD" -> "Approved unanimously · waiting for upload"
-        "UPLOADING" -> "Uploading · ${recommendation.uploadProgress}%"
-        "DOWNLOADING" -> "Downloading on each device"
+        "APPROVED_PENDING_UPLOAD" -> "Approved unanimously · preparing peer transfer"
+        "UPLOADING" -> "Sending directly · ${recommendation.uploadProgress}%"
+        "DOWNLOADING" -> "Receiving directly on each device"
         "READY" -> "Ready for the shared queue"
         "REJECTED" -> "Rejected · queue unchanged"
         "EXPIRED" -> "Expired · queue unchanged"
@@ -771,23 +772,23 @@ private fun RecommendationCard(
         }
         if (recommendation.type == JamRecommendationType.LOCAL_SONG && recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING", "DOWNLOADING", "READY", "FAILED")) {
             if (recommendation.uploadStatus == "UPLOADING") {
-                Text("Upload ${recommendation.uploadProgress}%", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
+                Text("Peer transfer ${recommendation.uploadProgress}%", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
                 androidx.compose.material3.LinearProgressIndicator(recommendation.uploadProgress / 100f, modifier = Modifier.fillMaxWidth())
             }
             recommendation.eligibleUids.forEach { uid ->
                 val name = participants.firstOrNull { it.uid == uid }?.displayName ?: if (uid == currentUid) "You" else "Listener"
                 val status = recommendation.downloads[uid] ?: JamDownloadState()
                 val statusLabel = when {
-                    recommendation.status == "UPLOADING" && uid == recommendation.proposerUid -> "Uploading · ${recommendation.uploadProgress}%"
-                    recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") -> "Waiting for upload"
+                    recommendation.status == "UPLOADING" && uid == recommendation.proposerUid -> "Sending directly · ${recommendation.uploadProgress}%"
+                    recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") -> "Waiting for direct transfer"
                     else -> when (status.status) {
-                    "WAITING_FOR_UPLOAD" -> "Waiting for upload"
-                    "UPLOADING" -> "Uploading"
-                    "WAITING_TO_DOWNLOAD" -> "Waiting to download"
-                    "DOWNLOADING" -> "Downloading · ${status.progress}%"
+                    "WAITING_FOR_UPLOAD" -> "Waiting for direct transfer"
+                    "UPLOADING" -> "Sending directly"
+                    "WAITING_TO_DOWNLOAD" -> "Waiting to receive"
+                    "DOWNLOADING" -> "Receiving · ${status.progress}%"
                     "VERIFYING_FILE" -> "Verifying file"
-                    "READY_FOR_PLAYBACK" -> "Download completed · Ready"
-                    "DOWNLOAD_FAILED" -> "Download failed · Retry required"
+                    "READY_FOR_PLAYBACK" -> "Received and verified · Ready"
+                    "DOWNLOAD_FAILED" -> "Peer transfer failed · Retry required"
                     else -> status.status.lowercase().replace('_', ' ')
                     }
                 }
@@ -1123,7 +1124,8 @@ private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAu
         ?: throw IllegalArgumentException("Choose an MP3, M4A, AAC, FLAC, OGG, or WAV file.")
     val retriever = MediaMetadataRetriever()
     try {
-        retriever.setDataSource(resolver, uri)
+        resolver.openFileDescriptor(uri, "r")?.use { descriptor -> retriever.setDataSource(descriptor.fileDescriptor) }
+            ?: throw IllegalArgumentException("This file couldn't be opened.")
         val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim().orEmpty()
         val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim().orEmpty()
         val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.trim().orEmpty()

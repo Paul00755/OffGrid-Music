@@ -114,7 +114,7 @@ data class JamParticipant(
     val lastSeenAtMs: Long = 0L,
     val isHost: Boolean = false
 ) {
-    val isConnected: Boolean get() = lastSeenAtMs > 0L && System.currentTimeMillis() - lastSeenAtMs < 90_000L
+    val isConnected: Boolean get() = lastSeenAtMs > 0L && System.currentTimeMillis() - lastSeenAtMs < 6 * 60_000L
 }
 
 @Immutable

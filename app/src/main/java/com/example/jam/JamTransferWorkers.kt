@@ -1,5 +1,6 @@
 package com.example.jam
 
+import com.example.BuildConfig
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -16,9 +17,6 @@ import com.example.auth.AuthManager
 import com.example.data.local.AppDatabase
 import com.example.data.local.SongEntity
 import com.example.util.FirebaseInitializer
-import com.google.firebase.functions.FirebaseFunctions
-import com.google.firebase.storage.FirebaseStorage
-import com.google.firebase.storage.StorageMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,7 +30,6 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /** WorkManager wrappers keep audio transfer resumable while the app is backgrounded or recreated. */
 object JamTransferWork {
@@ -58,6 +55,7 @@ object JamTransferWork {
         recommendationId: String,
         checksum: String,
         track: JamTrack,
+        fileSize: Long,
         contentType: String?
     ) {
         val request = OneTimeWorkRequestBuilder<JamDownloadWorker>()
@@ -65,6 +63,7 @@ object JamTransferWork {
                 .putString(JamDownloadWorker.KEY_SESSION, sessionId)
                 .putString(JamDownloadWorker.KEY_RECOMMENDATION, recommendationId)
                 .putString(JamDownloadWorker.KEY_CHECKSUM, checksum)
+                .putLong(JamDownloadWorker.KEY_FILE_SIZE, fileSize)
                 .putString(JamDownloadWorker.KEY_SHARED_TRACK_ID, track.sharedTrackId)
                 .putString(JamDownloadWorker.KEY_TITLE, track.title)
                 .putString(JamDownloadWorker.KEY_ARTIST, track.artist)
@@ -90,27 +89,38 @@ class JamUploadWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val mime = inputData.getString(KEY_MIME) ?: "audio/mpeg"
         val auth = AuthManager.getInstance(applicationContext)
         val firestore = FirebaseInitializer.getFirestore(applicationContext) ?: return Result.retry()
-        val repository = JamRepository(firestore, FirebaseFunctions.getInstance(), auth, BuildConfig.JAM_INVITE_HOST)
+        val repository = JamRepository(firestore, auth, BuildConfig.JAM_INVITE_HOST)
         val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
+        val localFile = File(applicationContext.cacheDir, "jam-source-$recommendationId.part")
         return try {
-            val path = repository.beginLocalUpload(sessionId, recommendationId)
-            val reference = FirebaseStorage.getInstance().reference.child(path)
-            val task = reference.putFile(uri, StorageMetadata.Builder().setContentType(mime).build())
-            val lastProgress = AtomicInteger(-10)
-            task.addOnProgressListener { snapshot ->
-                val percent = if (snapshot.totalByteCount > 0L) (snapshot.bytesTransferred * 100 / snapshot.totalByteCount).toInt() else 0
-                val previous = lastProgress.get()
-                if (percent == 100 || percent - previous >= 5 && lastProgress.compareAndSet(previous, percent)) {
-                    progressScope.launch { runCatching { repository.reportLocalUploadProgress(sessionId, recommendationId, percent) } }
-                }
+            applicationContext.contentResolver.openInputStream(uri)?.use { source -> localFile.outputStream().use(source::copyTo) }
+                ?: throw IllegalStateException("The selected song could not be opened.")
+            if (localFile.length() !in 1..JamPeerTransfer.MAX_TRANSFER_BYTES) throw IllegalStateException("This song exceeds the 25 MB transfer limit.")
+            val checksum = sha256(localFile)
+            repository.preparePeerUpload(sessionId, recommendationId, checksum, localFile.length(), mime)
+            repository.beginLocalUpload(sessionId, recommendationId)
+            val recommendation = repository.getRecommendation(sessionId, recommendationId)
+                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
+            val recipients = recommendation.eligibleUids.filter {
+                it != auth.currentUser?.uid && recommendation.votes[it] == JamVote.ACCEPT &&
+                    recommendation.downloads[it]?.readyForPlayback != true
             }
-            task.await()
+            if (recipients.isEmpty()) throw IllegalStateException("No Jam participant approved this transfer.")
+            recipients.forEachIndexed { index, recipientUid ->
+                val peerResult = JamPeerTransfer(applicationContext, firestore).send(
+                    sessionId, recommendationId, auth.currentUser?.uid ?: throw IllegalStateException("Sign in to transfer this song."),
+                    recipientUid, Uri.fromFile(localFile), mime
+                ) { perPeer ->
+                    val total = ((index * 100 + perPeer) / recipients.size).coerceIn(0, 100)
+                    if (total == 100 || total % 5 == 0) progressScope.launch {
+                        runCatching { repository.reportLocalUploadProgress(sessionId, recommendationId, total) }
+                    }
+                }
+                peerResult.file.delete()
+            }
             repository.completeLocalUpload(sessionId, recommendationId)
-            applicationContext.getSharedPreferences("offgrid_jam_transfers", Context.MODE_PRIVATE).edit()
-                .remove("source:$recommendationId")
-                .remove("mime:$recommendationId")
-                .apply()
+            localFile.delete()
             Result.success()
         } catch (error: Throwable) {
             if (runAttemptCount >= MAX_ATTEMPTS) {
@@ -118,6 +128,7 @@ class JamUploadWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 Result.failure()
             } else Result.retry()
         } finally {
+            localFile.delete()
             heartbeatJob.cancel()
             progressScope.cancel()
         }
@@ -146,25 +157,28 @@ class JamDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
             checksum = expectedChecksum
         )
         val auth = AuthManager.getInstance(applicationContext)
-        val repository = FirebaseInitializer.getFirestore(applicationContext)?.let {
-            JamRepository(it, FirebaseFunctions.getInstance(), auth, BuildConfig.JAM_INVITE_HOST)
+        val firestore = FirebaseInitializer.getFirestore(applicationContext) ?: return Result.retry()
+        val repository = firestore.let {
+            JamRepository(it, auth, BuildConfig.JAM_INVITE_HOST)
         } ?: return Result.retry()
         val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
-        val temporary = File(applicationContext.cacheDir, "jam-$recommendationId.part")
+        var temporary = File(applicationContext.cacheDir, "jam-$recommendationId.part")
         return try {
             repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", 0)
-            val storageRef = FirebaseStorage.getInstance().reference.child("jam-temp/$sessionId/$recommendationId/audio")
-            val task = storageRef.getFile(temporary)
-            val lastProgress = AtomicInteger(-10)
-            task.addOnProgressListener { snapshot ->
-                val percent = if (snapshot.totalByteCount > 0L) (snapshot.bytesTransferred * 100 / snapshot.totalByteCount).toInt() else 0
-                val previous = lastProgress.get()
-                if (percent == 100 || percent - previous >= 5 && lastProgress.compareAndSet(previous, percent)) {
-                    progressScope.launch { runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", percent) } }
+            val recommendation = repository.getRecommendation(sessionId, recommendationId)
+                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
+            val recipientUid = auth.currentUser?.uid ?: throw IllegalStateException("Sign in to receive this song.")
+            temporary.delete()
+            val received = JamPeerTransfer(applicationContext, firestore).receive(
+                sessionId, recommendationId, recommendation.proposerUid, recipientUid,
+                inputData.getLong(KEY_FILE_SIZE, 0L)
+            ) { percent ->
+                if (percent % 5 == 0) progressScope.launch {
+                    runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", percent) }
                 }
             }
-            task.await()
+            temporary = received.file
             repository.updateDownloadState(sessionId, recommendationId, "VERIFYING_FILE", 100)
             val checksum = sha256(temporary)
             if (!checksum.equals(expectedChecksum, ignoreCase = true)) {
@@ -196,6 +210,7 @@ class JamDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
         const val KEY_SESSION = "jam_session_id"
         const val KEY_RECOMMENDATION = "jam_recommendation_id"
         const val KEY_CHECKSUM = "jam_expected_checksum"
+        const val KEY_FILE_SIZE = "jam_expected_file_size"
         const val KEY_SHARED_TRACK_ID = "jam_shared_track_id"
         const val KEY_TITLE = "jam_shared_title"
         const val KEY_ARTIST = "jam_shared_artist"
@@ -212,7 +227,7 @@ private suspend fun keepJamTransferPresence(sessionId: String, repository: JamRe
         runCatching {
             repository.heartbeat(sessionId, user.displayName?.takeIf(String::isNotBlank) ?: "Listener", user.photoUrl?.toString())
         }
-        delay(45_000L)
+        delay(240_000L)
     }
 }
 

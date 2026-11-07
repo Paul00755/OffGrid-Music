@@ -1,16 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function member(sessionId) {
+      return signedIn() && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid));
     }
-
-    function jamMember(sessionId) {
+    function host(sessionId) {
+      return member(sessionId)
+        && get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid == request.auth.uid;
+    }
+    function joiningJam(sessionId) {
+      let participant = getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data;
       return signedIn()
-        && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid));
+        && !exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
+        && participant.invitationHash is string
+        && get(/databases/$(database)/documents/jamInvitations/$(participant.invitationHash)).data.sessionId == sessionId
+        && get(/databases/$(database)/documents/jamInvitations/$(participant.invitationHash)).data.active == true;
     }
 
-    // Existing personal cloud-sync data remains isolated to its authenticated owner.
     match /users/{userId} {
       allow read, write: if signedIn() && request.auth.uid == userId;
       match /{subcollection=**} {
@@ -18,44 +25,95 @@ service cloud.firestore {
       }
     }
 
-    // Jam mutations are performed only by authenticated callable Cloud Functions.
-    // The mobile client receives live state only after the trusted join operation has
-    // created its participant record. Admin SDK calls bypass rules under IAM.
+    // Spark-compatible Jam state. Membership is required for reads and session subcollections.
+    // Host controls are limited to host-owned documents; clients never write audio bytes here.
     match /jamSessions/{sessionId} {
-      allow get: if jamMember(sessionId);
-      allow list, create, update, delete: if false;
+      allow get: if member(sessionId);
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.participantCount == 1
+        && request.resource.data.maxParticipants == 10;
+      allow update: if (member(sessionId) || joiningJam(sessionId))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'hostUid', 'participantCount', 'permissions', 'playback', 'revision', 'queueRevision'
+        ])
+        && (!joiningJam(sessionId) || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'revision']));
+      allow delete: if false;
 
       match /participants/{participantUid} {
-        allow read: if jamMember(sessionId);
-        allow create, update, delete: if false;
+        allow read: if member(sessionId);
+        allow create: if signedIn() && participantUid == request.auth.uid && (
+          (getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid == request.auth.uid
+            && request.resource.data.role == 'HOST')
+          || (request.resource.data.invitationHash is string
+            && get(/databases/$(database)/documents/jamInvitations/$(request.resource.data.invitationHash)).data.sessionId == sessionId
+            && get(/databases/$(database)/documents/jamInvitations/$(request.resource.data.invitationHash)).data.active == true
+            && get(/databases/$(database)/documents/jamInvitations/$(request.resource.data.invitationHash)).data.expiresAt > request.time)
+        );
+        allow update: if member(sessionId) && (participantUid == request.auth.uid || host(sessionId))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'lastSeenAt', 'role']);
+        allow delete: if member(sessionId) && participantUid == request.auth.uid;
       }
 
       match /queue/{queueItemId} {
-        allow read: if jamMember(sessionId);
-        allow create, update, delete: if false;
+        allow read: if member(sessionId);
+        allow create, update: if member(sessionId)
+          && request.resource.data.keys().hasOnly(['track', 'position', 'addedByUid', 'addedAt', 'source']);
+        allow delete: if member(sessionId);
       }
 
       match /recommendations/{recommendationId} {
-        allow read: if jamMember(sessionId);
-        allow create, update, delete: if false;
+        allow read: if member(sessionId);
+        allow create: if member(sessionId)
+          && request.resource.data.proposerUid == request.auth.uid
+          && request.resource.data.recommendationType in ['LOCAL_SONG', 'SHARED_LIBRARY']
+          && request.resource.data.eligibleUids.size() <= 10;
+        allow update: if member(sessionId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'votes', 'approvalCount', 'rejectionCount', 'status', 'downloads', 'checksum', 'fileSize',
+            'contentType', 'uploadProgress', 'uploadStatus', 'failureReason', 'transferExpiresAt'
+          ]);
+        allow delete: if false;
       }
 
-      match /{otherJamData=**} {
-        allow read, write: if false;
+      match /peerTransfers/{transferId} {
+        allow read: if member(sessionId)
+          && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+        allow create: if member(sessionId)
+          && request.resource.data.senderUid == request.auth.uid
+          && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.recipientUid))
+          && request.resource.data.fileSize > 0 && request.resource.data.fileSize <= 26214400
+          && request.resource.data.keys().hasOnly([
+            'recommendationId', 'senderUid', 'recipientUid', 'mimeType', 'fileSize', 'sha256', 'offerSdp', 'status', 'createdAtMs'
+          ]);
+        allow update: if member(sessionId)
+          && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answerSdp', 'status', 'completedAtMs']);
+        allow delete: if member(sessionId)
+          && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      }
+
+      match /commands/{commandId} {
+        allow read: if member(sessionId);
+        allow create: if member(sessionId) && request.resource.data.actorUid == request.auth.uid;
+        allow update, delete: if false;
       }
     }
 
-    // Invitation code digests and rate-limit state are server-only.
     match /jamInvitations/{inviteHash} {
-      allow read, write: if false;
-    }
-    match /jamRateLimits/{rateLimitId} {
-      allow read, write: if false;
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && getAfter(/databases/$(database)/documents/jamSessions/$(request.resource.data.sessionId)).data.hostUid == request.auth.uid
+        && request.resource.data.active == true;
+      allow update: if signedIn()
+        && get(/databases/$(database)/documents/jamSessions/$(resource.data.sessionId)).data.hostUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active']);
+      allow delete: if false;
     }
 
-    // Default deny for all other paths.
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }

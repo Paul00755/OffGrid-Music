@@ -398,7 +398,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun signOut(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             jamController?.leaveBeforeSignOut()
-            com.example.service.notification.OffGridFirebaseMessagingService.cancelJamNotification(application)
+            com.example.service.notification.OffGridFirebaseMessagingService.cancelJamNotification(getApplication())
             cloudSyncRepository.onAuthStateChanged(null)
             authManager.signOut()
             preferences.resetAccountSpecificData()
@@ -496,7 +496,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             scope = viewModelScope,
             repository = JamRepository(
                 firestore = firestore,
-                functions = com.google.firebase.functions.FirebaseFunctions.getInstance(),
                 authManager = authManager,
                 inviteHost = com.example.BuildConfig.JAM_INVITE_HOST
             ),
