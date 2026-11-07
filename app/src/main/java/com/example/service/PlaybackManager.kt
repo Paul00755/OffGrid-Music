@@ -495,7 +495,7 @@ class PlaybackManager(
             _crossfadePlayer?.clearMediaItems()
         } catch (_: Exception) {}
         if (resetVolume) {
-            player.volume = 1.0f
+            player.volume = transitionTargetVolume()
         }
     }
 
@@ -2070,23 +2070,24 @@ class PlaybackManager(
 
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
                     val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
-                    if (isNaturalTransition && gaplessPlayback && crossfadeDurationSec <= 0) {
+                    val targetVolume = transitionTargetVolume()
+                    if (isNaturalTransition && gaplessPlayback && crossfadeDurationSec <= 0 && fadeInMs <= 0 && fadeOutMs <= 0) {
                         // True gapless transition: maintain unity volume across track boundary with zero dip
                         fadeJob?.cancel()
                         fadeJob = null
-                        player.volume = 1.0f
+                        player.volume = targetVolume
                     } else if (fadeInMs > 0 && willBePlaying) {
-                        val safeStartVol = if (isNaturalTransition) {
-                            // Non-gapless natural transition: start from 0.0f (or current attenuated level after fadeOutMs)
-                            if (player.volume < 0.25f) player.volume.coerceAtLeast(0.0f) else 0.0f
+                        val safeStartVol = if (isNaturalTransition && fadeOutMs > 0) {
+                            // Continue smoothly from the configured outgoing fade level.
+                            player.volume.coerceIn(0.0f, 1.0f)
                         } else {
                             0.0f
                         }
-                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = safeStartVol, targetVolume = 1.0f)
+                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = safeStartVol, targetVolume = targetVolume)
                     } else {
                         fadeJob?.cancel()
                         fadeJob = null
-                        player.volume = 1.0f
+                        player.volume = targetVolume
                     }
                 }
 
@@ -2425,30 +2426,35 @@ class PlaybackManager(
         } catch (_: Exception) {}
     }
 
+    private fun transitionTargetVolume(requestedVolume: Float = 1.0f): Float =
+        if (isAudioFocusDucked) minOf(requestedVolume, duckTargetVolume).coerceIn(0f, 1f)
+        else requestedVolume.coerceIn(0f, 1f)
+
     fun performVolumeRampUp(durationMs: Int, startVolume: Float = player.volume, targetVolume: Float = 1.0f) {
         fadeJob?.cancel()
         if (durationMs <= 0) {
-            player.volume = targetVolume
+            player.volume = transitionTargetVolume(targetVolume)
             return
         }
         fadeJob = scope.launch(Dispatchers.Main) {
             try {
                 val initial = startVolume.coerceIn(0f, 1f)
-                player.volume = initial
+                player.volume = transitionTargetVolume(initial)
                 val startTime = android.os.SystemClock.elapsedRealtime()
                 while (true) {
                     val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
                     if (elapsed >= durationMs) break
                     val fraction = (elapsed.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                    val current = initial + fraction * (targetVolume - initial)
-                    player.volume = current.coerceIn(0f, 1f)
+                    val currentTarget = transitionTargetVolume(targetVolume)
+                    val current = initial + fraction * (currentTarget - initial)
+                    player.volume = transitionTargetVolume(current)
                     delay(16L)
                 }
-                player.volume = targetVolume
+                player.volume = transitionTargetVolume(targetVolume)
             } catch (_: Exception) {
             } finally {
                 if (coroutineContext[Job]?.isCancelled != true) {
-                    player.volume = targetVolume
+                    player.volume = transitionTargetVolume(targetVolume)
                 }
             }
         }
@@ -2459,6 +2465,7 @@ class PlaybackManager(
         if (targetIndex !in queue.indices) return
         val currentSong = _playbackState.value.currentSong ?: return
         val targetSong = queue[targetIndex]
+        val outgoingIndex = player.currentMediaItemIndex
 
         if (currentSong.durationMs in 1L..2000L || targetSong.durationMs in 1L..2000L) return
 
@@ -2468,12 +2475,10 @@ class PlaybackManager(
         val fadeDuration = durationMs.coerceIn(800L, maxOf(800L, maxFade))
 
         crossfadeJob?.cancel()
-        fadeJob?.cancel()
-        isCrossfadeTransitioning = true
-
-        val initialPlayerVol = player.volume.coerceIn(0.15f, 1.0f)
+        hasTriggeredCrossfadeTransition = true
 
         crossfadeJob = scope.launch(Dispatchers.Main) {
+            var transitionStarted = false
             try {
                 // 1. Prepare crossfadePlayer with the outgoing track A while primary player continues playing track A uninterrupted
                 crossfadePlayer.stop()
@@ -2486,7 +2491,7 @@ class PlaybackManager(
                 val currentPos = player.currentPosition.coerceAtLeast(0L)
                 val outgoingItem = buildMediaItem(currentSong)
                 crossfadePlayer.setMediaItem(outgoingItem, currentPos)
-                crossfadePlayer.volume = initialPlayerVol
+                crossfadePlayer.volume = player.volume.coerceIn(0f, 1f)
                 crossfadePlayer.prepare()
 
                 // Wait for crossfadePlayer to be ready (up to 450ms) so outgoing audio flows with zero gap
@@ -2495,22 +2500,40 @@ class PlaybackManager(
                     delay(16L)
                     waitElapsed += 16L
                 }
+                if (crossfadePlayer.playbackState != Player.STATE_READY) {
+                    // Leave the primary track untouched and let ExoPlayer perform the normal transition.
+                    hasTriggeredCrossfadeTransition = true
+                    return@launch
+                }
+                if (player.currentMediaItemIndex != outgoingIndex ||
+                    _playbackState.value.currentSong?.id != currentSong.id
+                ) {
+                    return@launch
+                }
 
                 // 2. Start crossfadePlayer on outgoing track A, and transition primary player to incoming track B from 0:00
+                fadeJob?.cancel()
+                fadeJob = null
+                val initialPlayerVol = player.volume.coerceIn(0f, 1f)
+                crossfadePlayer.volume = initialPlayerVol
                 crossfadePlayer.playWhenReady = true
                 crossfadePlayer.play()
                 audioNormalizerProcessor.setTrack(targetSong.id, targetSong.path)
+                isCrossfadeTransitioning = true
+                transitionStarted = true
                 player.volume = 0.0f
                 player.seekTo(targetIndex, 0L)
                 player.playWhenReady = true
                 player.play()
 
-                // Wait briefly for primary player to buffer incoming track B before ramping volume
-                var inWaitElapsed = 0L
-                while (player.playbackState == Player.STATE_BUFFERING && inWaitElapsed < 350L && coroutineContext[Job]?.isActive == true) {
+                // Keep the outgoing track at its current level until the incoming track is actually audible.
+                while (!player.isPlaying && player.playWhenReady &&
+                    player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED &&
+                    coroutineContext[Job]?.isActive == true
+                ) {
                     delay(16L)
-                    inWaitElapsed += 16L
                 }
+                if (!player.isPlaying) return@launch
 
                 // 3. Smooth Equal-Power Crossfade curves (sine / cosine energy conservation)
                 val startTime = android.os.SystemClock.elapsedRealtime()
@@ -2521,8 +2544,8 @@ class PlaybackManager(
                     val outVol = (kotlin.math.cos(progress * (Math.PI / 2.0)) * initialPlayerVol).toFloat().coerceIn(0f, 1f)
                     val inVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0f, 1f)
 
-                    crossfadePlayer.volume = outVol
-                    player.volume = inVol
+                    crossfadePlayer.volume = transitionTargetVolume(outVol)
+                    player.volume = transitionTargetVolume(inVol)
                     delay(16L)
                 }
             } catch (_: kotlinx.coroutines.CancellationException) {
@@ -2535,8 +2558,8 @@ class PlaybackManager(
                     crossfadePlayer.stop()
                     crossfadePlayer.clearMediaItems()
                 } catch (_: Exception) {}
-                if (!wasCancelled && player.playWhenReady && !isFadingOutToPause) {
-                    player.volume = 1.0f
+                if (transitionStarted && !wasCancelled && player.playWhenReady && !isFadingOutToPause) {
+                    player.volume = transitionTargetVolume()
                 }
                 isCrossfadeTransitioning = false
             }
@@ -2600,7 +2623,7 @@ class PlaybackManager(
         fadeJob = null
         player.playWhenReady = false
         player.pause()
-        player.volume = 1.0f
+        player.volume = transitionTargetVolume()
         val curPos = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else currentPositionMs
         currentPositionMs = curPos
         _playbackPositionMs.value = curPos
@@ -2659,7 +2682,7 @@ class PlaybackManager(
         }
         fadeJob?.cancel()
         fadeJob = null
-        player.volume = 1.0f
+        player.volume = transitionTargetVolume()
 
         val queue = _playbackState.value.queue
         if (player.mediaItemCount == 0 && queue.isEmpty()) {
@@ -2784,7 +2807,7 @@ class PlaybackManager(
         cancelCrossfade(resetVolume = true)
         fadeJob?.cancel()
         fadeJob = null
-        player.volume = 1.0f
+        player.volume = transitionTargetVolume()
 
         val wasPlaying = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
         val targetSong = _playbackState.value.queue.getOrNull(targetIdx)
@@ -2807,11 +2830,6 @@ class PlaybackManager(
         if (wasPlaying && !isSleepTimerFinalStopping) {
             player.playWhenReady = true
             player.play()
-            if (fadeInMs > 0) {
-                performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
-            } else {
-                player.volume = 1.0f
-            }
             startProgressTracker()
         } else {
             player.playWhenReady = false
@@ -2827,7 +2845,7 @@ class PlaybackManager(
             cancelCrossfade(resetVolume = true)
             fadeJob?.cancel()
             fadeJob = null
-            player.volume = 1.0f
+            player.volume = transitionTargetVolume()
             val wasPlaying = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
             currentPositionMs = 0L
             _playbackPositionMs.value = 0L
@@ -2840,7 +2858,7 @@ class PlaybackManager(
                 if (fadeInMs > 0) {
                     performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
                 } else {
-                    player.volume = 1.0f
+                    player.volume = transitionTargetVolume()
                 }
                 startProgressTracker()
             } else {
@@ -2865,7 +2883,7 @@ class PlaybackManager(
             cancelCrossfade(resetVolume = true)
             fadeJob?.cancel()
             fadeJob = null
-            player.volume = 1.0f
+            player.volume = transitionTargetVolume()
 
             val wasPlaying = player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
             val targetSong = _playbackState.value.queue.getOrNull(targetIdx)
@@ -2888,11 +2906,6 @@ class PlaybackManager(
             if (wasPlaying) {
                 player.playWhenReady = true
                 player.play()
-                if (fadeInMs > 0) {
-                    performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = 0.0f, targetVolume = 1.0f)
-                } else {
-                    player.volume = 1.0f
-                }
                 startProgressTracker()
             } else {
                 player.playWhenReady = false
@@ -3032,7 +3045,11 @@ class PlaybackManager(
                         val totalDur = if (rawDur > 0L && rawDur != androidx.media3.common.C.TIME_UNSET) rawDur else 0L
 
                         // Seamless Audio Crossfade Transition
-                        val crossfadeMs = (crossfadeDurationSec * 1000L).coerceIn(0L, 12000L)
+                        val configuredCrossfadeMs = (crossfadeDurationSec * 1000L).coerceIn(0L, 12000L)
+                        val crossfadeMs = if (configuredCrossfadeMs > 0L) {
+                            maxOf(configuredCrossfadeMs, fadeInMs.coerceIn(0, 10000).toLong(), fadeOutMs.coerceIn(0, 10000).toLong())
+                                .coerceAtMost(12000L)
+                        } else 0L
                         val sleepState = sleepTimerManager.state.value
                         val isFinalSleepTrack = sleepState.isActive && (
                             (sleepState.mode == "SONGS" && (sleepState.isFinalTrack || sleepState.isFinalSleepTrack)) ||
@@ -3043,13 +3060,8 @@ class PlaybackManager(
                         val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
                         inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
                         val trackEndFadeOutMs = fadeOutMs.coerceIn(0, 10000).toLong()
-                        val effectiveEndFadeWindowMs = when {
-                            gaplessPlayback -> 0L
-                            trackEndFadeOutMs > 0L -> trackEndFadeOutMs
-                            fadeInMs > 0 -> 140L
-                            else -> 0L
-                        }
-                        inTrackEndFadeOut = !gaplessPlayback && crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
+                        val effectiveEndFadeWindowMs = trackEndFadeOutMs
+                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
                             reliableDur > (effectiveEndFadeWindowMs + 2000L) && currentPos >= 1500L &&
                             (reliableDur - currentPos) <= effectiveEndFadeWindowMs
 
@@ -3074,7 +3086,7 @@ class PlaybackManager(
                         } else if (crossfadeMs <= 0L) {
                             hasTriggeredCrossfadeTransition = false
                             if (inTrackEndFadeOut && (fadeJob == null || !fadeJob!!.isActive)) {
-                                val rem = (reliableDur - currentPos - 80L).coerceAtLeast(0L)
+                                val rem = (reliableDur - currentPos).coerceAtLeast(0L)
                                 val targetVol = (rem.toFloat() / effectiveEndFadeWindowMs.toFloat()).coerceIn(0.0f, 1.0f)
                                 player.volume = if (isAudioFocusDucked) minOf(targetVol, duckTargetVolume) else targetVol
                             } else if (!inTrackEndFadeOut && !isCrossfadeTransitioning && crossfadeJob?.isActive != true && !isAudioFocusDucked && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {

@@ -785,34 +785,19 @@ fun NowPlayingScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val isShuffleActive = playbackState.isShuffleEnabled
-                        Surface(
+                        IconButton(
                             onClick = {
                                 com.example.util.HapticUtils.performClickHaptic(context)
                                 onToggleShuffle()
                             },
-                            shape = CircleShape,
-                            color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.24f) else Color.Transparent,
-                            border = if (isShuffleActive) androidx.compose.foundation.BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.72f)) else null,
                             modifier = Modifier.size(38.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Shuffle,
-                                    contentDescription = "Shuffle",
-                                    tint = if (isShuffleActive) BentoPrimary else BentoTextSecondary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                if (isShuffleActive) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .padding(bottom = 3.dp)
-                                            .size(4.dp)
-                                            .clip(CircleShape)
-                                            .background(BentoPrimary)
-                                    )
-                                }
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Shuffle,
+                                contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
+                                tint = if (isShuffleActive) Color(0xFF43A047) else Color(0xFFE53935),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
 
                         IconButton(
@@ -1368,34 +1353,19 @@ fun NowPlayingScreen(
                                     }
 
                                     val isShuffleActive = playbackState.isShuffleEnabled
-                                    Surface(
+                                    IconButton(
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
                                             onToggleShuffle()
                                         },
-                                        shape = CircleShape,
-                                        color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.28f) else Color.Transparent,
-                                        border = if (isShuffleActive) androidx.compose.foundation.BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.85f)) else null,
                                         modifier = Modifier.size(40.dp)
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Shuffle,
-                                                contentDescription = "Shuffle",
-                                                tint = if (isShuffleActive) BentoPrimary else Color.White.copy(alpha = 0.55f),
-                                                modifier = Modifier.size(19.dp)
-                                            )
-                                            if (isShuffleActive) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.BottomCenter)
-                                                        .padding(bottom = 3.dp)
-                                                        .size(4.dp)
-                                                        .clip(CircleShape)
-                                                        .background(BentoPrimary)
-                                                )
-                                            }
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Shuffle,
+                                            contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
+                                            tint = if (isShuffleActive) Color(0xFF43A047) else Color(0xFFE53935),
+                                            modifier = Modifier.size(19.dp)
+                                        )
                                     }
                                 }
 

@@ -475,34 +475,19 @@ fun NowPlayingNeonWaveform(
                 ) {
                     // Shuffle Toggle
                     val isShuffleActive = playbackState.isShuffleEnabled
-                    Surface(
+                    IconButton(
                         onClick = {
                             HapticUtils.performClickHaptic(context)
                             onToggleShuffle()
                         },
-                        shape = CircleShape,
-                        color = if (isShuffleActive) neonCyan.copy(alpha = 0.24f) else Color.Transparent,
-                        border = if (isShuffleActive) BorderStroke(1.2.dp, neonCyan.copy(alpha = 0.80f)) else null,
                         modifier = Modifier.size(42.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.Shuffle,
-                                contentDescription = "Shuffle",
-                                tint = if (isShuffleActive) neonCyan else BentoTextSecondary,
-                                modifier = Modifier.size(21.dp)
-                            )
-                            if (isShuffleActive) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 4.dp)
-                                        .size(4.dp)
-                                        .clip(CircleShape)
-                                        .background(neonCyan)
-                                )
-                            }
-                        }
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
+                            tint = if (isShuffleActive) Color(0xFF43A047) else Color(0xFFE53935),
+                            modifier = Modifier.size(21.dp)
+                        )
                     }
 
                     // Circular Neon Rim Previous Button

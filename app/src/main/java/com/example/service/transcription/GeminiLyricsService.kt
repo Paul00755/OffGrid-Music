@@ -210,8 +210,9 @@ CRITICAL REQUIREMENTS:
 3. If the input contains Tanglish (Tamil written in English/Latin alphabet) and the destination is Tamil, transcribe and translate the words into accurate, natural Tamil script (e.g. "Uyirin uyire" -> "உயிரின் உயிரே", "Ennai kollathey" -> "என்னை கொல்லாதே").
 4. However, do NOT translate English phrases if they are original English lyrics (e.g. "Don't stop the party", "Yeah baby") into Tamil script. Preserve original English lyric portions.
 5. If destination is English, translate non-English lyrics into natural English poetic lyric lines while preserving timestamps.
-6. Preserve non-vocal audio markers like ♪.
-7. Return ONLY the raw LRC text lines. Do NOT include markdown code blocks (no ```lrc or ```), no intro, and no explanations.
+6. Preserve non-vocal audio markers such as ♪ and 🎼. Use ♪ or 🎼 with a timestamp for clearly audible instrumental or melodic passages that have no sung words; do not add markers where vocals are present or invent musical breaks.
+7. Use natural punctuation that matches the sung phrasing and emotion, including commas, periods, apostrophes, question marks, exclamation marks, and ellipses when appropriate. Do not change, omit, or embellish the words to force punctuation.
+8. Return ONLY the raw LRC text lines. Do NOT include markdown code blocks (no ```lrc or ```), no intro, and no explanations.
 
 Input Lyrics:
 $lrcText
@@ -235,7 +236,9 @@ CRITICAL REQUIREMENTS:
 3. If the song is sung in Tamil or Tanglish, output the lyrics in proper Tamil script (தமிழ்) if destination is Tamil.
 4. If words or phrases are sung in English, keep those specific English words in English.
 5. Do NOT guess timestamps using arbitrary fixed intervals; synchronize with the actual sung vocal phrases.
-6. Return ONLY the standard LRC formatted lyrics lines. Do NOT include markdown wrappers (no ```lrc), explanations, or notes.
+6. Preserve clearly audible instrumental or melodic passages with a timestamp and ♪ or 🎼. Do not insert music markers over sung vocals or invent instrumental breaks.
+7. Use natural punctuation matching the sung phrasing and emotion (commas, periods, apostrophes, question marks, exclamation marks, or ellipses when appropriate) without changing or embellishing the words.
+8. Return ONLY the standard LRC formatted lyrics lines. Do NOT include markdown wrappers (no ```lrc), explanations, or notes.
 """.trimIndent()
     }
 

@@ -80,7 +80,7 @@ object LrcParser {
         val plainLyrics: String? = if (parsedLines.isNotEmpty()) {
             val plainTextLines = parsedLines
                 .map { it.text.trim() }
-                .filter { it.isNotEmpty() && it != "♪" }
+                .filter { it.isNotEmpty() }
             if (plainTextLines.isNotEmpty()) plainTextLines.joinToString("\n") else null
         } else {
             // Unsynced/plain text LRC file fallback

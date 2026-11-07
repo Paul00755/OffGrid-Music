@@ -221,26 +221,13 @@ fun NowPlayingMinimalGlass(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val isShuffleActive = playbackState.isShuffleEnabled
-                    Surface(
-                        onClick = onToggleShuffle,
-                        shape = CircleShape,
-                        color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.24f) else Color.Transparent,
-                        border = if (isShuffleActive) androidx.compose.foundation.BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.75f)) else null,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = if (isShuffleActive) BentoPrimary else BentoTextSecondary, modifier = Modifier.size(20.dp))
-                            if (isShuffleActive) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 3.dp)
-                                        .size(4.dp)
-                                        .clip(CircleShape)
-                                        .background(BentoPrimary)
-                                )
-                            }
-                        }
+                    IconButton(onClick = onToggleShuffle, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
+                            tint = if (isShuffleActive) Color(0xFF43A047) else Color(0xFFE53935),
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                     IconButton(onClick = onSkipPrevious, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", tint = BentoTextPrimary, modifier = Modifier.size(28.dp))

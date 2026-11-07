@@ -2296,7 +2296,7 @@ fun SettingsScreen(
                         if (!isSearching || matchAudioFadeIn || broadAudioMatch) {
                             SettingsSliderRow(
                                 title = "Play Fade-In Duration",
-                                subtitle = "Gradually ramp up track volume when starting or resuming playback",
+                                subtitle = "Gradually ramp up track volume when starting, resuming, or entering a track",
                                 value = fadeInMs.toFloat(),
                                 onValueChange = { onSetFadeInMs(it.toInt()) },
                                 valueRange = 0f..5000f,
@@ -2312,7 +2312,7 @@ fun SettingsScreen(
                         if (!isSearching || matchAudioFadeOut || broadAudioMatch) {
                             SettingsSliderRow(
                                 title = "Pause Fade-Out Duration",
-                                subtitle = "Softly lower volume when pausing to eliminate abrupt audio cuts",
+                                subtitle = "Softly lower volume when pausing or as a track ends",
                                 value = fadeOutMs.toFloat(),
                                 onValueChange = { onSetFadeOutMs(it.toInt()) },
                                 valueRange = 0f..5000f,
