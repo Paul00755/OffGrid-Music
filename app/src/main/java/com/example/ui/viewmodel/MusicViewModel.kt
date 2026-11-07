@@ -25,6 +25,8 @@ import com.example.auth.UserAccount
 import com.example.auth.AuthUiState
 import com.example.auth.PasswordResetUiState
 import com.example.auth.GoogleSignInCancelledException
+import com.example.jam.JamFeatureController
+import com.example.jam.JamRepository
 import android.app.Activity
 import android.net.Uri
 import com.example.service.transcription.AudioTranscribeMode
@@ -217,6 +219,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeAuthScreen() {
+        if (authManager.currentUser == null) jamController?.cancelPendingAction()
         showAuthScreen.value = false
         authUiState.value = AuthUiState.Idle
     }
@@ -230,6 +233,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun continueWithoutSignUp() {
+        jamController?.cancelPendingAction()
         viewModelScope.launch {
             preferences.setSkipAuthPrompt(true)
             showAuthScreen.value = false
@@ -393,6 +397,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut(onComplete: () -> Unit = {}) {
         viewModelScope.launch {
+            jamController?.leaveBeforeSignOut()
+            com.example.service.notification.OffGridFirebaseMessagingService.cancelJamNotification(application)
             cloudSyncRepository.onAuthStateChanged(null)
             authManager.signOut()
             preferences.resetAccountSpecificData()
@@ -483,6 +489,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val jamController: JamFeatureController? = com.example.util.FirebaseInitializer.getFirestore(application)?.let { firestore ->
+        JamFeatureController(
+            context = application.applicationContext,
+            scope = viewModelScope,
+            repository = JamRepository(
+                firestore = firestore,
+                functions = com.google.firebase.functions.FirebaseFunctions.getInstance(),
+                authManager = authManager,
+                inviteHost = com.example.BuildConfig.JAM_INVITE_HOST
+            ),
+            authManager = authManager,
+            playbackManager = playbackManager,
+            allSongs = allSongs,
+            userAccount = userAccount,
+            displayName = effectiveDisplayName
+        )
+    }
 
     val favoriteSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.favoriteSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101018">
+  <title>Join an OffGrid Jam</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101018; color: #f4f1fa; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: radial-gradient(ellipse at 18% 12%, #523c7750, transparent 42%), #101018; }
+    main { box-sizing: border-box; width: min(92vw, 440px); padding: 30px; border: 1px solid #b7a7ce40; border-radius: 26px; background: #252431c9; box-shadow: 0 20px 70px #0008; }
+    h1 { margin: 0 0 10px; font-size: 1.7rem; }
+    p { color: #c6c2d0; line-height: 1.5; }
+    .code { margin: 22px 0; padding: 16px; border: 1px solid #c99a7d80; border-radius: 16px; color: #e9b08d; font-size: 1.35rem; font-weight: 700; letter-spacing: .12em; text-align: center; overflow-wrap: anywhere; }
+    button, a.button { box-sizing: border-box; width: 100%; min-height: 48px; margin-top: 10px; padding: 12px 16px; display: block; border: 0; border-radius: 15px; background: #d6a282; color: #201713; font: inherit; font-weight: 700; text-align: center; text-decoration: none; cursor: pointer; }
+    a.secondary { background: #3a3848; color: #f4f1fa; }
+    #message { min-height: 1.4em; text-align: center; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Join an OffGrid Jam</h1>
+    <p>Listen together with friends. Open this invitation in OffGrid Music, or copy the code and enter it from the Jam screen.</p>
+    <div class="code" id="invite-code">Loading invitation…</div>
+    <a class="button" id="open-app" href="#">Open OffGrid Music</a>
+    <button type="button" id="copy-code">Copy invitation code</button>
+    <p>Check GitHub Releases for an installable Android APK. If no APK is listed, there is no installable release available yet.</p>
+    <a class="button secondary" href="https://github.com/Paul00755/OffGrid-Music/releases">Browse GitHub Releases</a>
+    <a class="button secondary" href="https://github.com/Paul00755/OffGrid-Music">View the OffGrid Music repository</a>
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    const code = (location.pathname.split('/').filter(Boolean)[1] || '').replace(/[^a-z0-9]/gi, '').slice(0, 16).toUpperCase();
+    const codeNode = document.getElementById('invite-code');
+    const message = document.getElementById('message');
+    const openApp = document.getElementById('open-app');
+    codeNode.textContent = code || 'Invitation code missing';
+    document.getElementById('copy-code').disabled = !code;
+    if (code) {
+      const destination = `${location.host}/jam/${encodeURIComponent(code)}`;
+      openApp.href = `intent://${destination}#Intent;scheme=https;package=com.aistudio.offgridmusic.player;end`;
+      document.getElementById('copy-code').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(code); message.textContent = 'Invitation code copied.'; }
+        catch { message.textContent = 'Select and copy the invitation code above.'; }
+      });
+    } else {
+      openApp.hidden = true;
+      document.getElementById('copy-code').hidden = true;
+    }
+  </script>
+</body>
+</html>

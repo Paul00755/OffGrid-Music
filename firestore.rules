@@ -1,16 +1,59 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User data is strictly bounded to the authenticated owner's UID
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function signedIn() {
+      return request.auth != null;
+    }
 
+    function jamMember(sessionId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid));
+    }
+
+    // Existing personal cloud-sync data remains isolated to its authenticated owner.
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
       match /{subcollection=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if signedIn() && request.auth.uid == userId;
       }
     }
 
-    // Default deny for all other paths
+    // Jam mutations are performed only by authenticated callable Cloud Functions.
+    // The mobile client receives live state only after the trusted join operation has
+    // created its participant record. Admin SDK calls bypass rules under IAM.
+    match /jamSessions/{sessionId} {
+      allow get: if jamMember(sessionId);
+      allow list, create, update, delete: if false;
+
+      match /participants/{participantUid} {
+        allow read: if jamMember(sessionId);
+        allow create, update, delete: if false;
+      }
+
+      match /queue/{queueItemId} {
+        allow read: if jamMember(sessionId);
+        allow create, update, delete: if false;
+      }
+
+      match /recommendations/{recommendationId} {
+        allow read: if jamMember(sessionId);
+        allow create, update, delete: if false;
+      }
+
+      match /{otherJamData=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // Invitation code digests and rate-limit state are server-only.
+    match /jamInvitations/{inviteHash} {
+      allow read, write: if false;
+    }
+    match /jamRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    // Default deny for all other paths.
     match /{document=**} {
       allow read, write: if false;
     }

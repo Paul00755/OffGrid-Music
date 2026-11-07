@@ -45,9 +45,22 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    private val pendingJamInviteCode = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    private val pendingJamRecommendation = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, String>?>(null)
+
     companion object {
         @Volatile
         var isActivityAlive: Boolean = false
+
+        @Volatile
+        private var currentActivity: MainActivity? = null
+
+        fun deliverForegroundJamRecommendation(sessionId: String, recommendationId: String): Boolean {
+            val activity = currentActivity ?: return false
+            if (!isActivityAlive) return false
+            activity.runOnUiThread { activity.pendingJamRecommendation.value = sessionId to recommendationId }
+            return true
+        }
     }
 
     private var onPermissionResultCallback: (() -> Unit)? = null
@@ -74,6 +87,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         isActivityAlive = true
         super.onCreate(savedInstanceState)
+        currentActivity = this
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes = window.attributes.apply {
@@ -85,6 +99,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         handleWidgetLaunchIntent(intent)
+        handleJamInviteIntent(intent)
+        handleJamRecommendationIntent(intent)
 
         setContent {
             val viewModel: MusicViewModel = viewModel()
@@ -137,6 +153,8 @@ class MainActivity : ComponentActivity() {
                     val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()
 
                     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+                    val jamInviteCode by pendingJamInviteCode.collectAsStateWithLifecycle()
+                    val jamRecommendation by pendingJamRecommendation.collectAsStateWithLifecycle()
                     val showNowPlaying by viewModel.showNowPlaying.collectAsStateWithLifecycle()
                     val nowPlayingIntentReq by openNowPlayingRequest.collectAsStateWithLifecycle()
                     val widgetActionReq by pendingWidgetActionRequest.collectAsStateWithLifecycle()
@@ -156,6 +174,22 @@ class MainActivity : ComponentActivity() {
                             viewModel.enqueueOrExecuteWidgetAction(action)
                             pendingWidgetActionRequest.value = null
                         }
+                    }
+                    LaunchedEffect(jamInviteCode) {
+                        val code = jamInviteCode ?: return@LaunchedEffect
+                        viewModel.dismissSplash()
+                        viewModel.selectedTab.value = NavTab.JAM
+                        val needsAuth = viewModel.jamController?.requestJoin(code) ?: false
+                        if (needsAuth) viewModel.openAuthScreen()
+                        pendingJamInviteCode.value = null
+                    }
+                    LaunchedEffect(jamRecommendation) {
+                        val pending = jamRecommendation ?: return@LaunchedEffect
+                        viewModel.dismissSplash()
+                        viewModel.selectedTab.value = NavTab.JAM
+                        val needsAuth = viewModel.jamController?.requestOpenRecommendation(pending.first, pending.second) ?: false
+                        if (needsAuth) viewModel.openAuthScreen()
+                        pendingJamRecommendation.value = null
                     }
                     val searchTabQuery by viewModel.searchTabQuery.collectAsStateWithLifecycle()
                     val librarySearchQuery by viewModel.librarySearchQuery.collectAsStateWithLifecycle()
@@ -797,6 +831,11 @@ class MainActivity : ComponentActivity() {
                                                 onOpenRecentlyPlayed = { viewModel.navigateToTab(NavTab.RECENTLY_PLAYED) },
                                                 loadWrappedData = { start, end -> viewModel.getWrappedDataForPeriod(start, end) }
                                             )
+                                            NavTab.JAM -> JamScreen(
+                                                controller = viewModel.jamController,
+                                                songs = allSongs,
+                                                onRequireAuthentication = { viewModel.openAuthScreen() }
+                                            )
                                              NavTab.SETTINGS -> {
                                                  com.example.ui.screens.SettingsTabRoute(
                                                      viewModel = viewModel,
@@ -1066,6 +1105,33 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleWidgetLaunchIntent(intent)
+        handleJamInviteIntent(intent)
+        handleJamRecommendationIntent(intent)
+    }
+
+    private fun handleJamInviteIntent(intent: Intent?) {
+        val uri = intent?.data ?: return
+        val configuredHost = com.example.BuildConfig.JAM_INVITE_HOST
+        if (uri.scheme != "https" || configuredHost.isBlank() || !uri.host.equals(configuredHost, ignoreCase = true)) return
+        val segments = uri.pathSegments
+        if (segments.size >= 2 && segments[0].equals("jam", ignoreCase = true)) {
+            val code = segments[1].filter(Char::isLetterOrDigit).take(16)
+            if (code.length >= 12) pendingJamInviteCode.value = code
+        }
+    }
+
+    private fun handleJamRecommendationIntent(intent: Intent?) {
+        val extras = intent?.extras ?: return
+        val kind = extras.getString("kind").orEmpty()
+        if (!kind.startsWith("jam_", ignoreCase = true)) return
+        val recipientUid = extras.getString("recipientUid") ?: return
+        val signedInUid = com.example.util.FirebaseInitializer.getAuth(this)?.currentUser?.uid
+        if (signedInUid != null && recipientUid != signedInUid) return
+        val sessionId = extras.getString("sessionId") ?: extras.getString("session_id")
+        val recommendationId = extras.getString("recommendationId") ?: extras.getString("recommendation_id")
+        if (!sessionId.isNullOrBlank() && !recommendationId.isNullOrBlank()) {
+            pendingJamRecommendation.value = sessionId to recommendationId
+        }
     }
 
     private fun handleWidgetLaunchIntent(intent: Intent?) {
@@ -1346,6 +1412,7 @@ class MainActivity : ComponentActivity() {
             } catch (_: Exception) {}
         }
         mediaStoreObserver = null
+        if (currentActivity === this) currentActivity = null
     }
 
     private fun applyHighRefreshRate(enabled: Boolean = true) {

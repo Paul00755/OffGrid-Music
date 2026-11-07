@@ -26,7 +26,19 @@ class MusicApplication : Application(), ImageLoaderFactory, androidx.work.Config
     override fun onCreate() {
         super.onCreate()
         CrashReporter.init(this)
-        com.example.util.FirebaseInitializer.ensureInitialized(this)
+        com.example.util.FirebaseInitializer.ensureInitialized(this)?.let { firebaseApp ->
+            runCatching {
+                val factory = if (BuildConfig.DEBUG) {
+                    Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
+                        .getMethod("getInstance")
+                        .invoke(null) as com.google.firebase.appcheck.AppCheckProviderFactory
+                } else {
+                    com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory.getInstance()
+                }
+                com.google.firebase.appcheck.FirebaseAppCheck.getInstance(firebaseApp)
+                    .installAppCheckProviderFactory(factory)
+            }.onFailure { Log.w(TAG, "Firebase App Check provider is not configured", it) }
+        }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             performStartupDiagnostics()
         }

@@ -244,6 +244,11 @@ class LibraryScanner(
         }
     }
 
+    private fun isJamManagedSong(song: SongEntity): Boolean {
+        val managedDirectory = File(context.filesDir, "jam_shared").absolutePath.trimEnd(File.separatorChar)
+        return song.path.startsWith(managedDirectory + File.separator, ignoreCase = true)
+    }
+
     private fun resolveGenuineAudioPath(rawPath: String?, relativePath: String?, displayName: String?): String? {
         if (!rawPath.isNullOrBlank()) {
             return rawPath.trim()
@@ -972,7 +977,8 @@ class LibraryScanner(
                         dateAdded = song.dateAdded,
                         format = song.format
                     )
-                }.distinctBy { it.id }
+                }.plus(existingSongs.filter { isJamManagedSong(it) && File(it.path).isFile })
+                    .distinctBy { it.id }
 
                 val validNormPathsInThisScan = mergedSongsList.map { normalizePath(it.path) }.toHashSet()
                 val validIdsInThisScan = mergedSongsList.map { it.id }.toHashSet()
@@ -1060,6 +1066,11 @@ class LibraryScanner(
                     if (!seenNormPaths.add(normDbPath)) {
                         idsToDelete.add(dbSong.id)
                         duplicatesSkipped++
+                        continue
+                    }
+
+                    if (isJamManagedSong(dbSong)) {
+                        if (!File(dbSong.path).isFile) idsToDelete.add(dbSong.id)
                         continue
                     }
 

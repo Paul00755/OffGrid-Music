@@ -27,6 +27,12 @@ if (!persistentDebugKeystoreFile.exists() || persistentDebugKeystoreFile.length(
 }
 
 val ciVersionSuffix = (project.findProperty("versionNameSuffix") as? String)?.trim().orEmpty()
+val jamInviteHostCandidate = providers.gradleProperty("JAM_INVITE_HOST")
+  .orElse(providers.environmentVariable("JAM_INVITE_HOST"))
+  .orNull
+  ?.trim()
+  .orEmpty()
+val jamInviteHost = jamInviteHostCandidate.takeIf { it.matches(Regex("^[A-Za-z0-9.-]+$")) }.orEmpty()
 
 android {
   namespace = "com.example"
@@ -41,6 +47,8 @@ android {
     // AND installing older GitHub Release APKs without INSTALL_FAILED_VERSION_DOWNGRADE
     versionCode = 5
     versionName = "1.0.4$ciVersionSuffix"
+    buildConfigField("String", "JAM_INVITE_HOST", "\"$jamInviteHost\"")
+    manifestPlaceholders["jamInviteHost"] = jamInviteHost.ifBlank { "not-configured.invalid" }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -176,10 +184,14 @@ dependencies {
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
   implementation(libs.firebase.firestore)
+  implementation("com.google.firebase:firebase-functions")
+  implementation("com.google.firebase:firebase-storage")
+  implementation("com.google.firebase:firebase-appcheck-playintegrity")
 
   // Firebase Auth and Google Sign-In via Credential Manager
   implementation(libs.firebase.auth)
   implementation(libs.firebase.messaging)
+  implementation("com.google.zxing:core:3.5.3")
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
@@ -207,6 +219,7 @@ dependencies {
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
+  debugImplementation("com.google.firebase:firebase-appcheck-debug")
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)

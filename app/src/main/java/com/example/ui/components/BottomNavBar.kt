@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
@@ -33,6 +34,7 @@ import com.example.ui.theme.*
 
 enum class NavTab(val title: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
+    JAM("Jam", Icons.Default.Groups),
     LIBRARY("Library", Icons.Default.LibraryMusic),
     PLAYLISTS("Playlists", Icons.Default.QueueMusic),
     SEARCH("Search", Icons.Default.Search),
@@ -52,7 +54,7 @@ fun FloatingPillNavBar(
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val bottomTabs = listOf(NavTab.HOME, NavTab.LIBRARY, NavTab.PLAYLISTS, NavTab.SEARCH)
+    val bottomTabs = listOf(NavTab.HOME, NavTab.JAM, NavTab.LIBRARY, NavTab.PLAYLISTS, NavTab.SEARCH)
 
     Box(
         modifier = modifier

@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function sessionMember(sessionId) {
+      return signedIn() && firestore.exists(
+        /databases/(default)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)
+      ) && firestore.get(
+        /databases/(default)/documents/jamSessions/$(sessionId)
+      ).data.status == 'ACTIVE';
+    }
+
+    function proposal(sessionId, recommendationId) {
+      return firestore.get(
+        /databases/(default)/documents/jamSessions/$(sessionId)/recommendations/$(recommendationId)
+      ).data;
+    }
+
+    match /jam-temp/{sessionId}/{recommendationId}/audio {
+      allow read: if sessionMember(sessionId)
+        && request.auth.uid in proposal(sessionId, recommendationId).eligibleUids
+        && proposal(sessionId, recommendationId).recommendationType == 'LOCAL_SONG'
+        && proposal(sessionId, recommendationId).status in ['DOWNLOADING', 'READY'];
+
+      allow write: if sessionMember(sessionId)
+        && request.auth.uid == proposal(sessionId, recommendationId).proposerUid
+        && proposal(sessionId, recommendationId).recommendationType == 'LOCAL_SONG'
+        && proposal(sessionId, recommendationId).status == 'UPLOADING'
+        && request.resource.size > 3
+        && request.resource.size <= 26214400
+        && request.resource.contentType.matches('audio/(mpeg|mp4|aac|flac|ogg|wav|x-flac|x-wav)');
+
+      allow delete: if false;
+    }
+  }
+}

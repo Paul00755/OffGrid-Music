@@ -22,6 +22,7 @@
 - 🎨 **Visual & Display Studio (10 Themes × 12 Screen Layouts)**: **4 Display Modes** (*Dark, Light, Pure AMOLED, System*), **10 Curated Themes**, **Dynamic Artwork Color Extraction**, **Custom RGB Color Picker**, **4 Home Layouts**, **4 Now Playing Layouts** (including *Vinyl Turntable* & *Neon Studio*), **4 Playlist Layouts**, **4 Waveform Visualizers**, **9 Reorderable Home Feed Sections**, and **3 Home Screen Widgets**.
 - 📊 **Listening Analytics, 6-Slide Wrapped Story & Shareable Cards**: Track listening time, daily bar charts, time-of-day listener archetypes (*Night Owl Explorer, Dawn Melodist, Midday Flow Master, Sonic Harmonizer*), **6-slide interactive Wrapped stories**, and high-resolution shareable stats cards.
 - ⏱️ **Dual-Mode Sleep Timer, Room SQLite Tiers & Optional Cloud Sync**: Stop playback by **Duration (minutes)** or **Track Count (songs)**; manage local storage across **Standard (10K) / Expanded (50K) / Maximum (100K)** SQLite tiers; and optionally sync favorites, playlists, stats, and preferences via **Firebase Auth & Cloud Firestore**.
+- 🎶 **OffGrid Jam**: Host or join a synchronized listening session with permission-controlled playback and queue management, secure invitations, majority-voted shared-library recommendations, and unanimous local-song sharing with verified, resumable per-device downloads. Jam surfaces follow the selected app theme and dynamic gradient/glass preferences. See the [Firebase and invite-link setup guide](docs/offgrid-jam-setup.md).
 
 ---
 

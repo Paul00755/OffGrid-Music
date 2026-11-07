@@ -29,10 +29,43 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
         val prefs = UserPreferencesRepository.getInstance(applicationContext)
         val enabled = prefs.getUpdateNotificationsEnabledSync()
         AppUpdateRepository.getInstance(applicationContext).syncTopicSubscription(enabled)
+        runCatching {
+            if (com.example.util.FirebaseInitializer.getAuth(applicationContext)?.currentUser != null) {
+                com.google.firebase.functions.FirebaseFunctions.getInstance()
+                    .getHttpsCallable("registerJamDeviceToken")
+                    .call(mapOf("token" to token))
+            }
+        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
+        val data = remoteMessage.data
+        if (data["kind"].orEmpty().startsWith("jam_")) {
+            val recipientUid = data["recipientUid"]?.takeIf(String::isNotBlank) ?: return
+            val signedInUid = com.example.util.FirebaseInitializer.getAuth(applicationContext)?.currentUser?.uid
+            if (signedInUid != null && recipientUid != signedInUid) return
+            val sessionId = data["sessionId"].orEmpty()
+            val recommendationId = data["recommendationId"].orEmpty()
+            if (sessionId.isNotBlank() && recommendationId.isNotBlank() &&
+                !MainActivity.deliverForegroundJamRecommendation(sessionId, recommendationId)) {
+                val isCurrentAccount = signedInUid == recipientUid
+                showJamRecommendationNotification(
+                    context = applicationContext,
+                    title = if (isCurrentAccount) {
+                        remoteMessage.notification?.title ?: data["title"] ?: "OffGrid Jam recommendation"
+                    } else "Sign in to view your Jam",
+                    body = if (isCurrentAccount) {
+                        remoteMessage.notification?.body ?: data["body"] ?: "Open OffGrid Jam to see the latest update."
+                    } else "Sign in to OffGrid Music to review the pending recommendation.",
+                    sessionId = sessionId,
+                    recommendationId = recommendationId,
+                    kind = data["kind"].orEmpty(),
+                    recipientUid = recipientUid
+                )
+            }
+            return
+        }
         processIncomingUpdatePayload(
             context = applicationContext,
             data = remoteMessage.data,
@@ -44,12 +77,69 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
     companion object {
         const val CHANNEL_ID = "offgrid_app_updates"
         const val NOTIFICATION_ID = 9527
+        private const val JAM_CHANNEL_ID = "offgrid_jam_recommendations"
+        private const val JAM_NOTIFICATION_TAG = "offgrid_jam_recommendations"
+        private const val LEGACY_JAM_NOTIFICATION_ID = 9530
         const val EXTRA_OPEN_UPDATE_DIALOG = "com.example.EXTRA_OPEN_UPDATE_DIALOG"
         const val EXTRA_UPDATE_RELEASE_TAG = "com.example.EXTRA_UPDATE_RELEASE_TAG"
         const val EXTRA_UPDATE_RELEASE_URL = "com.example.EXTRA_UPDATE_RELEASE_URL"
         const val EXTRA_UPDATE_RELEASE_TITLE = "com.example.EXTRA_UPDATE_RELEASE_TITLE"
         const val EXTRA_UPDATE_RELEASE_NOTES = "com.example.EXTRA_UPDATE_RELEASE_NOTES"
         const val EXTRA_UPDATE_APK_URL = "com.example.EXTRA_UPDATE_APK_URL"
+
+        private fun showJamRecommendationNotification(
+            context: Context,
+            title: String,
+            body: String,
+            sessionId: String,
+            recommendationId: String,
+            kind: String,
+            recipientUid: String
+        ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(NotificationChannel(
+                    JAM_CHANNEL_ID,
+                    "Jam recommendations",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply { description = "Votes and song sharing updates for OffGrid Jam" })
+            }
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("kind", kind)
+                putExtra("sessionId", sessionId)
+                putExtra("recommendationId", recommendationId)
+                putExtra("recipientUid", recipientUid)
+            }
+            val pending = PendingIntent.getActivity(
+                context,
+                (sessionId + recommendationId).hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notificationId = (sessionId + recommendationId).hashCode()
+            manager.notify(JAM_NOTIFICATION_TAG, notificationId, NotificationCompat.Builder(context, JAM_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pending)
+                .build())
+        }
+
+        fun cancelJamNotification(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(LEGACY_JAM_NOTIFICATION_ID)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                manager.activeNotifications
+                    .filter { it.tag == JAM_NOTIFICATION_TAG }
+                    .forEach { manager.cancel(it.tag, it.id) }
+            }
+        }
 
         /**
          * Processes an incoming FCM payload (testable directly in Robolectric without Play Services).
