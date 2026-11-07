@@ -38,11 +38,10 @@ Both devices need to be online in the Jam for a transfer. If the receiving app i
 
 ## Invitation links
 
-Invitation codes can be entered from the Jam screen and do not require a custom domain. For HTTPS share links:
+Invitation codes work without a domain. This repository is configured for HTTPS invitations on `offgrid-music.web.app`:
 
-1. Use the Firebase Hosting domain or add a custom domain and configure its DNS.
-2. Build with `JAM_INVITE_HOST=your-host.example` as a Gradle property or environment variable. The Android manifest accepts only `https://your-host.example/jam/...` links.
-3. Publish `/.well-known/assetlinks.json` with package `com.aistudio.offgridmusic.player` and the SHA-256 fingerprint of the release signing certificate distributed to users.
-4. Deploy Hosting. The fallback page shows the invitation code and an Android app link.
+- The Android build workflow passes `JAM_INVITE_HOST=offgrid-music.web.app`, so GitHub APKs include the verified-link host automatically.
+- `public/.well-known/assetlinks.json` declares the Android package and signing-certificate SHA-256 used by those APKs.
+- Firebase Hosting serves `public/jam/index.html` as the code fallback page and the Digital Asset Links file at `/.well-known/assetlinks.json`.
 
-The checked-in Hosting target uses project `offgrid-music`. The production domain, release signing fingerprint, and Firebase deployment must be configured by the project owner.
+For local builds, use `./gradlew assembleDebug -PJAM_INVITE_HOST=offgrid-music.web.app`. If changing to a custom host, update both the workflow property and the `assetlinks.json` deployment to use the custom domain and the certificate fingerprint of the APK users install, then deploy Hosting.

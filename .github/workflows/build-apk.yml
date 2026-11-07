@@ -66,6 +66,7 @@ jobs:
         run: |
           ./gradlew assembleDebug \
             -PversionNameSuffix="-build.${{ github.run_number }}" \
+            -PJAM_INVITE_HOST=offgrid-music.web.app \
             -Pkotlin.compiler.execution.strategy=daemon \
             -Pksp.useKSP2=true \
             --no-configuration-cache \

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.aistudio.offgridmusic.player",
+      "sha256_cert_fingerprints": [
+        "66:83:D8:8E:16:E7:F3:5B:B5:54:C7:35:06:A0:B7:60:22:6E:DD:2D:E8:7A:F1:87:C4:A1:2B:A6:97:B6:17:3C"
+      ]
+    }
+  }
+]
