@@ -5,6 +5,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.verify.domain.DomainVerificationManager
+import android.content.pm.verify.domain.DomainVerificationUserState
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -155,6 +157,7 @@ class MainActivity : ComponentActivity() {
                     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
                     val jamInviteCode by pendingJamInviteCode.collectAsStateWithLifecycle()
                     val jamRecommendation by pendingJamRecommendation.collectAsStateWithLifecycle()
+                    var showJamLinkSettingsPrompt by remember { mutableStateOf(false) }
                     val showNowPlaying by viewModel.showNowPlaying.collectAsStateWithLifecycle()
                     val nowPlayingIntentReq by openNowPlayingRequest.collectAsStateWithLifecycle()
                     val widgetActionReq by pendingWidgetActionRequest.collectAsStateWithLifecycle()
@@ -190,6 +193,37 @@ class MainActivity : ComponentActivity() {
                         val needsAuth = viewModel.jamController?.requestOpenRecommendation(pending.first, pending.second) ?: false
                         if (needsAuth) viewModel.openAuthScreen()
                         pendingJamRecommendation.value = null
+                    }
+                    LaunchedEffect(selectedTab, showSplash) {
+                        showJamLinkSettingsPrompt = !showSplash &&
+                            selectedTab == NavTab.JAM &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            !isJamLinkHandlingEnabled()
+                    }
+                    if (showJamLinkSettingsPrompt) {
+                        AlertDialog(
+                            onDismissRequest = { showJamLinkSettingsPrompt = false },
+                            title = { Text("Open Jam links in OffGrid Music?") },
+                            text = {
+                                Text(
+                                    "Android is not set to open ${BuildConfig.JAM_INVITE_HOST} Jam links in OffGrid Music. " +
+                                        "You can enable Open supported links in the app settings. Jam invitation codes will still work if you skip this."
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showJamLinkSettingsPrompt = false
+                                    openJamLinkSettings()
+                                }) {
+                                    Text("Open link settings")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showJamLinkSettingsPrompt = false }) {
+                                    Text("Not now")
+                                }
+                            }
+                        )
                     }
                     val searchTabQuery by viewModel.searchTabQuery.collectAsStateWithLifecycle()
                     val librarySearchQuery by viewModel.librarySearchQuery.collectAsStateWithLifecycle()
@@ -1117,6 +1151,38 @@ class MainActivity : ComponentActivity() {
         if (segments.size >= 2 && segments[0].equals("jam", ignoreCase = true)) {
             val code = segments[1].filter(Char::isLetterOrDigit).take(16)
             if (code.length >= 12) pendingJamInviteCode.value = code
+        }
+    }
+
+    private fun isJamLinkHandlingEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        val host = BuildConfig.JAM_INVITE_HOST.trim()
+        if (host.isEmpty()) return true
+
+        return runCatching {
+            val manager = getSystemService(DomainVerificationManager::class.java) ?: return@runCatching false
+            val state = manager.getDomainVerificationUserState(packageName) ?: return@runCatching false
+            val hostState = state.hostToStateMap[host]
+            state.isLinkHandlingAllowed && (
+                hostState == DomainVerificationUserState.DOMAIN_STATE_VERIFIED ||
+                    hostState == DomainVerificationUserState.DOMAIN_STATE_SELECTED
+                )
+        }.getOrDefault(false)
+    }
+
+    private fun openJamLinkSettings() {
+        val appSettingsUri = Uri.fromParts("package", packageName, null)
+        val openByDefaultIntent = Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS).apply {
+            data = appSettingsUri
+        }
+        try {
+            startActivity(openByDefaultIntent)
+        } catch (_: Exception) {
+            runCatching {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = appSettingsUri
+                })
+            }
         }
     }
 

@@ -45,3 +45,5 @@ Invitation codes work without a domain. This repository is configured for HTTPS 
 - Firebase Hosting serves `public/jam/index.html` as the code fallback page and the Digital Asset Links file at `/.well-known/assetlinks.json`.
 
 For local builds, use `./gradlew assembleDebug -PJAM_INVITE_HOST=offgrid-music.web.app`. If changing to a custom host, update both the workflow property and the `assetlinks.json` deployment to use the custom domain and the certificate fingerprint of the APK users install, then deploy Hosting.
+
+On Android 12 and newer, opening the Jam tab checks whether Android allows OffGrid Music to handle the configured invitation domain. If not, the app offers a shortcut to **Settings → Apps → OffGrid Music → Open by default**. Enable **Open supported links** there. This is an Android app-link setting, not a runtime permission; Jam invitation codes continue to work if it is skipped. If a shared HTTPS link opens in a browser, Android has not launched OffGrid Music, so open the app and visit Jam to see the prompt; after enabling supported links, future invitation links can open the app directly.
