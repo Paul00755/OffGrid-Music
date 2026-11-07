@@ -1248,6 +1248,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setFetchOnlineArtworkHighRes(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setFetchOnlineArtworkHighRes(enabled) }
+        if (enabled) {
+            val songs = allSongs.value
+            if (songs.isNotEmpty()) {
+                com.example.ui.components.ArtworkResolutionCache.warmAllSongsArtworkInBackground(getApplication(), songs)
+            }
+        }
     }
     fun setCacheLyricsEnabled(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setCacheLyricsEnabled(enabled) }

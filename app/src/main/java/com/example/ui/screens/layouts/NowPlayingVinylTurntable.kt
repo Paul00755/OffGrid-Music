@@ -520,12 +520,31 @@ fun NowPlayingVinylTurntable(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onToggleShuffle, modifier = Modifier.size(42.dp)) {
-                        Icon(
-                            imageVector = Icons.Default.Shuffle,
-                            contentDescription = "Shuffle",
-                            tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary
-                        )
+                    val isShuffleActive = playbackState.isShuffleEnabled
+                    Surface(
+                        onClick = onToggleShuffle,
+                        shape = CircleShape,
+                        color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.24f) else Color.Transparent,
+                        border = if (isShuffleActive) BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.75f)) else null,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Shuffle,
+                                contentDescription = "Shuffle",
+                                tint = if (isShuffleActive) BentoPrimary else BentoTextSecondary
+                            )
+                            if (isShuffleActive) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 4.dp)
+                                        .size(4.dp)
+                                        .clip(CircleShape)
+                                        .background(BentoPrimary)
+                                )
+                            }
+                        }
                     }
 
                     Surface(

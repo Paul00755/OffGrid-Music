@@ -360,53 +360,103 @@ fun NowPlayingScreen(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            if (candidate.isSynced) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Language Badge (Tamil, Tanglish, English, Malayalam, Malayalam (Eng), Hindi, etc.)
+                                                val langBadgeColor = when {
+                                                    candidate.languageLabel.equals("Tamil", ignoreCase = true) ||
+                                                        candidate.languageLabel.equals("Malayalam", ignoreCase = true) ||
+                                                        candidate.languageLabel.equals("Hindi", ignoreCase = true) ||
+                                                        candidate.languageLabel.equals("Telugu", ignoreCase = true) ||
+                                                        candidate.languageLabel.equals("Kannada", ignoreCase = true) -> {
+                                                        if (searchDialogDark) Color(0xFF00E676) else Color(0xFF059669)
+                                                    }
+                                                    candidate.languageLabel.contains("Tanglish", ignoreCase = true) ||
+                                                        candidate.languageLabel.contains("(Eng)", ignoreCase = true) -> {
+                                                        if (searchDialogDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                                    }
+                                                    else -> {
+                                                        if (searchDialogDark) Color(0xFFC084FC) else Color(0xFF7C3AED)
+                                                    }
+                                                }
                                                 Surface(
-                                                    color = BentoPrimary.copy(alpha = 0.18f),
+                                                    color = langBadgeColor.copy(alpha = if (searchDialogDark) 0.16f else 0.12f),
+                                                    border = androidx.compose.foundation.BorderStroke(
+                                                        0.8.dp,
+                                                        langBadgeColor.copy(alpha = 0.42f)
+                                                    ),
                                                     shape = RoundedCornerShape(6.dp)
                                                 ) {
                                                     Row(
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                                                         verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                                                     ) {
                                                         Icon(
-                                                            imageVector = Icons.Default.Sync,
+                                                            imageVector = Icons.Default.Translate,
                                                             contentDescription = null,
-                                                            tint = BentoPrimary,
-                                                            modifier = Modifier.size(12.dp)
+                                                            tint = langBadgeColor,
+                                                            modifier = Modifier.size(11.dp)
                                                         )
                                                         Text(
-                                                            text = "Synced",
-                                                            fontSize = 11.sp,
-                                                            color = BentoPrimary,
+                                                            text = candidate.languageLabel,
+                                                            fontSize = 10.5.sp,
+                                                            color = langBadgeColor,
                                                             fontWeight = FontWeight.Bold
                                                         )
                                                     }
                                                 }
-                                            } else {
-                                                Surface(
-                                                    color = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0),
-                                                    shape = RoundedCornerShape(6.dp)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+
+                                                if (candidate.isSynced) {
+                                                    Surface(
+                                                        color = BentoPrimary.copy(alpha = 0.18f),
+                                                        shape = RoundedCornerShape(6.dp)
                                                     ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.TextFields,
-                                                            contentDescription = null,
-                                                            tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
-                                                            modifier = Modifier.size(12.dp)
-                                                        )
-                                                        Text(
-                                                            text = "Plain Text",
-                                                            fontSize = 11.sp,
-                                                            color = if (searchDialogDark) Color.White else Color(0xFF334155),
-                                                            fontWeight = FontWeight.Medium
-                                                        )
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Sync,
+                                                                contentDescription = null,
+                                                                tint = BentoPrimary,
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Text(
+                                                                text = "Synced",
+                                                                fontSize = 11.sp,
+                                                                color = BentoPrimary,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    Surface(
+                                                        color = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.TextFields,
+                                                                contentDescription = null,
+                                                                tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Text(
+                                                                text = "Plain Text",
+                                                                fontSize = 11.sp,
+                                                                color = if (searchDialogDark) Color.White else Color(0xFF334155),
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -419,6 +469,17 @@ fun NowPlayingScreen(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
+                                        if (candidate.previewSnippet.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Text(
+                                                text = "\"${candidate.previewSnippet}\"",
+                                                color = if (searchDialogDark) Color.White.copy(alpha = 0.52f) else Color(0xFF475569),
+                                                fontSize = 11.sp,
+                                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -723,13 +784,35 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onToggleShuffle, modifier = Modifier.size(36.dp)) {
-                            Icon(
-                                imageVector = Icons.Default.Shuffle,
-                                contentDescription = "Shuffle",
-                                tint = if (playbackState.isShuffleEnabled) BentoPrimary else BentoTextSecondary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                        val isShuffleActive = playbackState.isShuffleEnabled
+                        Surface(
+                            onClick = {
+                                com.example.util.HapticUtils.performClickHaptic(context)
+                                onToggleShuffle()
+                            },
+                            shape = CircleShape,
+                            color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.24f) else Color.Transparent,
+                            border = if (isShuffleActive) androidx.compose.foundation.BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.72f)) else null,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Shuffle,
+                                    contentDescription = "Shuffle",
+                                    tint = if (isShuffleActive) BentoPrimary else BentoTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                if (isShuffleActive) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .padding(bottom = 3.dp)
+                                            .size(4.dp)
+                                            .clip(CircleShape)
+                                            .background(BentoPrimary)
+                                    )
+                                }
+                            }
                         }
 
                         IconButton(
@@ -1284,19 +1367,35 @@ fun NowPlayingScreen(
                                         )
                                     }
 
-                                    IconButton(
+                                    val isShuffleActive = playbackState.isShuffleEnabled
+                                    Surface(
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
                                             onToggleShuffle()
                                         },
-                                        modifier = Modifier.size(38.dp)
+                                        shape = CircleShape,
+                                        color = if (isShuffleActive) BentoPrimary.copy(alpha = 0.28f) else Color.Transparent,
+                                        border = if (isShuffleActive) androidx.compose.foundation.BorderStroke(1.2.dp, BentoPrimary.copy(alpha = 0.85f)) else null,
+                                        modifier = Modifier.size(40.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Shuffle,
-                                            contentDescription = "Shuffle",
-                                            tint = if (playbackState.isShuffleEnabled) BentoPrimary else Color.White.copy(alpha = 0.55f),
-                                            modifier = Modifier.size(19.dp)
-                                        )
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shuffle,
+                                                contentDescription = "Shuffle",
+                                                tint = if (isShuffleActive) BentoPrimary else Color.White.copy(alpha = 0.55f),
+                                                modifier = Modifier.size(19.dp)
+                                            )
+                                            if (isShuffleActive) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomCenter)
+                                                        .padding(bottom = 3.dp)
+                                                        .size(4.dp)
+                                                        .clip(CircleShape)
+                                                        .background(BentoPrimary)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 

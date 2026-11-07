@@ -79,13 +79,19 @@ fun AuthScreen(
         onBackClick()
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        containerColor = BentoScreenBackground,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            TopAppBar(
-                windowInsets = WindowInsets(0, 0, 0, 0),
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(BentoBackground)
+    ) {
+        com.example.ui.theme.GlassGradientBackdrop()
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = BentoScreenBackground,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = {
+                TopAppBar(
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {},
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
@@ -803,5 +809,6 @@ fun AuthScreen(
             containerColor = BentoCardSurface,
             shape = RoundedCornerShape(20.dp)
         )
+    }
     }
 }

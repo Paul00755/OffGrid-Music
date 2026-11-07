@@ -97,7 +97,12 @@ class PlaybackManager(
         onDuckRequested = { duckVol ->
             isAudioFocusDucked = true
             duckTargetVolume = duckVol.coerceIn(0.05f, 1.0f)
-            try { player.volume = duckTargetVolume } catch (_: Throwable) {}
+            try {
+                player.volume = minOf(player.volume, duckTargetVolume)
+                _crossfadePlayer?.let { cf ->
+                    if (cf.isPlaying) cf.volume = minOf(cf.volume, duckTargetVolume)
+                }
+            } catch (_: Throwable) {}
         },
         onRestoreVolumeRequested = {
             isAudioFocusDucked = false
@@ -112,7 +117,7 @@ class PlaybackManager(
     @Volatile
     var isAudioFocusDucked: Boolean = false
     @Volatile
-    private var duckTargetVolume: Float = 0.25f
+    private var duckTargetVolume: Float = AudioFocusManager.DEFAULT_NOTIFICATION_DUCK_VOLUME
     val stereoBalanceProcessor = StereoBalanceAudioProcessor()
     val audioNormalizerProcessor = AudioNormalizerProcessor()
 
@@ -1123,7 +1128,9 @@ class PlaybackManager(
         _playbackPositionMs.value = safePos
         originalQueue = songs
 
+        val useShuffle = alwaysShuffleMode || _playbackState.value.isShuffleEnabled
         _playbackState.value = _playbackState.value.copy(
+            isShuffleEnabled = useShuffle,
             queue = songs,
             queueIndex = actualIndex,
             currentSong = song,
@@ -1208,6 +1215,16 @@ class PlaybackManager(
     }
 
     var alwaysShuffleMode: Boolean = false
+        set(value) {
+            field = value
+            if (value && !_playbackState.value.isShuffleEnabled) {
+                _playbackState.value = _playbackState.value.copy(isShuffleEnabled = true)
+                try {
+                    updateNotificationLayout()
+                    com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                } catch (_: Throwable) {}
+            }
+        }
 
     fun jumpToQueueIndex(index: Int) {
         if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
@@ -1769,6 +1786,9 @@ class PlaybackManager(
             isNormalizeAudioEnabled = userPreferences.getNormalizeAudioSync()
             setAudioBalance(userPreferences.getAudioBalanceSync())
             alwaysShuffleMode = userPreferences.getAlwaysShuffleModeSync()
+            if (alwaysShuffleMode && !_playbackState.value.isShuffleEnabled) {
+                _playbackState.value = _playbackState.value.copy(isShuffleEnabled = true)
+            }
             scrobbleThresholdType = userPreferences.getScrobbleThresholdTypeSync()
             scrobbleThresholdValue = userPreferences.getScrobbleThresholdValueSync()
             sleepTimerManager.setFinishLastSong(userPreferences.getSleepTimerFinishLastSongSync())
@@ -1845,6 +1865,11 @@ class PlaybackManager(
         scope.launch {
             userPreferences.sleepTimerFinishLastSong.collect { enabled ->
                 sleepTimerManager.setFinishLastSong(enabled)
+            }
+        }
+        scope.launch {
+            userPreferences.alwaysShuffleMode.collect { enabled ->
+                alwaysShuffleMode = enabled
             }
         }
 
@@ -2994,6 +3019,8 @@ class PlaybackManager(
                     inCrossfadeZone = false
                     inTrackEndFadeOut = false
                     if (player.isPlaying) {
+                        audioFocusManager.pollActiveCallStateWhilePlaying()
+                        if (!player.isPlaying) break
                         var currentPos = player.currentPosition.coerceAtLeast(0L)
                         val activeSongId = _playbackState.value.currentSong?.id ?: 0L
                         val loopTargetStart = com.example.util.SonicStudioEngine.checkAndConsumeLoopTrigger(activeSongId, currentPos)

@@ -945,9 +945,6 @@ object ArtworkManager {
                                 if (savedBytes != null) {
                                     putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                     val uriStr = Uri.fromFile(persistentFile).toString()
-                                    if (bitmap.width >= 600 || bitmap.height >= 600) {
-                                        ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, uriStr)
-                                    }
                                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                     ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                     return@withPermit uriStr
@@ -983,9 +980,6 @@ object ArtworkManager {
                             if (savedBytes != null) {
                                 putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                 val uriStr = Uri.fromFile(persistentFile).toString()
-                                if (bitmap.width >= 600 || bitmap.height >= 600) {
-                                    ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, uriStr)
-                                }
                                 ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
                                 ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
                                 return@withPermit uriStr

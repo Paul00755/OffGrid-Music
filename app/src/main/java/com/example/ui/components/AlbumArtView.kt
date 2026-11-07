@@ -202,7 +202,7 @@ object ArtworkResolutionCache {
         val key = trackIdentity(songId, path)
         if (highResArtworkKeys.contains(key) || highResArtworkKeys.contains("id:$songId")) return true
         return try {
-            val prefs = context.applicationContext.getSharedPreferences("song_artworks_highres_index", Context.MODE_PRIVATE)
+            val prefs = context.applicationContext.getSharedPreferences("song_artworks_online_highres_v2", Context.MODE_PRIVATE)
             val has = prefs.getBoolean(key, false) || prefs.getBoolean("id:$songId", false)
             if (has) highResArtworkKeys.add(key)
             has
@@ -217,7 +217,7 @@ object ArtworkResolutionCache {
         highResArtworkKeys.add(key)
         highResArtworkKeys.add("id:$songId")
         try {
-            val prefs = context.applicationContext.getSharedPreferences("song_artworks_highres_index", Context.MODE_PRIVATE)
+            val prefs = context.applicationContext.getSharedPreferences("song_artworks_online_highres_v2", Context.MODE_PRIVATE)
             prefs.edit()
                 .putBoolean(key, true)
                 .putBoolean("id:$songId", true)
@@ -368,6 +368,7 @@ object ArtworkResolutionCache {
         activeWarmAllJob?.cancel()
         activeWarmAllJob = backgroundWarmerScope.launch {
             ensureDiskIndexWarm(appCtx)
+            val prefsRepo = UserPreferencesRepository.getInstance(appCtx)
             // Pass 1: Pre-decode compact thumbnails for the first 600 songs that already have local artwork on disk
             var decodedCount = 0
             for (song in songs) {
@@ -380,6 +381,72 @@ object ArtworkResolutionCache {
                     if (decodedCount < 600 && getThumbnailBitmap(song.id, song.path) == null) {
                         decodeAndCacheThumbnail(appCtx, song.id, existingUri, song.path)
                         decodedCount++
+                    }
+                }
+            }
+
+            // Pass 2: Respect Fetch Hi-Res Artwork policy across the library:
+            // - When Fetch Hi-Res Artwork is OFF: only auto-fetch online if the song has NO local/embedded artwork.
+            // - When Fetch Hi-Res Artwork is ON: try to fetch hi-res online artwork for all songs except manually edited ones.
+            for (song in songs) {
+                if (!isActive) return@launch
+                if (song.id <= 0L) continue
+                if (com.example.util.ManualTagStore.isArtworkManuallyEdited(appCtx, song.id, song.path)) continue
+
+                val preferHighRes = prefsRepo.cachedFetchOnlineArtworkHighRes
+                val cacheEnabled = prefsRepo.cachedCacheAlbumArtEnabled && prefsRepo.cachedCacheSongArtWorkEnabled
+                val localUri = getAuthoritativeArtwork(appCtx, song, preferHighRes)
+                if (!localUri.isNullOrBlank() && getThumbnailBitmap(song.id, song.path) == null) {
+                    decodeAndCacheThumbnail(appCtx, song.id, localUri, song.path)
+                }
+
+                val isMissingArtwork = localUri.isNullOrBlank()
+                val needsOnlineFetch = if (preferHighRes) {
+                    !hasHighResArtwork(appCtx, song.id, song.path)
+                } else {
+                    isMissingArtwork
+                }
+
+                if (needsOnlineFetch &&
+                    shouldAttemptArtworkLookup(song.id, song.path) &&
+                    tryAcquireOnlineFetch(song.id, song.path, preferHighRes)
+                ) {
+                    val startGen = com.example.util.ManualTagStore.getArtworkEditGeneration(appCtx, song.id, song.path)
+                    try {
+                        val onlineUrl = OnlineArtistImageFetcher.getSongArtworkUrl(
+                            context = appCtx,
+                            title = song.displayTitle,
+                            artist = song.displayArtist,
+                            album = song.displayAlbum,
+                            preferUltraHd = preferHighRes,
+                            cacheEnabled = cacheEnabled,
+                            songId = song.id,
+                            filePath = song.path
+                        )
+                        if (!onlineUrl.isNullOrBlank() &&
+                            !com.example.util.ManualTagStore.isArtworkManuallyEdited(appCtx, song.id, song.path) &&
+                            com.example.util.ManualTagStore.getArtworkEditGeneration(appCtx, song.id, song.path) == startGen
+                        ) {
+                            val finalUri = if (cacheEnabled) {
+                                ArtworkManager.saveFetchedArtworkLocally(
+                                    context = appCtx,
+                                    songId = song.id,
+                                    url = onlineUrl,
+                                    filePath = song.path,
+                                    isHighRes = preferHighRes,
+                                    expectedArtworkGeneration = startGen
+                                ) ?: onlineUrl
+                            } else onlineUrl
+                            if (finalUri.isNotBlank()) {
+                                cacheArtwork(song.id, song.path, finalUri)
+                                decodeAndCacheThumbnail(appCtx, song.id, finalUri, song.path, forceReplace = true)
+                            }
+                        } else if (onlineUrl.isNullOrBlank() && isMissingArtwork) {
+                            markArtworkLookupFailed(song.id, song.path)
+                        }
+                    } catch (_: Throwable) {
+                    } finally {
+                        releaseOnlineFetch(song.id, song.path, preferHighRes)
                     }
                 }
             }
@@ -867,11 +934,11 @@ fun AlbumArtView(
         ArtworkResolutionCache.ensureDiskIndexWarmAsync(context)
         UserPreferencesRepository.getInstance(context)
     }
-    val preferHighResSetting = prefsRepo.cachedFetchOnlineArtworkHighRes
+    val preferHighResSetting by prefsRepo.fetchOnlineArtworkHighRes.collectAsState(initial = prefsRepo.cachedFetchOnlineArtworkHighRes)
     val cacheAlbumArtSetting = prefsRepo.cachedCacheAlbumArtEnabled
     val cacheSongArtSetting = prefsRepo.cachedCacheSongArtWorkEnabled
 
-    val isHighResPreferred = forceHighResOnline || preferHighResSetting
+    val isHighResPreferred = preferHighResSetting
     val isCacheEnabled = cacheAlbumArtSetting && cacheSongArtSetting
     val isThumbnail = !forceHighResOnline
 
@@ -971,9 +1038,7 @@ fun AlbumArtView(
                     } catch (_: Exception) {}
                 }
                 ArtworkResolutionCache.cacheArtwork(currentSong.id, currentSong.path, finalUri)
-                val decoded = if (isThumbnail) {
-                    ArtworkResolutionCache.decodeAndCacheThumbnail(context, currentSong.id, finalUri, currentSong.path, forceReplace = true)
-                } else null
+                val decoded = ArtworkResolutionCache.decodeAndCacheThumbnail(context, currentSong.id, finalUri, currentSong.path, forceReplace = true)
                 finalUri to decoded
             }
         } finally {
@@ -981,8 +1046,8 @@ fun AlbumArtView(
         }
     }
 
-    val needsHighResUpgrade = remember(forceHighResOnline, isHighResPreferred, songId, songPath, artworkVersion) {
-        if (!forceHighResOnline || !isHighResPreferred || song == null || songId <= 0L) {
+    val needsHighResUpgrade = remember(isHighResPreferred, songId, songPath, artworkVersion) {
+        if (!isHighResPreferred || song == null || songId <= 0L) {
             false
         } else {
             !com.example.util.ManualTagStore.isArtworkManuallyEdited(context, songId, song.path) &&

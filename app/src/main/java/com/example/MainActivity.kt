@@ -453,11 +453,48 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         val currentPlaylist = selectedPlaylist
                                         val currentSmartPlaylist = selectedSmartPlaylist
-                                    if (currentPlaylist != null) {
-                                        com.example.ui.screens.PlaylistDetailScreen(
-                                            playlist = currentPlaylist,
-                                            playlistSongs = selectedPlaylistSongs,
-                                            allPlaylists = allPlaylists,
+                                        if (showAuthScreen) {
+                                            val passwordResetState by viewModel.passwordResetState.collectAsState()
+                                            com.example.ui.screens.AuthScreen(
+                                                authUiState = authUiState,
+                                                passwordResetState = passwordResetState,
+                                                onSignInWithGoogle = { activity -> viewModel.signInWithGoogle(activity) },
+                                                onSignInWithEmail = { e, p -> viewModel.signInWithEmail(e, p) },
+                                                onSignUpWithEmail = { e, p, n -> viewModel.signUpWithEmail(e, p, n) },
+                                                onForgotPassword = { e -> viewModel.sendPasswordReset(e) },
+                                                onDismissPasswordReset = { viewModel.resetPasswordResetState() },
+                                                onContinueWithoutSignUp = { viewModel.continueWithoutSignUp() },
+                                                onDismissError = { viewModel.resetAuthUiState() },
+                                                onBackClick = { viewModel.closeAuthScreen() }
+                                            )
+                                        } else if (showAccountScreen) {
+                                            com.example.ui.screens.AccountScreen(
+                                                userAccount = userAccount,
+                                                customDisplayName = customDisplayName,
+                                                customAvatarUri = customAvatarUri,
+                                                effectiveDisplayName = effectiveDisplayName,
+                                                syncStatus = syncStatus,
+                                                backupStatus = viewModel.backupStatus.collectAsState().value,
+                                                lastSyncedTimestamp = viewModel.lastSyncedTimestamp.collectAsState().value,
+                                                lastBackupTimestamp = viewModel.lastBackupTimestamp.collectAsState().value,
+                                                automaticBackupEnabled = viewModel.automaticBackupEnabled.collectAsState().value,
+                                                backupFrequency = viewModel.backupFrequency.collectAsState().value,
+                                                onToggleAutomaticBackup = { viewModel.setAutomaticBackupEnabled(it) },
+                                                onSelectFrequency = { viewModel.setBackupFrequency(it) },
+                                                onSyncNow = { viewModel.triggerCloudSync() },
+                                                onBackupNow = { viewModel.triggerBackupNow() },
+                                                onOpenAuth = { viewModel.openAuthScreen() },
+                                                onSignInGoogle = { viewModel.signInWithGoogle(this@MainActivity) },
+                                                onUpdateDisplayName = { viewModel.updateUserDisplayName(it) },
+                                                onUpdateAvatar = { viewModel.updateProfileAvatar(it) },
+                                                onSignOut = { viewModel.signOut() },
+                                                onBackClick = { viewModel.closeAccountScreen() }
+                                            )
+                                        } else if (currentPlaylist != null) {
+                                            com.example.ui.screens.PlaylistDetailScreen(
+                                                playlist = currentPlaylist,
+                                                playlistSongs = selectedPlaylistSongs,
+                                                allPlaylists = allPlaylists,
                                             playbackState = playbackState,
                                             onBackClick = { viewModel.selectPlaylist(null) },
                                             onSongClick = { song, queue ->
@@ -782,47 +819,6 @@ class MainActivity : ComponentActivity() {
                                                  )
                                              }
                                         }
-                                    }
-
-                                    if (showAuthScreen) {
-                                        val passwordResetState by viewModel.passwordResetState.collectAsState()
-                                        com.example.ui.screens.AuthScreen(
-                                            authUiState = authUiState,
-                                            passwordResetState = passwordResetState,
-                                            onSignInWithGoogle = { activity -> viewModel.signInWithGoogle(activity) },
-                                            onSignInWithEmail = { e, p -> viewModel.signInWithEmail(e, p) },
-                                            onSignUpWithEmail = { e, p, n -> viewModel.signUpWithEmail(e, p, n) },
-                                            onForgotPassword = { e -> viewModel.sendPasswordReset(e) },
-                                            onDismissPasswordReset = { viewModel.resetPasswordResetState() },
-                                            onContinueWithoutSignUp = { viewModel.continueWithoutSignUp() },
-                                            onDismissError = { viewModel.resetAuthUiState() },
-                                            onBackClick = { viewModel.closeAuthScreen() }
-                                        )
-                                    }
-
-                                    if (showAccountScreen) {
-                                        com.example.ui.screens.AccountScreen(
-                                            userAccount = userAccount,
-                                            customDisplayName = customDisplayName,
-                                            customAvatarUri = customAvatarUri,
-                                            effectiveDisplayName = effectiveDisplayName,
-                                            syncStatus = syncStatus,
-                                            backupStatus = viewModel.backupStatus.collectAsState().value,
-                                            lastSyncedTimestamp = viewModel.lastSyncedTimestamp.collectAsState().value,
-                                            lastBackupTimestamp = viewModel.lastBackupTimestamp.collectAsState().value,
-                                            automaticBackupEnabled = viewModel.automaticBackupEnabled.collectAsState().value,
-                                            backupFrequency = viewModel.backupFrequency.collectAsState().value,
-                                            onToggleAutomaticBackup = { viewModel.setAutomaticBackupEnabled(it) },
-                                            onSelectFrequency = { viewModel.setBackupFrequency(it) },
-                                            onSyncNow = { viewModel.triggerCloudSync() },
-                                            onBackupNow = { viewModel.triggerBackupNow() },
-                                            onOpenAuth = { viewModel.openAuthScreen() },
-                                            onSignInGoogle = { viewModel.signInWithGoogle(this@MainActivity) },
-                                            onUpdateDisplayName = { viewModel.updateUserDisplayName(it) },
-                                            onUpdateAvatar = { viewModel.updateProfileAvatar(it) },
-                                            onSignOut = { viewModel.signOut() },
-                                            onBackClick = { viewModel.closeAccountScreen() }
-                                        )
                                     }
                                     }
                                 }

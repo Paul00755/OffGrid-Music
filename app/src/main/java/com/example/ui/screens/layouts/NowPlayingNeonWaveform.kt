@@ -474,19 +474,35 @@ fun NowPlayingNeonWaveform(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Shuffle Toggle
-                    IconButton(
+                    val isShuffleActive = playbackState.isShuffleEnabled
+                    Surface(
                         onClick = {
                             HapticUtils.performClickHaptic(context)
                             onToggleShuffle()
                         },
+                        shape = CircleShape,
+                        color = if (isShuffleActive) neonCyan.copy(alpha = 0.24f) else Color.Transparent,
+                        border = if (isShuffleActive) BorderStroke(1.2.dp, neonCyan.copy(alpha = 0.80f)) else null,
                         modifier = Modifier.size(42.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Shuffle,
-                            contentDescription = "Shuffle",
-                            tint = if (playbackState.isShuffleEnabled) neonCyan else BentoTextSecondary,
-                            modifier = Modifier.size(21.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Shuffle,
+                                contentDescription = "Shuffle",
+                                tint = if (isShuffleActive) neonCyan else BentoTextSecondary,
+                                modifier = Modifier.size(21.dp)
+                            )
+                            if (isShuffleActive) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 4.dp)
+                                        .size(4.dp)
+                                        .clip(CircleShape)
+                                        .background(neonCyan)
+                                )
+                            }
+                        }
                     }
 
                     // Circular Neon Rim Previous Button

@@ -27,8 +27,345 @@ data class LyricsCandidate(
     val plainLyrics: String?,
     val syncedLyricsRaw: String?,
     val source: String,
-    val isSynced: Boolean = !syncedLyricsRaw.isNullOrBlank() && com.example.util.LrcParser.parseLrcToLines(syncedLyricsRaw).isNotEmpty()
+    val isSynced: Boolean = !syncedLyricsRaw.isNullOrBlank() && com.example.util.LrcParser.parseLrcToLines(syncedLyricsRaw).isNotEmpty(),
+    val languageLabel: String = LyricsLanguageDetector.detectLanguageLabel(
+        plainLyrics = plainLyrics,
+        syncedLyricsRaw = syncedLyricsRaw,
+        trackName = trackName,
+        artistName = artistName,
+        albumName = albumName
+    ),
+    val previewSnippet: String = LyricsLanguageDetector.extractPreviewSnippet(plainLyrics, syncedLyricsRaw)
 )
+
+object LyricsLanguageDetector {
+    private val TIMESTAMP_REGEX = Regex("""\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?]""")
+    private val META_TAG_REGEX = Regex("""^\[(?:ti|ar|al|au|by|length|offset|re|ve):.*]$""", RegexOption.IGNORE_CASE)
+    private val WORD_SPLIT_REGEX = Regex("""[^a-zA-Z']+""")
+
+    private val ENGLISH_WORDS = setOf(
+        "the", "and", "you", "that", "was", "for", "are", "with", "his", "they", "this", "have",
+        "from", "one", "had", "but", "not", "what", "all", "were", "when", "your", "can", "there",
+        "which", "she", "how", "their", "will", "other", "about", "out", "many", "then", "them",
+        "these", "some", "her", "would", "make", "like", "him", "into", "time", "has", "look",
+        "more", "could", "than", "first", "water", "been", "call", "who", "now", "find", "down",
+        "day", "did", "get", "come", "made", "may", "love", "heart", "baby", "night", "know",
+        "feel", "never", "want", "take", "life", "eyes", "away", "stay", "cause", "yeah", "girl",
+        "world", "dream", "back", "through", "nothing", "everything", "always", "something",
+        "without", "around", "tonight", "hold", "mind", "soul", "falling", "breaking", "walking",
+        "running", "thinking", "waiting", "alone", "again", "before", "after", "every", "where",
+        "while", "under", "over", "between", "because", "don't", "can't", "won't", "i'm", "you're",
+        "we're", "it's", "that's", "there's", "let", "say", "tell", "give", "keep", "still"
+    )
+
+    private val TANGLISH_WORDS = setOf(
+        "un", "en", "nee", "naan", "nan", "unai", "unnai", "enai", "ennai", "enthan", "endhan",
+        "unthan", "undhan", "kadhal", "kaadhal", "kaathal", "kadhale", "kaadhale", "kanave", "kanavu",
+        "kangal", "kankal", "vizhi", "vizhigal", "uyire", "uyirae", "uyir", "idhayam", "ithayam",
+        "nenjam", "nenjil", "nenje", "manam", "manasu", "vaanam", "megam", "mazhai", "kaatru",
+        "katru", "poove", "pookkal", "malar", "nilavu", "nila", "vannila", "vennila", "iravu",
+        "pagal", "neram", "kaalam", "vazhkai", "vaazhkai", "ulagam", "ulagile", "azhage", "azhagi",
+        "azhagu", "kanmani", "ponmani", "thangam", "chellam", "kannamma", "mutham", "sirippu",
+        "pechu", "paarvai", "parvai", "thooram", "pakkam", "varumo", "varuma", "poga", "pogiren",
+        "varugiren", "thaane", "thane", "thaana", "thana", "illai", "illa", "yeno", "yaeno",
+        "etho", "yedho", "yetho", "indru", "endrum", "ini", "innum", "ingu", "angu", "engu",
+        "eppo", "eppadi", "sollu", "solla", "ketkiren", "paadava", "vaa", "va", "podi", "vaadi",
+        "penne", "kanna", "anbe", "anbu", "asai", "aasai", "urave", "thozha", "thozhi", "paravai",
+        "kuyil", "thendral", "suvasam", "mouname", "mounam", "ragasiyam", "maayam", "mayam",
+        "seithai", "seidhai", "konjam", "nerungi", "irangi", "maranthu", "marandhu", "pirinthu",
+        "pirindhu", "valigal", "kanneer", "neeyum", "naanum", "unnodu", "ennodu", "unakkaga",
+        "enakkaga", "paarthu", "parthu", "ninaithen", "pesum", "pesava", "vazhi", "vaazhvil"
+    )
+
+    private val MANGLISH_WORDS = setOf(
+        "ente", "ninte", "njaan", "njan", "ninne", "enne", "ninakku", "enakku", "manassil",
+        "hridayam", "pranayam", "sneham", "mizhi", "mizhikal", "ormakal", "orma", "koode",
+        "innu", "ennomal", "kinaavu", "kinavu", "raavu", "pakal", "mazha", "kaattu", "poovu",
+        "veyil", "aarum", "allathe", "enthe", "enthinu", "evide", "eppol", "angane", "ingane",
+        "oru", "kure", "valare", "kandu", "vannu", "poyi", "paranju", "arinju", "marannu",
+        "chirichu", "karanju", "paadi", "aaro", "ithu", "athu", "malare", "priye", "sakhi",
+        "lokam", "swapnam", "moham", "sukham", "dukkham", "pokumo", "ariyathe", "kaanaathe",
+        "kaanathe", "parayaathe", "manju", "konjum", "nenjile", "kiliye", "penne", "keralam",
+        "thirike", "varumo", "iniyum", "ivide", "avide", "ozhuki", "unarum", "urakkam"
+    )
+
+    private val HINGLISH_WORDS = setOf(
+        "mera", "meri", "mere", "tera", "teri", "tere", "tum", "tujhe", "tujhko", "mujhe",
+        "mujhko", "hum", "hamein", "humein", "main", "mein", "hai", "hain", "tha", "thi",
+        "hoon", "pyaar", "pyar", "ishq", "mohabbat", "dil", "jaan", "zindagi", "duniya",
+        "raat", "din", "shaam", "subah", "aankhein", "aankhon", "sapna", "sapne", "khwab",
+        "yaad", "yaadein", "saath", "paas", "door", "kabhi", "kahan", "kaise", "kyun", "kyon",
+        "kya", "koi", "kuch", "sab", "abhi", "phir", "bhi", "nahi", "nahin", "naa", "mat",
+        "aaja", "jaana", "deewana", "mahiya", "sanam", "rabba", "khuda", "maula", "bina",
+        "sang", "baatein", "baat", "chahat", "dhadkan", "saansein", "hawa", "baarish", "aasmaan",
+        "sitare", "chand", "chaand", "teri", "meri", "kahaani", "kahani", "lamha", "lamhe"
+    )
+
+    private val TELUGU_ROMAN_WORDS = setOf(
+        "naa", "nenu", "nuvvu", "neetho", "naatho", "prema", "hrudayam", "kanulu", "kallu",
+        "voohalu", "oohalu", "chirunavvu", "velugu", "vennela", "vaana", "gaali", "puvvu",
+        "ningi", "nela", "kosam", "undhi", "undi", "ledhu", "ledu", "radhu", "vasthava",
+        "velipoke", "cheliya", "andham", "amrutham", "pranama", "manasa", "entha", "ela",
+        "ekkada", "enduku", "oka", "chinna", "pedda", "kotha", "paatha"
+    )
+
+    private val KANNADA_ROMAN_WORDS = setOf(
+        "nanna", "ninna", "naanu", "neenu", "preethi", "hrudaya", "kannu", "kanasu", "belaku",
+        "male", "hoovu", "bhoomi", "jotheyali", "jothe", "elli", "yake", "hege", "yaaru",
+        "bandu", "hoda", "ninage", "nanage", "olave", "usire", "cheluve", "muddu", "gelathi",
+        "gelaya", "baalina", "baduku", "sneha", "kuhu"
+    )
+
+    private val TAMIL_META_HINTS = listOf(
+        "anirudh", "a.r. rahman", "ar rahman", "yuvan", "harris jayaraj", "santhosh narayanan",
+        "ilaiyaraaja", "ilayaraja", "dhibu ninan", "gv prakash", "g.v. prakash", "d. imman",
+        "imman", "hiphop tamizha", "hiphoptamizha", "dhanush", "s. p. balasubrahmanyam",
+        "pradeep kumar", "sean roldan", "sam c.s.", "sam cs", "chinmayi", "karthik",
+        "harish raghavendra", "naresh iyer", "vijay antony", "srikanth deva", "deva",
+        "vidyasagar", "swetha mohan", "andrea jeremiah", "saindhavi", "vaikom vijayalakshmi",
+        "tamil", "kollywood", "aambala", "masstamilan"
+    )
+
+    private val MALAYALAM_META_HINTS = listOf(
+        "sushin shyam", "gopi sundar", "shaan rahman", "rex vijayan", "jakes bejoy",
+        "hesham abdul wahab", "vineeth sreenivasan", "k.j. yesudas", "yesudas", "sithara",
+        "govind vasantha", "job kurian", "sooraj santhosh", "sachin warrier", "shahabaz aman",
+        "alphons joseph", "bijibal", "m. jayachandran", "oueppachan", "malayalam", "mollywood",
+        "premam", "hridayam", "kumbalangi", "manjummel", "aavesham"
+    )
+
+    private val HINDI_META_HINTS = listOf(
+        "arijit singh", "pritam", "vishal-shekhar", "vishal shekhar", "amit trivedi",
+        "atif aslam", "jubin nautiyal", "badshah", "neha kakkar", "shankar-ehsaan-loy",
+        "mithoon", "tanishk bagchi", "vishal mishra", "sachin-jigar", "kumar sanu",
+        "udit narayan", "alka yagnik", "himesh reshammiya", "yo yo honey singh", "darshan raval",
+        "b praak", "jaani", "irshad kamil", "amitabh bhattacharya", "gulzar", "hindi", "bollywood"
+    )
+
+    private val TELUGU_META_HINTS = listOf(
+        "devi sri prasad", "thaman s", "s. thaman", "m.m. keeravani", "keeravani",
+        "mickey j meyer", "anup rubens", "mani sharma", "ram miriyala", "sid sriram telugu",
+        "anurag kulkarni", "geetha madhuri", "sunitha", "telugu", "tollywood"
+    )
+
+    private val KANNADA_META_HINTS = listOf(
+        "arjun janya", "charan raj", "ajaneesh loknath", "mano murthy", "rajesh krishnan",
+        "puneeth rajkumar", "sanjith hegde", "vijay prakash kannada", "hamsalekha",
+        "gurukiran", "raghu dixit", "kannada", "sandalwood"
+    )
+
+    fun extractCleanLyricBody(plainLyrics: String?, syncedLyricsRaw: String?): String {
+        val raw = when {
+            !plainLyrics.isNullOrBlank() -> plainLyrics
+            !syncedLyricsRaw.isNullOrBlank() -> syncedLyricsRaw
+            else -> ""
+        }
+        if (raw.isBlank()) return ""
+        return raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !META_TAG_REGEX.matches(it) }
+            .map { TIMESTAMP_REGEX.replace(it, "").trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+    }
+
+    fun extractPreviewSnippet(plainLyrics: String?, syncedLyricsRaw: String?): String {
+        val clean = extractCleanLyricBody(plainLyrics, syncedLyricsRaw)
+        if (clean.isBlank()) return ""
+        return clean.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { line ->
+                line.length >= 4 &&
+                    !line.startsWith("lyrics", ignoreCase = true) &&
+                    !line.startsWith("synced by", ignoreCase = true)
+            }
+            ?.take(72) ?: ""
+    }
+
+    fun detectLanguageLabel(
+        plainLyrics: String?,
+        syncedLyricsRaw: String?,
+        trackName: String = "",
+        artistName: String = "",
+        albumName: String = ""
+    ): String {
+        val body = extractCleanLyricBody(plainLyrics, syncedLyricsRaw)
+        if (body.isBlank()) return "Unknown"
+
+        // 1. Check Native Non-Latin Scripts by Unicode block character counts
+        var tamilChars = 0
+        var malayalamChars = 0
+        var devanagariChars = 0
+        var teluguChars = 0
+        var kannadaChars = 0
+        var bengaliChars = 0
+        var gurmukhiChars = 0
+        var gujaratiChars = 0
+        var sinhalaChars = 0
+        var arabicChars = 0
+        var hangulChars = 0
+        var kanaChars = 0
+        var cjkChars = 0
+        var cyrillicChars = 0
+        var latinChars = 0
+
+        for (ch in body) {
+            when (ch) {
+                in '\u0B80'..'\u0BFF' -> tamilChars++
+                in '\u0D00'..'\u0D7F' -> malayalamChars++
+                in '\u0900'..'\u097F' -> devanagariChars++
+                in '\u0C00'..'\u0C7F' -> teluguChars++
+                in '\u0C80'..'\u0CFF' -> kannadaChars++
+                in '\u0980'..'\u09FF' -> bengaliChars++
+                in '\u0A00'..'\u0A7F' -> gurmukhiChars++
+                in '\u0A80'..'\u0AFF' -> gujaratiChars++
+                in '\u0D80'..'\u0DFF' -> sinhalaChars++
+                in '\u0600'..'\u06FF' -> arabicChars++
+                in '\uAC00'..'\uD7AF', in '\u1100'..'\u11FF' -> hangulChars++
+                in '\u3040'..'\u30FF' -> kanaChars++
+                in '\u4E00'..'\u9FFF' -> cjkChars++
+                in '\u0400'..'\u04FF' -> cyrillicChars++
+                in 'a'..'z', in 'A'..'Z' -> latinChars++
+            }
+        }
+
+        val nativeCounts = listOf(
+            "Tamil" to tamilChars,
+            "Malayalam" to malayalamChars,
+            "Hindi" to devanagariChars,
+            "Telugu" to teluguChars,
+            "Kannada" to kannadaChars,
+            "Bengali" to bengaliChars,
+            "Punjabi" to gurmukhiChars,
+            "Gujarati" to gujaratiChars,
+            "Sinhala" to sinhalaChars,
+            "Arabic / Urdu" to arabicChars,
+            "Korean" to hangulChars,
+            "Japanese" to (kanaChars * 2 + if (kanaChars > 0) cjkChars else 0),
+            "Chinese" to if (kanaChars == 0) cjkChars else 0,
+            "Russian" to cyrillicChars
+        )
+        val topNative = nativeCounts.maxByOrNull { it.second }
+        if (topNative != null && topNative.second >= 6) {
+            return topNative.first
+        }
+
+        // 2. Latin-script lyrics: Disambiguate English vs Tanglish, Malayalam (Eng), Hindi (Eng), Telugu (Eng), Kannada (Eng)
+        val words = body.lowercase()
+            .split(WORD_SPLIT_REGEX)
+            .filter { it.length >= 2 }
+
+        if (words.isEmpty()) return "English"
+
+        var englishHits = 0
+        var tanglishHits = 0
+        var manglishHits = 0
+        var hinglishHits = 0
+        var teluguRomanHits = 0
+        var kannadaRomanHits = 0
+
+        for (w in words) {
+            if (w in ENGLISH_WORDS) englishHits += 2
+            if (w in TANGLISH_WORDS) tanglishHits += 3
+            if (w in MANGLISH_WORDS) manglishHits += 3
+            if (w in HINGLISH_WORDS) hinglishHits += 3
+            if (w in TELUGU_ROMAN_WORDS) teluguRomanHits += 3
+            if (w in KANNADA_ROMAN_WORDS) kannadaRomanHits += 3
+
+            // Phonetic / morphological cues for Indian Romanized scripts
+            if (w.contains("zh")) {
+                tanglishHits += 2
+                manglishHits += 1
+            }
+            if (w.endsWith("kiren") || w.endsWith("giren") || w.endsWith("thaai") || w.endsWith("dhaai") || w.endsWith("aalum")) {
+                tanglishHits += 2
+            }
+            if (w.contains("nj") || w.endsWith("athe") || w.endsWith("umbol") || w.endsWith("ukal") || w.endsWith("iloode")) {
+                manglishHits += 2
+            }
+            if (w.endsWith("ein") || w.endsWith("oon") || w.startsWith("khw") || w.contains("aahe")) {
+                hinglishHits += 1
+            }
+            if (w.endsWith("dhi") || w.endsWith("dhu") || w.endsWith("thunn") || w.endsWith("pothun")) {
+                teluguRomanHits += 1
+            }
+            if (w.endsWith("yali") || w.endsWith("thide") || w.endsWith("vaagide")) {
+                kannadaRomanHits += 1
+            }
+        }
+
+        // Metadata hints from trackName / artistName / albumName
+        val metaHaystack = "$trackName $artistName $albumName".lowercase()
+        val hasTamilScriptInMeta = metaHaystack.any { it in '\u0B80'..'\u0BFF' }
+        val hasMalayalamScriptInMeta = metaHaystack.any { it in '\u0D00'..'\u0D7F' }
+        val hasHindiScriptInMeta = metaHaystack.any { it in '\u0900'..'\u097F' }
+        val hasTeluguScriptInMeta = metaHaystack.any { it in '\u0C00'..'\u0C7F' }
+        val hasKannadaScriptInMeta = metaHaystack.any { it in '\u0C80'..'\u0CFF' }
+
+        if (hasTamilScriptInMeta || TAMIL_META_HINTS.any { metaHaystack.contains(it) }) {
+            tanglishHits += 5
+        }
+        if (hasMalayalamScriptInMeta || MALAYALAM_META_HINTS.any { metaHaystack.contains(it) }) {
+            manglishHits += 5
+        }
+        if (hasHindiScriptInMeta || HINDI_META_HINTS.any { metaHaystack.contains(it) }) {
+            hinglishHits += 5
+        }
+        if (hasTeluguScriptInMeta || TELUGU_META_HINTS.any { metaHaystack.contains(it) }) {
+            teluguRomanHits += 5
+        }
+        if (hasKannadaScriptInMeta || KANNADA_META_HINTS.any { metaHaystack.contains(it) }) {
+            kannadaRomanHits += 5
+        }
+
+        // Also check if track title words themselves are in Tanglish/Manglish/Hinglish
+        val titleWords = trackName.lowercase().split(WORD_SPLIT_REGEX).filter { it.length >= 2 }
+        for (tw in titleWords) {
+            if (tw in TANGLISH_WORDS || tw.contains("zh")) tanglishHits += 3
+            if (tw in MANGLISH_WORDS) manglishHits += 3
+            if (tw in HINGLISH_WORDS) hinglishHits += 3
+            if (tw in TELUGU_ROMAN_WORDS) teluguRomanHits += 3
+            if (tw in KANNADA_ROMAN_WORDS) kannadaRomanHits += 3
+        }
+
+        val romanIndianCandidates = listOf(
+            "Tanglish" to tanglishHits,
+            "Malayalam (Eng)" to manglishHits,
+            "Hindi (Eng)" to hinglishHits,
+            "Telugu (Eng)" to teluguRomanHits,
+            "Kannada (Eng)" to kannadaRomanHits
+        )
+        val bestRomanIndian = romanIndianCandidates.maxByOrNull { it.second }
+
+        // English ratio check: in genuine English lyrics, common English words make up a high fraction of tokens
+        val englishWordRatio = englishHits.toFloat() / (words.size.coerceAtLeast(1) * 2).toFloat()
+
+        if (bestRomanIndian != null && bestRomanIndian.second >= 4 && bestRomanIndian.second * 1.3f >= englishHits) {
+            return bestRomanIndian.first
+        }
+
+        if (englishWordRatio >= 0.14f || englishHits >= 8) {
+            return "English"
+        }
+
+        if (bestRomanIndian != null && bestRomanIndian.second >= 2) {
+            return bestRomanIndian.first
+        }
+
+        // If almost no English stop words appear in a long Latin-script lyric (e.g. transliterated Tamil/regional song)
+        if (words.size >= 12 && englishWordRatio < 0.06f) {
+            val doubleVowelCount = words.count {
+                it.contains("aa") || it.contains("ee") || it.contains("oo") ||
+                    it.contains("th") || it.contains("dh") || it.contains("zh") || it.contains("nh")
+            }
+            if (doubleVowelCount >= 3) {
+                return bestRomanIndian?.takeIf { it.second > 0 }?.first ?: "Tanglish"
+            }
+        }
+
+        return "English"
+    }
+}
 
 class LyricsFetcher(
     private val lyricsDao: LyricsDao,
@@ -112,7 +449,7 @@ class LyricsFetcher(
         val seen = mutableSetOf<String>()
         val deduped = mutableListOf<LyricsCandidate>()
         for (c in combined) {
-            val key = "${c.source}:${c.trackName.lowercase()}:${c.artistName.lowercase()}:${c.isSynced}"
+            val key = "${c.source}:${c.trackName.lowercase()}:${c.artistName.lowercase()}:${c.isSynced}:${c.languageLabel}"
             if (seen.add(key)) {
                 deduped.add(c)
             }

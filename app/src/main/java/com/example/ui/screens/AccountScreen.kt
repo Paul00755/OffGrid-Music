@@ -106,13 +106,19 @@ fun AccountScreen(
 
     val displayPhoto = if (userAccount != null) (customAvatarUri ?: userAccount.photoUrl) else null
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        containerColor = BentoScreenBackground,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            TopAppBar(
-                windowInsets = WindowInsets(0, 0, 0, 0),
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(BentoBackground)
+    ) {
+        com.example.ui.theme.GlassGradientBackdrop()
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = BentoScreenBackground,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = {
+                TopAppBar(
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Text(
                         text = "Account",
@@ -584,5 +590,6 @@ fun AccountScreen(
                 }
             }
         )
+    }
     }
 }
