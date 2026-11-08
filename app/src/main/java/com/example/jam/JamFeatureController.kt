@@ -178,7 +178,14 @@ class JamFeatureController(
 
     fun openPage(page: JamPage) {
         if (_sessionId.value != null && page == JamPage.LANDING) {
-            _page.value = JamPage.ACTIVE
+            val session = _session.value
+            val hostStillWaiting = session?.started != true &&
+                (_page.value == JamPage.INVITE || session?.hostUid == authManager.currentUser?.uid)
+            _page.value = if (hostStillWaiting) {
+                JamPage.INVITE
+            } else {
+                JamPage.ACTIVE
+            }
             return
         }
         _page.value = page
@@ -192,13 +199,14 @@ class JamFeatureController(
         pendingAction = null
     }
 
-    fun createJam(permissions: JamPermissions) {
+    fun createJam(permissions: JamPermissions, maxParticipants: Int) {
         val account = currentAccountOrNull() ?: run { requestCreate(); return }
         runAction {
             val invite = repository.createSession(
                 displayName = displayName.value.ifBlank { account.displayName ?: "Listener" },
                 photoUrl = account.photoUrl,
-                permissions = permissions
+                permissions = permissions,
+                maxParticipants = maxParticipants
             )
             activateSession(invite.sessionId, page = JamPage.INVITE)
             _invite.value = invite
@@ -218,8 +226,12 @@ class JamFeatureController(
         }
     }
 
-    fun dismissInvite() {
-        if (_sessionId.value != null) _page.value = JamPage.ACTIVE
+    fun startJam() {
+        val id = _sessionId.value ?: return
+        runAction {
+            repository.startSession(id)
+            _page.value = JamPage.ACTIVE
+        }
     }
 
     fun addSong(song: Song) {
@@ -329,6 +341,17 @@ class JamFeatureController(
     fun leaveJam() {
         val id = _sessionId.value ?: return
         runAction {
+            repository.leave(id)
+            stopObserving(restorePlayback = true)
+            _page.value = JamPage.LANDING
+        }
+    }
+
+    fun transferHostAndLeave(participantUid: String) {
+        val id = _sessionId.value ?: return
+        if (participantUid.isBlank()) return
+        runAction {
+            repository.transferHost(id, participantUid)
             repository.leave(id)
             stopObserving(restorePlayback = true)
             _page.value = JamPage.LANDING

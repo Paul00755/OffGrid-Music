@@ -5,13 +5,11 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- Include database and settings; exclude only sensitive private API keys -->
+        <!-- Only include app data directories; private API key files stay outside backup scope. -->
         <include domain="database" path="." />
         <include domain="file" path="datastore" />
         <include domain="file" path="backups" />
         <include domain="sharedpref" path="." />
-        <exclude domain="file" path="gemini_user_key.dat" />
-        <exclude domain="file" path="gemini_user_key.fallback" />
     </cloud-backup>
     <device-transfer>
         <!-- Include database and settings for seamless upgrades and device transfers -->
@@ -19,7 +17,5 @@
         <include domain="file" path="datastore" />
         <include domain="file" path="backups" />
         <include domain="sharedpref" path="." />
-        <exclude domain="file" path="gemini_user_key.dat" />
-        <exclude domain="file" path="gemini_user_key.fallback" />
     </device-transfer>
 </data-extraction-rules>

@@ -22,12 +22,18 @@ class JamRepository(
         if (authManager.currentUser?.uid.isNullOrBlank()) throw JamRepositoryException("Sign in to use OffGrid Jam.")
     }
 
-    suspend fun createSession(displayName: String, photoUrl: String?, permissions: JamPermissions): JamInvite {
+    suspend fun createSession(
+        displayName: String,
+        photoUrl: String?,
+        permissions: JamPermissions,
+        maxParticipants: Int
+    ): JamInvite {
         requireUid()
         val result = call("createJam", mapOf(
             "displayName" to displayName.take(80),
             "photoUrl" to (photoUrl ?: ""),
-            "permissions" to permissions.toMap()
+            "permissions" to permissions.toMap(),
+            "maxParticipants" to maxParticipants.coerceIn(2, MAX_PARTICIPANTS)
         ))
         val id = result["sessionId"] as? String ?: throw JamRepositoryException("The Jam was created without a session ID.")
         val code = result["invitationCode"] as? String ?: throw JamRepositoryException("The Jam was created without an invitation code.")
@@ -52,6 +58,11 @@ class JamRepository(
     suspend fun closeSession(sessionId: String) {
         requireUid()
         call("closeJam", mapOf("sessionId" to sessionId))
+    }
+
+    suspend fun startSession(sessionId: String) {
+        requireUid()
+        call("startJam", mapOf("sessionId" to sessionId))
     }
 
     suspend fun transferHost(sessionId: String, participantUid: String) {
@@ -270,6 +281,7 @@ class JamRepository(
             "retryJamDownload" -> retryDownloadClient(uid, data)
             "submitJamPlaybackCommand" -> playbackCommandClient(uid, data)
             "closeJam" -> closeJamClient(uid, data)
+            "startJam" -> startJamClient(uid, data)
             "revokeJamInvite" -> revokeInviteClient(uid, data)
             "transferJamHost" -> transferHostClient(uid, data)
             "leaveJam" -> leaveJamClient(uid, data)
@@ -287,12 +299,15 @@ class JamRepository(
         val session = sessionRef(id)
         val member = session.collection(PARTICIPANTS).document(uid)
         val invite = firestore.collection("jamInvitations").document(inviteHash)
+        val maxParticipants = ((data["maxParticipants"] as? Number)?.toInt() ?: MAX_PARTICIPANTS)
+            .coerceIn(2, MAX_PARTICIPANTS)
         val playback = mapOf("sharedTrackId" to "", "queueItemId" to "", "isPlaying" to false, "positionMs" to 0L,
             "playbackSpeed" to 1.0, "updatedAt" to Timestamp.now(), "revision" to 0L, "commandId" to "",
             "commandType" to "CREATE", "actorUid" to uid, "step" to 0)
         firestore.runTransaction { tx ->
             tx.set(session, mapOf("hostUid" to uid, "status" to "ACTIVE", "participantCount" to 1,
-                "maxParticipants" to MAX_PARTICIPANTS, "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
+                "maxParticipants" to maxParticipants, "started" to false,
+                "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
                 "permissions" to data["permissions"], "playback" to playback, "revision" to 1L, "queueRevision" to 0L))
             tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, true))
             tx.set(invite, mapOf("sessionId" to id, "active" to true, "createdAt" to Timestamp.now(),
@@ -319,8 +334,13 @@ class JamRepository(
             }
             if (sessionSnapshot.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
             if (!memberSnapshot.exists()) {
+                if (sessionSnapshot.getBoolean("started") == true) {
+                    throw JamRepositoryException("This Jam has already started. Ask your friend to start a new session and wait for everyone to join before listening.")
+                }
                 val count = sessionSnapshot.getLong("participantCount") ?: 0L
-                if (count >= MAX_PARTICIPANTS) throw JamRepositoryException("This Jam is full (maximum 10 people).")
+                val maxParticipants = (sessionSnapshot.getLong("maxParticipants") ?: MAX_PARTICIPANTS.toLong())
+                    .toInt().coerceIn(2, MAX_PARTICIPANTS)
+                if (count >= maxParticipants) throw JamRepositoryException("This Jam is full (maximum $maxParticipants people).")
                 tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, false) + mapOf("invitationHash" to invitation.id))
                 tx.update(session, mapOf("participantCount" to count + 1, "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1))
             }
@@ -509,6 +529,9 @@ class JamRepository(
 
     private suspend fun playbackCommandClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
         val session = sessionRef(sessionId(data)); val snapshot = session.get().await()
+        if (snapshot.getBoolean("started") != true) {
+            throw JamRepositoryException("Wait for the host to open the room before starting playback.")
+        }
         val playback = snapshot.get("playback") as? Map<*, *> ?: emptyMap<Any, Any>()
         val type = data["commandType"] as? String ?: ""
         val permissions = JamPermissions.from(snapshot.get("permissions"))
@@ -519,6 +542,10 @@ class JamRepository(
         val commandId = data["commandId"] as? String ?: java.util.UUID.randomUUID().toString()
         return firestore.runTransaction { tx ->
             val currentSession = tx.get(session)
+            if (currentSession.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
+            if (currentSession.getBoolean("started") != true) {
+                throw JamRepositoryException("Wait for the host to open the room before starting playback.")
+            }
             val state = currentSession.get("playback") as? Map<*, *> ?: emptyMap<Any, Any>()
             var sharedId = state["sharedTrackId"] as? String ?: ""
             var itemId = state["queueItemId"] as? String ?: ""
@@ -589,6 +616,22 @@ class JamRepository(
         session.update(mapOf("status" to "CLOSED", "revision" to (snap.getLong("revision") ?: 0L) + 1)).await()
         revokeInviteClient(uid, data)
         return mapOf("ok" to true)
+    }
+    private suspend fun startJamClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
+        val session = sessionRef(sessionId(data))
+        return firestore.runTransaction { tx ->
+            val snap = tx.get(session)
+            if (snap.getString("hostUid") != uid) throw JamRepositoryException("Only the host can start this Jam.")
+            if (snap.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
+            if (snap.getBoolean("started") == true) return@runTransaction mapOf("ok" to true)
+            val count = snap.getLong("participantCount") ?: 0L
+            if (count < 2L) throw JamRepositoryException("Wait for at least one other listener to join before starting the Jam.")
+            tx.update(session, mapOf(
+                "started" to true,
+                "revision" to (snap.getLong("revision") ?: 0L) + 1L
+            ))
+            mapOf("ok" to true)
+        }.await()
     }
     private suspend fun revokeInviteClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
         val session = sessionRef(sessionId(data)); val snap = session.get().await()

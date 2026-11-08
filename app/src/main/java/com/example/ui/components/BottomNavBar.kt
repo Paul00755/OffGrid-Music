@@ -54,7 +54,7 @@ fun FloatingPillNavBar(
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val bottomTabs = listOf(NavTab.HOME, NavTab.JAM, NavTab.LIBRARY, NavTab.PLAYLISTS, NavTab.SEARCH)
+    val bottomTabs = listOf(NavTab.HOME, NavTab.LIBRARY, NavTab.PLAYLISTS, NavTab.SEARCH, NavTab.JAM)
 
     Box(
         modifier = modifier

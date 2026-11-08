@@ -470,7 +470,7 @@ class UserPreferencesRepository(private val context: Context) {
             scrobbleThresholdValue = prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] ?: readIntCached("scrobble_threshold_value", 30),
             repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: readIntCached("repeat_mode", 0),
             shuffleMode = prefs[PreferenceKeys.SHUFFLE_MODE] ?: readBoolCached("shuffle_mode", false),
-            alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", false),
+            alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", true),
             gesturePlaybackEnabled = prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true),
             highRefreshRate = prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: readBoolCached("high_refresh_rate", true),
             addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM"),
@@ -815,9 +815,9 @@ class UserPreferencesRepository(private val context: Context) {
     fun getFetchOnlineArtworkHighResSync(): Boolean = readBoolCached("fetch_online_artwork_high_res", false)
 
     val alwaysShuffleMode: Flow<Boolean> = safeData.map { prefs ->
-        prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", false)
+        prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", true)
     }
-    fun getAlwaysShuffleModeSync(): Boolean = readBoolCached("always_shuffle_mode", false)
+    fun getAlwaysShuffleModeSync(): Boolean = readBoolCached("always_shuffle_mode", true)
 
     val gesturePlaybackEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true)

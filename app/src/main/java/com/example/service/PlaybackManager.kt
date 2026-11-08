@@ -1257,9 +1257,14 @@ class PlaybackManager(
 
     var alwaysShuffleMode: Boolean = false
         set(value) {
+            val changed = field != value
             field = value
-            if (value && !_playbackState.value.isShuffleEnabled) {
-                _playbackState.value = _playbackState.value.copy(isShuffleEnabled = true)
+            if (changed && _playbackState.value.isShuffleEnabled != value) {
+                if (_playbackState.value.queue.isNotEmpty()) {
+                    toggleShuffle()
+                } else {
+                    _playbackState.value = _playbackState.value.copy(isShuffleEnabled = value)
+                }
                 try {
                     updateNotificationLayout()
                     com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)

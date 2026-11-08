@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +39,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MusicNote
@@ -62,9 +66,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -107,6 +114,7 @@ import com.example.jam.JamPermissionRule
 import com.example.jam.JamPermissions
 import com.example.jam.JamRecommendation
 import com.example.jam.JamRecommendationType
+import com.example.jam.JamRepository
 import com.example.jam.JamVote
 import com.example.jam.JamQueueItem
 import com.example.jam.JamSession
@@ -146,10 +154,14 @@ fun JamScreen(
     val invite = controller?.invite?.collectAsStateWithLifecycle()?.value
     val localTrackAvailable = controller?.localTrackAvailable?.collectAsStateWithLifecycle()?.value ?: false
     val currentUid = controller?.currentUid?.collectAsStateWithLifecycle()?.value
+    val isSignedIn = !currentUid.isNullOrBlank()
     val clipboard = LocalClipboardManager.current
     val glass = LocalGlassThemeConfig.current
     var permissionDraft by remember(session?.id, session?.revision) { mutableStateOf(session?.permissions ?: JamPermissions()) }
     var selectedPreset by rememberSaveable { mutableStateOf("Collaborative") }
+    var maxParticipants by rememberSaveable { mutableStateOf(JamRepository.MAX_PARTICIPANTS) }
+    var howItWorksStep by rememberSaveable { mutableStateOf<Int?>(null) }
+    var showRoomLeaveConfirmation by rememberSaveable { mutableStateOf(false) }
     var showNotificationRationale by remember { mutableStateOf(false) }
     var notificationPermissionDenied by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -196,12 +208,41 @@ fun JamScreen(
         )
     }
 
-    BackHandler(enabled = page !in setOf(JamPage.LANDING, JamPage.ACTIVE) || (page == JamPage.ACTIVE && session == null)) {
+    BackHandler(enabled = page != JamPage.LANDING) {
         when (page) {
-            JamPage.CREATE, JamPage.JOIN, JamPage.INVITE -> controller?.openPage(if (session != null) JamPage.ACTIVE else JamPage.LANDING)
+            JamPage.ACTIVE -> if (session == null) controller?.openPage(JamPage.LANDING) else showRoomLeaveConfirmation = true
+            JamPage.CREATE, JamPage.JOIN, JamPage.INVITE -> controller?.openPage(JamPage.LANDING)
             JamPage.PERMISSIONS -> controller?.openPage(JamPage.ACTIVE)
             else -> controller?.openPage(JamPage.LANDING)
         }
+    }
+
+    if (howItWorksStep != null) {
+        JamHowItWorksDialog(
+            currentStep = howItWorksStep!!.coerceIn(0, JAM_HOW_IT_WORKS_STEPS.lastIndex),
+            onStepChange = { howItWorksStep = it.coerceIn(0, JAM_HOW_IT_WORKS_STEPS.lastIndex) },
+            onDismiss = { howItWorksStep = null }
+        )
+    }
+    if (showRoomLeaveConfirmation && page == JamPage.ACTIVE && session != null) {
+        RoomLeaveDialog(
+            isHost = session.hostUid == currentUid,
+            participants = participants,
+            currentUid = currentUid.orEmpty(),
+            onDismiss = { showRoomLeaveConfirmation = false },
+            onLeave = {
+                showRoomLeaveConfirmation = false
+                controller?.leaveJam()
+            },
+            onTransferAndLeave = { targetUid ->
+                showRoomLeaveConfirmation = false
+                controller?.transferHostAndLeave(targetUid)
+            },
+            onDisband = {
+                showRoomLeaveConfirmation = false
+                controller?.closeJam()
+            }
+        )
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -215,6 +256,8 @@ fun JamScreen(
             JamPage.LANDING -> LandingPage(
                 controller = controller,
                 onRequireAuthentication = onRequireAuthentication,
+                isSignedIn = isSignedIn,
+                onHowItWorks = { howItWorksStep = 0 },
                 state = state,
                 modifier = Modifier.fillMaxSize()
             )
@@ -225,9 +268,11 @@ fun JamScreen(
                     selectedPreset = preset
                     permissionDraft = permissionForPreset(preset)
                 },
+                maxParticipants = maxParticipants,
+                onMaxParticipantsChange = { maxParticipants = it },
                 onPermissionsChange = { permissionDraft = it },
                 onBack = { controller?.openPage(JamPage.LANDING) },
-                onCreate = { controller?.createJam(permissionDraft) },
+                onCreate = { controller?.createJam(permissionDraft, maxParticipants) },
                 state = state
             )
             JamPage.JOIN -> JoinPage(
@@ -239,7 +284,9 @@ fun JamScreen(
             )
             JamPage.INVITE -> InvitePage(
                 invite = invite,
-                onBackToJam = { controller?.dismissInvite() },
+                participants = participants,
+                maxParticipants = session?.maxParticipants ?: maxParticipants,
+                onBackToJam = { controller?.startJam() },
                 onCopyCode = { code -> clipboard.setText(AnnotatedString(code)) },
                 onShare = { url, code ->
                     val text = url ?: "Join my OffGrid Jam with invitation code $code"
@@ -274,8 +321,7 @@ fun JamScreen(
                     permissionDraft = session?.permissions ?: JamPermissions()
                     controller?.openPage(JamPage.PERMISSIONS)
                 },
-                onLeave = { controller?.leaveJam() },
-                onClose = { controller?.closeJam() }
+                onBackRequest = { showRoomLeaveConfirmation = true }
             )
             JamPage.PERMISSIONS -> PermissionsPage(
                 permissions = permissionDraft,
@@ -297,6 +343,8 @@ fun JamScreen(
 private fun LandingPage(
     controller: JamFeatureController?,
     onRequireAuthentication: () -> Unit,
+    isSignedIn: Boolean,
+    onHowItWorks: () -> Unit,
     state: JamUiState,
     modifier: Modifier = Modifier
 ) {
@@ -316,6 +364,9 @@ private fun LandingPage(
                 style = MaterialTheme.typography.bodyMedium
             )
         }
+        TextButton(onClick = onHowItWorks, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text("How it works?", color = BentoPrimary, fontWeight = FontWeight.SemiBold)
+        }
         JamButton(
             text = "Create Jam",
             icon = Icons.Default.Add,
@@ -334,10 +385,12 @@ private fun LandingPage(
             Spacer(Modifier.width(8.dp))
             Text("Join a Jam", fontWeight = FontWeight.SemiBold)
         }
-        JamCard {
-            Icon(Icons.Default.Lock, contentDescription = null, tint = BentoPrimary)
-            Text("Sign in required", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-            Text("Jam uses your existing OffGrid account. Guest music scanning, local playlists, and regular playback remain available.", color = BentoTextSecondary)
+        if (!isSignedIn) {
+            JamCard {
+                Icon(Icons.Default.Lock, contentDescription = null, tint = BentoPrimary)
+                Text("Sign in required", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
+                Text("Jam uses your existing OffGrid account. Guest music scanning, local playlists, and regular playback remain available.", color = BentoTextSecondary)
+            }
         }
         JamStatus(state)
     }
@@ -348,6 +401,8 @@ private fun CreatePage(
     permissions: JamPermissions,
     selectedPreset: String,
     onPresetChange: (String) -> Unit,
+    maxParticipants: Int,
+    onMaxParticipantsChange: (Int) -> Unit,
     onPermissionsChange: (JamPermissions) -> Unit,
     onBack: () -> Unit,
     onCreate: () -> Unit,
@@ -355,6 +410,31 @@ private fun CreatePage(
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         JamHeader("Create a Jam", "Choose who can control the session", onBack)
+        JamCard {
+            Text("Room size", style = MaterialTheme.typography.titleMedium, color = BentoTextPrimary, fontWeight = FontWeight.Bold)
+            Text("Choose the maximum number of people, including you as host.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+            var menuExpanded by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { menuExpanded = true }, border = BorderStroke(1.dp, BentoCardBorder)) {
+                    Icon(Icons.Default.Groups, contentDescription = null, tint = BentoPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("$maxParticipants people", color = BentoTextPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("⌄", color = BentoTextSecondary)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    (2..JamRepository.MAX_PARTICIPANTS).forEach { count ->
+                        DropdownMenuItem(
+                            text = { Text("$count people") },
+                            onClick = {
+                                onMaxParticipantsChange(count)
+                                menuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Host Controlled", "Open Listening", "Collaborative", "Custom").forEach { preset ->
                 FilterChip(selected = selectedPreset == preset, onClick = { onPresetChange(preset) }, label = { Text(preset, maxLines = 1) })
@@ -401,6 +481,8 @@ private fun JoinPage(onBack: () -> Unit, onJoin: (String) -> Unit, state: JamUiS
 @Composable
 private fun InvitePage(
     invite: com.example.jam.JamInvite?,
+    participants: List<JamParticipant>,
+    maxParticipants: Int,
     onBackToJam: () -> Unit,
     onCopyCode: (String) -> Unit,
     onShare: (String?, String) -> Unit,
@@ -438,10 +520,188 @@ private fun InvitePage(
                     Text("The code is ready to share. Configure JAM_INVITE_HOST and Firebase Hosting to enable verified links and QR invitations.", color = BentoTextSecondary)
                 }
             }
-            JamButton("Open Jam", Icons.Default.Groups, onClick = onBackToJam)
+            JamCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Joined listeners", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("${participants.size}/$maxParticipants", color = BentoPrimary, fontWeight = FontWeight.Bold)
+                }
+                if (participants.isEmpty()) {
+                    Text("Waiting for listeners to connect…", color = BentoTextSecondary)
+                } else {
+                    participants.take(4).forEach { participant -> CompactParticipantRow(participant) }
+                    if (participants.size > 4) Text("and ${participants.size - 4} more…", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+                if (participants.size < 2) {
+                    Text("Wait for at least one other person to join before opening the room.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("Everyone is here. Open the room when your group is ready; new people can’t join after it starts.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            JamButton(
+                text = if (participants.size < 2) "Waiting for a listener" else "Open Jam",
+                icon = Icons.Default.Groups,
+                enabled = participants.size >= 2 && state !is JamUiState.Loading,
+                onClick = onBackToJam
+            )
         }
         JamStatus(state)
     }
+}
+
+private data class JamHowItWorksStep(
+    val title: String,
+    val description: String,
+    val previewIcons: List<androidx.compose.ui.graphics.vector.ImageVector>
+)
+
+private val JAM_HOW_IT_WORKS_STEPS = listOf(
+    JamHowItWorksStep(
+        "Create a room",
+        "The host chooses a room size and playback permissions. At least one other listener must join before the host can open the room.",
+        listOf(Icons.Default.Groups, Icons.Default.Tune, Icons.Default.Check)
+    ),
+    JamHowItWorksStep(
+        "Invite your group",
+        "Share the invitation code, QR, or link. Everyone needs OffGrid Music and an internet connection to sign in and join before the host starts listening.",
+        listOf(Icons.Default.Link, Icons.Default.PersonAdd, Icons.Default.Groups)
+    ),
+    JamHowItWorksStep(
+        "Find music you can all play",
+        "Add a track from your library. Jam checks each device locally; if a listener doesn’t have that audio, optional local-song sharing can send it after everyone approves.",
+        listOf(Icons.Default.LibraryMusic, Icons.Default.QueueMusic, Icons.Default.MusicNote)
+    ),
+    JamHowItWorksStep(
+        "Listen together",
+        "Jam keeps one shared queue and synchronizes play, pause, seek, and track changes. Join everyone before playback starts; late joins are blocked for that session.",
+        listOf(Icons.Default.QueueMusic, Icons.Default.PlayArrow, Icons.Default.Groups)
+    ),
+    JamHowItWorksStep(
+        "Share audio directly",
+        "When the host enables local-song sharing, a listener can choose a supported audio file (up to 25 MB). After unanimous approval it transfers device-to-device; the audio is not stored in Firebase. Internet is required for Jam coordination, while a direct transfer may use a compatible local network or internet route.",
+        listOf(Icons.Default.MusicNote, Icons.Default.Check, Icons.Default.Groups)
+    )
+)
+
+@Composable
+private fun JamHowItWorksDialog(
+    currentStep: Int,
+    onStepChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val step = JAM_HOW_IT_WORKS_STEPS[currentStep]
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("How OffGrid Jam works") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                JamCard {
+                    JamHowItWorksPreview(step.previewIcons)
+                    Text("STEP ${currentStep + 1} OF ${JAM_HOW_IT_WORKS_STEPS.size}", color = BentoPrimary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(step.title, color = BentoTextPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(step.description, color = BentoTextSecondary, style = MaterialTheme.typography.bodyMedium)
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onStepChange(currentStep - 1) }, enabled = currentStep > 0) {
+                        Text("Previous", color = if (currentStep > 0) BentoPrimary else BentoTextSecondary)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("${currentStep + 1} / ${JAM_HOW_IT_WORKS_STEPS.size}", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { onStepChange(currentStep + 1) }, enabled = currentStep < JAM_HOW_IT_WORKS_STEPS.lastIndex) {
+                        Text("Next", color = if (currentStep < JAM_HOW_IT_WORKS_STEPS.lastIndex) BentoPrimary else BentoTextSecondary)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done", color = BentoPrimary) } }
+    )
+}
+
+@Composable
+private fun JamHowItWorksPreview(icons: List<androidx.compose.ui.graphics.vector.ImageVector>) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        icons.forEachIndexed { index, image ->
+            if (index > 0) {
+                Text("→", color = BentoTextSecondary, modifier = Modifier.padding(horizontal = 8.dp))
+            }
+            Surface(shape = CircleShape, color = BentoPrimary.copy(alpha = 0.16f), modifier = Modifier.size(42.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(image, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoomLeaveDialog(
+    isHost: Boolean,
+    participants: List<JamParticipant>,
+    currentUid: String,
+    onDismiss: () -> Unit,
+    onLeave: () -> Unit,
+    onTransferAndLeave: (String) -> Unit,
+    onDisband: () -> Unit
+) {
+    val candidates = remember(participants, currentUid) { participants.filter { it.uid != currentUid } }
+    var selectedHostUid by remember(participants, currentUid) { mutableStateOf(candidates.firstOrNull()?.uid.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isHost) "Leave as host?" else "Leave this Jam?") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (isHost) {
+                    Text("Choose a new host for the listeners who remain, or disband the room for everyone.", color = BentoTextSecondary)
+                    if (candidates.isNotEmpty()) {
+                        Text("Assign host", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
+                        candidates.forEach { participant ->
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { selectedHostUid = participant.uid }.padding(end = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = selectedHostUid == participant.uid, onClick = { selectedHostUid = participant.uid })
+                                Text(participant.displayName, color = BentoTextPrimary)
+                                if (!participant.isConnected) Text(" · reconnecting", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        Text("No other listener has joined yet, so this room can only be disbanded.", color = BentoTextSecondary)
+                    }
+                } else {
+                    Text("You’ll leave the room and your previous local queue and playback will be restored.", color = BentoTextSecondary)
+                }
+            }
+        },
+        confirmButton = {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (isHost && candidates.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { onTransferAndLeave(selectedHostUid) },
+                        enabled = selectedHostUid.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Assign host and leave") }
+                }
+                if (isHost) {
+                    Button(onClick = onDisband, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+                        Text("Disband room for everyone")
+                    }
+                } else {
+                    Button(onClick = onLeave, modifier = Modifier.fillMaxWidth()) { Text("Leave Jam") }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Stay in Jam", color = BentoPrimary) }
+            }
+        }
+    )
 }
 
 @Composable
@@ -459,8 +719,7 @@ private fun ActivePage(
     onNotificationSettings: () -> Unit,
     state: JamUiState,
     onPermissions: () -> Unit,
-    onLeave: () -> Unit,
-    onClose: () -> Unit
+    onBackRequest: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -493,9 +752,16 @@ private fun ActivePage(
     val currentItem = queue.firstOrNull { it.id == session?.playback?.queueItemId }
         ?: queue.firstOrNull { it.track.sharedTrackId == session?.playback?.sharedTrackId }
     val isHost = session?.hostUid != null && session.hostUid == currentUid
+    val roomStarted = session?.started == true
     val permissionUid = currentUid
     val permissions = session?.permissions ?: JamPermissions()
     val durationMs = currentItem?.track?.durationMs?.coerceAtLeast(1L) ?: 1L
+    var recommendationsExpanded by rememberSaveable { mutableStateOf(false) }
+    var participantsExpanded by rememberSaveable { mutableStateOf(false) }
+    var queueExpanded by rememberSaveable { mutableStateOf(true) }
+    var sharingExpanded by rememberSaveable { mutableStateOf(false) }
+    var libraryExpanded by rememberSaveable { mutableStateOf(false) }
+    val noMatchesFound = queue.isEmpty() || (currentItem != null && !localTrackAvailable)
     val visibleSongs = remember(songs, libraryQuery) {
         val query = libraryQuery.trim()
         if (query.isBlank()) songs.take(8) else songs.asSequence()
@@ -524,24 +790,38 @@ private fun ActivePage(
         item {
             JamHeader(
                 title = "OffGrid Jam",
-                subtitle = if (session == null) "Connecting to your session…" else "${session.participantCount}/${JamRepositoryLimit.PARTICIPANTS} listeners · ${if (session.isActive) "Live" else "Ended"}",
-                onBack = { controller?.openPage(JamPage.LANDING) },
+                subtitle = if (session == null) "Connecting to your session…" else "${session.participantCount}/${session.maxParticipants} listeners · ${if (roomStarted) "Live" else "Waiting for host"}",
+                onBack = onBackRequest,
                 trailing = {
                     if (isHost) IconButton(onClick = onPermissions) { Icon(Icons.Default.Tune, "Permissions", tint = BentoPrimary) }
-                    IconButton(onClick = if (isHost) onClose else onLeave) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Leave Jam", tint = BentoTextSecondary) }
                 }
             )
         }
-        item {
-            RecommendationPanel(
-                recommendations = recommendations,
-                participants = participants,
-                currentUid = currentUid,
-                selectedRecommendationId = selectedRecommendationId,
-                onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
-                onRetryUpload = { controller?.retryUpload(it) },
-                onRetryDownload = { controller?.retryDownload(it) }
-            )
+        if (noMatchesFound) item {
+            JamCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(26.dp))
+                    Text("No matches found", color = BentoTextPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    if (currentItem != null && !localTrackAvailable) {
+                        "${currentItem.track.title} isn’t available on this device. Share the audio between devices to begin listening together."
+                    } else {
+                        "Add a track from either device. If it isn’t already on everyone’s device, share the audio between devices to begin listening together."
+                    },
+                    color = BentoTextSecondary
+                )
+                if (!permissions.allowLocalSongSharing) {
+                    if (isHost) {
+                        Text("Local song sharing is off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = onPermissions) { Text("Turn on sharing in Permissions", color = BentoPrimary) }
+                    } else {
+                        Text("Ask the host to turn on song sharing in the Permissions menu.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
+                    Text("Choose an audio file below. Once everyone approves, it transfers directly to the other devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
         item {
             JamCard {
@@ -569,63 +849,98 @@ private fun ActivePage(
                     onValueChange = { isSeeking = true; sliderPosition = it },
                     onValueChangeFinished = { controller?.seek(sliderPosition.toLong()); isSeeking = false },
                     valueRange = 0f..durationMs.toFloat(),
-                    enabled = currentItem != null && localTrackAvailable && session?.permissions?.seek?.allows(permissionUid, session.hostUid) == true
+                    enabled = roomStarted && currentItem != null && localTrackAvailable && session?.permissions?.seek?.allows(permissionUid, session.hostUid) == true
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    IconButton(onClick = { controller?.skip(-1) }, enabled = session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipPrevious, "Previous", tint = BentoTextPrimary) }
+                    IconButton(onClick = { controller?.skip(-1) }, enabled = roomStarted && session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipPrevious, "Previous", tint = BentoTextPrimary) }
                     Surface(
-                        modifier = Modifier.size(56.dp).clip(CircleShape).clickable(enabled = currentItem != null && localTrackAvailable) { controller?.togglePlayback() },
+                        modifier = Modifier.size(56.dp).clip(CircleShape).clickable(enabled = roomStarted && currentItem != null && localTrackAvailable) { controller?.togglePlayback() },
                         color = BentoPrimary,
                         shape = CircleShape
                     ) { Box(contentAlignment = Alignment.Center) { Icon(if (session?.playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause", tint = BentoOnPrimary, modifier = Modifier.size(30.dp)) } }
-                    IconButton(onClick = { controller?.skip(1) }, enabled = session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipNext, "Next", tint = BentoTextPrimary) }
+                    IconButton(onClick = { controller?.skip(1) }, enabled = roomStarted && session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipNext, "Next", tint = BentoTextPrimary) }
                 }
+                if (!roomStarted) Text("Playback starts when the host opens the room.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
             }
         }
         item {
-            JamCard {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.Groups, null, tint = BentoPrimary)
-                    Text("Listeners", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("${participants.size} connected", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
-                }
-                participants.forEach { ParticipantRow(it) }
-            }
+            JamAccordion(
+                title = "Listeners",
+                summary = "${participants.size} / ${session?.maxParticipants ?: JamRepository.MAX_PARTICIPANTS}",
+                icon = Icons.Default.Groups,
+                expanded = participantsExpanded,
+                onToggle = { participantsExpanded = !participantsExpanded }
+            ) { participants.forEach { CompactParticipantRow(it) } }
         }
         item {
-            JamCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.QueueMusic, null, tint = BentoPrimary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Shared queue", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("${queue.size}", color = BentoTextSecondary)
-                }
+            JamAccordion(
+                title = "Shared queue",
+                summary = "${queue.size} tracks",
+                icon = Icons.Default.QueueMusic,
+                expanded = queueExpanded,
+                onToggle = { queueExpanded = !queueExpanded }
+            ) {
                 if (queue.isEmpty()) Text("Add a track from your library to get started.", color = BentoTextSecondary)
+                queue.forEachIndexed { index, item ->
+                    QueueRow(
+                        item = item,
+                        isCurrent = item.id == session?.playback?.queueItemId,
+                        canManage = session?.permissions?.manageQueue?.allows(permissionUid, session.hostUid) == true,
+                        canRecommend = permissions.allowSharedLibraryRecommendations &&
+                            permissions.manageQueue.mode == JamAccessMode.HOST_ONLY && !isHost,
+                        onRecommend = { controller?.recommendSharedTrack(item.track) },
+                        onRemove = { controller?.removeQueueItem(item.id) },
+                        onMoveUp = { controller?.moveQueueItem(item.id, -1) },
+                        onMoveDown = { controller?.moveQueueItem(item.id, 1) },
+                        isFirst = index == 0,
+                        isLast = index == queue.lastIndex
+                    )
+                }
             }
         }
-        itemsIndexed(queue, key = { _, item -> item.id }) { index, item ->
-            QueueRow(
-                item = item,
-                isCurrent = item.id == session?.playback?.queueItemId,
-                canManage = session?.permissions?.manageQueue?.allows(permissionUid, session.hostUid) == true,
-                canRecommend = permissions.allowSharedLibraryRecommendations &&
-                    permissions.manageQueue.mode == JamAccessMode.HOST_ONLY && !isHost,
-                onRecommend = { controller?.recommendSharedTrack(item.track) },
-                onRemove = { controller?.removeQueueItem(item.id) },
-                onMoveUp = { controller?.moveQueueItem(item.id, -1) },
-                onMoveDown = { controller?.moveQueueItem(item.id, 1) },
-                isFirst = index == 0,
-                isLast = index == queue.lastIndex
-            )
+        item {
+            JamAccordion(
+                title = "Song recommendations",
+                summary = "${recommendations.count { it.isVoting }} voting",
+                icon = Icons.Default.Groups,
+                expanded = recommendationsExpanded,
+                onToggle = { recommendationsExpanded = !recommendationsExpanded }
+            ) {
+                RecommendationPanel(
+                    recommendations = recommendations,
+                    participants = participants,
+                    currentUid = currentUid,
+                    selectedRecommendationId = selectedRecommendationId,
+                    onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
+                    onRetryUpload = { controller?.retryUpload(it) },
+                    onRetryDownload = { controller?.retryDownload(it) }
+                )
+            }
         }
         item {
-            if (permissions.allowLocalSongSharing) {
-                JamCard {
-                    Text("Share a local song", color = BentoTextPrimary, fontWeight = FontWeight.Bold)
-                    Text("Everyone must approve it before upload. The Jam keeps playing while each device downloads and verifies the file.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+            JamAccordion(
+                title = "Share an audio file",
+                summary = if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off",
+                icon = Icons.Default.MusicNote,
+                expanded = sharingExpanded,
+                onToggle = { sharingExpanded = !sharingExpanded }
+            ) {
+                if (!permissions.allowLocalSongSharing) {
+                    Text(
+                        if (isHost) "Song sharing is off. Turn it on in Permissions so listeners can propose audio for unanimous approval."
+                        else "Song sharing is off. Ask the host to enable it in the Permissions menu.",
+                        color = BentoTextSecondary
+                    )
+                    if (isHost) OutlinedButton(onClick = onPermissions, border = BorderStroke(1.dp, BentoCardBorder)) {
+                        Icon(Icons.Default.Tune, null, tint = BentoPrimary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open permissions")
+                    }
+                } else {
+                    Text("Only supported audio files are accepted (MP3, M4A, AAC, FLAC, OGG, or WAV; up to 25 MB). After every listener approves, the transfer starts automatically and the file stays on the devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
-                        Text("I have the right to share this audio file.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                        Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                     }
                     selectedLocalAudio?.let { audio ->
                         JamCard {
@@ -657,12 +972,13 @@ private fun ActivePage(
             }
         }
         item {
-            JamCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Add from your library", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                }
+            JamAccordion(
+                title = "Add from your library",
+                summary = if (songs.isEmpty()) "No local tracks" else "${songs.size} local tracks",
+                icon = Icons.Default.LibraryMusic,
+                expanded = libraryExpanded,
+                onToggle = { libraryExpanded = !libraryExpanded }
+            ) {
                 OutlinedTextField(value = libraryQuery, onValueChange = { libraryQuery = it }, label = { Text("Search local tracks") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (songs.isEmpty()) Text("Scan your local library before adding tracks.", color = BentoTextSecondary)
                 else if (!searchMode && libraryQuery.isBlank()) {
@@ -968,6 +1284,39 @@ private fun JamCard(
 }
 
 @Composable
+private fun JamAccordion(
+    title: String,
+    summary: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    JamCard {
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onToggle).padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = BentoTextPrimary, fontWeight = FontWeight.Bold)
+                Text(summary, color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+            }
+            Icon(
+                if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide $title" else "Show $title",
+                tint = BentoTextSecondary
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+        }
+    }
+}
+
+@Composable
 private fun JamButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
     Button(
         onClick = onClick,
@@ -1005,6 +1354,28 @@ private fun ParticipantRow(participant: JamParticipant) {
         }
         Column(Modifier.weight(1f)) {
             Text(participant.displayName, color = BentoTextPrimary, fontWeight = FontWeight.Medium)
+            Text(if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+        }
+        if (participant.isHost) Text("HOST", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun CompactParticipantRow(participant: JamParticipant) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+        if (!participant.photoUrl.isNullOrBlank()) {
+            AsyncImage(participant.photoUrl, contentDescription = null, modifier = Modifier.size(30.dp).clip(CircleShape))
+        } else {
+            Box(Modifier.size(30.dp).clip(CircleShape).background(BentoCardPurple), contentAlignment = Alignment.Center) {
+                Text(participant.displayName.take(1).uppercase(), color = BentoPrimary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(participant.displayName, color = BentoTextPrimary, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
         }
         if (participant.isHost) Text("HOST", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -1120,7 +1491,11 @@ private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAu
         "wav" -> "audio/wav"
         else -> null
     }
-    val mimeType = (resolver.getType(uri)?.lowercase()?.takeIf { it in ALLOWED_JAM_AUDIO_MIMES } ?: extensionMime)
+    val detectedMimeType = resolver.getType(uri)?.lowercase()?.takeIf(String::isNotBlank)
+    if (detectedMimeType != null && detectedMimeType !in ALLOWED_JAM_AUDIO_MIMES) {
+        throw IllegalArgumentException("Only audio files are supported. Choose an MP3, M4A, AAC, FLAC, OGG, or WAV file.")
+    }
+    val mimeType = detectedMimeType ?: extensionMime
         ?: throw IllegalArgumentException("Choose an MP3, M4A, AAC, FLAC, OGG, or WAV file.")
     val retriever = MediaMetadataRetriever()
     try {

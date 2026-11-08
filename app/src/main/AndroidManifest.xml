@@ -79,6 +79,17 @@
             </intent-filter>
         </service>
 
+        <!-- MusicApplication supplies WorkManager's configuration; remove only its eager initializer. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
+
         <receiver
             android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">

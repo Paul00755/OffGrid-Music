@@ -83,15 +83,16 @@ jobs:
             base64 -d debug.keystore.base64 > debug.keystore
           fi
           chmod +x gradlew
-          ./gradlew assembleDebug \
+          ./gradlew assembleRelease \
+            -PJAM_INVITE_HOST=offgrid-music.web.app \
             -Pkotlin.compiler.execution.strategy=daemon \
             -Pksp.useKSP2=true \
             --no-configuration-cache \
             -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true"
 
-          COMPILED_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
+          COMPILED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
           if [ -n "$COMPILED_APK" ] && [ -f "$COMPILED_APK" ]; then
-            CLEAN_APK="app/build/outputs/apk/debug/OffGrid-Music.apk"
+            CLEAN_APK="app/build/outputs/apk/release/OffGrid-Music.apk"
             cp "$COMPILED_APK" "$CLEAN_APK"
             gh release upload "$TAG" "$CLEAN_APK" --clobber
             echo "Successfully attached $CLEAN_APK to release $TAG"

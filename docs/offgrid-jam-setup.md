@@ -18,6 +18,8 @@ Jam no longer requires Cloud Functions or Cloud Storage. Those Firebase products
 
 Jam operations are coordinated by signed-in clients and constrained by Firestore Security Rules. This keeps the project on Spark, with less tamper resistance than server-authoritative Cloud Functions. FCM remains available for the app's other notification uses, but Jam updates rely on Firestore listeners while participants are online.
 
+After Jam room limits or join rules change, deploy the repository's current Firestore rules with `firebase deploy --only firestore:rules --project offgrid-music`. A host chooses a 2–10 person room, waits for at least one other listener, then opens the room. New listeners cannot join after it starts; start a new room and let the group join before playback begins.
+
 ## How local song transfer connects
 
 After every Jam participant accepts a local-song proposal, the sender creates a temporary peer handshake in Firestore. The handshake contains connection descriptions and transfer metadata only. WebRTC tries the local network route and then a direct internet route using STUN. The recipient verifies the SHA-256 checksum and audio duration before adding the song to its local library. Transfers are capped at 25 MB.
@@ -44,6 +46,8 @@ Invitation codes work without a domain. This repository is configured for HTTPS 
 - `public/.well-known/assetlinks.json` declares the Android package and signing-certificate SHA-256 used by those APKs.
 - Firebase Hosting serves `public/jam/index.html` as the code fallback page and the Digital Asset Links file at `/.well-known/assetlinks.json`.
 
-For local builds, use `./gradlew assembleDebug -PJAM_INVITE_HOST=offgrid-music.web.app`. If changing to a custom host, update both the workflow property and the `assetlinks.json` deployment to use the custom domain and the certificate fingerprint of the APK users install, then deploy Hosting.
+For a compact installable build, use `./gradlew assembleRelease -PJAM_INVITE_HOST=offgrid-music.web.app`; debug APKs are larger and intended for development. If changing to a custom host, update both the workflow property and the `assetlinks.json` deployment to use the custom domain and the certificate fingerprint of the APK users install, then deploy Hosting.
+
+The Jam landing screen includes a five-step **How it works?** guide. The guide explains that internet access is needed for room coordination; approved audio transfers are sent directly between devices and are not stored in Firebase.
 
 On Android 12 and newer, opening the Jam tab checks whether Android allows OffGrid Music to handle the configured invitation domain. If not, the app offers a shortcut to **Settings → Apps → OffGrid Music → Open by default**. Enable **Open supported links** there. This is an Android app-link setting, not a runtime permission; Jam invitation codes continue to work if it is skipped. If a shared HTTPS link opens in a browser, Android has not launched OffGrid Music, so open the app and visit Jam to see the prompt; after enabling supported links, future invitation links can open the app directly.

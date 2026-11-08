@@ -16,7 +16,7 @@ env:
 
 jobs:
   build:
-    name: Build Debug APK
+    name: Build Release APK
     runs-on: ubuntu-24.04
 
     steps:
@@ -62,9 +62,9 @@ jobs:
       - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Build Debug APK
+      - name: Build Minified Release APK
         run: |
-          ./gradlew assembleDebug \
+          ./gradlew assembleRelease \
             -PversionNameSuffix="-build.${{ github.run_number }}" \
             -PJAM_INVITE_HOST=offgrid-music.web.app \
             -Pkotlin.compiler.execution.strategy=daemon \
@@ -75,9 +75,9 @@ jobs:
 
       - name: Prepare APK Assets (Clean & Legacy Names + Build Info)
         run: |
-          COMPILED_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
+          COMPILED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
           if [ -z "$COMPILED_APK" ] || [ ! -f "$COMPILED_APK" ]; then
-            echo "Error: No APK found in app/build/outputs/apk/debug/"
+            echo "Error: No APK found in app/build/outputs/apk/release/"
             exit 1
           fi
           echo "Found compiled APK: $COMPILED_APK"
@@ -103,13 +103,13 @@ jobs:
           echo "APK_SHA256=$APK_SHA256" >> $GITHUB_ENV
           echo "APK_SIZE=$APK_SIZE" >> $GITHUB_ENV
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v6
         with:
           name: OffGrid-Music-APK
           path: |
-            app/build/outputs/apk/debug/OffGrid-Music.apk
-            app/build/outputs/apk/debug/OffGrid Music.apk
+            app/build/outputs/apk/release/OffGrid-Music.apk
+            app/build/outputs/apk/release/OffGrid Music.apk
           retention-days: 30
 
       - name: Publish GitHub Releases (Immutable Version History + Latest Release)
@@ -117,7 +117,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK_DIR="app/build/outputs/apk/debug"
+          APK_DIR="app/build/outputs/apk/release"
           CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
           VERSIONED_APK="$APK_DIR/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk"
           SPACE_APK="$APK_DIR/OffGrid Music.apk"
