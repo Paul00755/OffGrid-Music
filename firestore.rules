@@ -9,6 +9,16 @@ service cloud.firestore {
       return member(sessionId)
         && get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid == request.auth.uid;
     }
+    function featureEnabled(sessionId, featureId) {
+      let permissions = get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.get('permissions', {});
+      return (featureId == 'sharedRecommendations'
+          && permissions.get('allowSharedLibraryRecommendations', false) == true)
+        || (featureId == 'localSongSharing'
+          && permissions.get('allowLocalSongSharing', false) == true);
+    }
+    function validFeatureId(featureId) {
+      return featureId == 'sharedRecommendations' || featureId == 'localSongSharing';
+    }
     function joiningJam(sessionId) {
       let participant = getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data;
       let session = get(/databases/$(database)/documents/jamSessions/$(sessionId)).data;
@@ -18,6 +28,8 @@ service cloud.firestore {
         && session.status == 'ACTIVE'
         && session.get('started', false) != true
         && session.participantCount < session.maxParticipants
+        && !(request.auth.uid in session.get('formerHostUids', []))
+        && !(request.auth.uid in session.get('kickedUids', []))
         && participant.invitationHash is string
         && invitation.sessionId == sessionId
         && invitation.active == true
@@ -36,7 +48,9 @@ service cloud.firestore {
     match /jamSessions/{sessionId} {
       // Session IDs are random and are obtained from an invitation. Signed-in invitees need
       // to read active session metadata before the transaction can decide whether to join.
-      allow get: if member(sessionId) || (signedIn() && resource.data.status == 'ACTIVE');
+      allow get: if member(sessionId)
+        || (signedIn() && resource.data.status == 'ACTIVE')
+        || (signedIn() && request.auth.uid in resource.data.get('kickedUids', []));
       allow list: if false;
       allow create: if signedIn()
         && request.resource.data.hostUid == request.auth.uid
@@ -48,18 +62,70 @@ service cloud.firestore {
         && request.resource.data.get('started', false) == false;
       allow update: if (member(sessionId) || joiningJam(sessionId))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'hostUid', 'participantCount', 'permissions', 'playback', 'revision', 'queueRevision', 'started'
+          'status', 'hostUid', 'participantCount', 'permissions', 'playback', 'revision', 'queueRevision',
+          'started', 'formerHostUids', 'kickedUids', 'lastRemovedUid', 'announcement'
         ])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['started']) ||
           (host(sessionId)
             && resource.data.get('started', false) != true
             && request.resource.data.started == true
             && resource.data.participantCount >= 2))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['permissions']) || host(sessionId))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['participantCount']) ||
+          (joiningJam(sessionId)
+            && request.resource.data.participantCount == resource.data.participantCount + 1)
+          || (member(sessionId)
+            && !existsAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
+            && request.resource.data.participantCount == resource.data.participantCount - 1)
+          || (host(sessionId)
+            && request.resource.data.get('lastRemovedUid', '') is string
+            && request.resource.data.get('lastRemovedUid', '') != ''
+            && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.lastRemovedUid))
+            && !existsAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.lastRemovedUid))
+            && request.resource.data.participantCount == resource.data.participantCount - 1
+            && request.resource.data.get('kickedUids', []).hasAll(resource.data.get('kickedUids', []))
+            && request.resource.data.lastRemovedUid in request.resource.data.get('kickedUids', [])))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+          (request.resource.data.status == 'CLOSED'
+            && (host(sessionId)
+              || (resource.data.get('started', false) == true
+                && request.resource.data.participantCount < 2))))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hostUid']) ||
+          (host(sessionId)
+            && request.resource.data.hostUid is string
+            && request.resource.data.hostUid != request.auth.uid
+            && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.hostUid))
+            && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.hostUid)).data.role == 'HOST'
+            && (!existsAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
+              ? request.auth.uid in request.resource.data.get('formerHostUids', [])
+              : getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data.role == 'PARTICIPANT')))
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['playback'])
           || resource.data.get('started', true) == true)
         && (!joiningJam(sessionId) ||
           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'revision'])
-            && request.resource.data.participantCount <= resource.data.maxParticipants));
+            && request.resource.data.participantCount <= resource.data.maxParticipants))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['formerHostUids']) ||
+          (host(sessionId)
+            && request.resource.data.formerHostUids is list
+            && request.resource.data.formerHostUids.hasAll(resource.data.get('formerHostUids', []))
+            && request.resource.data.formerHostUids.size() == resource.data.get('formerHostUids', []).size() + 1
+            && request.auth.uid in request.resource.data.formerHostUids))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['kickedUids']) ||
+          (host(sessionId)
+            && request.resource.data.kickedUids is list
+            && request.resource.data.kickedUids.hasAll(resource.data.get('kickedUids', []))
+            && request.resource.data.kickedUids.size() == resource.data.get('kickedUids', []).size() + 1
+            && request.resource.data.lastRemovedUid is string
+            && request.resource.data.lastRemovedUid != request.auth.uid
+            && request.resource.data.lastRemovedUid in request.resource.data.kickedUids
+            && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.lastRemovedUid))
+            && !existsAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.lastRemovedUid))))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastRemovedUid'])
+          || request.resource.data.diff(resource.data).affectedKeys().hasAny(['kickedUids']))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['announcement']) ||
+          host(sessionId)
+            || (request.resource.data.status == 'CLOSED'
+              && request.resource.data.participantCount < 2));
       allow delete: if false;
 
       match /participants/{participantUid} {
@@ -70,8 +136,15 @@ service cloud.firestore {
           || joiningJam(sessionId)
         );
         allow update: if member(sessionId) && (participantUid == request.auth.uid || host(sessionId))
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'lastSeenAt', 'role']);
-        allow delete: if member(sessionId) && participantUid == request.auth.uid;
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'lastSeenAt', 'role'])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || host(sessionId));
+        allow delete: if member(sessionId) && (
+          participantUid == request.auth.uid
+          || (host(sessionId)
+            && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.get('lastRemovedUid', '') == participantUid
+            && participantUid in getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.get('kickedUids', [])
+            && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.participantCount
+              == get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.participantCount - 1));
       }
 
       match /queue/{queueItemId} {
@@ -86,7 +159,9 @@ service cloud.firestore {
         allow create: if member(sessionId)
           && request.resource.data.proposerUid == request.auth.uid
           && request.resource.data.recommendationType in ['LOCAL_SONG', 'SHARED_LIBRARY']
-          && request.resource.data.eligibleUids.size() <= 10;
+          && request.resource.data.eligibleUids.size() <= 10
+          && featureEnabled(sessionId,
+            request.resource.data.recommendationType == 'LOCAL_SONG' ? 'localSongSharing' : 'sharedRecommendations');
         allow update: if member(sessionId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'votes', 'approvalCount', 'rejectionCount', 'status', 'downloads', 'checksum', 'fileSize',
@@ -95,10 +170,78 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /featureRequests/{featureId} {
+        allow read: if member(sessionId);
+        allow create: if member(sessionId)
+          && validFeatureId(featureId)
+          && get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.status == 'ACTIVE'
+          && get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid != request.auth.uid
+          && !featureEnabled(sessionId, featureId)
+          && request.resource.data.keys().hasAll(['active', 'requesterUid', 'requesterName', 'createdAt', 'blockedUids'])
+          && request.resource.data.keys().hasOnly(['active', 'requesterUid', 'requesterName', 'createdAt', 'blockedUids'])
+          && request.resource.data.active == true
+          && request.resource.data.requesterUid == request.auth.uid
+          && request.resource.data.requesterName is string
+          && request.resource.data.requesterName.size() > 0
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.blockedUids == [];
+        allow update: if member(sessionId)
+          && validFeatureId(featureId)
+          && request.resource.data.keys().hasOnly([
+            'active', 'requesterUid', 'requesterName', 'createdAt', 'blockedUids', 'resolvedAt'
+          ])
+          && (
+            (get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.status == 'ACTIVE'
+              && get(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid != request.auth.uid
+              && !featureEnabled(sessionId, featureId)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'active', 'requesterUid', 'requesterName', 'createdAt'
+              ])
+              && request.resource.data.get('blockedUids', []) == resource.data.get('blockedUids', [])
+              && request.resource.data.active == true
+              && request.resource.data.requesterUid == request.auth.uid
+              && request.resource.data.requesterName is string
+              && request.resource.data.requesterName.size() > 0
+              && request.resource.data.createdAt == request.time
+              && (resource.data.get('active', false) != true
+                || resource.data.createdAt + duration.value(2, 'm') <= request.time)
+              && !(request.auth.uid in resource.data.get('blockedUids', [])))
+            || (host(sessionId)
+              && resource.data.get('active', false) == true
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'active', 'requesterUid', 'requesterName', 'resolvedAt', 'blockedUids'
+              ])
+              && request.resource.data.active == false
+              && request.resource.data.requesterUid == ''
+              && request.resource.data.requesterName == ''
+              && request.resource.data.resolvedAt == request.time
+              && request.resource.data.get('blockedUids', []) is list
+              && (request.resource.data.get('blockedUids', []) == resource.data.get('blockedUids', [])
+                || (request.resource.data.get('blockedUids', []).hasAll(resource.data.get('blockedUids', []))
+                  && request.resource.data.get('blockedUids', []).size() == resource.data.get('blockedUids', []).size() + 1
+                  && resource.data.requesterUid in request.resource.data.get('blockedUids', [])))
+              && (request.resource.data.get('blockedUids', []) == resource.data.get('blockedUids', [])
+                || resource.data.requesterUid in request.resource.data.get('blockedUids', [])))
+            || (getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.status == 'CLOSED'
+              && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.participantCount < 2
+              && resource.data.get('active', false) == true
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'active', 'requesterUid', 'requesterName', 'resolvedAt'
+              ])
+              && request.resource.data.active == false
+              && request.resource.data.requesterUid == ''
+              && request.resource.data.requesterName == ''
+              && request.resource.data.resolvedAt == request.time
+              && request.resource.data.get('blockedUids', []) == resource.data.get('blockedUids', []))
+          );
+        allow delete: if false;
+      }
+
       match /peerTransfers/{transferId} {
         allow read: if member(sessionId)
           && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
         allow create: if member(sessionId)
+          && featureEnabled(sessionId, 'localSongSharing')
           && request.resource.data.senderUid == request.auth.uid
           && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.recipientUid))
           && request.resource.data.fileSize > 0 && request.resource.data.fileSize <= 26214400

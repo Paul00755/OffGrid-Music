@@ -4,9 +4,12 @@ import com.example.auth.AuthManager
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Transaction
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -50,9 +53,25 @@ class JamRepository(
         return result["sessionId"] as? String ?: throw JamRepositoryException("The invitation response was incomplete.")
     }
 
-    suspend fun leave(sessionId: String) {
+    suspend fun leave(sessionId: String): JamLeaveResult {
         requireUid()
-        call("leaveJam", mapOf("sessionId" to sessionId))
+        val result = call("leaveJam", mapOf("sessionId" to sessionId))
+        return JamLeaveResult(
+            sessionClosed = result["sessionClosed"] as? Boolean ?: false,
+            message = result["message"] as? String
+        )
+    }
+
+    suspend fun removeParticipant(sessionId: String, participantUid: String): JamRemoveResult {
+        requireUid()
+        val result = call("removeJamParticipant", mapOf(
+            "sessionId" to sessionId,
+            "participantUid" to participantUid
+        ))
+        return JamRemoveResult(
+            sessionClosed = result["sessionClosed"] as? Boolean ?: false,
+            message = result["message"] as? String
+        )
     }
 
     suspend fun closeSession(sessionId: String) {
@@ -63,6 +82,11 @@ class JamRepository(
     suspend fun startSession(sessionId: String) {
         requireUid()
         call("startJam", mapOf("sessionId" to sessionId))
+    }
+
+    suspend fun closeIfStartedWithOneListener(sessionId: String) {
+        requireUid()
+        call("closeSoloStartedJam", mapOf("sessionId" to sessionId))
     }
 
     suspend fun transferHost(sessionId: String, participantUid: String) {
@@ -81,6 +105,30 @@ class JamRepository(
             "sessionId" to sessionId,
             "displayName" to displayName.take(80),
             "photoUrl" to (photoUrl ?: "")
+        ))
+    }
+
+    suspend fun requestFeature(sessionId: String, feature: JamFeature, displayName: String) {
+        requireUid()
+        call("requestJamFeature", mapOf(
+            "sessionId" to sessionId,
+            "featureId" to feature.documentId,
+            "displayName" to displayName.take(80)
+        ))
+    }
+
+    suspend fun resolveFeatureRequest(
+        sessionId: String,
+        feature: JamFeature,
+        enableFeature: Boolean,
+        blockRequester: Boolean
+    ) {
+        requireUid()
+        call("resolveJamFeatureRequest", mapOf(
+            "sessionId" to sessionId,
+            "featureId" to feature.documentId,
+            "enableFeature" to enableFeature,
+            "blockRequester" to blockRequester
         ))
     }
 
@@ -237,6 +285,15 @@ class JamRepository(
         awaitClose { registration.remove() }
     }
 
+    fun observeFeatureRequests(sessionId: String): Flow<List<JamFeatureRequest>> = callbackFlow {
+        val registration = sessionRef(sessionId).collection(FEATURE_REQUESTS)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) close(error)
+                else trySend(snapshot?.documents.orEmpty().mapNotNull(::featureRequestFrom))
+            }
+        awaitClose { registration.remove() }
+    }
+
     fun observeQueue(sessionId: String): Flow<List<JamQueueItem>> = callbackFlow {
         val registration: ListenerRegistration = sessionRef(sessionId).collection(QUEUE)
             .orderBy("position", Query.Direction.ASCENDING)
@@ -267,6 +324,8 @@ class JamRepository(
             "createJam" -> createJamClient(uid, data)
             "joinJam" -> joinJamClient(uid, data)
             "heartbeatJam" -> heartbeatClient(uid, data)
+            "requestJamFeature" -> requestJamFeatureClient(uid, data)
+            "resolveJamFeatureRequest" -> resolveJamFeatureRequestClient(uid, data)
             "updateJamPermissions" -> updatePermissionsClient(uid, data)
             "mutateJamQueue" -> mutateQueueClient(uid, data)
             "registerJamDeviceToken" -> emptyMap()
@@ -285,6 +344,8 @@ class JamRepository(
             "revokeJamInvite" -> revokeInviteClient(uid, data)
             "transferJamHost" -> transferHostClient(uid, data)
             "leaveJam" -> leaveJamClient(uid, data)
+            "removeJamParticipant" -> removeJamParticipantClient(uid, data)
+        "closeSoloStartedJam" -> closeSoloStartedJamClient(uid, data)
             else -> throw JamRepositoryException("This Jam action is not supported on the Spark backend.")
         }
     } catch (error: Throwable) {
@@ -306,7 +367,7 @@ class JamRepository(
             "commandType" to "CREATE", "actorUid" to uid, "step" to 0)
         firestore.runTransaction { tx ->
             tx.set(session, mapOf("hostUid" to uid, "status" to "ACTIVE", "participantCount" to 1,
-                "maxParticipants" to maxParticipants, "started" to false,
+                "maxParticipants" to maxParticipants, "started" to false, "formerHostUids" to emptyList<String>(),
                 "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
                 "permissions" to data["permissions"], "playback" to playback, "revision" to 1L, "queueRevision" to 0L))
             tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, true))
@@ -334,6 +395,14 @@ class JamRepository(
             }
             if (sessionSnapshot.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
             if (!memberSnapshot.exists()) {
+                val kickedUids = (sessionSnapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if (uid in kickedUids) {
+                    throw JamRepositoryException("The host removed you from this Jam. You cannot rejoin this Jam room.")
+                }
+                val formerHosts = (sessionSnapshot.get("formerHostUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if (uid in formerHosts) {
+                    throw JamRepositoryException("You left this Jam as host and can’t rejoin it. Ask the current host to create a new Jam.")
+                }
                 if (sessionSnapshot.getBoolean("started") == true) {
                     throw JamRepositoryException("This Jam has already started. Ask your friend to start a new session and wait for everyone to join before listening.")
                 }
@@ -358,10 +427,91 @@ class JamRepository(
     }
 
     private suspend fun updatePermissionsClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
-        val session = sessionRef(sessionId(data)); val snapshot = session.get().await()
-        if (snapshot.getString("hostUid") != uid) throw JamRepositoryException("Only the host can change Jam permissions.")
-        session.update(mapOf("permissions" to data["permissions"], "revision" to (snapshot.getLong("revision") ?: 0L) + 1)).await()
-        return mapOf("ok" to true)
+        val session = sessionRef(sessionId(data))
+        val nextPermissions = JamPermissions.from(data["permissions"])
+        val requestRefs = JamFeature.values().associateWith { feature -> featureRequestRef(session.id, feature) }
+        return firestore.runTransaction { tx ->
+            val snapshot = tx.get(session)
+            val requestSnapshots = requestRefs.mapValues { (_, ref) -> tx.get(ref) }
+            if (snapshot.getString("hostUid") != uid) throw JamRepositoryException("Only the host can change Jam permissions.")
+            val currentPermissions = JamPermissions.from(snapshot.get("permissions"))
+            tx.update(session, mapOf(
+                "permissions" to nextPermissions.toMap(),
+                "revision" to (snapshot.getLong("revision") ?: 0L) + 1L
+            ))
+            JamFeature.values().forEach { feature ->
+                if (feature.isEnabled(currentPermissions) != feature.isEnabled(nextPermissions)) {
+                    resolveFeatureRequestDoc(tx, requestRefs.getValue(feature), requestSnapshots.getValue(feature), blockRequester = false)
+                }
+            }
+            mapOf("ok" to true)
+        }.await()
+    }
+
+    private suspend fun requestJamFeatureClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
+        val id = sessionId(data)
+        val feature = featureFromId(data["featureId"] as? String)
+        val session = sessionRef(id)
+        val request = featureRequestRef(id, feature)
+        val member = session.collection(PARTICIPANTS).document(uid)
+        val displayName = safeDisplayName(data)
+        return try {
+            firestore.runTransaction { tx ->
+                val sessionSnapshot = tx.get(session)
+                val memberSnapshot = tx.get(member)
+                val requestSnapshot = tx.get(request)
+                if (!memberSnapshot.exists()) throw JamRepositoryException("Join the Jam before requesting a feature.")
+                if (sessionSnapshot.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
+                if (sessionSnapshot.getString("hostUid") == uid) throw JamRepositoryException("The host can enable this feature in Permissions.")
+                if (feature.isEnabled(JamPermissions.from(sessionSnapshot.get("permissions")))) {
+                    throw JamRepositoryException("This feature is already enabled for the Jam.")
+                }
+                val blockedUids = (requestSnapshot.get("blockedUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if (uid in blockedUids) throw JamRepositoryException("The host has blocked your requests for ${feature.title} in this Jam.")
+                val values = mapOf(
+                    "active" to true,
+                    "requesterUid" to uid,
+                    "requesterName" to displayName,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                if (requestSnapshot.exists()) tx.update(request, values) else tx.set(request, values + ("blockedUids" to emptyList<String>()))
+                mapOf("ok" to true)
+            }.await()
+        } catch (error: FirebaseFirestoreException) {
+            val requestSnapshot = runCatching { request.get().await() }.getOrNull()
+            if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED && requestSnapshot?.getBoolean("active") == true) {
+                val requester = requestSnapshot.getString("requesterName")?.takeIf(String::isNotBlank) ?: "Someone"
+                throw JamRepositoryException("$requester already requested ${feature.title}. Please wait for that request to expire.")
+            }
+            throw error
+        }
+    }
+
+    private suspend fun resolveJamFeatureRequestClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
+        val id = sessionId(data)
+        val feature = featureFromId(data["featureId"] as? String)
+        val session = sessionRef(id)
+        val request = featureRequestRef(id, feature)
+        val enableFeature = data["enableFeature"] as? Boolean ?: false
+        val blockRequester = data["blockRequester"] as? Boolean ?: false
+        return firestore.runTransaction { tx ->
+            val sessionSnapshot = tx.get(session)
+            val requestSnapshot = tx.get(request)
+            if (sessionSnapshot.getString("hostUid") != uid) throw JamRepositoryException("Only the host can respond to feature requests.")
+            resolveFeatureRequestDoc(tx, request, requestSnapshot, blockRequester)
+            val permissions = JamPermissions.from(sessionSnapshot.get("permissions"))
+            val nextPermissions = when (feature) {
+                JamFeature.SHARED_RECOMMENDATIONS -> permissions.copy(allowSharedLibraryRecommendations = enableFeature || permissions.allowSharedLibraryRecommendations)
+                JamFeature.LOCAL_SONG_SHARING -> permissions.copy(allowLocalSongSharing = enableFeature || permissions.allowLocalSongSharing)
+            }
+            if (enableFeature && nextPermissions != permissions) {
+                tx.update(session, mapOf(
+                    "permissions" to nextPermissions.toMap(),
+                    "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1L
+                ))
+            }
+            mapOf("ok" to true, "enabled" to enableFeature)
+        }.await()
     }
 
     private suspend fun mutateQueueClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
@@ -611,9 +761,27 @@ class JamRepository(
     }
 
     private suspend fun closeJamClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
-        val session = sessionRef(sessionId(data)); val snap = session.get().await()
-        if (snap.getString("hostUid") != uid) throw JamRepositoryException("Only the host can end this Jam.")
-        session.update(mapOf("status" to "CLOSED", "revision" to (snap.getLong("revision") ?: 0L) + 1)).await()
+        val session = sessionRef(sessionId(data))
+        firestore.runTransaction { tx ->
+            val snap = tx.get(session)
+            val requestSnapshots = JamFeature.values().associateWith { feature ->
+                val ref = featureRequestRef(session.id, feature)
+                ref to tx.get(ref)
+            }
+            if (snap.getString("hostUid") != uid) throw JamRepositoryException("Only the host can end this Jam.")
+            tx.update(session, mapOf(
+                "status" to "CLOSED",
+                "announcement" to mapOf(
+                    "message" to "The host closed this Jam room.",
+                    "createdAt" to Timestamp.now()
+                ),
+                "revision" to (snap.getLong("revision") ?: 0L) + 1
+            ))
+            requestSnapshots.values.forEach { (ref, requestSnapshot) ->
+                resolveFeatureRequestDoc(tx, ref, requestSnapshot, blockRequester = false)
+            }
+            null
+        }.await()
         revokeInviteClient(uid, data)
         return mapOf("ok" to true)
     }
@@ -631,6 +799,33 @@ class JamRepository(
                 "revision" to (snap.getLong("revision") ?: 0L) + 1L
             ))
             mapOf("ok" to true)
+        }.await()
+    }
+
+    private suspend fun closeSoloStartedJamClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
+        val session = sessionRef(sessionId(data))
+        return firestore.runTransaction { tx ->
+            val snap = tx.get(session)
+            val count = snap.getLong("participantCount") ?: 0L
+            val shouldClose = snap.getString("status") == "ACTIVE" && snap.getBoolean("started") == true && count < 2L
+            val requestSnapshots = JamFeature.values().associateWith { feature ->
+                val ref = featureRequestRef(session.id, feature)
+                ref to tx.get(ref)
+            }
+            if (shouldClose) {
+                tx.update(session, mapOf(
+                    "status" to "CLOSED",
+                    "announcement" to mapOf(
+                        "message" to "The Jam closed because fewer than two listeners remained.",
+                        "createdAt" to Timestamp.now()
+                    ),
+                    "revision" to (snap.getLong("revision") ?: 0L) + 1L
+                ))
+                requestSnapshots.values.forEach { (ref, requestSnapshot) ->
+                    resolveFeatureRequestDoc(tx, ref, requestSnapshot, blockRequester = false)
+                }
+            }
+            mapOf("ok" to true, "closed" to shouldClose)
         }.await()
     }
     private suspend fun revokeInviteClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
@@ -651,30 +846,163 @@ class JamRepository(
         return mapOf("ok" to true)
     }
     private suspend fun leaveJamClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
-        val session = sessionRef(sessionId(data)); val snap = session.get().await()
-        val people = session.collection(PARTICIPANTS).orderBy("joinedAt").get().await().documents.filter { it.id != uid }
-        val batch = firestore.batch()
-        batch.delete(session.collection(PARTICIPANTS).document(uid))
-        if (people.isEmpty()) {
-            batch.update(session, mapOf("status" to "CLOSED", "participantCount" to 0L,
-                "revision" to (snap.getLong("revision") ?: 0L) + 1L))
-            snap.getString("inviteCodeHash")?.let { batch.update(firestore.collection("jamInvitations").document(it), "active", false) }
-        } else {
-            val values = mutableMapOf<String, Any>("participantCount" to people.size,
-                "revision" to (snap.getLong("revision") ?: 0L) + 1L)
-            if (snap.getString("hostUid") == uid) {
-                values["hostUid"] = people.first().id
-                batch.update(people.first().reference, "role", "HOST")
+        val session = sessionRef(sessionId(data))
+        val participants = session.collection(PARTICIPANTS)
+        val memberRef = participants.document(uid)
+        val orderedRemainingRefs = participants.orderBy("joinedAt", Query.Direction.ASCENDING)
+            .get().await().documents.filterNot { it.id == uid }.map { it.reference }
+
+        return firestore.runTransaction { tx ->
+            val snap = tx.get(session)
+            val leavingMember = tx.get(memberRef)
+            if (!leavingMember.exists()) {
+                return@runTransaction mapOf("ok" to true, "sessionClosed" to (snap.getString("status") == "CLOSED"))
             }
-            batch.update(session, values)
-        }
-        batch.commit().await()
-        return mapOf("ok" to true)
+
+            val isHost = snap.getString("hostUid") == uid
+            val remainingCount = ((snap.getLong("participantCount") ?: 1L) - 1L).coerceAtLeast(0L)
+            val remainingMembers = if (isHost) {
+                orderedRemainingRefs.mapNotNull { ref -> tx.get(ref).takeIf { it.exists() } }
+            } else {
+                emptyList()
+            }
+            val requestSnapshots = JamFeature.values().associateWith { feature ->
+                val ref = featureRequestRef(session.id, feature)
+                ref to tx.get(ref)
+            }
+            val successor = if (isHost) remainingMembers.firstOrNull() else null
+            val revision = (snap.getLong("revision") ?: 0L) + 1L
+            val formerHosts = (snap.get("formerHostUids") as? List<*>)
+                ?.filterIsInstance<String>().orEmpty().toMutableList()
+            if (isHost && uid !in formerHosts) formerHosts.add(uid)
+
+            val updates = mutableMapOf<String, Any>(
+                "participantCount" to remainingCount,
+                "revision" to revision
+            )
+            if (isHost) updates["formerHostUids"] = formerHosts
+
+            val shouldClose = remainingCount < 2L || snap.getString("status") != "ACTIVE"
+            val message: String
+            if (shouldClose) {
+                message = when {
+                    remainingCount == 0L -> "The Jam closed because no listeners remained."
+                    isHost -> "The Jam closed because only one listener remained after the host left."
+                    else -> "The Jam closed because only one listener remained after a listener left."
+                }
+                updates["status"] = "CLOSED"
+                updates["announcement"] = mapOf("message" to message, "createdAt" to Timestamp.now())
+            } else if (isHost) {
+                val newHost = successor ?: throw JamRepositoryException("The listener list changed. Please try leaving the Jam again.")
+                val newHostName = newHost.getString("displayName")?.takeIf(String::isNotBlank) ?: "the first listener"
+                message = "The host left the Jam. $newHostName is now hosting."
+                updates["hostUid"] = newHost.id
+                updates["announcement"] = mapOf(
+                    "message" to message,
+                    "targetUid" to newHost.id,
+                    "targetMessage" to "You are now hosting this Jam because the previous host left.",
+                    "createdAt" to Timestamp.now()
+                )
+                tx.update(newHost.reference, "role", "HOST")
+            } else {
+                message = "You left the Jam."
+            }
+
+            if (shouldClose || isHost) {
+                requestSnapshots.values.forEach { (ref, requestSnapshot) ->
+                    resolveFeatureRequestDoc(tx, ref, requestSnapshot, blockRequester = false)
+                }
+            }
+
+            tx.delete(memberRef)
+            tx.update(session, updates)
+            mapOf("ok" to true, "sessionClosed" to shouldClose, "message" to message)
+        }.await()
+    }
+
+    private suspend fun removeJamParticipantClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
+        val session = sessionRef(sessionId(data))
+        val targetUid = data["participantUid"] as? String
+            ?: throw JamRepositoryException("Choose a listener to remove.")
+        if (targetUid == uid) throw JamRepositoryException("The host cannot remove themselves. Use Leave Jam instead.")
+        val target = session.collection(PARTICIPANTS).document(targetUid)
+        return firestore.runTransaction { tx ->
+            val snapshot = tx.get(session)
+            val targetSnapshot = tx.get(target)
+            val requestSnapshots = JamFeature.values().associateWith { feature ->
+                val ref = featureRequestRef(session.id, feature)
+                ref to tx.get(ref)
+            }
+            if (snapshot.getString("hostUid") != uid) throw JamRepositoryException("Only the host can remove a listener.")
+            if (!targetSnapshot.exists()) throw JamRepositoryException("This listener has already left the Jam.")
+            val currentCount = (snapshot.getLong("participantCount") ?: 0L).coerceAtLeast(1L)
+            val remainingCount = (currentCount - 1L).coerceAtLeast(0L)
+            val kicked = (snapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty().toMutableList()
+            if (targetUid !in kicked) kicked.add(targetUid)
+            val targetName = targetSnapshot.getString("displayName")?.takeIf(String::isNotBlank) ?: "This listener"
+            val shouldClose = remainingCount < 2L
+            val publicMessage = if (shouldClose) {
+                "The Jam closed because the host removed the last guest."
+            } else {
+                "$targetName was removed from the Jam and cannot rejoin this room."
+            }
+            val targetMessage = "The host removed you from this Jam. You cannot rejoin this Jam room."
+            val revision = (snapshot.getLong("revision") ?: 0L) + 1L
+            val updates = mutableMapOf<String, Any>(
+                "participantCount" to remainingCount,
+                "kickedUids" to kicked,
+                "lastRemovedUid" to targetUid,
+                "announcement" to mapOf(
+                    "message" to publicMessage,
+                    "targetUid" to targetUid,
+                    "targetMessage" to targetMessage,
+                    "createdAt" to Timestamp.now()
+                ),
+                "revision" to revision
+            )
+            if (shouldClose) updates["status"] = "CLOSED"
+            requestSnapshots.values.forEach { (ref, requestSnapshot) ->
+                if (shouldClose || requestSnapshot.getString("requesterUid") == targetUid) {
+                    resolveFeatureRequestDoc(tx, ref, requestSnapshot, blockRequester = false)
+                }
+            }
+            tx.delete(target)
+            tx.update(session, updates)
+            mapOf(
+                "ok" to true,
+                "sessionClosed" to shouldClose,
+                "message" to if (shouldClose) "The Jam was closed because only the host would remain." else "$targetName was removed from the Jam."
+            )
+        }.await()
     }
 
     private fun recommendationRef(data: Map<String, Any>) = sessionRef(sessionId(data)).collection(RECOMMENDATIONS)
         .document(data["recommendationId"] as? String ?: throw JamRepositoryException("Recommendation is missing."))
     private fun sessionId(data: Map<String, Any>) = data["sessionId"] as? String ?: throw JamRepositoryException("Jam session is missing.")
+    private fun featureFromId(value: String?): JamFeature = JamFeature.values().firstOrNull { it.documentId == value }
+        ?: throw JamRepositoryException("This Jam feature is not supported.")
+    private fun featureRequestRef(sessionId: String, feature: JamFeature) =
+        sessionRef(sessionId).collection(FEATURE_REQUESTS).document(feature.documentId)
+
+    private fun resolveFeatureRequestDoc(
+        transaction: Transaction,
+        ref: DocumentReference,
+        snapshot: DocumentSnapshot,
+        blockRequester: Boolean
+    ) {
+        if (!snapshot.exists() || snapshot.getBoolean("active") != true) return
+        val requesterUid = snapshot.getString("requesterUid").orEmpty()
+        val blockedUids = (snapshot.get("blockedUids") as? List<*>)?.filterIsInstance<String>().orEmpty().toMutableList()
+        if (blockRequester && requesterUid.isNotBlank() && requesterUid !in blockedUids) blockedUids.add(requesterUid)
+        transaction.update(ref, mapOf(
+            "active" to false,
+            "requesterUid" to "",
+            "requesterName" to "",
+            "resolvedAt" to FieldValue.serverTimestamp(),
+            "blockedUids" to blockedUids
+        ))
+    }
+
     private fun safeDisplayName(data: Map<String, Any>) = (data["displayName"] as? String)?.trim()?.take(80)?.ifBlank { "Listener" } ?: "Listener"
     private fun safePhoto(data: Map<String, Any>) = (data["photoUrl"] as? String)?.takeIf { it.startsWith("https://") }?.take(500).orEmpty()
     private fun participantRecord(uid: String, displayName: String?, photo: String?, host: Boolean) = mapOf(
@@ -706,6 +1034,18 @@ class JamRepository(
         lastSeenAtMs = snapshot.getTimestamp("lastSeenAt")?.toDate()?.time ?: 0L,
         isHost = snapshot.getString("role") == "HOST"
     )
+
+    private fun featureRequestFrom(snapshot: DocumentSnapshot): JamFeatureRequest? {
+        val feature = JamFeature.values().firstOrNull { it.documentId == snapshot.id } ?: return null
+        return JamFeatureRequest(
+            feature = feature,
+            requesterUid = snapshot.getString("requesterUid").orEmpty(),
+            requesterName = snapshot.getString("requesterName").orEmpty(),
+            createdAtMs = snapshot.getTimestamp("createdAt")?.toDate()?.time ?: 0L,
+            blockedUids = (snapshot.get("blockedUids") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+            active = snapshot.getBoolean("active") == true
+        )
+    }
 
     private fun queueItemFrom(snapshot: DocumentSnapshot): JamQueueItem? {
         val data = snapshot.get("track") as? Map<*, *> ?: return null
@@ -796,6 +1136,7 @@ class JamRepository(
         private const val PARTICIPANTS = "participants"
         private const val QUEUE = "queue"
         private const val RECOMMENDATIONS = "recommendations"
+        private const val FEATURE_REQUESTS = "featureRequests"
         private const val MAX_RECOMMENDATIONS = 30
     }
 }

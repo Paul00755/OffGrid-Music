@@ -46,6 +46,8 @@ class JamFeatureController(
     val queue: StateFlow<List<JamQueueItem>> = _queue.asStateFlow()
     private val _recommendations = MutableStateFlow<List<JamRecommendation>>(emptyList())
     val recommendations: StateFlow<List<JamRecommendation>> = _recommendations.asStateFlow()
+    private val _featureRequests = MutableStateFlow<List<JamFeatureRequest>>(emptyList())
+    val featureRequests: StateFlow<List<JamFeatureRequest>> = _featureRequests.asStateFlow()
     private val _invite = MutableStateFlow<JamInvite?>(null)
     val invite: StateFlow<JamInvite?> = _invite.asStateFlow()
     private val _localTrackAvailable = MutableStateFlow(true)
@@ -68,12 +70,15 @@ class JamFeatureController(
     private var queueListenerJob: Job? = null
     private var participantListenerJob: Job? = null
     private var recommendationListenerJob: Job? = null
+    private var featureRequestListenerJob: Job? = null
     private var heartbeatJob: Job? = null
     private var driftJob: Job? = null
+    private var soloCloseJob: Job? = null
     private var lastAppliedRevision = -1L
     private var lastAppliedTrackId: String? = null
     private var lastHandledEndTrackId: String? = null
     private var restoredForUid: String? = null
+    private var lastAnnouncementAtMs: Long = 0L
     private val handlingEnd = AtomicBoolean(false)
 
     private val endedListener = object : Player.Listener {
@@ -113,7 +118,7 @@ class JamFeatureController(
                     val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
                     val savedSession = prefs.getString(KEY_ACTIVE_SESSION, null)
                     if (_sessionId.value == null && prefs.getString(KEY_ACTIVE_UID, null) == uid && !savedSession.isNullOrBlank()) {
-                        activateSession(savedSession, JamPage.ACTIVE)
+                        activateSession(savedSession, JamPage.ACTIVE, restoringSavedSession = true)
                     }
                 }
                 val pending = pendingAction
@@ -177,10 +182,16 @@ class JamFeatureController(
     }
 
     fun openPage(page: JamPage) {
+        val session = _session.value
+        val uid = authManager.currentUser?.uid
+        if (page == JamPage.ACTIVE && session != null && !session.started &&
+            session.hostUid == uid && session.participantCount < 2) {
+            _page.value = JamPage.INVITE
+            return
+        }
         if (_sessionId.value != null && page == JamPage.LANDING) {
-            val session = _session.value
             val hostStillWaiting = session?.started != true &&
-                (_page.value == JamPage.INVITE || session?.hostUid == authManager.currentUser?.uid)
+                (_page.value == JamPage.INVITE || (_invite.value != null && session?.hostUid == uid))
             _page.value = if (hostStillWaiting) {
                 JamPage.INVITE
             } else {
@@ -203,13 +214,17 @@ class JamFeatureController(
         val account = currentAccountOrNull() ?: run { requestCreate(); return }
         runAction {
             val invite = repository.createSession(
-                displayName = displayName.value.ifBlank { account.displayName ?: "Listener" },
+                displayName = resolvedDisplayName(account),
                 photoUrl = account.photoUrl,
                 permissions = permissions,
                 maxParticipants = maxParticipants
             )
             activateSession(invite.sessionId, page = JamPage.INVITE)
             _invite.value = invite
+            context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_ACTIVE_INVITE_CODE, invite.code)
+                .putString(KEY_ACTIVE_INVITE_URL, invite.url)
+                .apply()
         }
     }
 
@@ -218,7 +233,7 @@ class JamFeatureController(
         runAction {
             val id = repository.joinByCode(
                 code = code,
-                displayName = displayName.value.ifBlank { account.displayName ?: "Listener" },
+                displayName = resolvedDisplayName(account),
                 photoUrl = account.photoUrl
             )
             _invite.value = null
@@ -303,6 +318,17 @@ class JamFeatureController(
         runAction { repository.updatePermissions(id, permissions) }
     }
 
+    fun requestFeature(feature: JamFeature) {
+        val id = _sessionId.value ?: return
+        val account = currentAccountOrNull() ?: return
+        runAction { repository.requestFeature(id, feature, resolvedDisplayName(account)) }
+    }
+
+    fun resolveFeatureRequest(feature: JamFeature, enableFeature: Boolean, blockRequester: Boolean = false) {
+        val id = _sessionId.value ?: return
+        runAction { repository.resolveFeatureRequest(id, feature, enableFeature, blockRequester) }
+    }
+
     fun togglePlayback() {
         val current = _session.value ?: return
         setPlaybackPlaying(!current.playback.isPlaying)
@@ -335,26 +361,29 @@ class JamFeatureController(
             repository.closeSession(id)
             stopObserving(restorePlayback = true)
             _page.value = JamPage.LANDING
+            _uiState.value = JamUiState.Notice("Jam room closed for everyone.")
         }
     }
 
     fun leaveJam() {
         val id = _sessionId.value ?: return
         runAction {
-            repository.leave(id)
+            val result = repository.leave(id)
             stopObserving(restorePlayback = true)
             _page.value = JamPage.LANDING
+            result.message?.let { _uiState.value = JamUiState.Notice(it) }
         }
     }
 
-    fun transferHostAndLeave(participantUid: String) {
+    fun removeParticipant(participantUid: String) {
         val id = _sessionId.value ?: return
-        if (participantUid.isBlank()) return
         runAction {
-            repository.transferHost(id, participantUid)
-            repository.leave(id)
-            stopObserving(restorePlayback = true)
-            _page.value = JamPage.LANDING
+            val result = repository.removeParticipant(id, participantUid)
+            if (result.sessionClosed) {
+                stopObserving(restorePlayback = true)
+                _page.value = JamPage.LANDING
+            }
+            _uiState.value = JamUiState.Notice(result.message ?: "Listener removed from the Jam.")
         }
     }
 
@@ -378,13 +407,15 @@ class JamFeatureController(
         val account = currentAccountOrNull() ?: return
         scope.launch {
             runCatching {
-                repository.heartbeat(id, displayName.value.ifBlank { account.displayName ?: "Listener" }, account.photoUrl)
+                repository.heartbeat(id, resolvedDisplayName(account), account.photoUrl)
             }.onFailure { _uiState.value = JamUiState.Error(it.message ?: "Connection was interrupted.") }
         }
     }
 
-    private fun activateSession(id: String, page: JamPage) {
+    private fun activateSession(id: String, page: JamPage, restoringSavedSession: Boolean = false) {
         stopListenersOnly()
+        soloCloseJob?.cancel()
+        soloCloseJob = null
         if (_sessionId.value == null) previousPlayback = playbackManager.playbackState.value
         playbackManager.setJamPlaybackActive(true)
         playbackManager.setJamCommandHandler { action, value ->
@@ -398,17 +429,29 @@ class JamFeatureController(
         }
         playbackManager.pauseJamPlayback()
         _sessionId.value = id
+        val accountUid = currentAccountOrNull()?.uid
+        val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
+        val isSameSavedSession = restoringSavedSession &&
+            prefs.getString(KEY_ACTIVE_UID, null) == accountUid &&
+            prefs.getString(KEY_ACTIVE_SESSION, null) == id
+        val restoredInvite = if (isSameSavedSession) {
+            prefs.getString(KEY_ACTIVE_INVITE_CODE, null)?.takeIf(String::isNotBlank)?.let { code ->
+                JamInvite(id, code, prefs.getString(KEY_ACTIVE_INVITE_URL, null))
+            }
+        } else null
+        _invite.value = restoredInvite
         currentAccountOrNull()?.uid?.let { uid ->
-            context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY_ACTIVE_UID, uid)
-                .putString(KEY_ACTIVE_SESSION, id)
-                .apply()
+            prefs.edit().putString(KEY_ACTIVE_UID, uid).putString(KEY_ACTIVE_SESSION, id).apply()
+        }
+        if (!isSameSavedSession) {
+            prefs.edit().remove(KEY_ACTIVE_INVITE_CODE).remove(KEY_ACTIVE_INVITE_URL).apply()
         }
         _session.value = null
         _participants.value = emptyList()
         _queue.value = emptyList()
         _recommendations.value = emptyList()
-        _page.value = page
+        _featureRequests.value = emptyList()
+        _page.value = if (restoredInvite != null && page == JamPage.ACTIVE) JamPage.INVITE else page
         _uiState.value = JamUiState.Idle
         lastAppliedRevision = -1L
         lastAppliedTrackId = null
@@ -425,11 +468,43 @@ class JamFeatureController(
                 }
                 .collectLatest { session ->
                     _session.value = session
+                    val uid = authManager.currentUser?.uid
+                    if (session != null && uid != null && uid in session.kickedUids) {
+                        val removalMessage = session.announcement?.forUser(uid)
+                            ?: "The host removed you from this Jam. You cannot rejoin this Jam room."
+                        stopObserving(restorePlayback = true)
+                        _page.value = JamPage.LANDING
+                        _uiState.value = JamUiState.Notice(removalMessage)
+                        return@collectLatest
+                    }
                     if (session == null || !session.isActive) {
                         if (_sessionId.value == id) {
-                            _uiState.value = JamUiState.Error("This Jam has ended.")
+                            _uiState.value = JamUiState.Notice(
+                                session?.announcement?.forUser(authManager.currentUser?.uid.orEmpty()) ?: "This Jam has ended."
+                            )
                             stopObserving(restorePlayback = true)
                             _page.value = JamPage.LANDING
+                        }
+                    } else {
+                        val announcement = session.announcement
+                        if (announcement != null && announcement.createdAtMs > lastAnnouncementAtMs &&
+                            System.currentTimeMillis() - announcement.createdAtMs < 5 * 60_000L) {
+                            lastAnnouncementAtMs = announcement.createdAtMs
+                            _uiState.value = JamUiState.Notice(announcement.forUser(uid.orEmpty()))
+                        }
+                        if (session.started && session.participantCount < 2) {
+                            _page.value = JamPage.LANDING
+                            _uiState.value = JamUiState.Notice("This Jam is closing because fewer than two listeners remain.")
+                        } else if (!session.started && session.hostUid == uid && _page.value == JamPage.ACTIVE) {
+                            _page.value = JamPage.INVITE
+                        } else if (session.started && _page.value == JamPage.INVITE) {
+                            _page.value = JamPage.ACTIVE
+                        }
+                        if (session.started && session.participantCount < 2 && soloCloseJob?.isActive != true) {
+                            soloCloseJob = scope.launch {
+                                runCatching { repository.closeIfStartedWithOneListener(id) }
+                                    .onFailure { _uiState.value = JamUiState.Error(it.message ?: "Couldn't close an empty Jam room.") }
+                            }
                         }
                     }
                 }
@@ -445,6 +520,9 @@ class JamFeatureController(
                 _recommendations.value = recommendations
                 syncLocalTransfers(recommendations)
             }
+        }
+        featureRequestListenerJob = scope.launch {
+            repository.observeFeatureRequests(id).collectLatest { _featureRequests.value = it }
         }
         heartbeatJob = scope.launch {
             while (_sessionId.value == id) {
@@ -555,6 +633,7 @@ class JamFeatureController(
         _participants.value = emptyList()
         _queue.value = emptyList()
         _recommendations.value = emptyList()
+        _featureRequests.value = emptyList()
         _invite.value = null
         _localTrackAvailable.value = true
         if (restorePlayback) {
@@ -564,6 +643,8 @@ class JamFeatureController(
         context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE).edit()
             .remove(KEY_ACTIVE_UID)
             .remove(KEY_ACTIVE_SESSION)
+            .remove(KEY_ACTIVE_INVITE_CODE)
+            .remove(KEY_ACTIVE_INVITE_URL)
             .apply()
         lastAppliedRevision = -1L
         lastAppliedTrackId = null
@@ -574,12 +655,23 @@ class JamFeatureController(
         queueListenerJob?.cancel(); queueListenerJob = null
         participantListenerJob?.cancel(); participantListenerJob = null
         recommendationListenerJob?.cancel(); recommendationListenerJob = null
+        featureRequestListenerJob?.cancel(); featureRequestListenerJob = null
         heartbeatJob?.cancel(); heartbeatJob = null
         driftJob?.cancel(); driftJob = null
+        soloCloseJob?.cancel(); soloCloseJob = null
     }
 
     private fun currentAccountOrNull(): UserAccount? = userAccount.value ?: authManager.currentUser?.let {
         UserAccount(uid = it.uid, email = it.email, displayName = it.displayName, photoUrl = it.photoUrl?.toString())
+    }
+
+    private fun resolvedDisplayName(account: UserAccount): String {
+        val appName = displayName.value.trim()
+            .takeIf { it.isNotBlank() && !it.equals("Music Lover", ignoreCase = true) }
+        return appName
+            ?: account.displayName?.trim()?.takeIf(String::isNotBlank)
+            ?: account.email?.substringBefore("@")?.trim()?.takeIf(String::isNotBlank)
+            ?: "Listener"
     }
 
     private fun syncLocalTransfers(recommendations: List<JamRecommendation>) {
@@ -614,7 +706,9 @@ class JamFeatureController(
             _uiState.value = JamUiState.Loading
             try {
                 block()
-                if (_uiState.value !is JamUiState.Error) _uiState.value = JamUiState.Idle
+                if (_uiState.value !is JamUiState.Error && _uiState.value !is JamUiState.Notice) {
+                    _uiState.value = JamUiState.Idle
+                }
             } catch (error: Throwable) {
                 _uiState.value = JamUiState.Error(error.message ?: "Jam couldn't complete that action.")
             }
@@ -628,6 +722,8 @@ class JamFeatureController(
         private const val TRANSFER_PREFS = "offgrid_jam_transfers"
         private const val KEY_ACTIVE_UID = "active_user_id"
         private const val KEY_ACTIVE_SESSION = "active_session_id"
+        private const val KEY_ACTIVE_INVITE_CODE = "active_invite_code"
+        private const val KEY_ACTIVE_INVITE_URL = "active_invite_url"
         private const val MAX_MATCH_DURATION_DIFF_MS = 4_000L
         private const val DRIFT_CHECK_INTERVAL_MS = 15_000L
         private const val SEEK_DRIFT_THRESHOLD_MS = 1_800L

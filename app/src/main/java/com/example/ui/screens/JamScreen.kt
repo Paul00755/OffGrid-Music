@@ -37,6 +37,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -71,7 +72,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -106,6 +106,8 @@ import coil.compose.AsyncImage
 import com.example.data.model.Song
 import com.example.jam.JamAccessMode
 import com.example.jam.JamFeatureController
+import com.example.jam.JamFeature
+import com.example.jam.JamFeatureRequest
 import com.example.jam.JamDownloadState
 import com.example.jam.JamPage
 import com.example.jam.JamParticipant
@@ -150,6 +152,7 @@ fun JamScreen(
     val participants = controller?.participants?.collectAsStateWithLifecycle()?.value.orEmpty()
     val queue = controller?.queue?.collectAsStateWithLifecycle()?.value.orEmpty()
     val recommendations = controller?.recommendations?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val featureRequests = controller?.featureRequests?.collectAsStateWithLifecycle()?.value.orEmpty()
     val selectedRecommendationId = controller?.selectedRecommendationId?.collectAsStateWithLifecycle()?.value
     val invite = controller?.invite?.collectAsStateWithLifecycle()?.value
     val localTrackAvailable = controller?.localTrackAvailable?.collectAsStateWithLifecycle()?.value ?: false
@@ -162,6 +165,7 @@ fun JamScreen(
     var maxParticipants by rememberSaveable { mutableStateOf(JamRepository.MAX_PARTICIPANTS) }
     var howItWorksStep by rememberSaveable { mutableStateOf<Int?>(null) }
     var showRoomLeaveConfirmation by rememberSaveable { mutableStateOf(false) }
+    var participantUidToRemove by rememberSaveable { mutableStateOf<String?>(null) }
     var showNotificationRationale by remember { mutableStateOf(false) }
     var notificationPermissionDenied by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -211,7 +215,8 @@ fun JamScreen(
     BackHandler(enabled = page != JamPage.LANDING) {
         when (page) {
             JamPage.ACTIVE -> if (session == null) controller?.openPage(JamPage.LANDING) else showRoomLeaveConfirmation = true
-            JamPage.CREATE, JamPage.JOIN, JamPage.INVITE -> controller?.openPage(JamPage.LANDING)
+            JamPage.INVITE -> showRoomLeaveConfirmation = true
+            JamPage.CREATE, JamPage.JOIN -> controller?.openPage(JamPage.LANDING)
             JamPage.PERMISSIONS -> controller?.openPage(JamPage.ACTIVE)
             else -> controller?.openPage(JamPage.LANDING)
         }
@@ -224,23 +229,54 @@ fun JamScreen(
             onDismiss = { howItWorksStep = null }
         )
     }
-    if (showRoomLeaveConfirmation && page == JamPage.ACTIVE && session != null) {
+    if (showRoomLeaveConfirmation && page in setOf(JamPage.ACTIVE, JamPage.INVITE) && session != null) {
         RoomLeaveDialog(
             isHost = session.hostUid == currentUid,
             participants = participants,
             currentUid = currentUid.orEmpty(),
+            isWaitingLobby = page == JamPage.INVITE,
             onDismiss = { showRoomLeaveConfirmation = false },
             onLeave = {
                 showRoomLeaveConfirmation = false
                 controller?.leaveJam()
             },
-            onTransferAndLeave = { targetUid ->
-                showRoomLeaveConfirmation = false
-                controller?.transferHostAndLeave(targetUid)
-            },
             onDisband = {
                 showRoomLeaveConfirmation = false
                 controller?.closeJam()
+            }
+        )
+    }
+    participants.firstOrNull { it.uid == participantUidToRemove }?.let { participant ->
+        val removalClosesJam = participants.size <= 2
+        AlertDialog(
+            onDismissRequest = { participantUidToRemove = null },
+            title = { Text(if (removalClosesJam) "Remove listener and close Jam?" else "Remove listener?") },
+            text = {
+                Text(
+                    if (removalClosesJam) {
+                        "A Jam session needs at least two people to continue. If you remove ${participant.displayName}, the room will close automatically. They will not be able to rejoin this Jam room."
+                    } else {
+                        "Note: removing ${participant.displayName} from the Jam means they can no longer join this existing Jam room."
+                    },
+                    color = BentoTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uid = participant.uid
+                        participantUidToRemove = null
+                        controller?.removeParticipant(uid)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(if (removalClosesJam) "Remove and close room" else "Confirm & remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { participantUidToRemove = null }) {
+                    Text(if (removalClosesJam) "Keep user and continue" else "Cancel", color = BentoPrimary)
+                }
             }
         )
     }
@@ -285,8 +321,12 @@ fun JamScreen(
             JamPage.INVITE -> InvitePage(
                 invite = invite,
                 participants = participants,
+                isHost = session?.hostUid != null && session.hostUid == currentUid,
+                currentUid = currentUid.orEmpty(),
                 maxParticipants = session?.maxParticipants ?: maxParticipants,
                 onBackToJam = { controller?.startJam() },
+                onCloseRoom = { showRoomLeaveConfirmation = true },
+                onRemoveParticipant = { participantUidToRemove = it },
                 onCopyCode = { code -> clipboard.setText(AnnotatedString(code)) },
                 onShare = { url, code ->
                     val text = url ?: "Join my OffGrid Jam with invitation code $code"
@@ -305,6 +345,7 @@ fun JamScreen(
                 participants = participants,
                 queue = queue,
                 recommendations = recommendations,
+                featureRequests = featureRequests,
                 selectedRecommendationId = selectedRecommendationId,
                 songs = songs,
                 localTrackAvailable = localTrackAvailable,
@@ -321,6 +362,9 @@ fun JamScreen(
                     permissionDraft = session?.permissions ?: JamPermissions()
                     controller?.openPage(JamPage.PERMISSIONS)
                 },
+                onRequestFeature = { feature -> controller?.requestFeature(feature) },
+                onResolveFeatureRequest = { feature, enable, block -> controller?.resolveFeatureRequest(feature, enable, block) },
+                onRemoveParticipant = { participantUidToRemove = it },
                 onBackRequest = { showRoomLeaveConfirmation = true }
             )
             JamPage.PERMISSIONS -> PermissionsPage(
@@ -482,42 +526,55 @@ private fun JoinPage(onBack: () -> Unit, onJoin: (String) -> Unit, state: JamUiS
 private fun InvitePage(
     invite: com.example.jam.JamInvite?,
     participants: List<JamParticipant>,
+    isHost: Boolean,
+    currentUid: String,
     maxParticipants: Int,
     onBackToJam: () -> Unit,
+    onCloseRoom: () -> Unit,
+    onRemoveParticipant: (String) -> Unit,
     onCopyCode: (String) -> Unit,
     onShare: (String?, String) -> Unit,
     state: JamUiState
 ) {
+    var showAllParticipants by rememberSaveable(invite?.sessionId) { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         JamHeader("Invite people", "Share this code or link with your group")
-        if (state is JamUiState.Loading || invite == null) {
+        if (state is JamUiState.Loading) {
             CircularProgressIndicator(color = BentoPrimary)
         } else {
-            JamCard {
-                Text("INVITATION CODE", style = MaterialTheme.typography.labelLarge, color = BentoTextSecondary, letterSpacing = 1.sp)
-                Text(invite.code.chunked(4).joinToString(" "), style = MaterialTheme.typography.headlineMedium, color = BentoPrimary, fontWeight = FontWeight.Bold)
-                OutlinedButton(onClick = { onCopyCode(invite.code) }, border = BorderStroke(1.dp, BentoCardBorder)) {
-                    Icon(Icons.Default.ContentCopy, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Copy code")
-                }
-            }
-            if (invite.url != null) {
+            if (invite == null) {
                 JamCard {
-                    Text("INVITATION LINK", style = MaterialTheme.typography.labelLarge, color = BentoTextSecondary, letterSpacing = 1.sp)
-                    Text(invite.url, color = BentoTextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    JamQrCode(invite.url)
-                    OutlinedButton(onClick = { onShare(invite.url, invite.code) }, border = BorderStroke(1.dp, BentoCardBorder)) {
-                        Icon(Icons.Default.QrCode2, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Share link or QR")
-                    }
+                    Icon(Icons.Default.Link, contentDescription = null, tint = BentoPrimary)
+                    Text("Invitation code unavailable", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
+                    Text("This saved room is still waiting for listeners, but its old invitation code is no longer on this device. Close this room or start a new one to share a fresh code.", color = BentoTextSecondary)
                 }
             } else {
                 JamCard {
-                    Icon(Icons.Default.Link, contentDescription = null, tint = BentoPrimary)
-                    Text("Invitation links need a configured domain", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("The code is ready to share. Configure JAM_INVITE_HOST and Firebase Hosting to enable verified links and QR invitations.", color = BentoTextSecondary)
+                    Text("INVITATION CODE", style = MaterialTheme.typography.labelLarge, color = BentoTextSecondary, letterSpacing = 1.sp)
+                    Text(invite.code.chunked(4).joinToString(" "), style = MaterialTheme.typography.headlineMedium, color = BentoPrimary, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = { onCopyCode(invite.code) }, border = BorderStroke(1.dp, BentoCardBorder)) {
+                        Icon(Icons.Default.ContentCopy, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copy code")
+                    }
+                }
+                if (invite.url != null) {
+                    JamCard {
+                        Text("INVITATION LINK", style = MaterialTheme.typography.labelLarge, color = BentoTextSecondary, letterSpacing = 1.sp)
+                        Text(invite.url, color = BentoTextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        JamQrCode(invite.url)
+                        OutlinedButton(onClick = { onShare(invite.url, invite.code) }, border = BorderStroke(1.dp, BentoCardBorder)) {
+                            Icon(Icons.Default.QrCode2, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share link or QR")
+                        }
+                    }
+                } else {
+                    JamCard {
+                        Icon(Icons.Default.Link, contentDescription = null, tint = BentoPrimary)
+                        Text("Invitation links need a configured domain", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
+                        Text("The code is ready to share. Configure JAM_INVITE_HOST and Firebase Hosting to enable verified links and QR invitations.", color = BentoTextSecondary)
+                    }
                 }
             }
             JamCard {
@@ -528,8 +585,20 @@ private fun InvitePage(
                 if (participants.isEmpty()) {
                     Text("Waiting for listeners to connect…", color = BentoTextSecondary)
                 } else {
-                    participants.take(4).forEach { participant -> CompactParticipantRow(participant) }
-                    if (participants.size > 4) Text("and ${participants.size - 4} more…", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                    (if (showAllParticipants) participants else participants.take(4)).forEach { participant ->
+                        CompactParticipantRow(participant) {
+                            if (isHost && participant.uid != currentUid) {
+                                IconButton(onClick = { onRemoveParticipant(participant.uid) }) {
+                                    Icon(Icons.Default.RemoveCircleOutline, "Remove ${participant.displayName}", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                    if (participants.size > 4) {
+                        TextButton(onClick = { showAllParticipants = !showAllParticipants }) {
+                            Text(if (showAllParticipants) "Show fewer" else "Show all ${participants.size} listeners", color = BentoPrimary)
+                        }
+                    }
                 }
                 if (participants.size < 2) {
                     Text("Wait for at least one other person to join before opening the room.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
@@ -543,6 +612,16 @@ private fun InvitePage(
                 enabled = participants.size >= 2 && state !is JamUiState.Loading,
                 onClick = onBackToJam
             )
+            OutlinedButton(
+                onClick = onCloseRoom,
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(8.dp))
+                Text("Close Jam Room", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+            }
         }
         JamStatus(state)
     }
@@ -645,40 +724,43 @@ private fun RoomLeaveDialog(
     isHost: Boolean,
     participants: List<JamParticipant>,
     currentUid: String,
+    isWaitingLobby: Boolean,
     onDismiss: () -> Unit,
     onLeave: () -> Unit,
-    onTransferAndLeave: (String) -> Unit,
     onDisband: () -> Unit
 ) {
-    val candidates = remember(participants, currentUid) { participants.filter { it.uid != currentUid } }
-    var selectedHostUid by remember(participants, currentUid) { mutableStateOf(candidates.firstOrNull()?.uid.orEmpty()) }
+    val candidates = remember(participants, currentUid) {
+        participants.filter { it.uid != currentUid }.sortedBy { it.joinedAtMs }
+    }
+    val nextHost = candidates.firstOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isHost) "Leave as host?" else "Leave this Jam?") },
+        title = {
+            Text(when {
+                !isHost -> "Leave this Jam?"
+                isWaitingLobby -> "Close the invite room?"
+                else -> "Leave as host?"
+            })
+        },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (isHost) {
-                    Text("Choose a new host for the listeners who remain, or disband the room for everyone.", color = BentoTextSecondary)
-                    if (candidates.isNotEmpty()) {
-                        Text("Assign host", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
-                        candidates.forEach { participant ->
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { selectedHostUid = participant.uid }.padding(end = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = selectedHostUid == participant.uid, onClick = { selectedHostUid = participant.uid })
-                                Text(participant.displayName, color = BentoTextPrimary)
-                                if (!participant.isConnected) Text(" · reconnecting", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
+                    if (candidates.size >= 2 && nextHost != null) {
+                        Text("If you leave, ${nextHost.displayName} will automatically become host because they joined first. Everyone in the room will see a message. The Jam stays open with at least two listeners remaining.", color = BentoTextSecondary)
+                    } else if (candidates.size == 1) {
+                        Text("Only one listener would remain after you leave, so the Jam will close and notify them.", color = BentoTextSecondary)
                     } else {
-                        Text("No other listener has joined yet, so this room can only be disbanded.", color = BentoTextSecondary)
+                        Text("No listener has joined yet, so leaving closes this Jam room.", color = BentoTextSecondary)
                     }
                 } else {
-                    Text("You’ll leave the room and your previous local queue and playback will be restored.", color = BentoTextSecondary)
+                    Text(
+                        if (participants.size <= 2) "You are the only guest. Leaving will close the Jam because only one listener would remain; the host will be notified. Your previous playback will be restored."
+                        else "You’ll leave the room and your previous local queue and playback will be restored.",
+                        color = BentoTextSecondary
+                    )
                 }
             }
         },
@@ -686,22 +768,88 @@ private fun RoomLeaveDialog(
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (isHost && candidates.isNotEmpty()) {
                     OutlinedButton(
-                        onClick = { onTransferAndLeave(selectedHostUid) },
-                        enabled = selectedHostUid.isNotBlank(),
+                        onClick = onLeave,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Assign host and leave") }
+                    ) {
+                        Text(if (candidates.size >= 2) "Leave and hand off to first listener" else "Leave and close the Jam")
+                    }
                 }
-                if (isHost) {
+                if (isHost && candidates.size >= 2) {
                     Button(onClick = onDisband, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
                         Text("Disband room for everyone")
                     }
+                } else if (isHost && candidates.isEmpty()) {
+                    Button(onClick = onLeave, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+                        Text("Close Jam Room")
+                    }
                 } else {
-                    Button(onClick = onLeave, modifier = Modifier.fillMaxWidth()) { Text("Leave Jam") }
+                    if (!isHost) Button(onClick = onLeave, modifier = Modifier.fillMaxWidth()) { Text("Leave Jam") }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Stay in Jam", color = BentoPrimary) }
             }
         }
     )
+}
+
+@Composable
+private fun JamFeatureRequestCard(
+    request: JamFeatureRequest,
+    remainingMs: Long,
+    isHost: Boolean,
+    onRespond: () -> Unit,
+    onIgnore: () -> Unit
+) {
+    JamCard {
+        Text(
+            "${request.requesterName} requested the host to enable ${request.feature.title}.",
+            color = BentoTextPrimary,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text("Request expires in ${formatRequestTime(remainingMs)}.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+        if (isHost) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onRespond) { Text("Respond", color = BentoPrimary) }
+                TextButton(onClick = onIgnore) { Text("Ignore", color = BentoTextSecondary) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeatureRequestPrompt(
+    feature: JamFeature,
+    request: JamFeatureRequest?,
+    requestBlocked: Boolean,
+    onRequest: () -> Unit
+) {
+    JamCard {
+        Text(
+            when (feature) {
+                JamFeature.SHARED_RECOMMENDATIONS -> "Want to recommend a song? Ask the host to enable song recommendations for this Jam."
+                JamFeature.LOCAL_SONG_SHARING -> "Want to share a local song? Ask the host to enable local song sharing for this Jam."
+            },
+            color = BentoTextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (requestBlocked) {
+            Text("The host blocked requests for this feature in this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+        } else if (request == null) {
+            TextButton(onClick = onRequest, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                Text("Request", color = BentoPrimary, fontWeight = FontWeight.SemiBold)
+            }
+        } else {
+            Text(
+                "${request.requesterName} has already requested this feature · ${formatRequestTime(request.remainingMs())} left",
+                color = BentoPrimary,
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
+}
+
+private fun formatRequestTime(remainingMs: Long): String {
+    val totalSeconds = ((remainingMs.coerceAtLeast(0L) + 999L) / 1_000L).toInt()
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 @Composable
@@ -711,6 +859,7 @@ private fun ActivePage(
     participants: List<JamParticipant>,
     queue: List<JamQueueItem>,
     recommendations: List<JamRecommendation>,
+    featureRequests: List<JamFeatureRequest>,
     selectedRecommendationId: String?,
     songs: List<Song>,
     localTrackAvailable: Boolean,
@@ -719,6 +868,9 @@ private fun ActivePage(
     onNotificationSettings: () -> Unit,
     state: JamUiState,
     onPermissions: () -> Unit,
+    onRequestFeature: (JamFeature) -> Unit,
+    onResolveFeatureRequest: (JamFeature, Boolean, Boolean) -> Unit,
+    onRemoveParticipant: (String) -> Unit,
     onBackRequest: () -> Unit
 ) {
     val context = LocalContext.current
@@ -761,6 +913,18 @@ private fun ActivePage(
     var queueExpanded by rememberSaveable { mutableStateOf(true) }
     var sharingExpanded by rememberSaveable { mutableStateOf(false) }
     var libraryExpanded by rememberSaveable { mutableStateOf(false) }
+    var requestClockMs by remember(session?.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    var selectedFeatureRequest by remember { mutableStateOf<JamFeatureRequest?>(null) }
+    var blockFeatureRequester by remember { mutableStateOf(false) }
+    LaunchedEffect(session?.id) {
+        while (session != null) {
+            requestClockMs = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1_000L)
+        }
+    }
+    val activeFeatureRequests = remember(featureRequests, requestClockMs) {
+        featureRequests.filter { it.isPending(requestClockMs) }
+    }
     val noMatchesFound = queue.isEmpty() || (currentItem != null && !localTrackAvailable)
     val visibleSongs = remember(songs, libraryQuery) {
         val query = libraryQuery.trim()
@@ -774,6 +938,38 @@ private fun ActivePage(
             sliderPosition = playback.estimatedPosition().toFloat().coerceIn(0f, durationMs.toFloat())
             kotlinx.coroutines.delay(500L)
         }
+    }
+
+    selectedFeatureRequest?.takeIf { it.isPending(requestClockMs) }?.let { request ->
+        AlertDialog(
+            onDismissRequest = { selectedFeatureRequest = null; blockFeatureRequester = false },
+            title = { Text("Respond to request") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${request.requesterName} asked you to enable ${request.feature.title}.", color = BentoTextPrimary)
+                    Text("You can enable it now or keep the current setting. This request expires in ${formatRequestTime(request.remainingMs(requestClockMs))}.", color = BentoTextSecondary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = blockFeatureRequester, onCheckedChange = { blockFeatureRequester = it })
+                        Text("Block this user from requesting this feature again in this Jam", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = {
+                        onResolveFeatureRequest(request.feature, true, blockFeatureRequester)
+                        selectedFeatureRequest = null
+                        blockFeatureRequester = false
+                    }) { Text("Enable this feature", color = BentoPrimary) }
+                    TextButton(onClick = {
+                        onResolveFeatureRequest(request.feature, false, blockFeatureRequester)
+                        selectedFeatureRequest = null
+                        blockFeatureRequester = false
+                    }) { Text("Keep current setting", color = BentoPrimary) }
+                    TextButton(onClick = { selectedFeatureRequest = null; blockFeatureRequester = false }) { Text("Cancel", color = BentoTextSecondary) }
+                }
+            }
+        )
     }
 
     LazyColumn(
@@ -797,6 +993,37 @@ private fun ActivePage(
                 }
             )
         }
+        if (activeFeatureRequests.isNotEmpty()) {
+            itemsIndexed(activeFeatureRequests, key = { _, request -> "request-${request.feature.documentId}" }) { _, request ->
+                JamFeatureRequestCard(
+                    request = request,
+                    remainingMs = request.remainingMs(requestClockMs),
+                    isHost = isHost,
+                    onRespond = { selectedFeatureRequest = request; blockFeatureRequester = false },
+                    onIgnore = { onResolveFeatureRequest(request.feature, false, false) }
+                )
+            }
+        }
+        if (!isHost && !permissions.allowSharedLibraryRecommendations) {
+            item {
+                FeatureRequestPrompt(
+                    feature = JamFeature.SHARED_RECOMMENDATIONS,
+                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
+                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
+                    onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
+                )
+            }
+        }
+        if (!isHost && !permissions.allowLocalSongSharing) {
+            item {
+                FeatureRequestPrompt(
+                    feature = JamFeature.LOCAL_SONG_SHARING,
+                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
+                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
+                    onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
+                )
+            }
+        }
         if (noMatchesFound) item {
             JamCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -815,8 +1042,6 @@ private fun ActivePage(
                     if (isHost) {
                         Text("Local song sharing is off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                         TextButton(onClick = onPermissions) { Text("Turn on sharing in Permissions", color = BentoPrimary) }
-                    } else {
-                        Text("Ask the host to turn on song sharing in the Permissions menu.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                     }
                 } else {
                     Text("Choose an audio file below. Once everyone approves, it transfers directly to the other devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
@@ -870,7 +1095,17 @@ private fun ActivePage(
                 icon = Icons.Default.Groups,
                 expanded = participantsExpanded,
                 onToggle = { participantsExpanded = !participantsExpanded }
-            ) { participants.forEach { CompactParticipantRow(it) } }
+            ) {
+                participants.forEach { participant ->
+                    CompactParticipantRow(participant) {
+                        if (isHost && participant.uid != currentUid) {
+                            IconButton(onClick = { onRemoveParticipant(participant.uid) }) {
+                                Icon(Icons.Default.RemoveCircleOutline, "Remove ${participant.displayName}", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
         }
         item {
             JamAccordion(
@@ -898,7 +1133,7 @@ private fun ActivePage(
                 }
             }
         }
-        item {
+        if (isHost || permissions.allowSharedLibraryRecommendations) item {
             JamAccordion(
                 title = "Song recommendations",
                 summary = "${recommendations.count { it.isVoting }} voting",
@@ -907,7 +1142,9 @@ private fun ActivePage(
                 onToggle = { recommendationsExpanded = !recommendationsExpanded }
             ) {
                 RecommendationPanel(
-                    recommendations = recommendations,
+                    recommendations = recommendations.filter { recommendation ->
+                        recommendation.type != JamRecommendationType.LOCAL_SONG || isHost || permissions.allowLocalSongSharing
+                    },
                     participants = participants,
                     currentUid = currentUid,
                     selectedRecommendationId = selectedRecommendationId,
@@ -917,7 +1154,7 @@ private fun ActivePage(
                 )
             }
         }
-        item {
+        if (isHost || permissions.allowLocalSongSharing) item {
             JamAccordion(
                 title = "Share an audio file",
                 summary = if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off",
@@ -926,12 +1163,8 @@ private fun ActivePage(
                 onToggle = { sharingExpanded = !sharingExpanded }
             ) {
                 if (!permissions.allowLocalSongSharing) {
-                    Text(
-                        if (isHost) "Song sharing is off. Turn it on in Permissions so listeners can propose audio for unanimous approval."
-                        else "Song sharing is off. Ask the host to enable it in the Permissions menu.",
-                        color = BentoTextSecondary
-                    )
-                    if (isHost) OutlinedButton(onClick = onPermissions, border = BorderStroke(1.dp, BentoCardBorder)) {
+                    Text("Song sharing is off. Turn it on in Permissions so listeners can propose audio for unanimous approval.", color = BentoTextSecondary)
+                    OutlinedButton(onClick = onPermissions, border = BorderStroke(1.dp, BentoCardBorder)) {
                         Icon(Icons.Default.Tune, null, tint = BentoPrimary)
                         Spacer(Modifier.width(8.dp))
                         Text("Open permissions")
@@ -1339,6 +1572,9 @@ private fun JamStatus(state: JamUiState) {
         is JamUiState.Error -> JamCard {
             Text(state.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
+        is JamUiState.Notice -> JamCard {
+            Text(state.message, color = BentoPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
@@ -1361,7 +1597,7 @@ private fun ParticipantRow(participant: JamParticipant) {
 }
 
 @Composable
-private fun CompactParticipantRow(participant: JamParticipant) {
+private fun CompactParticipantRow(participant: JamParticipant, trailing: @Composable (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -1379,6 +1615,7 @@ private fun CompactParticipantRow(participant: JamParticipant) {
             Text(if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
         }
         if (participant.isHost) Text("HOST", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        trailing?.invoke()
     }
 }
 

@@ -146,6 +146,57 @@ data class JamPlaybackState(
 }
 
 @Immutable
+data class JamAnnouncement(
+    val message: String,
+    val targetUid: String? = null,
+    val targetMessage: String? = null,
+    val createdAtMs: Long = 0L
+) {
+    fun forUser(uid: String): String =
+        if (targetUid == uid && !targetMessage.isNullOrBlank()) targetMessage else message
+}
+
+data class JamLeaveResult(
+    val sessionClosed: Boolean = false,
+    val message: String? = null
+)
+
+data class JamRemoveResult(
+    val sessionClosed: Boolean = false,
+    val message: String? = null
+)
+
+enum class JamFeature(val documentId: String, val title: String) {
+    SHARED_RECOMMENDATIONS("sharedRecommendations", "song recommendations"),
+    LOCAL_SONG_SHARING("localSongSharing", "local song sharing");
+
+    fun isEnabled(permissions: JamPermissions): Boolean = when (this) {
+        SHARED_RECOMMENDATIONS -> permissions.allowSharedLibraryRecommendations
+        LOCAL_SONG_SHARING -> permissions.allowLocalSongSharing
+    }
+}
+
+@Immutable
+data class JamFeatureRequest(
+    val feature: JamFeature,
+    val requesterUid: String,
+    val requesterName: String,
+    val createdAtMs: Long,
+    val blockedUids: List<String> = emptyList(),
+    val active: Boolean = false
+) {
+    fun remainingMs(nowMs: Long = System.currentTimeMillis()): Long =
+        (createdAtMs + REQUEST_WINDOW_MS - nowMs).coerceAtLeast(0L)
+
+    fun isPending(nowMs: Long = System.currentTimeMillis()): Boolean =
+        active && requesterUid.isNotBlank() && createdAtMs > 0L && remainingMs(nowMs) > 0L
+
+    companion object {
+        const val REQUEST_WINDOW_MS = 2 * 60_000L
+    }
+}
+
+@Immutable
 data class JamSession(
     val id: String,
     val hostUid: String,
@@ -153,6 +204,9 @@ data class JamSession(
     val participantCount: Int,
     val maxParticipants: Int = 10,
     val started: Boolean = false,
+    val formerHostUids: List<String> = emptyList(),
+    val kickedUids: List<String> = emptyList(),
+    val announcement: JamAnnouncement? = null,
     val permissions: JamPermissions,
     val playback: JamPlaybackState,
     val revision: Long,
@@ -182,6 +236,19 @@ data class JamSession(
                 commandType = playbackMap["commandType"] as? String,
                 actorUid = playbackMap["actorUid"] as? String
             )
+            val announcementMap = snapshot.get("announcement") as? Map<*, *>
+            val announcement = (announcementMap?.get("message") as? String)
+                ?.takeIf(String::isNotBlank)
+                ?.let { message ->
+                    JamAnnouncement(
+                        message = message,
+                        targetUid = announcementMap["targetUid"] as? String,
+                        targetMessage = announcementMap["targetMessage"] as? String,
+                        createdAtMs = (announcementMap["createdAtMs"] as? Number)?.toLong()
+                            ?: (announcementMap["createdAt"] as? Timestamp)?.toDate()?.time
+                            ?: 0L
+                    )
+                }
             return JamSession(
                 id = id,
                 hostUid = snapshot.getString("hostUid").orEmpty(),
@@ -189,6 +256,9 @@ data class JamSession(
                 participantCount = (snapshot.getLong("participantCount") ?: 0L).toInt(),
                 maxParticipants = (snapshot.getLong("maxParticipants") ?: 10L).toInt().coerceIn(2, 10),
                 started = snapshot.getBoolean("started") ?: false,
+                formerHostUids = (snapshot.get("formerHostUids") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                kickedUids = (snapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                announcement = announcement,
                 permissions = JamPermissions.from(snapshot.get("permissions")),
                 playback = playback,
                 revision = snapshot.getLong("revision") ?: 0L,
@@ -251,6 +321,7 @@ sealed interface JamUiState {
     data object Idle : JamUiState
     data object Loading : JamUiState
     data class Error(val message: String) : JamUiState
+    data class Notice(val message: String) : JamUiState
 }
 
 internal fun sharedTrackId(track: JamTrack): String {
