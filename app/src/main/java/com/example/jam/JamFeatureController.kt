@@ -56,6 +56,13 @@ class JamFeatureController(
     val currentUid: StateFlow<String?> = _currentUid.asStateFlow()
     private val _selectedRecommendationId = MutableStateFlow<String?>(null)
     val selectedRecommendationId: StateFlow<String?> = _selectedRecommendationId.asStateFlow()
+    private val _sharedLibraryMatches = MutableStateFlow<List<JamSharedLibraryMatch>>(emptyList())
+    val sharedLibraryMatches: StateFlow<List<JamSharedLibraryMatch>> = _sharedLibraryMatches.asStateFlow()
+    private val _libraryIndexStatus = MutableStateFlow(JamLibraryIndexStatus())
+    val libraryIndexStatus: StateFlow<JamLibraryIndexStatus> = _libraryIndexStatus.asStateFlow()
+    private val _remoteLibraryIndex = MutableStateFlow(JamLibraryIndexSnapshot())
+    private var localLibraryEntries: List<LocalLibraryEntry> = emptyList()
+    private var localLibraryReadyForSession: String? = null
 
     private sealed interface PendingAction {
         data object Create : PendingAction
@@ -70,6 +77,7 @@ class JamFeatureController(
     private var queueListenerJob: Job? = null
     private var participantListenerJob: Job? = null
     private var recommendationListenerJob: Job? = null
+    private var libraryIndexListenerJob: Job? = null
     private var featureRequestListenerJob: Job? = null
     private var heartbeatJob: Job? = null
     private var driftJob: Job? = null
@@ -138,6 +146,14 @@ class JamFeatureController(
         scope.launch {
             combine(_session, _queue, allSongs) { session, queue, songs -> Triple(session, queue, songs) }
                 .collectLatest { (session, queue, songs) -> applyPlaybackSnapshot(session, queue, songs) }
+        }
+        scope.launch {
+            combine(_sessionId, allSongs) { sessionId, songs -> sessionId to songs }
+                .collectLatest { (sessionId, songs) -> indexLocalLibrary(sessionId, songs) }
+        }
+        scope.launch {
+            combine(_participants, _remoteLibraryIndex) { participants, index -> participants to index }
+                .collectLatest { updateSharedLibraryMatches() }
         }
     }
 
@@ -266,6 +282,10 @@ class JamFeatureController(
     fun recommendSharedTrack(track: JamTrack) {
         val id = _sessionId.value ?: return
         runAction { repository.createRecommendation(id, JamRecommendationType.SHARED_LIBRARY, track) }
+    }
+
+    fun recommendSharedLibrarySong(match: JamSharedLibraryMatch) {
+        recommendSharedTrack(match.track)
     }
 
     fun recommendLocalTrack(track: JamTrack, uri: Uri, mimeType: String) {
@@ -453,6 +473,11 @@ class JamFeatureController(
         _queue.value = emptyList()
         _recommendations.value = emptyList()
         _featureRequests.value = emptyList()
+        _remoteLibraryIndex.value = JamLibraryIndexSnapshot()
+        _sharedLibraryMatches.value = emptyList()
+        _libraryIndexStatus.value = JamLibraryIndexStatus()
+        localLibraryEntries = emptyList()
+        localLibraryReadyForSession = null
         _page.value = if (restoredInvite != null && page == JamPage.ACTIVE) JamPage.INVITE else page
         _uiState.value = JamUiState.Idle
         lastAppliedRevision = -1L
@@ -519,7 +544,24 @@ class JamFeatureController(
         participantListenerJob = scope.launch {
             repository.observeParticipants(id)
                 .catch { error -> handleListenerFailure(id, error) }
-                .collectLatest { _participants.value = it }
+                .collectLatest {
+                    _participants.value = it
+                    updateSharedLibraryMatches()
+                }
+        }
+        libraryIndexListenerJob = scope.launch {
+            repository.observeSharedLibraryIndex(id)
+                .catch { error ->
+                    if (_sessionId.value == id) {
+                        _libraryIndexStatus.value = _libraryIndexStatus.value.copy(
+                            error = error.message ?: "Couldn't read the shared library index."
+                        )
+                    }
+                }
+                .collectLatest {
+                    _remoteLibraryIndex.value = it
+                    updateSharedLibraryMatches()
+                }
         }
         recommendationListenerJob = scope.launch {
             repository.observeRecommendations(id)
@@ -596,7 +638,108 @@ class JamFeatureController(
         }
     }
 
+    private data class LocalLibraryEntry(
+        val song: Song,
+        val track: JamTrack,
+        val audioFingerprint: String?,
+        val matchKeys: List<String>
+    )
+
+    private suspend fun indexLocalLibrary(sessionId: String?, songs: List<Song>) {
+        if (sessionId.isNullOrBlank()) {
+            localLibraryEntries = emptyList()
+            localLibraryReadyForSession = null
+            _sharedLibraryMatches.value = emptyList()
+            _libraryIndexStatus.value = JamLibraryIndexStatus()
+            return
+        }
+
+        delay(650L) // Let MediaStore scans settle before rebuilding the private Jam index.
+        val eligibleSongs = songs.filter { !it.isMissing && !it.isCorrupted && it.durationMs > 0L }
+        localLibraryEntries = emptyList()
+        localLibraryReadyForSession = null
+        _sharedLibraryMatches.value = emptyList()
+        _libraryIndexStatus.value = JamLibraryIndexStatus(
+            localTotalTracks = eligibleSongs.size,
+            participantCount = _participants.value.count { it.isConnected }
+        )
+
+        val entries = ArrayList<LocalLibraryEntry>(eligibleSongs.size)
+        eligibleSongs.forEachIndexed { index, song ->
+            val audioFingerprint = JamLibraryFingerprint.forSong(context, song)
+            val track = trackFrom(song, audioFingerprint)
+            if (track != null) {
+                val keys = jamLibraryMatchKeys(track, audioFingerprint, sessionId)
+                if (keys.isNotEmpty()) entries += LocalLibraryEntry(song, track, audioFingerprint, keys)
+            }
+            if ((index + 1) % 20 == 0 || index == eligibleSongs.lastIndex) {
+                _libraryIndexStatus.value = _libraryIndexStatus.value.copy(localIndexedTracks = index + 1)
+            }
+        }
+
+        if (_sessionId.value != sessionId) return
+        val matchKeys = entries.flatMap { it.matchKeys }.distinct()
+        runCatching {
+            repository.publishSharedLibraryIndex(sessionId, eligibleSongs.size, matchKeys)
+        }.onFailure { error ->
+            if (_sessionId.value == sessionId) {
+                _libraryIndexStatus.value = _libraryIndexStatus.value.copy(
+                    localIndexedTracks = eligibleSongs.size,
+                    error = error.message ?: "Couldn't publish this device's private matching index."
+                )
+            }
+        }.onSuccess {
+            if (_sessionId.value == sessionId) {
+                localLibraryEntries = entries
+                localLibraryReadyForSession = sessionId
+                _libraryIndexStatus.value = _libraryIndexStatus.value.copy(
+                    localIndexedTracks = eligibleSongs.size,
+                    localTotalTracks = eligibleSongs.size,
+                    error = null
+                )
+                updateSharedLibraryMatches()
+                applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+            }
+        }
+    }
+
+    private fun updateSharedLibraryMatches() {
+        val currentSessionId = _sessionId.value
+        val currentParticipants = _participants.value.filter { it.isConnected }
+        val uidList = currentParticipants.map { it.uid }.distinct()
+        val index = _remoteLibraryIndex.value
+        val readyParticipants = uidList.count { it in index.readyUids }
+        val localReady = currentSessionId != null && localLibraryReadyForSession == currentSessionId
+        val allReady = localReady && uidList.isNotEmpty() && readyParticipants == uidList.size
+        val commonKeys = if (allReady) {
+            uidList.mapNotNull(index.keysByUid::get).reduceOrNull { common, keys -> common intersect keys }.orEmpty()
+        } else emptySet()
+
+        _sharedLibraryMatches.value = if (allReady) {
+            localLibraryEntries.mapNotNull { entry ->
+                val commonKey = entry.matchKeys.firstOrNull { it in commonKeys } ?: return@mapNotNull null
+                val sharedTrack = entry.track.copy(
+                    sharedTrackId = commonKey,
+                    audioFingerprint = null
+                )
+                JamSharedLibraryMatch(entry.song, sharedTrack, commonKey)
+            }.distinctBy { it.matchKey }
+        } else emptyList()
+
+        _libraryIndexStatus.value = _libraryIndexStatus.value.copy(
+            indexedParticipants = readyParticipants,
+            participantCount = uidList.size,
+            isReady = allReady
+        )
+    }
+
     private fun matchLocalSong(track: JamTrack, songs: List<Song>): Song? {
+        val fingerprint = track.audioFingerprint?.takeIf(String::isNotBlank)
+        if (fingerprint != null) {
+            val fingerprintMatches = songs.filter { JamLibraryFingerprint.cached(context, it) == fingerprint }
+            fingerprintMatches.singleOrNull()?.let { return it }
+            if (fingerprintMatches.size > 1) return null
+        }
         if (!track.checksum.isNullOrBlank()) {
             val trackPrefix = track.sharedTrackId.take(24)
             val checksumPrefix = track.checksum.take(16)
@@ -604,37 +747,50 @@ class JamFeatureController(
                 song.path.contains(trackPrefix) && song.path.contains(checksumPrefix) && java.io.File(song.path).isFile
             }
         }
-        val idMatch = songs.firstOrNull { trackFrom(it)?.sharedTrackId == track.sharedTrackId }
+        val idMatch = songs.firstOrNull {
+            val localTrack = trackFrom(it, JamLibraryFingerprint.cached(context, it)) ?: return@firstOrNull false
+            localTrack.sharedTrackId == track.sharedTrackId ||
+                track.sharedTrackId in jamLibraryMatchKeys(localTrack, JamLibraryFingerprint.cached(context, it), _sessionId.value.orEmpty())
+        }
         if (idMatch != null) return idMatch
-        val title = normalize(TagCleaner.cleanTitle(track.title, ""))
+        val title = normalizeMatchTitle(track.title)
         val artist = normalize(TagCleaner.cleanArtist(track.artist))
         val album = normalize(TagCleaner.cleanAlbum(track.album))
-        if (title.isBlank() || artist.isBlank()) return null
+        if (artist.isBlank() || track.durationMs <= 0L) return null
         val candidates = songs.filter { song ->
-            val localTitle = normalize(TagCleaner.cleanTitle(song.displayTitle, ""))
+            val localTitle = normalizeMatchTitle(song.displayTitle)
             val localArtist = normalize(TagCleaner.cleanArtist(song.displayArtist))
             val localAlbum = normalize(TagCleaner.cleanAlbum(song.displayAlbum))
             val durationDiff = kotlin.math.abs(song.durationMs - track.durationMs)
             val albumCompatible = album == localAlbum || isUnknownAlbum(album) || isUnknownAlbum(localAlbum)
-            localTitle == title && localArtist == artist && albumCompatible && durationDiff <= MAX_MATCH_DURATION_DIFF_MS
+            title.isNotBlank() && localTitle == title && localArtist == artist && albumCompatible && durationDiff <= MAX_MATCH_DURATION_DIFF_MS
         }
         return candidates.singleOrNull()
     }
 
-    private fun trackFrom(song: Song): JamTrack? {
+    private fun trackFrom(song: Song, audioFingerprint: String? = null): JamTrack? {
         if (song.isMissing || song.isCorrupted || song.durationMs <= 0L) return null
-        val title = TagCleaner.cleanTitle(song.displayTitle, "").trim()
-        val artist = TagCleaner.cleanArtist(song.displayArtist).trim()
-        if (title.isBlank() || artist.isBlank()) return null
+        val title = TagCleaner.cleanTitle(song.displayTitle, "").trim().ifBlank { song.displayTitle.trim() }
+        val artist = TagCleaner.cleanArtist(song.displayArtist).trim().ifBlank { song.displayArtist.trim() }
+        if (title.isBlank() || (artist.isBlank() && audioFingerprint.isNullOrBlank())) return null
         val candidate = JamTrack(
             sharedTrackId = "",
             title = title.take(180),
-            artist = artist.take(180),
+            artist = artist.ifBlank { "Unknown Artist" }.take(180),
             album = TagCleaner.cleanAlbum(song.displayAlbum).trim().take(180),
-            durationMs = song.durationMs
+            durationMs = song.durationMs,
+            audioFingerprint = audioFingerprint
         )
         return candidate.copy(sharedTrackId = sharedTrackId(candidate))
     }
+
+    private fun normalizeMatchTitle(value: String): String = value.lowercase()
+        .replace(Regex("\\.(mp3|m4a|mp4|aac|flac|ogg|wav)$"), " ")
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+        .split(Regex("\\s+"))
+        .dropLastWhile { it in setOf("audio", "video", "song", "lyrics", "lyric", "official", "tamil", "telugu", "malayalam", "hindi", "mp3", "mp4") }
+        .joinToString(" ")
 
     private fun stopObserving(restorePlayback: Boolean) {
         stopListenersOnly()
@@ -644,6 +800,11 @@ class JamFeatureController(
         _queue.value = emptyList()
         _recommendations.value = emptyList()
         _featureRequests.value = emptyList()
+        _remoteLibraryIndex.value = JamLibraryIndexSnapshot()
+        _sharedLibraryMatches.value = emptyList()
+        _libraryIndexStatus.value = JamLibraryIndexStatus()
+        localLibraryEntries = emptyList()
+        localLibraryReadyForSession = null
         _invite.value = null
         _localTrackAvailable.value = true
         if (restorePlayback) {
@@ -665,6 +826,7 @@ class JamFeatureController(
         queueListenerJob?.cancel(); queueListenerJob = null
         participantListenerJob?.cancel(); participantListenerJob = null
         recommendationListenerJob?.cancel(); recommendationListenerJob = null
+        libraryIndexListenerJob?.cancel(); libraryIndexListenerJob = null
         featureRequestListenerJob?.cancel(); featureRequestListenerJob = null
         heartbeatJob?.cancel(); heartbeatJob = null
         driftJob?.cancel(); driftJob = null

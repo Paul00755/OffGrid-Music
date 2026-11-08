@@ -159,6 +159,43 @@ service cloud.firestore {
         allow delete: if member(sessionId);
       }
 
+      // Each member publishes compact, opaque match hashes only. Audio and filenames remain local.
+      match /libraryIndex/{indexDocumentId} {
+        allow read: if member(sessionId);
+        allow create, update: if member(sessionId)
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.schemaVersion == 1
+          && (
+            (request.resource.data.kind == 'manifest'
+              && request.resource.data.keys().hasOnly([
+                'ownerUid', 'kind', 'schemaVersion', 'chunkCount', 'trackCount', 'ready'
+              ])
+              && request.resource.data.keys().hasAll([
+                'ownerUid', 'kind', 'schemaVersion', 'chunkCount', 'trackCount', 'ready'
+              ])
+              && request.resource.data.chunkCount is int
+              && request.resource.data.chunkCount >= 0
+              && request.resource.data.chunkCount <= 100
+              && request.resource.data.trackCount is int
+              && request.resource.data.trackCount >= 0
+              && request.resource.data.trackCount <= 20000
+              && request.resource.data.ready == true)
+            || (request.resource.data.kind == 'chunk'
+              && request.resource.data.keys().hasOnly([
+                'ownerUid', 'kind', 'schemaVersion', 'chunkIndex', 'keys'
+              ])
+              && request.resource.data.keys().hasAll([
+                'ownerUid', 'kind', 'schemaVersion', 'chunkIndex', 'keys'
+              ])
+              && request.resource.data.chunkIndex is int
+              && request.resource.data.chunkIndex >= 0
+              && request.resource.data.chunkIndex < 100
+              && request.resource.data.keys is list
+              && request.resource.data.keys.size() <= 200)
+          );
+        allow delete: if member(sessionId) && resource.data.ownerUid == request.auth.uid;
+      }
+
       match /recommendations/{recommendationId} {
         allow read: if member(sessionId);
         allow create: if member(sessionId)

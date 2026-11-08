@@ -316,6 +316,90 @@ class JamRepository(
         awaitClose { registration.remove() }
     }
 
+    /** Publishes opaque match hashes only; song names and audio bytes stay on each device. */
+    suspend fun publishSharedLibraryIndex(sessionId: String, trackCount: Int, rawMatchKeys: Collection<String>) {
+        val uid = requireUidValue()
+        val index = sessionRef(sessionId).collection(LIBRARY_INDEX)
+        val matchKeys = rawMatchKeys.asSequence()
+            .filter { it.length in 20..80 }
+            .distinct()
+            .take(MAX_LIBRARY_MATCH_KEYS)
+            .toList()
+        val chunks = matchKeys.chunked(LIBRARY_MATCH_KEYS_PER_CHUNK)
+        val wanted = LinkedHashMap<String, Map<String, Any>>()
+        chunks.forEachIndexed { chunkIndex, keys ->
+            wanted["${uid}_chunk_$chunkIndex"] = mapOf(
+                "ownerUid" to uid,
+                "kind" to "chunk",
+                "chunkIndex" to chunkIndex,
+                "schemaVersion" to LIBRARY_INDEX_SCHEMA_VERSION,
+                "keys" to keys
+            )
+        }
+        wanted["${uid}_manifest"] = mapOf(
+            "ownerUid" to uid,
+            "kind" to "manifest",
+            "schemaVersion" to LIBRARY_INDEX_SCHEMA_VERSION,
+            "chunkCount" to chunks.size,
+            "trackCount" to trackCount.coerceAtLeast(0),
+            "ready" to true
+        )
+
+        val existing = index.whereEqualTo("ownerUid", uid).get().await().documents
+        val batch = firestore.batch()
+        var hasChanges = false
+        existing.forEach { snapshot ->
+            if (snapshot.id !in wanted) {
+                batch.delete(snapshot.reference)
+                hasChanges = true
+            }
+        }
+        wanted.forEach { (documentId, data) ->
+            val current = existing.firstOrNull { it.id == documentId }
+            val unchanged = current != null && if (data["kind"] == "chunk") {
+                current.get("keys") == data["keys"] &&
+                    current.getLong("chunkIndex") == (data["chunkIndex"] as Int).toLong() &&
+                    current.getLong("schemaVersion") == LIBRARY_INDEX_SCHEMA_VERSION.toLong()
+            } else {
+                current.getBoolean("ready") == true &&
+                    current.getLong("chunkCount") == chunks.size.toLong() &&
+                    current.getLong("trackCount") == (data["trackCount"] as Int).toLong() &&
+                    current.getLong("schemaVersion") == LIBRARY_INDEX_SCHEMA_VERSION.toLong()
+            }
+            if (!unchanged) {
+                batch.set(index.document(documentId), data)
+                hasChanges = true
+            }
+        }
+        if (hasChanges) batch.commit().await()
+    }
+
+    fun observeSharedLibraryIndex(sessionId: String): Flow<JamLibraryIndexSnapshot> = callbackFlow {
+        val registration = sessionRef(sessionId).collection(LIBRARY_INDEX)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) close(error)
+                else {
+                    val grouped = snapshot?.documents.orEmpty().groupBy { it.getString("ownerUid").orEmpty() }
+                    val keysByUid = mutableMapOf<String, Set<String>>()
+                    val readyUids = mutableSetOf<String>()
+                    grouped.forEach { (uid, userDocs) ->
+                        if (uid.isBlank()) return@forEach
+                        val manifest = userDocs.firstOrNull { it.getString("kind") == "manifest" } ?: return@forEach
+                        if (manifest.getLong("schemaVersion") != LIBRARY_INDEX_SCHEMA_VERSION.toLong() || manifest.getBoolean("ready") != true) return@forEach
+                        val expectedChunks = (manifest.getLong("chunkCount") ?: -1L).toInt()
+                        val chunks = userDocs.filter { it.getString("kind") == "chunk" }
+                        if (expectedChunks < 0 || chunks.size != expectedChunks) return@forEach
+                        readyUids += uid
+                        keysByUid[uid] = chunks.flatMap { chunk ->
+                            (chunk.get("keys") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                        }.toSet()
+                    }
+                    trySend(JamLibraryIndexSnapshot(keysByUid = keysByUid, readyUids = readyUids))
+                }
+            }
+        awaitClose { registration.remove() }
+    }
+
     /** Spark-compatible operations: Firestore stores Jam metadata only; no callable/server storage. */
     private suspend fun call(name: String, data: Map<String, Any>): Map<String, Any?> = try {
         val uid = authManager.currentUser?.uid?.takeIf(String::isNotBlank)
@@ -429,9 +513,14 @@ class JamRepository(
         val session = sessionRef(sessionId(data))
         val nextPermissions = JamPermissions.from(data["permissions"])
         val requestRefs = JamFeature.values().associateWith { feature -> featureRequestRef(session.id, feature) }
+        val recommendationRefs = session.collection(RECOMMENDATIONS)
+            .limit(MAX_RECOMMENDATIONS.toLong())
+            .get().await().documents.map { it.reference }
         return firestore.runTransaction { tx ->
             val snapshot = tx.get(session)
             val requestSnapshots = requestRefs.mapValues { (_, ref) -> tx.get(ref) }
+            val pendingRecommendations = recommendationRefs.map(tx::get)
+                .filter { it.getString("status") == "VOTING" }
             if (snapshot.getString("hostUid") != uid) throw JamRepositoryException("Only the host can change Jam permissions.")
             val currentPermissions = JamPermissions.from(snapshot.get("permissions"))
             tx.update(session, mapOf(
@@ -442,6 +531,15 @@ class JamRepository(
                 if (feature.isEnabled(currentPermissions) != feature.isEnabled(nextPermissions)) {
                     resolveFeatureRequestDoc(tx, requestRefs.getValue(feature), requestSnapshots.getValue(feature), blockRequester = false)
                 }
+            }
+            pendingRecommendations.forEach { recommendation ->
+                val type = recommendation.getString("recommendationType")
+                val featureEnabled = when (type) {
+                    JamRecommendationType.LOCAL_SONG.name -> nextPermissions.allowLocalSongSharing
+                    JamRecommendationType.SHARED_LIBRARY.name -> nextPermissions.allowSharedLibraryRecommendations
+                    else -> true
+                }
+                if (!featureEnabled) tx.update(recommendation.reference, "status", "CANCELLED_PERMISSION_DISABLED")
             }
             mapOf("ok" to true)
         }.await()
@@ -548,21 +646,26 @@ class JamRepository(
         val permissions = JamPermissions.from(snapshot.get("permissions"))
         if (type == "LOCAL_SONG" && !permissions.allowLocalSongSharing) throw JamRepositoryException("Local song sharing is disabled.")
         if (type == "SHARED_LIBRARY" && !permissions.allowSharedLibraryRecommendations) throw JamRepositoryException("Recommendations are disabled.")
-        if (type == "SHARED_LIBRARY" && permissions.manageQueue.mode != JamAccessMode.HOST_ONLY) throw JamRepositoryException("Shared-library recommendations require host-controlled queue management.")
         val members = session.collection(PARTICIPANTS).get().await().documents
         val eligible = members.map { it.id }
         val required = if (type == "LOCAL_SONG") eligible.size else eligible.size / 2 + 1
+        if (uid !in eligible || eligible.isEmpty()) throw JamRepositoryException("Join the Jam before recommending a song.")
+        val initialApprovalCount = 1
+        val initialStatus = if (initialApprovalCount >= required) {
+            if (type == "LOCAL_SONG") "APPROVED_PENDING_UPLOAD" else "READY"
+        } else "VOTING"
         val track = data["track"] ?: throw JamRepositoryException("Track data is invalid.")
         val ref = session.collection(RECOMMENDATIONS).document()
+        val proposerName = members.firstOrNull { it.id == uid }?.getString("displayName")
+            ?.takeIf(String::isNotBlank) ?: authManager.currentUser?.displayName?.takeIf(String::isNotBlank) ?: "Listener"
         ref.set(mapOf("recommendationType" to type, "proposerUid" to uid,
-            "proposerName" to (authManager.currentUser?.displayName ?: "Listener"), "track" to track,
+            "proposerName" to proposerName, "track" to track,
             "eligibleUids" to eligible, "deadlineAt" to Timestamp(java.util.Date(System.currentTimeMillis() + VOTE_WINDOW_MS)),
-            "status" to "VOTING", "requiredApprovalCount" to required, "approvalCount" to 0, "rejectionCount" to 0,
+            "status" to initialStatus, "requiredApprovalCount" to required, "approvalCount" to initialApprovalCount, "rejectionCount" to 0,
             "votes" to eligible.associateWith { if (it == uid) "ACCEPT" else "PENDING" },
             "downloads" to if (type == "LOCAL_SONG") mapOf(uid to mapOf("status" to "READY_FOR_PLAYBACK", "progress" to 100,
                 "checksumVerified" to true, "locallyAvailable" to true, "readyForPlayback" to true)) else emptyMap<String, Any>(),
             "createdAt" to Timestamp.now(), "uploadStatus" to "WAITING_FOR_PEERS")).await()
-        if (eligible.size == 1) ref.update(mapOf("approvalCount" to 1, "status" to if (type == "LOCAL_SONG") "APPROVED_PENDING_UPLOAD" else "READY")).await()
         return mapOf("recommendationId" to ref.id)
     }
 
@@ -570,11 +673,22 @@ class JamRepository(
         val session = sessionRef(sessionId(data)); val ref = session.collection(RECOMMENDATIONS).document(data["recommendationId"] as? String ?: "")
         val existingQueueSize = session.collection(QUEUE).orderBy("position").limit(MAX_QUEUE_SIZE.toLong()).get().await().size()
         firestore.runTransaction { tx ->
-            val snap = tx.get(ref); val votes = (snap.get("votes") as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf()
+            val snap = tx.get(ref)
+            val sessionSnapshot = tx.get(session)
+            val votes = (snap.get("votes") as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf()
+            val proposerUid = snap.getString("proposerUid").orEmpty()
+            if (uid == proposerUid) throw JamRepositoryException("Your submission is already counted as approved.")
             if (snap.getString("status") != "VOTING" || uid !in (snap.get("eligibleUids") as? List<*>).orEmpty()) throw JamRepositoryException("Voting is closed for this recommendation.")
+            if (proposerUid.isNotBlank() && votes[proposerUid] != "ACCEPT") votes[proposerUid] = "ACCEPT"
             if (votes[uid] != "PENDING") throw JamRepositoryException("You already voted on this song.")
             val vote = data["vote"] as? String ?: ""
             if (vote !in setOf("ACCEPT", "REJECT")) throw JamRepositoryException("Vote is invalid.")
+            val permissions = JamPermissions.from(sessionSnapshot.get("permissions"))
+            val recommendationsEnabled = when (snap.getString("recommendationType")) {
+                JamRecommendationType.LOCAL_SONG.name -> permissions.allowLocalSongSharing
+                else -> permissions.allowSharedLibraryRecommendations
+            }
+            if (!recommendationsEnabled) throw JamRepositoryException("The host disabled voting for this feature.")
             votes[uid] = vote
             val yes = votes.values.count { it == "ACCEPT" }; val no = votes.values.count { it == "REJECT" }
             val pending = votes.values.count { it == "PENDING" }; val required = (snap.getLong("requiredApprovalCount") ?: 1L).toInt()
@@ -587,7 +701,6 @@ class JamRepository(
                 else -> "VOTING"
             }
             if (status == "READY" && type == "SHARED_LIBRARY") {
-                val sessionSnapshot = tx.get(session)
                 if (existingQueueSize >= MAX_QUEUE_SIZE) throw JamRepositoryException("The shared queue is full.")
                 val track = snap.get("track") as? Map<*, *> ?: throw JamRepositoryException("Track metadata is missing.")
                 tx.set(session.collection(QUEUE).document(), mapOf("track" to track, "position" to existingQueueSize,
@@ -1017,6 +1130,9 @@ class JamRepository(
 
     private fun sessionRef(id: String) = firestore.collection(SESSIONS).document(id)
 
+    private fun requireUidValue(): String = authManager.currentUser?.uid?.takeIf(String::isNotBlank)
+        ?: throw JamRepositoryException("Sign in to use OffGrid Jam.")
+
     private fun <T> listenDocument(ref: DocumentReference, parse: (DocumentSnapshot) -> T): Flow<T> = callbackFlow {
         val registration = ref.addSnapshotListener { snapshot, error ->
             if (error != null) close(error)
@@ -1058,7 +1174,8 @@ class JamRepository(
                 artist = data["artist"] as? String ?: "Unknown Artist",
                 album = data["album"] as? String ?: "Unknown Album",
                 durationMs = (data["durationMs"] as? Number)?.toLong() ?: 0L,
-                checksum = data["checksum"] as? String
+                checksum = data["checksum"] as? String,
+                audioFingerprint = data["audioFingerprint"] as? String
             ),
             addedByUid = snapshot.getString("addedByUid").orEmpty(),
             position = snapshot.getLong("position") ?: 0L
@@ -1071,10 +1188,17 @@ class JamRepository(
         val type = runCatching {
             JamRecommendationType.valueOf(data["recommendationType"] as? String ?: "")
         }.getOrNull() ?: return null
-        val votes = (data["votes"] as? Map<*, *>).orEmpty().mapNotNull { (uid, value) ->
+        val proposerUid = data["proposerUid"] as? String ?: ""
+        val eligibleUids = (data["eligibleUids"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+        val rawVotes = (data["votes"] as? Map<*, *>).orEmpty().mapNotNull { (uid, value) ->
             val parsed = runCatching { JamVote.valueOf(value as? String ?: "PENDING") }.getOrDefault(JamVote.PENDING)
             (uid as? String)?.let { it to parsed }
         }.toMap()
+        val votes = rawVotes.toMutableMap().apply {
+            if (proposerUid in eligibleUids) put(proposerUid, JamVote.ACCEPT)
+        }.toMap()
+        val derivedApprovalCount = votes.values.count { it == JamVote.ACCEPT }
+        val derivedRejectionCount = votes.values.count { it == JamVote.REJECT }
         val downloads = (data["downloads"] as? Map<*, *>).orEmpty().mapNotNull { (uid, value) ->
             val state = value as? Map<*, *> ?: return@mapNotNull null
             (uid as? String)?.let { key -> key to JamDownloadState(
@@ -1089,7 +1213,7 @@ class JamRepository(
         return JamRecommendation(
             id = snapshot.id,
             type = type,
-            proposerUid = data["proposerUid"] as? String ?: "",
+            proposerUid = proposerUid,
             proposerName = data["proposerName"] as? String ?: "Listener",
             track = JamTrack(
                 sharedTrackId = rawTrack["sharedTrackId"] as? String ?: return null,
@@ -1097,13 +1221,14 @@ class JamRepository(
                 artist = rawTrack["artist"] as? String ?: "Unknown Artist",
                 album = rawTrack["album"] as? String ?: "Unknown Album",
                 durationMs = (rawTrack["durationMs"] as? Number)?.toLong() ?: 0L,
-                checksum = rawTrack["checksum"] as? String
+                checksum = rawTrack["checksum"] as? String,
+                audioFingerprint = rawTrack["audioFingerprint"] as? String
             ),
-            eligibleUids = (data["eligibleUids"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            eligibleUids = eligibleUids,
             deadlineAtMs = snapshot.getTimestamp("deadlineAt")?.toDate()?.time ?: 0L,
             status = data["status"] as? String ?: "FAILED",
-            approvalCount = (data["approvalCount"] as? Number)?.toInt() ?: 0,
-            rejectionCount = (data["rejectionCount"] as? Number)?.toInt() ?: 0,
+            approvalCount = if (data["votes"] is Map<*, *>) derivedApprovalCount else (data["approvalCount"] as? Number)?.toInt() ?: 0,
+            rejectionCount = if (data["votes"] is Map<*, *>) derivedRejectionCount else (data["rejectionCount"] as? Number)?.toInt() ?: 0,
             requiredApprovalCount = (data["requiredApprovalCount"] as? Number)?.toInt() ?: 0,
             votes = votes,
             downloads = downloads,
@@ -1136,6 +1261,10 @@ class JamRepository(
         private const val QUEUE = "queue"
         private const val RECOMMENDATIONS = "recommendations"
         private const val FEATURE_REQUESTS = "featureRequests"
+        private const val LIBRARY_INDEX = "libraryIndex"
+        private const val LIBRARY_INDEX_SCHEMA_VERSION = 1
+        private const val LIBRARY_MATCH_KEYS_PER_CHUNK = 200
+        private const val MAX_LIBRARY_MATCH_KEYS = 20_000
         private const val MAX_RECOMMENDATIONS = 30
     }
 }

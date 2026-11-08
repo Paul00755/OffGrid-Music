@@ -303,7 +303,9 @@ fun HomeScreen(
                 drawerContainerColor = BentoCardSurface,
                 drawerContentColor = BentoTextPrimary,
                 modifier = Modifier
-                    .widthIn(min = 280.dp, max = 320.dp)
+                    // Keep the drawer proportional on narrow phones and cap it on larger screens.
+                    .widthIn(max = 360.dp)
+                    .fillMaxWidth(0.9f)
                     .fillMaxHeight()
                     .graphicsLayer {
                         val offset = drawerState.currentOffset

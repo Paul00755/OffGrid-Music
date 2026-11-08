@@ -3082,7 +3082,7 @@ fun SettingsScreen(
                                 Text("Display Scale", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                                 Text(
                                     text = when (displayScale.uppercase()) {
-                                        "COMPACT" -> "Compact (0.92x)"
+                                        "COMPACT" -> "Compact (0.86x)"
                                         "COMFORT" -> "Comfort (1.08x)"
                                         else -> "Standard (1.0x)"
                                     },

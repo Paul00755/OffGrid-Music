@@ -113,6 +113,8 @@ import com.example.jam.JamFeatureRequest
 import com.example.jam.JamDownloadState
 import com.example.jam.JamPage
 import com.example.jam.JamParticipant
+import com.example.jam.JamLibraryIndexStatus
+import com.example.jam.JamSharedLibraryMatch
 import com.example.jam.JamPermissionKind
 import com.example.jam.JamPermissionRule
 import com.example.jam.JamPermissions
@@ -160,6 +162,8 @@ fun JamScreen(
     val selectedRecommendationId = controller?.selectedRecommendationId?.collectAsStateWithLifecycle()?.value
     val invite = controller?.invite?.collectAsStateWithLifecycle()?.value
     val localTrackAvailable = controller?.localTrackAvailable?.collectAsStateWithLifecycle()?.value ?: false
+    val sharedLibraryMatches = controller?.sharedLibraryMatches?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val libraryIndexStatus = controller?.libraryIndexStatus?.collectAsStateWithLifecycle()?.value ?: JamLibraryIndexStatus()
     val currentUid = controller?.currentUid?.collectAsStateWithLifecycle()?.value
     val isSignedIn = !currentUid.isNullOrBlank()
     val clipboard = LocalClipboardManager.current
@@ -353,6 +357,8 @@ fun JamScreen(
                 selectedRecommendationId = selectedRecommendationId,
                 songs = songs,
                 localTrackAvailable = localTrackAvailable,
+                sharedLibraryMatches = sharedLibraryMatches,
+                libraryIndexStatus = libraryIndexStatus,
                 currentUid = currentUid.orEmpty(),
                 notificationsDenied = notificationPermissionDenied,
                 onNotificationSettings = {
@@ -497,8 +503,7 @@ private fun CreatePage(
             JamFeatureToggles(
                 permissions,
                 onPermissionsChange,
-                enabled = true,
-                showSharedRecommendations = permissions.manageQueue.mode == JamAccessMode.HOST_ONLY
+                enabled = true
             )
         }
         JamButton("Create Jam", Icons.Default.Groups, enabled = state !is JamUiState.Loading, onClick = onCreate)
@@ -978,6 +983,8 @@ private fun ActivePage(
     selectedRecommendationId: String?,
     songs: List<Song>,
     localTrackAvailable: Boolean,
+    sharedLibraryMatches: List<JamSharedLibraryMatch>,
+    libraryIndexStatus: JamLibraryIndexStatus,
     currentUid: String,
     notificationsDenied: Boolean,
     onNotificationSettings: () -> Unit,
@@ -991,8 +998,8 @@ private fun ActivePage(
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var libraryQuery by rememberSaveable { mutableStateOf("") }
-    var searchMode by rememberSaveable { mutableStateOf(false) }
     var localShareConsent by rememberSaveable { mutableStateOf(false) }
+    var queueExpanded by rememberSaveable { mutableStateOf(true) }
     var localFileError by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLocalAudio by remember { mutableStateOf<LocalAudioSelection?>(null) }
     val localAudioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -1023,11 +1030,8 @@ private fun ActivePage(
     val permissionUid = currentUid
     val permissions = session?.permissions ?: JamPermissions()
     val durationMs = currentItem?.track?.durationMs?.coerceAtLeast(1L) ?: 1L
-    var recommendationsExpanded by rememberSaveable { mutableStateOf(false) }
+    var selectedRoomTab by rememberSaveable(session?.id) { mutableStateOf(0) }
     var participantsExpanded by rememberSaveable { mutableStateOf(false) }
-    var queueExpanded by rememberSaveable { mutableStateOf(true) }
-    var sharingExpanded by rememberSaveable { mutableStateOf(false) }
-    var libraryExpanded by rememberSaveable { mutableStateOf(false) }
     var requestClockMs by remember(session?.id) { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedFeatureRequest by remember { mutableStateOf<JamFeatureRequest?>(null) }
     var blockFeatureRequester by remember { mutableStateOf(false) }
@@ -1040,12 +1044,13 @@ private fun ActivePage(
     val activeFeatureRequests = remember(featureRequests, requestClockMs) {
         featureRequests.filter { it.isPending(requestClockMs) }
     }
-    val noMatchesFound = queue.isEmpty() || (currentItem != null && !localTrackAvailable)
-    val visibleSongs = remember(songs, libraryQuery) {
+    val noMatchesFound = (libraryIndexStatus.isReady && sharedLibraryMatches.isEmpty() && queue.isEmpty()) ||
+        (currentItem != null && !localTrackAvailable)
+    val visibleMatches = remember(sharedLibraryMatches, libraryQuery) {
         val query = libraryQuery.trim()
-        if (query.isBlank()) songs.take(8) else songs.asSequence()
-            .filter { it.displayTitle.contains(query, true) || it.displayArtist.contains(query, true) || it.displayAlbum.contains(query, true) }
-            .take(12).toList()
+        if (query.isBlank()) sharedLibraryMatches.take(12) else sharedLibraryMatches.asSequence()
+            .filter { match -> match.song.displayTitle.contains(query, true) || match.song.displayArtist.contains(query, true) || match.song.displayAlbum.contains(query, true) }
+            .take(24).toList()
     }
     LaunchedEffect(session?.playback, isSeeking) {
         while (!isSeeking) {
@@ -1119,26 +1124,6 @@ private fun ActivePage(
                 )
             }
         }
-        if (!isHost && !permissions.allowSharedLibraryRecommendations) {
-            item {
-                FeatureRequestPrompt(
-                    feature = JamFeature.SHARED_RECOMMENDATIONS,
-                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
-                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
-                    onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
-                )
-            }
-        }
-        if (!isHost && !permissions.allowLocalSongSharing) {
-            item {
-                FeatureRequestPrompt(
-                    feature = JamFeature.LOCAL_SONG_SHARING,
-                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
-                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
-                    onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
-                )
-            }
-        }
         if (noMatchesFound) item {
             JamCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1148,17 +1133,17 @@ private fun ActivePage(
                 Text(
                     if (currentItem != null && !localTrackAvailable) {
                         "${currentItem.track.title} isn’t available on this device. Share the audio between devices to begin listening together."
+                    } else if (!libraryIndexStatus.isReady) {
+                        "Checking the devices for songs everyone already has… ${libraryIndexStatus.indexedParticipants}/${libraryIndexStatus.participantCount} devices ready."
                     } else {
-                        "Add a track from either device. If it isn’t already on everyone’s device, share the audio between devices to begin listening together."
+                        "No songs match across everyone’s devices yet. Share some between both devices to begin listening together."
                     },
                     color = BentoTextSecondary
                 )
-                if (!permissions.allowLocalSongSharing) {
-                    if (isHost) {
-                        Text("Local song sharing is off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = onPermissions) { Text("Turn on sharing in Permissions", color = BentoPrimary) }
-                    }
-                } else {
+                if (!permissions.allowLocalSongSharing && isHost) {
+                    Text("Local song sharing is off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onPermissions) { Text("Turn on sharing in Permissions", color = BentoPrimary) }
+                } else if (permissions.allowLocalSongSharing) {
                     Text("Choose an audio file below. Once everyone approves, it transfers directly to the other devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -1167,7 +1152,8 @@ private fun ActivePage(
             JamCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     val localArtwork = currentItem?.track?.let { track ->
-                        songs.firstOrNull { it.displayTitle.equals(track.title, true) && it.displayArtist.equals(track.artist, true) }?.artworkUri
+                        sharedLibraryMatches.firstOrNull { it.matchKey == track.sharedTrackId }?.song?.artworkUri
+                            ?: songs.firstOrNull { it.displayTitle.equals(track.title, true) && it.displayArtist.equals(track.artist, true) }?.artworkUri
                     }
                     if (!localArtwork.isNullOrBlank()) {
                         AsyncImage(model = localArtwork, contentDescription = null, modifier = Modifier.size(70.dp).clip(RoundedCornerShape(14.dp)))
@@ -1223,6 +1209,18 @@ private fun ActivePage(
             }
         }
         item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Queue", "Recommendations", "Local sharing").forEachIndexed { index, label ->
+                    FilterChip(
+                        selected = selectedRoomTab == index,
+                        onClick = { selectedRoomTab = index },
+                        modifier = Modifier.weight(1f),
+                        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) }
+                    )
+                }
+            }
+        }
+        if (selectedRoomTab == 0) item {
             JamAccordion(
                 title = "Shared queue",
                 summary = "${queue.size} tracks",
@@ -1230,14 +1228,13 @@ private fun ActivePage(
                 expanded = queueExpanded,
                 onToggle = { queueExpanded = !queueExpanded }
             ) {
-                if (queue.isEmpty()) Text("Add a track from your library to get started.", color = BentoTextSecondary)
+                if (queue.isEmpty()) Text("No songs queued yet. Choose a matching song in Recommendations or share an audio file.", color = BentoTextSecondary)
                 queue.forEachIndexed { index, item ->
                     QueueRow(
                         item = item,
                         isCurrent = item.id == session?.playback?.queueItemId,
                         canManage = session?.permissions?.manageQueue?.allows(permissionUid, session.hostUid) == true,
-                        canRecommend = permissions.allowSharedLibraryRecommendations &&
-                            permissions.manageQueue.mode == JamAccessMode.HOST_ONLY && !isHost,
+                        canRecommend = permissions.allowSharedLibraryRecommendations,
                         onRecommend = { controller?.recommendSharedTrack(item.track) },
                         onRemove = { controller?.removeQueueItem(item.id) },
                         onMoveUp = { controller?.moveQueueItem(item.id, -1) },
@@ -1248,93 +1245,122 @@ private fun ActivePage(
                 }
             }
         }
-        if (isHost || permissions.allowSharedLibraryRecommendations) item {
-            JamAccordion(
-                title = "Song recommendations",
-                summary = "${recommendations.count { it.isVoting }} voting",
-                icon = Icons.Default.Groups,
-                expanded = recommendationsExpanded,
-                onToggle = { recommendationsExpanded = !recommendationsExpanded }
-            ) {
-                RecommendationPanel(
-                    recommendations = recommendations.filter { recommendation ->
-                        recommendation.type != JamRecommendationType.LOCAL_SONG || isHost || permissions.allowLocalSongSharing
-                    },
-                    participants = participants,
-                    currentUid = currentUid,
-                    selectedRecommendationId = selectedRecommendationId,
-                    onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
-                    onRetryUpload = { controller?.retryUpload(it) },
-                    onRetryDownload = { controller?.retryDownload(it) }
+        if (selectedRoomTab == 1) item {
+            if (!isHost && !permissions.allowSharedLibraryRecommendations) {
+                FeatureRequestPrompt(
+                    feature = JamFeature.SHARED_RECOMMENDATIONS,
+                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
+                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
+                    onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
                 )
-            }
-        }
-        if (isHost || permissions.allowLocalSongSharing) item {
-            JamAccordion(
-                title = "Share an audio file",
-                summary = if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off",
-                icon = Icons.Default.MusicNote,
-                expanded = sharingExpanded,
-                onToggle = { sharingExpanded = !sharingExpanded }
-            ) {
-                if (!permissions.allowLocalSongSharing) {
-                    Text("Song sharing is off. Turn it on in Permissions so listeners can propose audio for unanimous approval.", color = BentoTextSecondary)
-                    OutlinedButton(onClick = onPermissions, border = BorderStroke(1.dp, BentoCardBorder)) {
-                        Icon(Icons.Default.Tune, null, tint = BentoPrimary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Open permissions")
-                    }
-                } else {
-                    Text("Only supported audio files are accepted (MP3, M4A, AAC, FLAC, OGG, or WAV; up to 25 MB). After every listener approves, the transfer starts automatically and the file stays on the devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
-                        Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                    }
-                    selectedLocalAudio?.let { audio ->
-                        JamCard {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                if (audio.artwork != null) {
-                                    androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)))
-                                } else {
-                                    Box(Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardPurple), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
-                                    }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    JamCard {
+                        Text("Add from shared library with matching songs", color = BentoTextPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            when {
+                                libraryIndexStatus.error != null -> libraryIndexStatus.error
+                                !libraryIndexStatus.isReady -> "Matching songs across devices… ${libraryIndexStatus.indexedParticipants}/${libraryIndexStatus.participantCount} devices indexed. Audio files and names stay on each device."
+                                sharedLibraryMatches.isEmpty() -> "No matches found. Share some between both devices to begin listening together."
+                                else -> "Only songs found on every connected device appear here. Matching uses an audio fingerprint first, with normalized title, artist, and duration as a fallback."
+                            },
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = libraryQuery,
+                            onValueChange = { libraryQuery = it },
+                            label = { Text("Search matching songs") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        visibleMatches.forEach { match ->
+                            SharedLibraryMatchRow(
+                                match = match,
+                                actionLabel = if (permissions.allowSharedLibraryRecommendations) "Recommend" else "Enable",
+                                onAction = {
+                                    if (permissions.allowSharedLibraryRecommendations) controller?.recommendSharedLibrarySong(match)
+                                    else onPermissions()
                                 }
-                                Column(Modifier.weight(1f)) {
-                                    Text(audio.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(audio.track.artist, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${formatJamDuration(audio.track.durationMs)} · ${formatJamSize(audio.sizeBytes)} · ${participants.firstOrNull { it.uid == currentUid }?.displayName ?: "You"}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                            JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
-                                controller?.recommendLocalTrack(audio.track, audio.uri, audio.mimeType)
-                                selectedLocalAudio = null
-                            }
+                            )
+                        }
+                        if (libraryIndexStatus.isReady && sharedLibraryMatches.isNotEmpty() && visibleMatches.isEmpty()) {
+                            Text("No matching songs fit this search.", color = BentoTextSecondary)
+                        }
+                        if (isHost && !permissions.allowSharedLibraryRecommendations) {
+                            Text("Recommendations are off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = onPermissions) { Text("Open permissions", color = BentoPrimary) }
                         }
                     }
-                    JamButton("Choose audio file", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
-                        localAudioPicker.launch(arrayOf("audio/*"))
-                    }
-                    localFileError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    RecommendationPanel(
+                        recommendations = recommendations.filter { it.type == JamRecommendationType.SHARED_LIBRARY },
+                        emptyMessage = "No recommendations yet. Choose a matching song above to suggest it.",
+                        participants = participants,
+                        currentUid = currentUid,
+                        selectedRecommendationId = selectedRecommendationId,
+                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
+                        onRetryUpload = { controller?.retryUpload(it) },
+                        onRetryDownload = { controller?.retryDownload(it) }
+                    )
                 }
             }
         }
-        item {
-            JamAccordion(
-                title = "Add from your library",
-                summary = if (songs.isEmpty()) "No local tracks" else "${songs.size} local tracks",
-                icon = Icons.Default.LibraryMusic,
-                expanded = libraryExpanded,
-                onToggle = { libraryExpanded = !libraryExpanded }
-            ) {
-                OutlinedTextField(value = libraryQuery, onValueChange = { libraryQuery = it }, label = { Text("Search local tracks") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                if (songs.isEmpty()) Text("Scan your local library before adding tracks.", color = BentoTextSecondary)
-                else if (!searchMode && libraryQuery.isBlank()) {
-                    visibleSongs.take(4).forEach { song -> LocalSongRow(song) { controller?.addSong(song) } }
-                    TextButton(onClick = { searchMode = true }) { Text("Show matches", color = BentoPrimary) }
-                } else {
-                    visibleSongs.forEach { song -> LocalSongRow(song) { controller?.addSong(song) } }
-                    if (visibleSongs.isEmpty()) Text("No local tracks match this search.", color = BentoTextSecondary)
+        if (selectedRoomTab == 2) item {
+            if (!isHost && !permissions.allowLocalSongSharing) {
+                FeatureRequestPrompt(
+                    feature = JamFeature.LOCAL_SONG_SHARING,
+                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
+                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
+                    onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    JamCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Local song sharing", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text(if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (!permissions.allowLocalSongSharing) {
+                            Text("Local song sharing is off for this Jam.", color = BentoTextSecondary)
+                            TextButton(onClick = onPermissions) { Text("Open permissions", color = BentoPrimary) }
+                        } else {
+                            Text("MP3, M4A, AAC, FLAC, OGG, and WAV files up to 25 MB transfer directly between devices after approval. No song is stored in Firebase.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
+                                Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                            }
+                            selectedLocalAudio?.let { audio ->
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    if (audio.artwork != null) androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
+                                    else Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardPurple), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, tint = BentoPrimary) }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(audio.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("${audio.track.artist} · ${formatJamDuration(audio.track.durationMs)} · ${formatJamSize(audio.sizeBytes)}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                    controller?.recommendLocalTrack(audio.track, audio.uri, audio.mimeType)
+                                    selectedLocalAudio = null
+                                }
+                            }
+                            JamButton("Share a local song", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                localAudioPicker.launch(arrayOf("audio/*"))
+                            }
+                            localFileError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                    RecommendationPanel(
+                        recommendations = recommendations.filter { it.type == JamRecommendationType.LOCAL_SONG },
+                        emptyMessage = "No local song shares or votes yet.",
+                        participants = participants,
+                        currentUid = currentUid,
+                        selectedRecommendationId = selectedRecommendationId,
+                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
+                        onRetryUpload = { controller?.retryUpload(it) },
+                        onRetryDownload = { controller?.retryDownload(it) }
+                    )
                 }
             }
         }
@@ -1345,6 +1371,7 @@ private fun ActivePage(
 @Composable
 private fun RecommendationPanel(
     recommendations: List<JamRecommendation>,
+    emptyMessage: String,
     participants: List<JamParticipant>,
     currentUid: String,
     selectedRecommendationId: String?,
@@ -1361,7 +1388,7 @@ private fun RecommendationPanel(
                 Text(recommendations.count { it.isVoting }.toString(), color = BentoTextSecondary)
             }
             if (recommendations.isEmpty()) {
-                Text("Shared-library votes and local-song transfers will appear here.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text(emptyMessage, color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
             }
         }
         recommendations.take(8).forEach { recommendation ->
@@ -1374,6 +1401,35 @@ private fun RecommendationPanel(
                 onRetryUpload = { onRetryUpload(recommendation.id) },
                 onRetryDownload = { onRetryDownload(recommendation.id) }
             )
+        }
+    }
+}
+
+@Composable
+private fun SharedLibraryMatchRow(
+    match: JamSharedLibraryMatch,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.45f)).padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (!match.song.artworkUri.isNullOrBlank()) {
+            AsyncImage(match.song.artworkUri, contentDescription = null, modifier = Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)))
+        } else {
+            Box(Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(BentoCardSurface), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(match.song.displayTitle, color = BentoTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Text(match.song.displayArtist, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            Text("Available on all connected devices", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+        }
+        TextButton(onClick = onAction, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp)) {
+            Text(actionLabel, color = BentoPrimary, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -1404,6 +1460,7 @@ private fun RecommendationCard(
         "READY" -> "Ready for the shared queue"
         "REJECTED" -> "Rejected · queue unchanged"
         "EXPIRED" -> "Expired · queue unchanged"
+        "CANCELLED_PERMISSION_DISABLED" -> "Canceled because the host disabled this feature"
         "FAILED" -> recommendation.failureReason ?: "Transfer failed"
         else -> recommendation.status.lowercase().replace('_', ' ')
     }
@@ -1415,20 +1472,26 @@ private fun RecommendationCard(
                 Text(recommendation.track.title, color = BentoTextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("${recommendation.track.artist} · ${if (recommendation.type == JamRecommendationType.LOCAL_SONG) "Local song" else "Shared library"}", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
             }
-            Text(resultText, color = if (recommendation.status in setOf("REJECTED", "EXPIRED", "FAILED")) MaterialTheme.colorScheme.error else BentoPrimary, style = MaterialTheme.typography.labelSmall)
+            Text(resultText, color = if (recommendation.status in setOf("REJECTED", "EXPIRED", "FAILED", "CANCELLED_PERMISSION_DISABLED")) MaterialTheme.colorScheme.error else BentoPrimary, style = MaterialTheme.typography.labelSmall)
         }
-        Text("Recommended by ${recommendation.proposerName}", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+        val proposerName = participants.firstOrNull { it.uid == recommendation.proposerUid }?.displayName
+            ?.takeIf(String::isNotBlank) ?: recommendation.proposerName
+        Text("Recommended by $proposerName", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+        if (currentUid == recommendation.proposerUid) {
+            Text("Your submission is automatically approved; no self-vote is needed.", color = BentoPrimary, style = MaterialTheme.typography.bodySmall)
+        }
         Text("${recommendation.approvalCount} accepted · ${recommendation.rejectionCount} rejected · ${recommendation.pendingCount} pending · ${recommendation.requiredApprovalCount} required", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
         recommendation.eligibleUids.forEach { uid ->
             val name = participants.firstOrNull { it.uid == uid }?.displayName ?: if (uid == currentUid) "You" else "Listener"
-            val vote = recommendation.votes[uid] ?: JamVote.PENDING
-            Text("$name — ${vote.name.lowercase().replaceFirstChar(Char::uppercase)}", color = when (vote) {
+            val vote = if (uid == recommendation.proposerUid) JamVote.ACCEPT else recommendation.votes[uid] ?: JamVote.PENDING
+            val voteLabel = if (uid == recommendation.proposerUid) "Auto-approved" else vote.name.lowercase().replaceFirstChar(Char::uppercase)
+            Text("$name — $voteLabel", color = when (vote) {
                 JamVote.ACCEPT -> BentoPrimary
                 JamVote.REJECT -> MaterialTheme.colorScheme.error
                 JamVote.PENDING -> BentoTextSecondary
             }, style = MaterialTheme.typography.bodySmall)
         }
-        if (recommendation.isVoting && recommendation.votes[currentUid] == JamVote.PENDING && nowMs < recommendation.deadlineAtMs) {
+        if (recommendation.isVoting && currentUid != recommendation.proposerUid && recommendation.votes[currentUid] == JamVote.PENDING && nowMs < recommendation.deadlineAtMs) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { onVote(JamVote.ACCEPT) }) { Text("Accept", color = BentoPrimary) }
                 TextButton(onClick = { onVote(JamVote.REJECT) }) { Text("Reject", color = MaterialTheme.colorScheme.error) }
@@ -1495,8 +1558,7 @@ private fun PermissionsPage(
             JamFeatureToggles(
                 permissions,
                 onPermissionsChange,
-                enabled = isHost,
-                showSharedRecommendations = permissions.manageQueue.mode == JamAccessMode.HOST_ONLY
+                enabled = isHost
             )
         }
         JamButton("Save permissions", Icons.Default.Check, enabled = isHost && state !is JamUiState.Loading, onClick = onSave)
@@ -1508,8 +1570,7 @@ private fun PermissionsPage(
 private fun JamFeatureToggles(
     permissions: JamPermissions,
     onChange: (JamPermissions) -> Unit,
-    enabled: Boolean,
-    showSharedRecommendations: Boolean
+    enabled: Boolean
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Song sharing", style = MaterialTheme.typography.titleMedium, color = BentoTextPrimary, fontWeight = FontWeight.Bold)
@@ -1524,18 +1585,16 @@ private fun JamFeatureToggles(
                 enabled = enabled
             )
         }
-        if (showSharedRecommendations) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Allow shared-library recommendations", color = BentoTextPrimary, fontWeight = FontWeight.Medium)
-                    Text("Participants vote on songs already in the Jam library.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(
-                    checked = permissions.allowSharedLibraryRecommendations,
-                    onCheckedChange = { onChange(permissions.copy(allowSharedLibraryRecommendations = it)) },
-                    enabled = enabled
-                )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Allow shared-library recommendations", color = BentoTextPrimary, fontWeight = FontWeight.Medium)
+                Text("Participants vote on songs already available on every device.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
             }
+            Switch(
+                checked = permissions.allowSharedLibraryRecommendations,
+                onCheckedChange = { onChange(permissions.copy(allowSharedLibraryRecommendations = it)) },
+                enabled = enabled
+            )
         }
     }
 }

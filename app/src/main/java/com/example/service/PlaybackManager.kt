@@ -317,7 +317,7 @@ class PlaybackManager(
         }
 
         override fun play() {
-            if (fadeInMs > 0) {
+            if (!jamPlaybackActive && fadeInMs > 0) {
                 playWithFade()
             } else {
                 this@PlaybackManager.play()
@@ -325,7 +325,7 @@ class PlaybackManager(
         }
 
         override fun pause() {
-            if (fadeOutMs > 0) {
+            if (!jamPlaybackActive && fadeOutMs > 0) {
                 pauseWithFade()
             } else {
                 this@PlaybackManager.pause()
@@ -1390,8 +1390,8 @@ class PlaybackManager(
                 player.repeatMode = Player.REPEAT_MODE_OFF
             }
             player.prepare()
-            if (startPlayback && fadeInMs > 0) {
-                playWithFade(fadeInMs)
+            if (startPlayback && effectiveFadeInMs > 0) {
+                playWithFade(effectiveFadeInMs)
             } else if (startPlayback) {
                 play()
             } else {
@@ -1420,6 +1420,12 @@ class PlaybackManager(
     private var jamRestoreGeneration = 0L
     private val effectiveCrossfadeDurationSec: Int
         get() = if (jamPlaybackActive) 0 else crossfadeDurationSec
+    private val effectiveFadeInMs: Int
+        get() = if (jamPlaybackActive) 0 else fadeInMs
+    private val effectiveFadeOutMs: Int
+        get() = if (jamPlaybackActive) 0 else fadeOutMs
+    private val effectiveGaplessPlayback: Boolean
+        get() = !jamPlaybackActive && gaplessPlayback
 
     /** Keeps local crossfade preferences intact while Jam playback uses server-led track changes. */
     fun setJamPlaybackActive(active: Boolean) {
@@ -1431,6 +1437,7 @@ class PlaybackManager(
             fadeJob?.cancel()
             fadeJob = null
             cancelCrossfade(resetVolume = true)
+            player.volume = transitionTargetVolume()
         }
     }
 
@@ -1472,10 +1479,10 @@ class PlaybackManager(
                     player.prepare()
                 }
                 if (!player.isPlaying && !player.playWhenReady) {
-                    if (fadeInMs > 0) playWithFade(fadeInMs) else play()
+                    play()
                 }
             } else if (player.isPlaying || player.playWhenReady) {
-                if (fadeOutMs > 0) pauseWithFade(fadeOutMs) else pause()
+                pause()
             }
         } finally {
             applyingJamSnapshot = wasApplying
@@ -1499,7 +1506,7 @@ class PlaybackManager(
         val wasApplying = applyingJamSnapshot
         applyingJamSnapshot = true
         try {
-            if (fadeOutMs > 0) pauseWithFade(fadeOutMs) else pause()
+            pause()
         } finally {
             applyingJamSnapshot = wasApplying
         }
@@ -2277,19 +2284,19 @@ class PlaybackManager(
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
                     val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
                     val targetVolume = transitionTargetVolume()
-                    if (isNaturalTransition && gaplessPlayback && effectiveCrossfadeDurationSec <= 0 && fadeInMs <= 0 && fadeOutMs <= 0) {
+                    if (isNaturalTransition && effectiveGaplessPlayback && effectiveCrossfadeDurationSec <= 0 && effectiveFadeInMs <= 0 && effectiveFadeOutMs <= 0) {
                         // True gapless transition: maintain unity volume across track boundary with zero dip
                         fadeJob?.cancel()
                         fadeJob = null
                         player.volume = targetVolume
-                    } else if (fadeInMs > 0 && willBePlaying) {
-                        val safeStartVol = if (isNaturalTransition && fadeOutMs > 0) {
+                    } else if (effectiveFadeInMs > 0 && willBePlaying) {
+                        val safeStartVol = if (isNaturalTransition && effectiveFadeOutMs > 0) {
                             // Continue smoothly from the configured outgoing fade level.
                             player.volume.coerceIn(0.0f, 1.0f)
                         } else {
                             0.0f
                         }
-                        performVolumeRampUp(fadeInMs.coerceIn(0, 10000), startVolume = safeStartVol, targetVolume = targetVolume)
+                        performVolumeRampUp(effectiveFadeInMs.coerceIn(0, 10000), startVolume = safeStartVol, targetVolume = targetVolume)
                     } else {
                         fadeJob?.cancel()
                         fadeJob = null
@@ -3274,7 +3281,7 @@ class PlaybackManager(
                         // Seamless Audio Crossfade Transition
                         val configuredCrossfadeMs = (effectiveCrossfadeDurationSec * 1000L).coerceIn(0L, 12000L)
                         val crossfadeMs = if (configuredCrossfadeMs > 0L) {
-                            maxOf(configuredCrossfadeMs, fadeInMs.coerceIn(0, 10000).toLong(), fadeOutMs.coerceIn(0, 10000).toLong())
+                            maxOf(configuredCrossfadeMs, effectiveFadeInMs.coerceIn(0, 10000).toLong(), effectiveFadeOutMs.coerceIn(0, 10000).toLong())
                                 .coerceAtMost(12000L)
                         } else 0L
                         val sleepState = sleepTimerManager.state.value
@@ -3286,7 +3293,7 @@ class PlaybackManager(
                         val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
                         val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
                         inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
-                        val trackEndFadeOutMs = fadeOutMs.coerceIn(0, 10000).toLong()
+                        val trackEndFadeOutMs = effectiveFadeOutMs.coerceIn(0, 10000).toLong()
                         val effectiveEndFadeWindowMs = trackEndFadeOutMs
                         inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
                             reliableDur > (effectiveEndFadeWindowMs + 2000L) && currentPos >= 1500L &&

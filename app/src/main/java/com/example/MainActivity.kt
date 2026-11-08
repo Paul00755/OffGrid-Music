@@ -127,7 +127,8 @@ class MainActivity : ComponentActivity() {
             val baseDensityFactor = remember(currentDensity.density, currentDensity.fontScale, displayScale) {
                 val scaleMultiplier = when (displayScale.uppercase()) {
                     "COMFORT" -> 1.08f
-                    "COMPACT" -> 0.92f
+                    // Compact should be visibly smaller on phones with dense system display settings.
+                    "COMPACT" -> 0.86f
                     else -> 1.0f
                 }
                 val safeDensity = (currentDensity.density * scaleMultiplier).coerceIn(0.5f, 5.0f)

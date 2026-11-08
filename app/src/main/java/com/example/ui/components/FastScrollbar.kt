@@ -28,12 +28,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import com.example.ui.theme.BentoPrimary
 import com.example.util.HapticUtils
 import kotlinx.coroutines.Dispatchers
@@ -335,37 +339,42 @@ fun FastScrollbar(
                 .background(if (isDragging) thumbColor else thumbColor.copy(alpha = 0.85f))
         )
 
-        // Floating section / letter bubble while dragging
-        AnimatedVisibility(
-            visible = isDragging && !activeLabel.isNullOrBlank(),
-            enter = fadeIn(tween(70)) + scaleIn(tween(90), initialScale = 0.82f),
-            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.82f),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .graphicsLayer {
-                    val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                    val displayFraction = if (isDragging) dragFraction else stateScrollFraction
-                    translationY = (topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight) - 6f)
-                    translationX = with(density) { (-46).dp.toPx() }
-                }
-        ) {
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = thumbColor,
-                shadowElevation = 8.dp,
-                modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        // Use a Popup so the section label is measured independently of the 26dp drag rail.
+        // Otherwise Compose constrains longer labels (for example, "Stats") to the rail width.
+        if (isDragging && !activeLabel.isNullOrBlank()) {
+            val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+            val bubbleOffsetY = (topPaddingPx + (dragFraction.coerceIn(0f, 1f) * usableHeight) - 6f).roundToInt()
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Popup(
+                    alignment = Alignment.TopEnd,
+                    offset = IntOffset(x = 0, y = bubbleOffsetY)
                 ) {
-                    Text(
-                        text = activeLabel ?: "",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.Black,
-                        maxLines = 1
-                    )
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(tween(70)) + scaleIn(tween(90), initialScale = 0.82f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.82f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = thumbColor,
+                            shadowElevation = 8.dp,
+                            modifier = Modifier.widthIn(min = 64.dp, max = 180.dp).heightIn(min = 40.dp)
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = activeLabel.orEmpty(),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.Black,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

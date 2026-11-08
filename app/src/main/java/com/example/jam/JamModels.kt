@@ -93,7 +93,8 @@ data class JamTrack(
     val artist: String,
     val album: String,
     val durationMs: Long,
-    val checksum: String? = null
+    val checksum: String? = null,
+    val audioFingerprint: String? = null
 ) {
     fun toMap(): Map<String, Any> = buildMap {
         put("sharedTrackId", sharedTrackId)
@@ -102,6 +103,7 @@ data class JamTrack(
         put("album", album)
         put("durationMs", durationMs.coerceAtLeast(0L))
         checksum?.takeIf(String::isNotBlank)?.let { put("checksum", it) }
+        audioFingerprint?.takeIf(String::isNotBlank)?.let { put("audioFingerprint", it) }
     }
 }
 
@@ -312,7 +314,7 @@ data class JamRecommendation(
     val pendingCount: Int get() = (eligibleUids.size - approvalCount - rejectionCount).coerceAtLeast(0)
     val remainingMs: Long get() = (deadlineAtMs - System.currentTimeMillis()).coerceAtLeast(0L)
     val isVoting: Boolean get() = status == "VOTING"
-    val isTerminal: Boolean get() = status in setOf("READY", "REJECTED", "EXPIRED", "FAILED")
+    val isTerminal: Boolean get() = status in setOf("READY", "REJECTED", "EXPIRED", "FAILED", "CANCELLED_PERMISSION_DISABLED")
 }
 
 enum class JamPage { LANDING, CREATE, JOIN, INVITE, ACTIVE, PERMISSIONS }
