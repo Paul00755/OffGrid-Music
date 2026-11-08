@@ -19,21 +19,25 @@ service cloud.firestore {
     function validFeatureId(featureId) {
       return featureId == 'sharedRecommendations' || featureId == 'localSongSharing';
     }
-    function joiningJam(sessionId) {
-      let participant = getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data;
+    function validJoinInvitation(sessionId, inviteHash) {
       let session = get(/databases/$(database)/documents/jamSessions/$(sessionId)).data;
-      let invitation = get(/databases/$(database)/documents/jamInvitations/$(participant.invitationHash)).data;
-      return signedIn()
-        && !exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
-        && session.status == 'ACTIVE'
+      let invitation = get(/databases/$(database)/documents/jamInvitations/$(inviteHash)).data;
+      return session.status == 'ACTIVE'
         && session.get('started', false) != true
         && session.participantCount < session.maxParticipants
         && !(request.auth.uid in session.get('formerHostUids', []))
         && !(request.auth.uid in session.get('kickedUids', []))
-        && participant.invitationHash is string
         && invitation.sessionId == sessionId
         && invitation.active == true
         && invitation.expiresAt > request.time;
+    }
+    function joiningJam(sessionId) {
+      return signedIn()
+        && !exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data.get('invitationHash', '') is string
+        && getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data.get('invitationHash', '') != ''
+        && validJoinInvitation(sessionId, getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data.invitationHash);
     }
 
     match /users/{userId} {
@@ -101,7 +105,7 @@ service cloud.firestore {
               : getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.auth.uid)).data.role == 'PARTICIPANT')))
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['playback'])
           || resource.data.get('started', true) == true)
-        && (!joiningJam(sessionId) ||
+        && (member(sessionId) ||
           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'revision'])
             && request.resource.data.participantCount <= resource.data.maxParticipants))
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['formerHostUids']) ||
@@ -129,7 +133,8 @@ service cloud.firestore {
       allow delete: if false;
 
       match /participants/{participantUid} {
-        allow read: if member(sessionId);
+        allow get: if signedIn() && (participantUid == request.auth.uid || member(sessionId));
+        allow list: if member(sessionId);
         allow create: if signedIn() && participantUid == request.auth.uid && (
           (getAfter(/databases/$(database)/documents/jamSessions/$(sessionId)).data.hostUid == request.auth.uid
             && request.resource.data.role == 'HOST')

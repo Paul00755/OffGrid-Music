@@ -1137,11 +1137,14 @@ class MainActivity : ComponentActivity() {
 
     private fun handleJamInviteIntent(intent: Intent?) {
         val uri = intent?.data ?: return
-        val configuredHost = com.example.BuildConfig.JAM_INVITE_HOST
-        if (uri.scheme != "https" || configuredHost.isBlank() || !uri.host.equals(configuredHost, ignoreCase = true)) return
+        val configuredHost = com.example.BuildConfig.JAM_INVITE_HOST.trim()
+        val host = uri.host?.trim().orEmpty()
+        val validHost = (configuredHost.isNotBlank() && host.equals(configuredHost, ignoreCase = true)) ||
+            host.equals("offgrid-music.web.app", ignoreCase = true)
+        if (!uri.scheme.equals("https", ignoreCase = true) || !validHost) return
         val segments = uri.pathSegments
         if (segments.size >= 2 && segments[0].equals("jam", ignoreCase = true)) {
-            val code = segments[1].filter(Char::isLetterOrDigit).take(16)
+            val code = com.example.jam.extractJamInviteCode(segments[1])
             if (code.length >= 12) pendingJamInviteCode.value = code
         }
     }

@@ -46,7 +46,7 @@ class JamRepository(
     suspend fun joinByCode(code: String, displayName: String, photoUrl: String?): String {
         requireUid()
         val result = call("joinJam", mapOf(
-            "invitationCode" to code.filter(Char::isLetterOrDigit).uppercase().take(16),
+            "invitationCode" to extractJamInviteCode(code),
             "displayName" to displayName.take(80),
             "photoUrl" to (photoUrl ?: "")
         ))
@@ -368,9 +368,9 @@ class JamRepository(
         firestore.runTransaction { tx ->
             tx.set(session, mapOf("hostUid" to uid, "status" to "ACTIVE", "participantCount" to 1,
                 "maxParticipants" to maxParticipants, "started" to false, "formerHostUids" to emptyList<String>(),
-                "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
+                "kickedUids" to emptyList<String>(), "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
                 "permissions" to data["permissions"], "playback" to playback, "revision" to 1L, "queueRevision" to 0L))
-            tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, true))
+            tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, true) + mapOf("invitationHash" to inviteHash))
             tx.set(invite, mapOf("sessionId" to id, "active" to true, "createdAt" to Timestamp.now(),
                 "expiresAt" to Timestamp(java.util.Date(System.currentTimeMillis() + INVITE_LIFETIME_MS))))
             null
@@ -379,40 +379,39 @@ class JamRepository(
     }
 
     private suspend fun joinJamClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
-        val code = (data["invitationCode"] as? String).orEmpty().filter(Char::isLetterOrDigit).uppercase()
+        val code = extractJamInviteCode((data["invitationCode"] as? String).orEmpty())
         if (code.length != INVITE_CODE_LENGTH) throw JamRepositoryException("Invitation code is invalid.")
         val invitation = firestore.collection("jamInvitations").document(invitationDigest(code))
         val info = invitation.get().await()
         val id = info.getString("sessionId") ?: throw JamRepositoryException("This invitation is invalid or has been revoked.")
         val session = sessionRef(id)
         val member = session.collection(PARTICIPANTS).document(uid)
+        val alreadyMember = runCatching { member.get().await().exists() }.getOrDefault(false)
+        if (alreadyMember) return mapOf("sessionId" to id)
         firestore.runTransaction { tx ->
             val inviteSnapshot = tx.get(invitation)
             val sessionSnapshot = tx.get(session)
-            val memberSnapshot = tx.get(member)
             if (inviteSnapshot.getBoolean("active") != true || (inviteSnapshot.getTimestamp("expiresAt")?.toDate()?.time ?: 0L) <= System.currentTimeMillis()) {
                 throw JamRepositoryException("This invitation has expired or was revoked.")
             }
             if (sessionSnapshot.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
-            if (!memberSnapshot.exists()) {
-                val kickedUids = (sessionSnapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
-                if (uid in kickedUids) {
-                    throw JamRepositoryException("The host removed you from this Jam. You cannot rejoin this Jam room.")
-                }
-                val formerHosts = (sessionSnapshot.get("formerHostUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
-                if (uid in formerHosts) {
-                    throw JamRepositoryException("You left this Jam as host and can’t rejoin it. Ask the current host to create a new Jam.")
-                }
-                if (sessionSnapshot.getBoolean("started") == true) {
-                    throw JamRepositoryException("This Jam has already started. Ask your friend to start a new session and wait for everyone to join before listening.")
-                }
-                val count = sessionSnapshot.getLong("participantCount") ?: 0L
-                val maxParticipants = (sessionSnapshot.getLong("maxParticipants") ?: MAX_PARTICIPANTS.toLong())
-                    .toInt().coerceIn(2, MAX_PARTICIPANTS)
-                if (count >= maxParticipants) throw JamRepositoryException("This Jam is full (maximum $maxParticipants people).")
-                tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, false) + mapOf("invitationHash" to invitation.id))
-                tx.update(session, mapOf("participantCount" to count + 1, "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1))
+            val kickedUids = (sessionSnapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
+            if (uid in kickedUids) {
+                throw JamRepositoryException("The host removed you from this Jam. You cannot rejoin this Jam room.")
             }
+            val formerHosts = (sessionSnapshot.get("formerHostUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
+            if (uid in formerHosts) {
+                throw JamRepositoryException("You left this Jam as host and can’t rejoin it. Ask the current host to create a new Jam.")
+            }
+            if (sessionSnapshot.getBoolean("started") == true) {
+                throw JamRepositoryException("This Jam has already started. Ask your friend to start a new session and wait for everyone to join before listening.")
+            }
+            val count = sessionSnapshot.getLong("participantCount") ?: 0L
+            val maxParticipants = (sessionSnapshot.getLong("maxParticipants") ?: MAX_PARTICIPANTS.toLong())
+                .toInt().coerceIn(2, MAX_PARTICIPANTS)
+            if (count >= maxParticipants) throw JamRepositoryException("This Jam is full (maximum $maxParticipants people).")
+            tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, false) + mapOf("invitationHash" to invitation.id))
+            tx.update(session, mapOf("participantCount" to count + 1, "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1))
             id
         }.await()
         return mapOf("sessionId" to id)
@@ -1120,7 +1119,7 @@ class JamRepository(
     }
 
     private fun buildInviteUrl(code: String): String? {
-        val host = inviteHost.trim().trim('/').takeIf(String::isNotBlank) ?: return null
+        val host = inviteHost.trim().trim('/').takeIf(String::isNotBlank) ?: "offgrid-music.web.app"
         return "https://$host/jam/${code.lowercase()}"
     }
 

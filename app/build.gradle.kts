@@ -32,7 +32,10 @@ val jamInviteHostCandidate = providers.gradleProperty("JAM_INVITE_HOST")
   .orNull
   ?.trim()
   .orEmpty()
-val jamInviteHost = jamInviteHostCandidate.takeIf { it.matches(Regex("^[A-Za-z0-9.-]+$")) }.orEmpty()
+val jamInviteHost = jamInviteHostCandidate
+  .takeIf { it.matches(Regex("^[A-Za-z0-9.-]+$")) }
+  ?.takeIf { it.isNotBlank() }
+  ?: "offgrid-music.web.app"
 val jamTurnUri = providers.gradleProperty("JAM_TURN_URI").orElse(providers.environmentVariable("JAM_TURN_URI")).orNull.orEmpty()
 val jamTurnUsername = providers.gradleProperty("JAM_TURN_USERNAME").orElse(providers.environmentVariable("JAM_TURN_USERNAME")).orNull.orEmpty()
 val jamTurnCredential = providers.gradleProperty("JAM_TURN_CREDENTIAL").orElse(providers.environmentVariable("JAM_TURN_CREDENTIAL")).orNull.orEmpty()
@@ -172,10 +175,10 @@ dependencies {
   implementation("io.github.webrtc-sdk:android:150.7871.04")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
-  // implementation(libs.androidx.camera.camera2)
-  // implementation(libs.androidx.camera.core)
-  // implementation(libs.androidx.camera.lifecycle)
-  // implementation(libs.androidx.camera.view)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.core)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)

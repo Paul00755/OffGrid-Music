@@ -229,10 +229,12 @@ class JamFeatureController(
     }
 
     fun joinByCode(code: String) {
-        val account = currentAccountOrNull() ?: run { requestJoin(code); return }
+        val normalized = extractJamInviteCode(code)
+        val account = currentAccountOrNull() ?: run { requestJoin(normalized); return }
+        _page.value = JamPage.JOIN
         runAction {
             val id = repository.joinByCode(
-                code = code,
+                code = normalized,
                 displayName = resolvedDisplayName(account),
                 photoUrl = account.photoUrl
             )

@@ -337,3 +337,27 @@ internal fun invitationDigest(code: String): String {
     val bytes = MessageDigest.getInstance("SHA-256").digest(code.trim().uppercase().toByteArray())
     return bytes.joinToString("") { "%02x".format(it) }
 }
+
+/**
+ * Extracts a normalized uppercase Jam invitation code (up to 16 alphanumeric characters)
+ * from a raw code, a formatted code with spaces, a `/jam/<code>` link, or a QR payload.
+ */
+fun extractJamInviteCode(rawInput: String): String {
+    val trimmed = rawInput.trim()
+    if (trimmed.isEmpty()) return ""
+
+    // Match .../jam/<code> in https:// or intent:// URLs
+    val jamPathMatch = Regex("(?i)(?:^|/)jam/([A-Za-z0-9]{12,16})(?:[/?#]|$)").find(trimmed)
+    if (jamPathMatch != null) {
+        return jamPathMatch.groupValues[1].uppercase().take(16)
+    }
+
+    // Match ?code=<code> or &code=<code>
+    val queryMatch = Regex("(?i)[?&]code=([A-Za-z0-9]{12,16})(?:[&#]|$)").find(trimmed)
+    if (queryMatch != null) {
+        return queryMatch.groupValues[1].uppercase().take(16)
+    }
+
+    return trimmed.filter(Char::isLetterOrDigit).uppercase().take(16)
+}
+

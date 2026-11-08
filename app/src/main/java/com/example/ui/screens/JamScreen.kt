@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Reorder
@@ -91,6 +92,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -121,6 +123,8 @@ import com.example.jam.JamVote
 import com.example.jam.JamQueueItem
 import com.example.jam.JamSession
 import com.example.jam.JamUiState
+import com.example.jam.extractJamInviteCode
+import com.example.ui.components.JamQrScannerDialog
 import com.example.ui.theme.BentoCardBorder
 import com.example.ui.theme.BentoCardPurple
 import com.example.ui.theme.BentoCardSurface
@@ -504,20 +508,131 @@ private fun CreatePage(
 
 @Composable
 private fun JoinPage(onBack: () -> Unit, onJoin: (String) -> Unit, state: JamUiState) {
+    val context = LocalContext.current
     var code by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        JamHeader("Join a Jam", "Enter the invitation code", onBack)
+    var showQrScanner by rememberSaveable { mutableStateOf(false) }
+    var cameraPermissionDenied by rememberSaveable { mutableStateOf(false) }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            cameraPermissionDenied = false
+            showQrScanner = true
+        } else {
+            cameraPermissionDenied = true
+        }
+    }
+
+    val launchQrScanner = {
+        val hasCameraPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasCameraPermission) {
+            cameraPermissionDenied = false
+            showQrScanner = true
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    if (showQrScanner) {
+        JamQrScannerDialog(
+            onDismiss = { showQrScanner = false },
+            onCodeScanned = { scannedCode ->
+                showQrScanner = false
+                val normalized = extractJamInviteCode(scannedCode)
+                if (normalized.length >= 12) {
+                    code = normalized
+                    onJoin(normalized)
+                }
+            }
+        )
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        JamHeader("Join a Jam", "Enter the invitation code or scan the QR code", onBack)
         OutlinedTextField(
             value = code,
-            onValueChange = { code = it.filter(Char::isLetterOrDigit).take(16).uppercase() },
-            label = { Text("Invitation code") },
+            onValueChange = { code = extractJamInviteCode(it) },
+            label = { Text("Invitation code or link") },
             leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = BentoPrimary) },
+            trailingIcon = {
+                IconButton(
+                    onClick = launchQrScanner,
+                    modifier = Modifier.testTag("join_code_qr_icon_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCodeScanner,
+                        contentDescription = "Scan QR code",
+                        tint = BentoPrimary
+                    )
+                }
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Ascii),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().testTag("jam_invite_code_input")
         )
-        JamButton("Continue", Icons.Default.PersonAdd, enabled = code.length >= 12 && state !is JamUiState.Loading) { onJoin(code) }
-        Text("Opening a valid invitation link or scanning its QR code brings you to this same join flow.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+        JamButton(
+            text = "Continue",
+            icon = Icons.Default.PersonAdd,
+            enabled = code.length >= 12 && state !is JamUiState.Loading
+        ) {
+            onJoin(code)
+        }
+        OutlinedButton(
+            onClick = launchQrScanner,
+            enabled = state !is JamUiState.Loading,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+                .testTag("scan_qr_button"),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, BentoCardBorder)
+        ) {
+            Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = BentoPrimary)
+            Spacer(Modifier.width(8.dp))
+            Text("Scan QR Code", color = BentoTextPrimary, fontWeight = FontWeight.SemiBold)
+        }
+        if (cameraPermissionDenied) {
+            JamCard {
+                Text(
+                    "Camera permission is required to scan a Jam QR code.",
+                    color = BentoTextPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Allow camera access when prompted, or open App Settings if you previously disabled it.",
+                    color = BentoTextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("Allow Camera", color = BentoPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", context.packageName, null)
+                                }
+                            )
+                        }
+                    }) {
+                        Text("Open Settings", color = BentoTextSecondary)
+                    }
+                }
+            }
+        }
+        Text(
+            "You can enter the 16-character invitation code, paste an invitation link, or tap Scan QR Code to scan the host's QR directly.",
+            color = BentoTextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
         JamStatus(state)
     }
 }
