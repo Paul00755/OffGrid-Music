@@ -49,11 +49,14 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Reorder
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
@@ -912,67 +915,6 @@ private fun RoomLeaveDialog(
 }
 
 @Composable
-private fun JamFeatureRequestCard(
-    request: JamFeatureRequest,
-    remainingMs: Long,
-    isHost: Boolean,
-    onRespond: () -> Unit,
-    onIgnore: () -> Unit
-) {
-    JamCard {
-        Text(
-            "${request.requesterName} requested the host to enable ${request.feature.title}.",
-            color = BentoTextPrimary,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text("Request expires in ${formatRequestTime(remainingMs)}.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-        if (isHost) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onRespond) { Text("Respond", color = BentoPrimary) }
-                TextButton(onClick = onIgnore) { Text("Ignore", color = BentoTextSecondary) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeatureRequestPrompt(
-    feature: JamFeature,
-    request: JamFeatureRequest?,
-    requestBlocked: Boolean,
-    onRequest: () -> Unit
-) {
-    JamCard {
-        Text(
-            when (feature) {
-                JamFeature.SHARED_RECOMMENDATIONS -> "Want to recommend a song? Ask the host to enable song recommendations for this Jam."
-                JamFeature.LOCAL_SONG_SHARING -> "Want to share a local song? Ask the host to enable local song sharing for this Jam."
-            },
-            color = BentoTextSecondary,
-            style = MaterialTheme.typography.bodySmall
-        )
-        if (requestBlocked) {
-            Text("The host blocked requests for this feature in this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
-        } else if (request == null) {
-            TextButton(onClick = onRequest, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                Text("Request", color = BentoPrimary, fontWeight = FontWeight.SemiBold)
-            }
-        } else {
-            Text(
-                "${request.requesterName} has already requested this feature · ${formatRequestTime(request.remainingMs())} left",
-                color = BentoPrimary,
-                style = MaterialTheme.typography.labelSmall
-            )
-        }
-    }
-}
-
-private fun formatRequestTime(remainingMs: Long): String {
-    val totalSeconds = ((remainingMs.coerceAtLeast(0L) + 999L) / 1_000L).toInt()
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
-}
-
-@Composable
 private fun ActivePage(
     controller: JamFeatureController?,
     session: JamSession?,
@@ -998,6 +940,7 @@ private fun ActivePage(
     val context = LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var libraryQuery by rememberSaveable { mutableStateOf("") }
+    var showAllMatchesDialog by rememberSaveable { mutableStateOf(false) }
     var localShareConsent by rememberSaveable { mutableStateOf(false) }
     var queueExpanded by rememberSaveable { mutableStateOf(true) }
     var localFileError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1024,17 +967,35 @@ private fun ActivePage(
     }
     var isSeeking by remember { mutableStateOf(false) }
     val currentItem = queue.firstOrNull { it.id == session?.playback?.queueItemId }
-        ?: queue.firstOrNull { it.track.sharedTrackId == session?.playback?.sharedTrackId }
+        ?: session?.playback?.sharedTrackId?.takeIf(String::isNotBlank)?.let { tid ->
+            queue.firstOrNull { it.track.sharedTrackId == tid }
+        }
+        ?: queue.firstOrNull()
     val isHost = session?.hostUid != null && session.hostUid == currentUid
+    val hostUid = session?.hostUid.orEmpty()
     val roomStarted = session?.started == true
     val permissionUid = currentUid
     val permissions = session?.permissions ?: JamPermissions()
+    val canPlayPause = permissions.allows(JamPermissionKind.PLAY_PAUSE, permissionUid, hostUid)
+    val canSeek = permissions.allows(JamPermissionKind.SEEK, permissionUid, hostUid)
+    val canSkip = permissions.allows(JamPermissionKind.SKIP_TRACK, permissionUid, hostUid)
+    val canAddTracks = permissions.allows(JamPermissionKind.ADD_TO_QUEUE, permissionUid, hostUid)
+    val canManageQueue = permissions.allows(JamPermissionKind.MANAGE_QUEUE, permissionUid, hostUid)
+
     val durationMs = currentItem?.track?.durationMs?.coerceAtLeast(1L) ?: 1L
     var selectedRoomTab by rememberSaveable(session?.id) { mutableStateOf(0) }
     var participantsExpanded by rememberSaveable { mutableStateOf(false) }
     var requestClockMs by remember(session?.id) { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedFeatureRequest by remember { mutableStateOf<JamFeatureRequest?>(null) }
     var blockFeatureRequester by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedRecommendationId) {
+        if (!selectedRecommendationId.isNullOrBlank()) {
+            val targetRec = recommendations.firstOrNull { it.id == selectedRecommendationId }
+            selectedRoomTab = if (targetRec?.type == JamRecommendationType.LOCAL_SONG) 2 else 1
+        }
+    }
+
     LaunchedEffect(session?.id) {
         while (session != null) {
             requestClockMs = System.currentTimeMillis()
@@ -1046,50 +1007,109 @@ private fun ActivePage(
     }
     val noMatchesFound = (libraryIndexStatus.isReady && sharedLibraryMatches.isEmpty() && queue.isEmpty()) ||
         (currentItem != null && !localTrackAvailable)
+
+    // Standard preview shows up to 50 matching songs as requested by the user
     val visibleMatches = remember(sharedLibraryMatches, libraryQuery) {
         val query = libraryQuery.trim()
-        if (query.isBlank()) sharedLibraryMatches.take(12) else sharedLibraryMatches.asSequence()
-            .filter { match -> match.song.displayTitle.contains(query, true) || match.song.displayArtist.contains(query, true) || match.song.displayAlbum.contains(query, true) }
-            .take(24).toList()
+        if (query.isBlank()) {
+            sharedLibraryMatches.take(50)
+        } else {
+            sharedLibraryMatches.asSequence()
+                .filter { match ->
+                    match.song.displayTitle.contains(query, true) ||
+                        match.song.displayArtist.contains(query, true) ||
+                        match.song.displayAlbum.contains(query, true)
+                }
+                .take(50)
+                .toList()
+        }
     }
-    LaunchedEffect(session?.playback, isSeeking) {
+
+    LaunchedEffect(session?.playback, isSeeking, durationMs) {
         while (!isSeeking) {
             val playback = session?.playback ?: break
             sliderPosition = playback.estimatedPosition().toFloat().coerceIn(0f, durationMs.toFloat())
-            kotlinx.coroutines.delay(500L)
+            kotlinx.coroutines.delay(200L)
         }
+    }
+
+    if (showAllMatchesDialog) {
+        AllMatchingSongsDialog(
+            matches = sharedLibraryMatches,
+            canAddTracks = canAddTracks,
+            canPlayPause = canPlayPause,
+            canRecommend = permissions.allowSharedLibraryRecommendations,
+            isHost = isHost,
+            onAddAll = { shuffle -> controller?.addAllMatchingSongsToQueue(shuffle = shuffle) },
+            onPlayNow = { match -> controller?.playSharedLibrarySongNow(match) },
+            onPlayNext = { match -> controller?.playSharedLibrarySongNext(match) },
+            onAddToQueue = { match -> controller?.addSharedLibrarySongToQueue(match) },
+            onRecommend = { match -> controller?.recommendSharedLibrarySong(match) },
+            onOpenPermissions = onPermissions,
+            onDismiss = { showAllMatchesDialog = false }
+        )
     }
 
     selectedFeatureRequest?.takeIf { it.isPending(requestClockMs) }?.let { request ->
         AlertDialog(
             onDismissRequest = { selectedFeatureRequest = null; blockFeatureRequester = false },
-            title = { Text("Respond to request") },
+            title = { Text("Respond to Request") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${request.requesterName} asked you to enable ${request.feature.title}.", color = BentoTextPrimary)
-                    Text("You can enable it now or keep the current setting. This request expires in ${formatRequestTime(request.remainingMs(requestClockMs))}.", color = BentoTextSecondary)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "${request.requesterName} asked you to enable ${request.feature.title} for this Jam.",
+                        color = BentoTextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Expires in ${formatCountdownMmSs(request.remainingMs(requestClockMs))}. Turning one setting on or off will not affect the other feature.",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = blockFeatureRequester, onCheckedChange = { blockFeatureRequester = it })
-                        Text("Block this user from requesting this feature again in this Jam", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "Block ${request.requesterName} from requesting this feature again in this Jam",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             },
             confirmButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    TextButton(onClick = {
-                        onResolveFeatureRequest(request.feature, true, blockFeatureRequester)
-                        selectedFeatureRequest = null
-                        blockFeatureRequester = false
-                    }) { Text("Enable this feature", color = BentoPrimary) }
-                    TextButton(onClick = {
-                        onResolveFeatureRequest(request.feature, false, blockFeatureRequester)
-                        selectedFeatureRequest = null
-                        blockFeatureRequester = false
-                    }) { Text("Keep current setting", color = BentoPrimary) }
-                    TextButton(onClick = { selectedFeatureRequest = null; blockFeatureRequester = false }) { Text("Cancel", color = BentoTextSecondary) }
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = {
+                            onResolveFeatureRequest(request.feature, true, blockFeatureRequester)
+                            selectedFeatureRequest = null
+                            blockFeatureRequester = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                    ) { Text("Enable Feature", fontWeight = FontWeight.Bold) }
+                    OutlinedButton(
+                        onClick = {
+                            onResolveFeatureRequest(request.feature, false, blockFeatureRequester)
+                            selectedFeatureRequest = null
+                            blockFeatureRequester = false
+                        },
+                        border = BorderStroke(1.dp, BentoCardBorder)
+                    ) { Text("Keep Current Setting", color = BentoTextPrimary) }
+                    TextButton(onClick = { selectedFeatureRequest = null; blockFeatureRequester = false }) {
+                        Text("Cancel", color = BentoTextSecondary)
+                    }
                 }
             }
         )
+    }
+
+    val sharedRecommendations = remember(recommendations) {
+        recommendations.filter { it.type == JamRecommendationType.SHARED_LIBRARY }
+    }
+    val localShareRecommendations = remember(recommendations) {
+        recommendations.filter { it.type == JamRecommendationType.LOCAL_SONG }
+    }
+    val activeVotesBadgeCount = remember(recommendations) {
+        recommendations.count { it.isVoting }
     }
 
     LazyColumn(
@@ -1104,18 +1124,27 @@ private fun ActivePage(
             }
         }
         item {
+            val hostName = participants.firstOrNull { it.uid == hostUid || it.isHost }?.displayName ?: "Host"
             JamHeader(
                 title = "OffGrid Jam",
-                subtitle = if (session == null) "Connecting to your session…" else "${session.participantCount}/${session.maxParticipants} listeners · ${if (roomStarted) "Live" else "Waiting for host"}",
+                subtitle = if (session == null) {
+                    "Connecting to your session…"
+                } else {
+                    "${session.participantCount}/${session.maxParticipants} listeners · Host: $hostName · ${if (roomStarted) "Connected" else "Waiting"}"
+                },
                 onBack = onBackRequest,
                 trailing = {
-                    if (isHost) IconButton(onClick = onPermissions) { Icon(Icons.Default.Tune, "Permissions", tint = BentoPrimary) }
+                    if (isHost) {
+                        IconButton(onClick = onPermissions) {
+                            Icon(Icons.Default.Tune, "Permissions", tint = BentoPrimary)
+                        }
+                    }
                 }
             )
         }
         if (activeFeatureRequests.isNotEmpty()) {
             itemsIndexed(activeFeatureRequests, key = { _, request -> "request-${request.feature.documentId}" }) { _, request ->
-                JamFeatureRequestCard(
+                JamFeatureRequestBanner(
                     request = request,
                     remainingMs = request.remainingMs(requestClockMs),
                     isHost = isHost,
@@ -1142,31 +1171,66 @@ private fun ActivePage(
                 )
                 if (!permissions.allowLocalSongSharing && isHost) {
                     Text("Local song sharing is off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = onPermissions) { Text("Turn on sharing in Permissions", color = BentoPrimary) }
+                    TextButton(
+                        onClick = { controller?.setPermissions(permissions.copy(allowLocalSongSharing = true)) }
+                    ) { Text("Turn on local song sharing", color = BentoPrimary, fontWeight = FontWeight.Bold) }
                 } else if (permissions.allowLocalSongSharing) {
-                    Text("Choose an audio file below. Once everyone approves, it transfers directly to the other devices.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text("Open the Local Sharing tab below to share an audio file directly with the group.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
+
+        // Synchronized Now Playing Card
         item {
             JamCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     val localArtwork = currentItem?.track?.let { track ->
-                        sharedLibraryMatches.firstOrNull { it.matchKey == track.sharedTrackId }?.song?.artworkUri
-                            ?: songs.firstOrNull { it.displayTitle.equals(track.title, true) && it.displayArtist.equals(track.artist, true) }?.artworkUri
+                        resolveTrackArtwork(track.sharedTrackId, track.title, track.artist, sharedLibraryMatches, songs)
                     }
                     if (!localArtwork.isNullOrBlank()) {
-                        AsyncImage(model = localArtwork, contentDescription = null, modifier = Modifier.size(70.dp).clip(RoundedCornerShape(14.dp)))
+                        AsyncImage(
+                            model = localArtwork,
+                            contentDescription = null,
+                            modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
+                        )
                     } else {
-                        Box(Modifier.size(70.dp).clip(RoundedCornerShape(14.dp)).background(BentoCardPurple), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)).background(BentoCardPurple),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(32.dp))
                         }
                     }
-                    Column(Modifier.weight(1f)) {
-                        Text(currentItem?.track?.title ?: "Nothing queued", color = BentoTextPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(currentItem?.track?.artist ?: "Add a track from your library", color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = currentItem?.track?.title ?: "Nothing queued",
+                            color = BentoTextPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = currentItem?.track?.artist
+                                ?: if (sharedLibraryMatches.isNotEmpty()) "${sharedLibraryMatches.size} matching songs ready to add" else "Add a track from your library",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         if (currentItem != null && !localTrackAvailable) {
-                            Text("This track isn't available on your device", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                text = "This track isn't available on your device",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        } else if (currentItem != null) {
+                            Text(
+                                text = if (session?.playback?.isPlaying == true) "Synced live across all devices" else "Paused · Ready to play",
+                                color = BentoPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -1175,20 +1239,90 @@ private fun ActivePage(
                     onValueChange = { isSeeking = true; sliderPosition = it },
                     onValueChangeFinished = { controller?.seek(sliderPosition.toLong()); isSeeking = false },
                     valueRange = 0f..durationMs.toFloat(),
-                    enabled = roomStarted && currentItem != null && localTrackAvailable && session?.permissions?.seek?.allows(permissionUid, session.hostUid) == true
+                    enabled = roomStarted && currentItem != null && localTrackAvailable && canSeek
                 )
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    IconButton(onClick = { controller?.skip(-1) }, enabled = roomStarted && session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipPrevious, "Previous", tint = BentoTextPrimary) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (currentItem != null) formatDurationMmSs(sliderPosition.toLong()) else "0:00",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        text = if (currentItem != null) formatDurationMmSs(durationMs) else "0:00",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    IconButton(
+                        onClick = { controller?.shuffleQueue() },
+                        enabled = roomStarted && queue.size > 1 && canManageQueue
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Shuffle shared queue",
+                            tint = if (roomStarted && queue.size > 1 && canManageQueue) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.4f)
+                        )
+                    }
+                    IconButton(
+                        onClick = { controller?.skip(-1) },
+                        enabled = roomStarted && queue.isNotEmpty() && canSkip
+                    ) {
+                        Icon(Icons.Default.SkipPrevious, "Previous", tint = BentoTextPrimary)
+                    }
                     Surface(
-                        modifier = Modifier.size(56.dp).clip(CircleShape).clickable(enabled = roomStarted && currentItem != null && localTrackAvailable) { controller?.togglePlayback() },
+                        modifier = Modifier
+                            .size(58.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                enabled = roomStarted && (currentItem != null || queue.isNotEmpty()) && localTrackAvailable && canPlayPause
+                            ) { controller?.togglePlayback() },
                         color = BentoPrimary,
                         shape = CircleShape
-                    ) { Box(contentAlignment = Alignment.Center) { Icon(if (session?.playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause", tint = BentoOnPrimary, modifier = Modifier.size(30.dp)) } }
-                    IconButton(onClick = { controller?.skip(1) }, enabled = roomStarted && session?.permissions?.skipTrack?.allows(permissionUid, session.hostUid) == true) { Icon(Icons.Default.SkipNext, "Next", tint = BentoTextPrimary) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (session?.playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play or pause",
+                                tint = BentoOnPrimary,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { controller?.skip(1) },
+                        enabled = roomStarted && queue.isNotEmpty() && canSkip
+                    ) {
+                        Icon(Icons.Default.SkipNext, "Next", tint = BentoTextPrimary)
+                    }
+                    IconButton(
+                        onClick = { selectedRoomTab = 0 }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = "Open shared queue",
+                            tint = if (selectedRoomTab == 0) BentoPrimary else BentoTextSecondary
+                        )
+                    }
                 }
-                if (!roomStarted) Text("Playback starts when the host opens the room.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                if (!roomStarted) {
+                    Text(
+                        text = "Playback starts when the host opens the room.",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
+
+        // Listeners Accordion
         item {
             JamAccordion(
                 title = "Listeners",
@@ -1208,33 +1342,126 @@ private fun ActivePage(
                 }
             }
         }
+
+        // 2-Column Bento Feature & Permission Grid (Host can toggle Song Recommendations & Local Sharing independently right here!)
+        item {
+            JamPermissionsBentoGrid(
+                permissions = permissions,
+                isHost = isHost,
+                onToggleRecommendations = if (isHost) { enabled ->
+                    controller?.setPermissions(permissions.copy(allowSharedLibraryRecommendations = enabled))
+                } else null,
+                onToggleLocalSharing = if (isHost) { enabled ->
+                    controller?.setPermissions(permissions.copy(allowLocalSongSharing = enabled))
+                } else null,
+                onOpenPermissions = if (isHost) onPermissions else null
+            )
+        }
+
+        // Room Navigation Tabs: Queue | Recommendations | Local Sharing
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("Queue", "Recommendations", "Local sharing").forEachIndexed { index, label ->
+                val tabLabels = listOf(
+                    "Queue (${queue.size})",
+                    if (activeVotesBadgeCount > 0) "Recommendations ($activeVotesBadgeCount)" else "Recommendations",
+                    "Local Sharing"
+                )
+                tabLabels.forEachIndexed { index, label ->
                     FilterChip(
                         selected = selectedRoomTab == index,
                         onClick = { selectedRoomTab = index },
                         modifier = Modifier.weight(1f),
-                        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) }
+                        label = {
+                            Text(
+                                text = label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (selectedRoomTab == index) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
                     )
                 }
             }
         }
+
+        // TAB 0: SHARED QUEUE
         if (selectedRoomTab == 0) item {
             JamAccordion(
-                title = "Shared queue",
+                title = "Shared Queue",
                 summary = "${queue.size} tracks",
                 icon = Icons.Default.QueueMusic,
                 expanded = queueExpanded,
                 onToggle = { queueExpanded = !queueExpanded }
             ) {
-                if (queue.isEmpty()) Text("No songs queued yet. Choose a matching song in Recommendations or share an audio file.", color = BentoTextSecondary)
+                if (canAddTracks && sharedLibraryMatches.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { controller?.addAllMatchingSongsToQueue(shuffle = false) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, BentoPrimary),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Include All (${sharedLibraryMatches.size})",
+                                color = BentoPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { controller?.addAllMatchingSongsToQueue(shuffle = true) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, BentoCardBorder),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Shuffle & Include All",
+                                color = BentoTextPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                if (queue.isEmpty()) {
+                    Text(
+                        text = "No songs queued yet. Open Recommendations to add or suggest matching songs, or share a local audio file.",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 queue.forEachIndexed { index, item ->
-                    QueueRow(
+                    val isCurrentTrack = item.id == currentItem?.id
+                    val itemArtwork = resolveTrackArtwork(
+                        item.track.sharedTrackId,
+                        item.track.title,
+                        item.track.artist,
+                        sharedLibraryMatches,
+                        songs
+                    )
+                    RedesignedQueueRow(
+                        index = index,
                         item = item,
-                        isCurrent = item.id == session?.playback?.queueItemId,
-                        canManage = session?.permissions?.manageQueue?.allows(permissionUid, session.hostUid) == true,
+                        artworkUri = itemArtwork,
+                        isCurrent = isCurrentTrack,
+                        canPlay = roomStarted && canPlayPause,
+                        canManage = canManageQueue,
                         canRecommend = permissions.allowSharedLibraryRecommendations,
+                        onPlayNow = { controller?.playQueueItem(item.id) },
                         onRecommend = { controller?.recommendSharedTrack(item.track) },
                         onRemove = { controller?.removeQueueItem(item.id) },
                         onMoveUp = { controller?.moveQueueItem(item.id, -1) },
@@ -1245,99 +1472,311 @@ private fun ActivePage(
                 }
             }
         }
+
+        // TAB 1: RECOMMENDATIONS & SHARED LIBRARY MATCHING SONGS
         if (selectedRoomTab == 1) item {
-            if (!isHost && !permissions.allowSharedLibraryRecommendations) {
-                FeatureRequestPrompt(
-                    feature = JamFeature.SHARED_RECOMMENDATIONS,
-                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
-                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
-                    onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 1) Active Recommendations & Voting Panel FIRST so users never have to drag down to vote!
+                if (permissions.allowSharedLibraryRecommendations || isHost) {
+                    RichRecommendationPanel(
+                        title = "Song Recommendations",
+                        recommendations = sharedRecommendations,
+                        emptyMessage = if (permissions.allowSharedLibraryRecommendations) {
+                            "No song recommendations yet. Pick any matching song below to start a 30-second group vote."
+                        } else {
+                            "Song recommendations are currently turned off for participants."
+                        },
+                        participants = participants,
+                        currentUid = currentUid,
+                        hostUid = hostUid,
+                        selectedRecommendationId = selectedRecommendationId,
+                        songs = songs,
+                        sharedLibraryMatches = sharedLibraryMatches,
+                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
+                        onRetryUpload = { controller?.retryUpload(it) },
+                        onRetryDownload = { controller?.retryDownload(it) },
+                        onViewQueue = { selectedRoomTab = 0 }
+                    )
+                } else {
+                    // Participant view when Song Recommendations is OFF
+                    JamFeatureDisabledPromptCard(
+                        feature = JamFeature.SHARED_RECOMMENDATIONS,
+                        request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
+                        requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
+                        onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
+                    )
+                }
+
+                // 2) Matched Songs Library (shows up to 50 songs in standard preview + View All modal + bulk Include All / Shuffle All + per-song action menu)
+                if (canAddTracks || permissions.allowSharedLibraryRecommendations || isHost) {
                     JamCard {
-                        Text("Add from shared library with matching songs", color = BentoTextPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            when {
-                                libraryIndexStatus.error != null -> libraryIndexStatus.error
-                                !libraryIndexStatus.isReady -> "Matching songs across devices… ${libraryIndexStatus.indexedParticipants}/${libraryIndexStatus.participantCount} devices indexed. Audio files and names stay on each device."
-                                sharedLibraryMatches.isEmpty() -> "No matches found. Share some between both devices to begin listening together."
-                                else -> "Only songs found on every connected device appear here. Matching uses an audio fingerprint first, with normalized title, artist, and duration as a fallback."
-                            },
-                            color = BentoTextSecondary,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Matched Songs Library",
+                                    color = BentoTextPrimary,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = when {
+                                        libraryIndexStatus.error != null -> libraryIndexStatus.error
+                                        !libraryIndexStatus.isReady -> "Matching songs across devices… ${libraryIndexStatus.indexedParticipants}/${libraryIndexStatus.participantCount} devices indexed."
+                                        sharedLibraryMatches.isEmpty() -> "No matches found across connected devices yet."
+                                        else -> "${sharedLibraryMatches.size} songs available on every connected device (showing up to 50)."
+                                    },
+                                    color = BentoTextSecondary,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            if (sharedLibraryMatches.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { showAllMatchesDialog = true },
+                                    modifier = Modifier.testTag("view_all_matching_songs_button")
+                                ) {
+                                    Text(
+                                        text = "View All (${sharedLibraryMatches.size})",
+                                        color = BentoPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Bulk Queue Actions: Include All & Shuffle & Include All
+                        if (canAddTracks && sharedLibraryMatches.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { controller?.addAllMatchingSongsToQueue(shuffle = false) },
+                                    modifier = Modifier.weight(1f).height(42.dp).testTag("include_all_matched_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Include All in Queue",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = { controller?.addAllMatchingSongsToQueue(shuffle = true) },
+                                    modifier = Modifier.weight(1f).height(42.dp).testTag("shuffle_all_matched_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, BentoPrimary),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Shuffle, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Shuffle & Include All",
+                                        color = BentoPrimary,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
                         OutlinedTextField(
                             value = libraryQuery,
                             onValueChange = { libraryQuery = it },
                             label = { Text("Search matching songs") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary) },
+                            trailingIcon = {
+                                if (libraryQuery.isNotEmpty()) {
+                                    IconButton(onClick = { libraryQuery = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear search", tint = BentoTextSecondary)
+                                    }
+                                }
+                            },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+
                         visibleMatches.forEach { match ->
-                            SharedLibraryMatchRow(
+                            EnhancedSharedLibraryMatchRow(
                                 match = match,
-                                actionLabel = if (permissions.allowSharedLibraryRecommendations) "Recommend" else "Enable",
-                                onAction = {
-                                    if (permissions.allowSharedLibraryRecommendations) controller?.recommendSharedLibrarySong(match)
-                                    else onPermissions()
-                                }
+                                canAddTracks = canAddTracks,
+                                canPlayPause = canPlayPause,
+                                canRecommend = permissions.allowSharedLibraryRecommendations,
+                                isHost = isHost,
+                                onPlayNow = { controller?.playSharedLibrarySongNow(match) },
+                                onPlayNext = { controller?.playSharedLibrarySongNext(match) },
+                                onAddToQueue = { controller?.addSharedLibrarySongToQueue(match) },
+                                onRecommend = { controller?.recommendSharedLibrarySong(match) },
+                                onOpenPermissions = onPermissions
                             )
                         }
+
+                        if (sharedLibraryMatches.size > visibleMatches.size && libraryQuery.isBlank()) {
+                            OutlinedButton(
+                                onClick = { showAllMatchesDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, BentoCardBorder)
+                            ) {
+                                Text(
+                                    text = "View All ${sharedLibraryMatches.size} Matching Songs",
+                                    color = BentoPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
                         if (libraryIndexStatus.isReady && sharedLibraryMatches.isNotEmpty() && visibleMatches.isEmpty()) {
                             Text("No matching songs fit this search.", color = BentoTextSecondary)
                         }
                         if (isHost && !permissions.allowSharedLibraryRecommendations) {
-                            Text("Recommendations are off for this Jam.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                            TextButton(onClick = onPermissions) { Text("Open permissions", color = BentoPrimary) }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Participant recommendations are off (you can still add/play tracks as host).",
+                                    color = BentoTextSecondary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = { controller?.setPermissions(permissions.copy(allowSharedLibraryRecommendations = true)) }
+                                ) {
+                                    Text("Turn On", color = BentoPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
-                    RecommendationPanel(
-                        recommendations = recommendations.filter { it.type == JamRecommendationType.SHARED_LIBRARY },
-                        emptyMessage = "No recommendations yet. Choose a matching song above to suggest it.",
-                        participants = participants,
-                        currentUid = currentUid,
-                        selectedRecommendationId = selectedRecommendationId,
-                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
-                        onRetryUpload = { controller?.retryUpload(it) },
-                        onRetryDownload = { controller?.retryDownload(it) }
+                }
+
+                // If participant is on Recommendations tab and Local Song Sharing is OFF, also show the independent Local Song Sharing prompt
+                if (!isHost && !permissions.allowLocalSongSharing) {
+                    JamFeatureDisabledPromptCard(
+                        feature = JamFeature.LOCAL_SONG_SHARING,
+                        request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
+                        requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
+                        onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
                     )
                 }
+
+                // Shared Queue Preview Strip (always visible so queued tracks remain accessible)
+                SharedQueuePreviewStrip(
+                    queue = queue,
+                    currentQueueItemId = currentItem?.id,
+                    songs = songs,
+                    sharedLibraryMatches = sharedLibraryMatches,
+                    onViewAllQueue = { selectedRoomTab = 0 },
+                    onPlayQueueItem = { itemId ->
+                        if (roomStarted && canPlayPause) controller?.playQueueItem(itemId)
+                    }
+                )
             }
         }
+
+        // TAB 2: LOCAL SONG SHARING
         if (selectedRoomTab == 2) item {
-            if (!isHost && !permissions.allowLocalSongSharing) {
-                FeatureRequestPrompt(
-                    feature = JamFeature.LOCAL_SONG_SHARING,
-                    request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
-                    requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
-                    onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // If participant is on Local Sharing tab and Song Recommendations is OFF, also show the independent Recommendations prompt
+                if (!isHost && !permissions.allowSharedLibraryRecommendations) {
+                    JamFeatureDisabledPromptCard(
+                        feature = JamFeature.SHARED_RECOMMENDATIONS,
+                        request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS },
+                        requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.SHARED_RECOMMENDATIONS }?.blockedUids?.contains(currentUid) == true,
+                        onRequest = { onRequestFeature(JamFeature.SHARED_RECOMMENDATIONS) }
+                    )
+                }
+
+                if (!isHost && !permissions.allowLocalSongSharing) {
+                    JamFeatureDisabledPromptCard(
+                        feature = JamFeature.LOCAL_SONG_SHARING,
+                        request = activeFeatureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING },
+                        requestBlocked = featureRequests.firstOrNull { it.feature == JamFeature.LOCAL_SONG_SHARING }?.blockedUids?.contains(currentUid) == true,
+                        onRequest = { onRequestFeature(JamFeature.LOCAL_SONG_SHARING) }
+                    )
+                } else {
+                    // 1) Active Local Song Share Votes & Transfers FIRST so users don't have to scroll down to vote
+                    RichRecommendationPanel(
+                        title = "Local Song Shares & Votes",
+                        recommendations = localShareRecommendations,
+                        emptyMessage = "No local song shares or votes yet. Choose a supported audio file below to share it with the room.",
+                        participants = participants,
+                        currentUid = currentUid,
+                        hostUid = hostUid,
+                        selectedRecommendationId = selectedRecommendationId,
+                        songs = songs,
+                        sharedLibraryMatches = sharedLibraryMatches,
+                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
+                        onRetryUpload = { controller?.retryUpload(it) },
+                        onRetryDownload = { controller?.retryDownload(it) },
+                        onViewQueue = { selectedRoomTab = 0 }
+                    )
+
+                    // 2) Share a Local Audio File Card
                     JamCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
                             Spacer(Modifier.width(8.dp))
-                            Text("Local song sharing", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            Text(if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+                            Text("Share a Local Song", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text(
+                                text = if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off",
+                                color = if (permissions.allowLocalSongSharing) BentoPrimary else BentoTextSecondary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                         if (!permissions.allowLocalSongSharing) {
-                            Text("Local song sharing is off for this Jam.", color = BentoTextSecondary)
-                            TextButton(onClick = onPermissions) { Text("Open permissions", color = BentoPrimary) }
+                            Text("Local song sharing is currently off for this Jam.", color = BentoTextSecondary)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { controller?.setPermissions(permissions.copy(allowLocalSongSharing = true)) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                                ) {
+                                    Text("Turn On Local Song Sharing", fontWeight = FontWeight.Bold)
+                                }
+                                TextButton(onClick = onPermissions) { Text("All Permissions", color = BentoPrimary) }
+                            }
                         } else {
-                            Text("MP3, M4A, AAC, FLAC, OGG, and WAV files up to 25 MB transfer directly between devices after approval. No song is stored in Firebase.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "Supported audio files (MP3, M4A, AAC, FLAC, OGG, WAV up to 25 MB) transfer directly between devices after unanimous approval. Non-audio files are rejected.",
+                                color = BentoTextSecondary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
                                 Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                             }
                             selectedLocalAudio?.let { audio ->
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    if (audio.artwork != null) androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
-                                    else Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardPurple), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, tint = BentoPrimary) }
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.5f)).padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    if (audio.artwork != null) {
+                                        androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
+                                    } else {
+                                        Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardSurface), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
+                                        }
+                                    }
                                     Column(Modifier.weight(1f)) {
                                         Text(audio.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text("${audio.track.artist} · ${formatJamDuration(audio.track.durationMs)} · ${formatJamSize(audio.sizeBytes)}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    IconButton(onClick = { selectedLocalAudio = null }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
                                     }
                                 }
                                 JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
@@ -1345,192 +1784,28 @@ private fun ActivePage(
                                     selectedLocalAudio = null
                                 }
                             }
-                            JamButton("Share a local song", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
+                            JamButton("Choose Audio File (MP3 / Audio)", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
                                 localAudioPicker.launch(arrayOf("audio/*"))
                             }
                             localFileError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         }
                     }
-                    RecommendationPanel(
-                        recommendations = recommendations.filter { it.type == JamRecommendationType.LOCAL_SONG },
-                        emptyMessage = "No local song shares or votes yet.",
-                        participants = participants,
-                        currentUid = currentUid,
-                        selectedRecommendationId = selectedRecommendationId,
-                        onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
-                        onRetryUpload = { controller?.retryUpload(it) },
-                        onRetryDownload = { controller?.retryDownload(it) }
-                    )
                 }
+
+                // Shared Queue Preview Strip
+                SharedQueuePreviewStrip(
+                    queue = queue,
+                    currentQueueItemId = currentItem?.id,
+                    songs = songs,
+                    sharedLibraryMatches = sharedLibraryMatches,
+                    onViewAllQueue = { selectedRoomTab = 0 },
+                    onPlayQueueItem = { itemId ->
+                        if (roomStarted && canPlayPause) controller?.playQueueItem(itemId)
+                    }
+                )
             }
         }
         item { JamStatus(state) }
-    }
-}
-
-@Composable
-private fun RecommendationPanel(
-    recommendations: List<JamRecommendation>,
-    emptyMessage: String,
-    participants: List<JamParticipant>,
-    currentUid: String,
-    selectedRecommendationId: String?,
-    onVote: (String, JamVote) -> Unit,
-    onRetryUpload: (String) -> Unit,
-    onRetryDownload: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        JamCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Groups, null, tint = BentoPrimary)
-                Spacer(Modifier.width(8.dp))
-                Text("Song recommendations", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(recommendations.count { it.isVoting }.toString(), color = BentoTextSecondary)
-            }
-            if (recommendations.isEmpty()) {
-                Text(emptyMessage, color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        recommendations.take(8).forEach { recommendation ->
-            RecommendationCard(
-                recommendation = recommendation,
-                participants = participants,
-                currentUid = currentUid,
-                selected = selectedRecommendationId == recommendation.id,
-                onVote = { onVote(recommendation.id, it) },
-                onRetryUpload = { onRetryUpload(recommendation.id) },
-                onRetryDownload = { onRetryDownload(recommendation.id) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SharedLibraryMatchRow(
-    match: JamSharedLibraryMatch,
-    actionLabel: String,
-    onAction: () -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.45f)).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        if (!match.song.artworkUri.isNullOrBlank()) {
-            AsyncImage(match.song.artworkUri, contentDescription = null, modifier = Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)))
-        } else {
-            Box(Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(BentoCardSurface), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
-            }
-        }
-        Column(Modifier.weight(1f)) {
-            Text(match.song.displayTitle, color = BentoTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            Text(match.song.displayArtist, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-            Text("Available on all connected devices", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
-        }
-        TextButton(onClick = onAction, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp)) {
-            Text(actionLabel, color = BentoPrimary, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-private fun RecommendationCard(
-    recommendation: JamRecommendation,
-    participants: List<JamParticipant>,
-    currentUid: String,
-    selected: Boolean,
-    onVote: (JamVote) -> Unit,
-    onRetryUpload: () -> Unit,
-    onRetryDownload: () -> Unit
-) {
-    var nowMs by remember(recommendation.id, recommendation.status) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(recommendation.id, recommendation.status) {
-        while (recommendation.status == "VOTING") {
-            nowMs = System.currentTimeMillis()
-            kotlinx.coroutines.delay(1_000L)
-        }
-    }
-    val required = recommendation.requiredApprovalCount
-    val resultText = when (recommendation.status) {
-        "VOTING" -> "${((recommendation.deadlineAtMs - nowMs).coerceAtLeast(0L) + 999L) / 1000L}s left · ${recommendation.approvalCount}/$required approvals"
-        "APPROVED_PENDING_UPLOAD" -> "Approved unanimously · preparing peer transfer"
-        "UPLOADING" -> "Sending directly · ${recommendation.uploadProgress}%"
-        "DOWNLOADING" -> "Receiving directly on each device"
-        "READY" -> "Ready for the shared queue"
-        "REJECTED" -> "Rejected · queue unchanged"
-        "EXPIRED" -> "Expired · queue unchanged"
-        "CANCELLED_PERMISSION_DISABLED" -> "Canceled because the host disabled this feature"
-        "FAILED" -> recommendation.failureReason ?: "Transfer failed"
-        else -> recommendation.status.lowercase().replace('_', ' ')
-    }
-    JamCard(modifier = if (selected) Modifier.border(1.5.dp, BentoPrimary, RoundedCornerShape(22.dp)) else Modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(recommendation.track.title, color = BentoTextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${recommendation.track.artist} · ${if (recommendation.type == JamRecommendationType.LOCAL_SONG) "Local song" else "Shared library"}", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-            }
-            Text(resultText, color = if (recommendation.status in setOf("REJECTED", "EXPIRED", "FAILED", "CANCELLED_PERMISSION_DISABLED")) MaterialTheme.colorScheme.error else BentoPrimary, style = MaterialTheme.typography.labelSmall)
-        }
-        val proposerName = participants.firstOrNull { it.uid == recommendation.proposerUid }?.displayName
-            ?.takeIf(String::isNotBlank) ?: recommendation.proposerName
-        Text("Recommended by $proposerName", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-        if (currentUid == recommendation.proposerUid) {
-            Text("Your submission is automatically approved; no self-vote is needed.", color = BentoPrimary, style = MaterialTheme.typography.bodySmall)
-        }
-        Text("${recommendation.approvalCount} accepted · ${recommendation.rejectionCount} rejected · ${recommendation.pendingCount} pending · ${recommendation.requiredApprovalCount} required", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
-        recommendation.eligibleUids.forEach { uid ->
-            val name = participants.firstOrNull { it.uid == uid }?.displayName ?: if (uid == currentUid) "You" else "Listener"
-            val vote = if (uid == recommendation.proposerUid) JamVote.ACCEPT else recommendation.votes[uid] ?: JamVote.PENDING
-            val voteLabel = if (uid == recommendation.proposerUid) "Auto-approved" else vote.name.lowercase().replaceFirstChar(Char::uppercase)
-            Text("$name — $voteLabel", color = when (vote) {
-                JamVote.ACCEPT -> BentoPrimary
-                JamVote.REJECT -> MaterialTheme.colorScheme.error
-                JamVote.PENDING -> BentoTextSecondary
-            }, style = MaterialTheme.typography.bodySmall)
-        }
-        if (recommendation.isVoting && currentUid != recommendation.proposerUid && recommendation.votes[currentUid] == JamVote.PENDING && nowMs < recommendation.deadlineAtMs) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { onVote(JamVote.ACCEPT) }) { Text("Accept", color = BentoPrimary) }
-                TextButton(onClick = { onVote(JamVote.REJECT) }) { Text("Reject", color = MaterialTheme.colorScheme.error) }
-            }
-        }
-        if (recommendation.type == JamRecommendationType.LOCAL_SONG && recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING", "DOWNLOADING", "READY", "FAILED")) {
-            if (recommendation.uploadStatus == "UPLOADING") {
-                Text("Peer transfer ${recommendation.uploadProgress}%", color = BentoTextSecondary, style = MaterialTheme.typography.labelMedium)
-                androidx.compose.material3.LinearProgressIndicator(recommendation.uploadProgress / 100f, modifier = Modifier.fillMaxWidth())
-            }
-            recommendation.eligibleUids.forEach { uid ->
-                val name = participants.firstOrNull { it.uid == uid }?.displayName ?: if (uid == currentUid) "You" else "Listener"
-                val status = recommendation.downloads[uid] ?: JamDownloadState()
-                val statusLabel = when {
-                    recommendation.status == "UPLOADING" && uid == recommendation.proposerUid -> "Sending directly · ${recommendation.uploadProgress}%"
-                    recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") -> "Waiting for direct transfer"
-                    else -> when (status.status) {
-                    "WAITING_FOR_UPLOAD" -> "Waiting for direct transfer"
-                    "UPLOADING" -> "Sending directly"
-                    "WAITING_TO_DOWNLOAD" -> "Waiting to receive"
-                    "DOWNLOADING" -> "Receiving · ${status.progress}%"
-                    "VERIFYING_FILE" -> "Verifying file"
-                    "READY_FOR_PLAYBACK" -> "Received and verified · Ready"
-                    "DOWNLOAD_FAILED" -> "Peer transfer failed · Retry required"
-                    else -> status.status.lowercase().replace('_', ' ')
-                    }
-                }
-                Text("$name — $statusLabel", color = if (status.status.endsWith("FAILED")) MaterialTheme.colorScheme.error else BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
-                if (status.status == "DOWNLOADING") {
-                    androidx.compose.material3.LinearProgressIndicator(status.progress / 100f, modifier = Modifier.fillMaxWidth())
-                }
-                if (uid == currentUid && status.status == "DOWNLOAD_FAILED") {
-                    TextButton(onClick = onRetryDownload) { Text("Retry download", color = BentoPrimary) }
-                }
-            }
-            if (currentUid == recommendation.proposerUid && recommendation.uploadStatus == "UPLOAD_FAILED") {
-                TextButton(onClick = onRetryUpload) { Text("Retry upload", color = BentoPrimary) }
-            }
-        }
     }
 }
 
@@ -1547,6 +1822,16 @@ private fun PermissionsPage(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         JamHeader("Jam permissions", "Choose who can control this session", onBack)
         if (!isHost) Text("Only the host can edit these permissions.", color = BentoTextSecondary)
+        JamPermissionsBentoGrid(
+            permissions = permissions,
+            isHost = isHost,
+            onToggleRecommendations = if (isHost) { enabled ->
+                onPermissionsChange(permissions.copy(allowSharedLibraryRecommendations = enabled))
+            } else null,
+            onToggleLocalSharing = if (isHost) { enabled ->
+                onPermissionsChange(permissions.copy(allowLocalSongSharing = enabled))
+            } else null
+        )
         JamCard {
             PermissionRows(
                 permissions = permissions,
@@ -1793,35 +2078,7 @@ private fun CompactParticipantRow(participant: JamParticipant, trailing: @Compos
     }
 }
 
-@Composable
-private fun QueueRow(
-    item: JamQueueItem,
-    isCurrent: Boolean,
-    canManage: Boolean,
-    canRecommend: Boolean,
-    onRecommend: () -> Unit,
-    onRemove: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    isFirst: Boolean,
-    isLast: Boolean
-) {
-    JamCard {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Default.MusicNote, null, tint = if (isCurrent) BentoPrimary else BentoTextSecondary)
-            Column(Modifier.weight(1f)) {
-                Text(item.track.title, color = BentoTextPrimary, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(item.track.artist, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (canRecommend) TextButton(onClick = onRecommend) { Text("Recommend", color = BentoPrimary) }
-            if (canManage) {
-                IconButton(onClick = onMoveUp, enabled = !isFirst) { Icon(Icons.Default.Reorder, "Move up", tint = BentoTextSecondary) }
-                IconButton(onClick = onMoveDown, enabled = !isLast) { Icon(Icons.Default.Reorder, "Move down", tint = BentoTextSecondary) }
-                IconButton(onClick = onRemove) { Icon(Icons.Default.RemoveCircleOutline, "Remove", tint = BentoTextSecondary) }
-            }
-        }
-    }
-}
+
 
 @Composable
 private fun LocalSongRow(song: Song, onAdd: () -> Unit) {

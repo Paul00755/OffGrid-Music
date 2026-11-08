@@ -1461,6 +1461,11 @@ class MainActivity : ComponentActivity() {
             try {
                 com.example.service.PlaybackManager.activeInstance?.onAppForegroundStateChanged(false)
             } catch (_: Throwable) {}
+            if (isFinishing) {
+                try {
+                    com.example.jam.JamFeatureController.activeInstance?.onAppClosed()
+                } catch (_: Throwable) {}
+            }
         }
         try {
             val pmState = com.example.service.PlaybackManager.activeInstance?.playbackState?.value

@@ -137,6 +137,32 @@ class JamRepository(
         call("mutateJamQueue", mapOf("sessionId" to sessionId, "operation" to "ADD", "track" to track.toMap()))
     }
 
+    suspend fun playTrackNext(sessionId: String, track: JamTrack) {
+        requireUid()
+        call("mutateJamQueue", mapOf("sessionId" to sessionId, "operation" to "PLAY_NEXT", "track" to track.toMap()))
+    }
+
+    suspend fun playTrackNow(sessionId: String, track: JamTrack) {
+        requireUid()
+        call("mutateJamQueue", mapOf(
+            "sessionId" to sessionId,
+            "operation" to "ADD",
+            "track" to track.toMap(),
+            "playImmediately" to true
+        ))
+    }
+
+    suspend fun addTracksBatch(sessionId: String, tracks: List<JamTrack>, shuffle: Boolean = false): Int {
+        requireUid()
+        val result = call("mutateJamQueue", mapOf(
+            "sessionId" to sessionId,
+            "operation" to "ADD_BATCH",
+            "tracks" to tracks.map { it.toMap() },
+            "shuffle" to shuffle
+        ))
+        return (result["addedCount"] as? Number)?.toInt() ?: 0
+    }
+
     suspend fun removeTrack(sessionId: String, queueItemId: String) {
         requireUid()
         call("mutateJamQueue", mapOf("sessionId" to sessionId, "operation" to "REMOVE", "queueItemId" to queueItemId))
@@ -152,7 +178,8 @@ class JamRepository(
         type: JamPermissionKind,
         isPlaying: Boolean? = null,
         positionMs: Long? = null,
-        step: Int = 1
+        step: Int = 1,
+        targetQueueItemId: String? = null
     ): JamPlaybackState {
         requireUid()
         val payload = mutableMapOf<String, Any>(
@@ -163,6 +190,7 @@ class JamRepository(
         if (isPlaying != null) payload["isPlaying"] = isPlaying
         if (positionMs != null) payload["positionMs"] = positionMs.coerceAtLeast(0L)
         if (type == JamPermissionKind.SKIP_TRACK) payload["step"] = if (step < 0) -1 else 1
+        if (!targetQueueItemId.isNullOrBlank()) payload["queueItemId"] = targetQueueItemId
         val result = call("submitJamPlaybackCommand", payload)
         return JamPlaybackState(
             sharedTrackId = result["sharedTrackId"] as? String,
@@ -616,17 +644,163 @@ class JamRepository(
         val operation = data["operation"] as? String ?: ""
         val documents = queue.orderBy("position").limit(MAX_QUEUE_SIZE.toLong()).get().await().documents
         val current = session.get().await()
+        val hostUid = current.getString("hostUid").orEmpty()
         val permissions = JamPermissions.from(current.get("permissions"))
-        val kind = if (operation == "ADD") JamPermissionKind.ADD_TO_QUEUE else JamPermissionKind.MANAGE_QUEUE
-        if (!permissions.allows(kind, uid, current.getString("hostUid").orEmpty())) throw JamRepositoryException("You don't have permission to change the queue.")
+        val kind = when (operation) {
+            "ADD", "PLAY_NEXT", "ADD_BATCH" -> JamPermissionKind.ADD_TO_QUEUE
+            else -> JamPermissionKind.MANAGE_QUEUE
+        }
+        if (!permissions.allows(kind, uid, hostUid)) throw JamRepositoryException("You don't have permission to change the queue.")
+        val currentPlayback = (current.get("playback") as? Map<*, *>)?.entries
+            ?.associate { it.key.toString() to it.value }
+            ?.toMutableMap()
+            ?: mutableMapOf()
+        val currentQueueItemId = currentPlayback["queueItemId"] as? String ?: ""
+        val activeItemExists = currentQueueItemId.isNotBlank() && documents.any { it.id == currentQueueItemId }
+        val roomStarted = current.getBoolean("started") == true
+        var updatedPlayback: Map<String, Any?>? = null
+        var addedCount = 0
+
         when (operation) {
             "ADD" -> {
+                val track = data["track"] as? Map<*, *> ?: throw JamRepositoryException("Track data is invalid.")
+                val playImmediately = data["playImmediately"] as? Boolean ?: false
+                val trackSharedId = track["sharedTrackId"] as? String ?: ""
+                val existingDoc = if (playImmediately && trackSharedId.isNotBlank()) {
+                    documents.firstOrNull { (it.get("track") as? Map<*, *>)?.get("sharedTrackId") == trackSharedId }
+                } else null
+                val targetDocId: String
+                if (existingDoc != null) {
+                    targetDocId = existingDoc.id
+                } else {
+                    if (documents.size >= MAX_QUEUE_SIZE) throw JamRepositoryException("The Jam queue is full.")
+                    val doc = queue.document()
+                    doc.set(mapOf("track" to track, "position" to documents.size, "addedByUid" to uid, "addedAt" to Timestamp.now())).await()
+                    targetDocId = doc.id
+                    addedCount = 1
+                }
+                if (playImmediately && roomStarted && permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, hostUid)) {
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    updatedPlayback = mapOf(
+                        "sharedTrackId" to trackSharedId,
+                        "queueItemId" to targetDocId,
+                        "isPlaying" to true,
+                        "positionMs" to 0L,
+                        "playbackSpeed" to 1.0,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev,
+                        "commandId" to java.util.UUID.randomUUID().toString(),
+                        "commandType" to JamPermissionKind.SKIP_TRACK.name,
+                        "actorUid" to uid,
+                        "step" to 1
+                    )
+                } else if (!activeItemExists && roomStarted) {
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    updatedPlayback = currentPlayback + mapOf(
+                        "sharedTrackId" to trackSharedId,
+                        "queueItemId" to targetDocId,
+                        "positionMs" to 0L,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev
+                    )
+                }
+            }
+            "PLAY_NEXT" -> {
                 if (documents.size >= MAX_QUEUE_SIZE) throw JamRepositoryException("The Jam queue is full.")
                 val track = data["track"] as? Map<*, *> ?: throw JamRepositoryException("Track data is invalid.")
-                val doc = queue.document()
-                doc.set(mapOf("track" to track, "position" to documents.size, "addedByUid" to uid, "addedAt" to Timestamp.now())).await()
+                val trackSharedId = track["sharedTrackId"] as? String ?: ""
+                val currentIdx = documents.indexOfFirst { it.id == currentQueueItemId }
+                val insertPosition = if (documents.isEmpty()) 0 else if (currentIdx >= 0) currentIdx + 1 else 1.coerceAtMost(documents.size)
+                val batch = firestore.batch()
+                val newDoc = queue.document()
+                batch.set(newDoc, mapOf("track" to track, "position" to insertPosition, "addedByUid" to uid, "addedAt" to Timestamp.now()))
+                for (i in insertPosition until documents.size) {
+                    batch.update(documents[i].reference, "position", i + 1)
+                }
+                batch.commit().await()
+                addedCount = 1
+                if (!activeItemExists && roomStarted) {
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    updatedPlayback = currentPlayback + mapOf(
+                        "sharedTrackId" to trackSharedId,
+                        "queueItemId" to newDoc.id,
+                        "positionMs" to 0L,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev
+                    )
+                }
             }
-            "REMOVE" -> queue.document(data["queueItemId"] as? String ?: "").delete().await()
+            "ADD_BATCH" -> {
+                val rawTracks = (data["tracks"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
+                if (rawTracks.isEmpty()) throw JamRepositoryException("No matching songs to add.")
+                val shuffle = data["shuffle"] as? Boolean ?: false
+                val existingSharedIds = documents.mapNotNull {
+                    (it.get("track") as? Map<*, *>)?.get("sharedTrackId") as? String
+                }.toSet()
+                val remainingCapacity = (MAX_QUEUE_SIZE - documents.size).coerceAtLeast(0)
+                val candidateTracks = rawTracks
+                    .filter { (it["sharedTrackId"] as? String).orEmpty() !in existingSharedIds }
+                    .let { if (shuffle) it.shuffled() else it }
+                    .take(remainingCapacity)
+                if (candidateTracks.isNotEmpty()) {
+                    val batch = firestore.batch()
+                    var firstDocId: String? = null
+                    var firstSharedId: String? = null
+                    candidateTracks.forEachIndexed { offset, track ->
+                        val doc = queue.document()
+                        if (offset == 0) {
+                            firstDocId = doc.id
+                            firstSharedId = track["sharedTrackId"] as? String ?: ""
+                        }
+                        batch.set(
+                            doc,
+                            mapOf(
+                                "track" to track,
+                                "position" to (documents.size + offset),
+                                "addedByUid" to uid,
+                                "addedAt" to Timestamp.now()
+                            )
+                        )
+                    }
+                    batch.commit().await()
+                    addedCount = candidateTracks.size
+                    if (!activeItemExists && roomStarted && firstDocId != null) {
+                        val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                        updatedPlayback = currentPlayback + mapOf(
+                            "sharedTrackId" to firstSharedId.orEmpty(),
+                            "queueItemId" to firstDocId!!,
+                            "positionMs" to 0L,
+                            "updatedAt" to Timestamp.now(),
+                            "revision" to rev
+                        )
+                    }
+                } else if (shuffle && documents.size > 1 && permissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, hostUid)) {
+                    val currentActive = documents.firstOrNull { it.id == currentQueueItemId }
+                    val others = documents.filterNot { it.id == currentQueueItemId }.shuffled()
+                    val reordered = if (currentActive != null) listOf(currentActive) + others else others
+                    val batch = firestore.batch()
+                    reordered.forEachIndexed { index, snap -> batch.update(snap.reference, "position", index) }
+                    batch.commit().await()
+                }
+            }
+            "REMOVE" -> {
+                val removedId = data["queueItemId"] as? String ?: ""
+                queue.document(removedId).delete().await()
+                if (removedId == currentQueueItemId && roomStarted) {
+                    val remaining = documents.filterNot { it.id == removedId }
+                    val nextDoc = remaining.firstOrNull()
+                    val nextTrack = nextDoc?.get("track") as? Map<*, *>
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    updatedPlayback = currentPlayback + mapOf(
+                        "sharedTrackId" to (nextTrack?.get("sharedTrackId") as? String ?: ""),
+                        "queueItemId" to (nextDoc?.id ?: ""),
+                        "isPlaying" to if (nextDoc == null) false else (currentPlayback["isPlaying"] as? Boolean ?: false),
+                        "positionMs" to 0L,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev
+                    )
+                }
+            }
             "REORDER" -> {
                 val ids = (data["queueItemIds"] as? List<*>)?.filterIsInstance<String>().orEmpty()
                 if (ids.toSet() != documents.map { it.id }.toSet() || ids.size != documents.size) throw JamRepositoryException("Queue changed. Try again.")
@@ -636,8 +810,15 @@ class JamRepository(
             }
             else -> throw JamRepositoryException("Queue operation is invalid.")
         }
-        session.update(mapOf("queueRevision" to (current.getLong("queueRevision") ?: 0L) + 1, "revision" to (current.getLong("revision") ?: 0L) + 1)).await()
-        return mapOf("ok" to true)
+        val sessionUpdates = mutableMapOf<String, Any>(
+            "queueRevision" to (current.getLong("queueRevision") ?: 0L) + 1,
+            "revision" to (current.getLong("revision") ?: 0L) + 1
+        )
+        if (updatedPlayback != null) {
+            sessionUpdates["playback"] = updatedPlayback
+        }
+        session.update(sessionUpdates).await()
+        return mapOf("ok" to true, "addedCount" to addedCount)
     }
 
     private suspend fun createRecommendationClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
@@ -703,10 +884,29 @@ class JamRepository(
             if (status == "READY" && type == "SHARED_LIBRARY") {
                 if (existingQueueSize >= MAX_QUEUE_SIZE) throw JamRepositoryException("The shared queue is full.")
                 val track = snap.get("track") as? Map<*, *> ?: throw JamRepositoryException("Track metadata is missing.")
-                tx.set(session.collection(QUEUE).document(), mapOf("track" to track, "position" to existingQueueSize,
+                val newQueueDoc = session.collection(QUEUE).document()
+                tx.set(newQueueDoc, mapOf("track" to track, "position" to existingQueueSize,
                     "addedByUid" to snap.getString("proposerUid").orEmpty(), "addedAt" to Timestamp.now(), "source" to "RECOMMENDATION"))
-                tx.update(session, mapOf("queueRevision" to (sessionSnapshot.getLong("queueRevision") ?: 0L) + 1L,
-                    "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1L))
+                val sessionUpdates = mutableMapOf<String, Any>(
+                    "queueRevision" to (sessionSnapshot.getLong("queueRevision") ?: 0L) + 1L,
+                    "revision" to (sessionSnapshot.getLong("revision") ?: 0L) + 1L
+                )
+                val currentPlayback = (sessionSnapshot.get("playback") as? Map<*, *>)?.entries
+                    ?.associate { it.key.toString() to it.value }
+                    ?.toMutableMap()
+                if (sessionSnapshot.getBoolean("started") == true &&
+                    currentPlayback != null &&
+                    (currentPlayback["queueItemId"] as? String).isNullOrBlank()) {
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    sessionUpdates["playback"] = currentPlayback + mapOf(
+                        "sharedTrackId" to (track["sharedTrackId"] as? String ?: ""),
+                        "queueItemId" to newQueueDoc.id,
+                        "positionMs" to 0L,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev
+                    )
+                }
+                tx.update(session, sessionUpdates)
             }
             tx.update(ref, mapOf("votes" to votes, "approvalCount" to yes, "rejectionCount" to no, "status" to status))
             null
@@ -770,11 +970,30 @@ class JamRepository(
                 val currentSession = tx.get(session)
                 if (existingQueueSize >= MAX_QUEUE_SIZE) throw JamRepositoryException("The shared queue is full.")
                 val track = snap.get("track") as? Map<*, *> ?: throw JamRepositoryException("Track metadata is missing.")
-                tx.set(session.collection(QUEUE).document(), mapOf("track" to track, "position" to existingQueueSize,
+                val newQueueDoc = session.collection(QUEUE).document()
+                tx.set(newQueueDoc, mapOf("track" to track, "position" to existingQueueSize,
                     "addedByUid" to snap.getString("proposerUid").orEmpty(), "addedAt" to Timestamp.now(), "source" to "RECOMMENDATION"))
                 values["status"] = "READY"
-                tx.update(session, mapOf("queueRevision" to (currentSession.getLong("queueRevision") ?: 0L) + 1L,
-                    "revision" to (currentSession.getLong("revision") ?: 0L) + 1L))
+                val sessionUpdates = mutableMapOf<String, Any>(
+                    "queueRevision" to (currentSession.getLong("queueRevision") ?: 0L) + 1L,
+                    "revision" to (currentSession.getLong("revision") ?: 0L) + 1L
+                )
+                val currentPlayback = (currentSession.get("playback") as? Map<*, *>)?.entries
+                    ?.associate { it.key.toString() to it.value }
+                    ?.toMutableMap()
+                if (currentSession.getBoolean("started") == true &&
+                    currentPlayback != null &&
+                    (currentPlayback["queueItemId"] as? String).isNullOrBlank()) {
+                    val rev = ((currentPlayback["revision"] as? Number)?.toLong() ?: 0L) + 1L
+                    sessionUpdates["playback"] = currentPlayback + mapOf(
+                        "sharedTrackId" to (track["sharedTrackId"] as? String ?: ""),
+                        "queueItemId" to newQueueDoc.id,
+                        "positionMs" to 0L,
+                        "updatedAt" to Timestamp.now(),
+                        "revision" to rev
+                    )
+                }
+                tx.update(session, sessionUpdates)
             }
             tx.update(ref, values)
             null
@@ -794,7 +1013,6 @@ class JamRepository(
         if (snapshot.getBoolean("started") != true) {
             throw JamRepositoryException("Wait for the host to open the room before starting playback.")
         }
-        val playback = snapshot.get("playback") as? Map<*, *> ?: emptyMap<Any, Any>()
         val type = data["commandType"] as? String ?: ""
         val permissions = JamPermissions.from(snapshot.get("permissions"))
         val kind = runCatching { JamPermissionKind.valueOf(type) }.getOrNull() ?: throw JamRepositoryException("Playback command is invalid.")
@@ -802,6 +1020,7 @@ class JamRepository(
         val queue = session.collection(QUEUE).orderBy("position").get().await().documents
         val now = System.currentTimeMillis()
         val commandId = data["commandId"] as? String ?: java.util.UUID.randomUUID().toString()
+        val requestedQueueItemId = (data["queueItemId"] as? String)?.takeIf(String::isNotBlank)
         return firestore.runTransaction { tx ->
             val currentSession = tx.get(session)
             if (currentSession.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
@@ -819,8 +1038,24 @@ class JamRepository(
             val expectedPosition = if (playing) position + ((now - updatedAt).coerceAtLeast(0L) * speed).toLong() else position
             when (kind) {
                 JamPermissionKind.PLAY_PAUSE -> {
-                    if (playing) position = expectedPosition
-                    playing = data["isPlaying"] as? Boolean ?: !playing
+                    val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
+                    if (requestedTarget != null) {
+                        val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                        sharedId = track["sharedTrackId"] as? String ?: ""
+                        itemId = requestedTarget.id
+                        position = 0L
+                        playing = data["isPlaying"] as? Boolean ?: true
+                    } else if ((itemId.isBlank() || queue.none { it.id == itemId }) && queue.isNotEmpty()) {
+                        val firstTarget = queue.first()
+                        val track = firstTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                        sharedId = track["sharedTrackId"] as? String ?: ""
+                        itemId = firstTarget.id
+                        position = 0L
+                        playing = data["isPlaying"] as? Boolean ?: true
+                    } else {
+                        if (playing) position = expectedPosition
+                        playing = data["isPlaying"] as? Boolean ?: !playing
+                    }
                 }
                 JamPermissionKind.SEEK -> {
                     val currentTrack = queue.firstOrNull { it.id == itemId }?.get("track") as? Map<*, *>
@@ -829,34 +1064,44 @@ class JamRepository(
                 }
                 JamPermissionKind.SKIP_TRACK -> {
                     if (queue.isEmpty()) throw JamRepositoryException("Add a track to the shared queue first.")
-                    val direction = if ((data["step"] as? Number)?.toInt() == -1) -1 else 1
-                    val currentIndex = queue.indexOfFirst { it.id == itemId }
-                    if (direction < 0 && playing && expectedPosition > 3_000L) {
+                    val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
+                    if (requestedTarget != null) {
+                        val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                        sharedId = track["sharedTrackId"] as? String ?: ""
+                        itemId = requestedTarget.id
                         position = 0L
-                        step = -1
+                        playing = true
+                        step = 1
                     } else {
-                        val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
-                        when {
-                            targetIndex < 0 -> {
-                                val currentTrack = queue[currentIndex.coerceAtLeast(0)].get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                                sharedId = currentTrack["sharedTrackId"] as? String ?: ""
-                                itemId = queue[currentIndex.coerceAtLeast(0)].id
-                                position = 0L
+                        val direction = if ((data["step"] as? Number)?.toInt() == -1) -1 else 1
+                        val currentIndex = queue.indexOfFirst { it.id == itemId }
+                        if (direction < 0 && playing && expectedPosition > 3_000L) {
+                            position = 0L
+                            step = -1
+                        } else {
+                            val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
+                            when {
+                                targetIndex < 0 -> {
+                                    val currentTrack = queue[currentIndex.coerceAtLeast(0)].get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                                    sharedId = currentTrack["sharedTrackId"] as? String ?: ""
+                                    itemId = queue[currentIndex.coerceAtLeast(0)].id
+                                    position = 0L
+                                }
+                                targetIndex >= queue.size -> {
+                                    position = expectedPosition
+                                    playing = false
+                                }
+                                else -> {
+                                    val target = queue[targetIndex]
+                                    val track = target.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                                    sharedId = track["sharedTrackId"] as? String ?: ""
+                                    itemId = target.id
+                                    position = 0L
+                                    playing = true
+                                }
                             }
-                            targetIndex >= queue.size -> {
-                                position = expectedPosition
-                                playing = false
-                            }
-                            else -> {
-                                val target = queue[targetIndex]
-                                val track = target.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                                sharedId = track["sharedTrackId"] as? String ?: ""
-                                itemId = target.id
-                                position = 0L
-                                playing = true
-                            }
+                            step = direction
                         }
-                        step = direction
                     }
                 }
                 else -> Unit

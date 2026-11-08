@@ -361,6 +361,11 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
+            // Automatically leave any active Jam session when the user closes/swipes away the app
+            try {
+                com.example.jam.JamFeatureController.activeInstance?.onAppClosed()
+            } catch (_: Throwable) {}
+
             val player = activeMediaSession?.player ?: PlaybackManager.activeInstance?.player
             val isPlaying = player?.isPlaying == true
             val hasActiveSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null || (player != null && player.mediaItemCount > 0)

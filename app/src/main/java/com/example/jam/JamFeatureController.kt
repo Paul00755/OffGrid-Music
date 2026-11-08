@@ -10,7 +10,10 @@ import com.example.service.PlaybackManager
 import com.example.service.PlaybackState
 import com.example.util.TagCleaner
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** UI state and playback bridge for Jam; all audio continues through the app's existing player. */
@@ -91,6 +95,13 @@ class JamFeatureController(
 
     private val endedListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY && _sessionId.value != null) {
+                scope.launch {
+                    delay(220L)
+                    correctPlaybackDrift()
+                }
+                return
+            }
             if (playbackState != Player.STATE_ENDED) return
             val current = _session.value ?: return
             if (authManager.currentUser?.uid != current.hostUid) return
@@ -107,9 +118,19 @@ class JamFeatureController(
                 }
             }
         }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && _sessionId.value != null) {
+                scope.launch {
+                    delay(220L)
+                    correctPlaybackDrift()
+                }
+            }
+        }
     }
 
     init {
+        activeInstance = this
         playbackManager.player.addListener(endedListener)
         scope.launch {
             userAccount.collectLatest { account ->
@@ -125,8 +146,19 @@ class JamFeatureController(
                     restoredForUid = uid
                     val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
                     val savedSession = prefs.getString(KEY_ACTIVE_SESSION, null)
-                    if (_sessionId.value == null && prefs.getString(KEY_ACTIVE_UID, null) == uid && !savedSession.isNullOrBlank()) {
-                        activateSession(savedSession, JamPage.ACTIVE, restoringSavedSession = true)
+                    if (_sessionId.value == null && !savedSession.isNullOrBlank()) {
+                        // Cleanly exit any stale session left over from a previous app termination
+                        prefs.edit()
+                            .remove(KEY_ACTIVE_UID)
+                            .remove(KEY_ACTIVE_SESSION)
+                            .remove(KEY_ACTIVE_INVITE_CODE)
+                            .remove(KEY_ACTIVE_INVITE_URL)
+                            .apply()
+                        appCloseScope.launch {
+                            withContext(NonCancellable) {
+                                runCatching { repository.leave(savedSession) }
+                            }
+                        }
                     }
                 }
                 val pending = pendingAction
@@ -281,11 +313,88 @@ class JamFeatureController(
 
     fun recommendSharedTrack(track: JamTrack) {
         val id = _sessionId.value ?: return
-        runAction { repository.createRecommendation(id, JamRecommendationType.SHARED_LIBRARY, track) }
+        runAction {
+            repository.createRecommendation(id, JamRecommendationType.SHARED_LIBRARY, track)
+            _uiState.value = JamUiState.Notice("Started 30s vote for \"${track.title}\".")
+        }
     }
 
     fun recommendSharedLibrarySong(match: JamSharedLibraryMatch) {
         recommendSharedTrack(match.track)
+    }
+
+    fun addSharedLibrarySongToQueue(match: JamSharedLibraryMatch) {
+        val sessionId = _sessionId.value ?: return
+        runAction {
+            repository.addTrack(sessionId, match.track)
+            _uiState.value = JamUiState.Notice("Added \"${match.track.title}\" to the shared queue.")
+        }
+    }
+
+    fun playSharedLibrarySongNext(match: JamSharedLibraryMatch) {
+        val sessionId = _sessionId.value ?: return
+        runAction {
+            repository.playTrackNext(sessionId, match.track)
+            _uiState.value = JamUiState.Notice("\"${match.track.title}\" will play next.")
+        }
+    }
+
+    fun playSharedLibrarySongNow(match: JamSharedLibraryMatch) {
+        val sessionId = _sessionId.value ?: return
+        runAction {
+            repository.playTrackNow(sessionId, match.track)
+            _uiState.value = JamUiState.Notice("Now playing \"${match.track.title}\" for everyone.")
+        }
+    }
+
+    fun addAllMatchingSongsToQueue(shuffle: Boolean = false) {
+        val sessionId = _sessionId.value ?: return
+        val tracks = _sharedLibraryMatches.value.map { it.track }
+        if (tracks.isEmpty()) {
+            _uiState.value = JamUiState.Error("No matching songs are available to add.")
+            return
+        }
+        runAction {
+            val added = repository.addTracksBatch(sessionId, tracks, shuffle = shuffle)
+            _uiState.value = if (added > 0) {
+                JamUiState.Notice(
+                    if (shuffle) "Shuffled and added $added matching song(s) to the shared queue."
+                    else "Added $added matching song(s) to the shared queue."
+                )
+            } else {
+                JamUiState.Notice("The shared queue is already full (${JamRepository.MAX_QUEUE_SIZE} tracks).")
+            }
+        }
+    }
+
+    fun playQueueItem(queueItemId: String) {
+        val current = _session.value ?: return
+        runAction {
+            repository.submitPlaybackCommand(
+                current.id,
+                JamPermissionKind.PLAY_PAUSE,
+                isPlaying = true,
+                targetQueueItemId = queueItemId
+            )
+        }
+    }
+
+    fun shuffleQueue() {
+        val id = _sessionId.value ?: return
+        val current = _queue.value
+        if (current.size <= 1) return
+        val activeId = _session.value?.playback?.queueItemId
+        val activeItem = current.firstOrNull { it.id == activeId }
+        val others = current.filter { it.id != activeId }.shuffled()
+        val orderedIds = if (activeItem != null) {
+            listOf(activeItem.id) + others.map { it.id }
+        } else {
+            others.map { it.id }
+        }
+        runAction {
+            repository.reorderQueue(id, orderedIds)
+            _uiState.value = JamUiState.Notice("Shuffled the shared queue.")
+        }
     }
 
     fun recommendLocalTrack(track: JamTrack, uri: Uri, mimeType: String) {
@@ -394,6 +503,24 @@ class JamFeatureController(
             stopObserving(restorePlayback = true)
             _page.value = JamPage.LANDING
             result.message?.let { _uiState.value = JamUiState.Notice(it) }
+        }
+    }
+
+    /**
+     * Automatically leaves the active Jam session when the user closes the app.
+     * If the leaving user is the host and at least 2 listeners remain, the earliest listener
+     * is promoted to host; if fewer than 2 listeners remain, the Jam room closes automatically.
+     */
+    fun onAppClosed() {
+        val prefs = context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE)
+        val id = _sessionId.value ?: prefs.getString(KEY_ACTIVE_SESSION, null)
+        if (id.isNullOrBlank()) return
+        stopObserving(restorePlayback = true)
+        _page.value = JamPage.LANDING
+        appCloseScope.launch {
+            withContext(NonCancellable) {
+                runCatching { repository.leave(id) }
+            }
         }
     }
 
@@ -593,9 +720,11 @@ class JamFeatureController(
     private fun applyPlaybackSnapshot(session: JamSession?, queue: List<JamQueueItem>, songs: List<Song>) {
         if (session == null || !session.isActive || _sessionId.value != session.id) return
         val playback = session.playback
-        val trackId = playback.sharedTrackId?.takeIf(String::isNotBlank) ?: return
-        val item = queue.firstOrNull { it.id == playback.queueItemId } ?: queue.firstOrNull { it.track.sharedTrackId == trackId }
+        val item = queue.firstOrNull { it.id == playback.queueItemId }
+            ?: playback.sharedTrackId?.takeIf(String::isNotBlank)?.let { tid -> queue.firstOrNull { it.track.sharedTrackId == tid } }
+            ?: queue.firstOrNull()
         val track = item?.track ?: return
+        val trackId = track.sharedTrackId.takeIf(String::isNotBlank) ?: return
         val local = matchLocalSong(track, songs)
         if (local == null) {
             _localTrackAvailable.value = false
@@ -906,15 +1035,20 @@ class JamFeatureController(
     private fun isUnknownAlbum(value: String) = value.isBlank() || value.contains("unknown") || value == "-"
 
     companion object {
+        @Volatile
+        var activeInstance: JamFeatureController? = null
+            private set
+
+        private val appCloseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private const val TRANSFER_PREFS = "offgrid_jam_transfers"
         private const val KEY_ACTIVE_UID = "active_user_id"
         private const val KEY_ACTIVE_SESSION = "active_session_id"
         private const val KEY_ACTIVE_INVITE_CODE = "active_invite_code"
         private const val KEY_ACTIVE_INVITE_URL = "active_invite_url"
         private const val MAX_MATCH_DURATION_DIFF_MS = 4_000L
-        private const val DRIFT_CHECK_INTERVAL_MS = 15_000L
-        private const val SEEK_DRIFT_THRESHOLD_MS = 1_800L
-        private const val SPEED_CORRECTION_THRESHOLD_MS = 600L
-        private const val SPEED_CORRECTION_DURATION_MS = 3_000L
+        private const val DRIFT_CHECK_INTERVAL_MS = 2_500L
+        private const val SEEK_DRIFT_THRESHOLD_MS = 650L
+        private const val SPEED_CORRECTION_THRESHOLD_MS = 120L
+        private const val SPEED_CORRECTION_DURATION_MS = 1_800L
     }
 }
