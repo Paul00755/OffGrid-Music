@@ -526,7 +526,8 @@ fun NowPlayingVinylTurntable(
                         Icon(
                             imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
-                            tint = BentoTextPrimary
+                            tint = BentoTextPrimary,
+                            modifier = Modifier.size(if (isShuffleActive) 26.dp else 22.dp)
                         )
                     }
 

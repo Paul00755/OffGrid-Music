@@ -338,9 +338,16 @@ class MusicPlaybackService : MediaSessionService() {
         }
         val isDismissRecovery = intent?.action == ACTION_NOTIFICATION_DISMISSED
         val isForceEnsure = intent?.action == ACTION_ENSURE_BACKGROUND_NOTIFICATION || isDismissRecovery
-        val result = super.onStartCommand(intent, flags, startId)
+        super.onStartCommand(intent, flags, startId)
         val hasActiveMedia = session.player.mediaItemCount > 0 ||
             PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
+        if (!hasActiveMedia) {
+            // MediaButtonReceiver can cold-start this service for a stale headset/notification
+            // command. With no item to play, don't leave a startForegroundService() launch
+            // waiting for a media notification that will never be created.
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
         updateNotification(
             session = session,
             startInForegroundRequired = hasActiveMedia,

@@ -487,7 +487,7 @@ fun NowPlayingNeonWaveform(
                             if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
                             tint = BentoTextPrimary,
-                            modifier = Modifier.size(21.dp)
+                            modifier = Modifier.size(if (isShuffleActive) 26.dp else 22.dp)
                         )
                     }
 

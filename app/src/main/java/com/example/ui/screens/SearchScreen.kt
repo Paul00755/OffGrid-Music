@@ -582,7 +582,7 @@ fun SearchScreen(
                                         isPlaying = playbackState.currentSong?.id == song.id,
                                         onClick = {
                                             if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery) else onAddRecentSearch(song.displayTitle)
-                                            onSongClick(song)
+                                            onPlaySongQueue(song, matchingSongs)
                                         },
                                         onFavoriteToggle = {
                                             if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery) else onAddRecentSearch(song.displayTitle)
@@ -601,7 +601,7 @@ fun SearchScreen(
                                             onDismissRequest = { showMenu = false },
                                             onPlayNow = {
                                                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery) else onAddRecentSearch(song.displayTitle)
-                                                onSongClick(song)
+                                                onPlaySongQueue(song, matchingSongs)
                                             },
                                             onPlayNext = {
                                                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery) else onAddRecentSearch(song.displayTitle)
@@ -745,7 +745,7 @@ fun SearchScreen(
                                             .fillMaxWidth()
                                             .clickable {
                                                 if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
-                                                if (folderSongs.isNotEmpty()) onSongClick(folderSongs.first())
+                                                if (folderSongs.isNotEmpty()) onPlaySongQueue(folderSongs.first(), folderSongs)
                                             }
                                     ) {
                                         Row(

@@ -797,7 +797,7 @@ fun NowPlayingScreen(
                                 imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                                 contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
                                 tint = BentoTextPrimary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(if (isShuffleActive) 24.dp else 20.dp)
                             )
                         }
 
@@ -1365,7 +1365,7 @@ fun NowPlayingScreen(
                                             imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
                                             tint = BentoTextPrimary,
-                                            modifier = Modifier.size(19.dp)
+                                            modifier = Modifier.size(if (isShuffleActive) 25.dp else 21.dp)
                                         )
                                     }
                                 }

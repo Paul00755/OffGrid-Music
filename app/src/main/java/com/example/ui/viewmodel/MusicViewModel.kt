@@ -1702,8 +1702,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playbackManager.playQueue(
                 songs = songs,
                 startIndex = 0,
-                sourceContext = sourceContext,
-                forceShuffle = false
+                sourceContext = sourceContext
             )
         }
     }

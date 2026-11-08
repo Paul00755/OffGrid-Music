@@ -227,7 +227,7 @@ fun NowPlayingMinimalGlass(
                             if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
                             tint = BentoTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(if (isShuffleActive) 25.dp else 21.dp)
                         )
                     }
                     IconButton(onClick = onSkipPrevious, modifier = Modifier.size(44.dp)) {

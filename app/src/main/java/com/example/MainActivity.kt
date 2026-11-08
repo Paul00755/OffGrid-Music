@@ -827,18 +827,10 @@ class MainActivity : ComponentActivity() {
                                             NavTab.RECENTLY_PLAYED -> RecentlyPlayedScreen(
                                                 recentlyPlayedSongs = recentlyPlayed,
                                                 playbackState = playbackState,
-                                                onSongClick = { viewModel.playSong(it, recentlyPlayed, sourceContext = "RECENTLY_PLAYED") },
+                                                onSongClick = { song, queue -> viewModel.playSong(song, queue, sourceContext = "RECENTLY_PLAYED") },
                                                 onFavoriteToggle = { viewModel.toggleFavorite(it) },
-                                                onShuffleAll = {
-                                                    if (recentlyPlayed.isNotEmpty()) {
-                                                        viewModel.shuffleAndPlay(recentlyPlayed, sourceContext = "RECENTLY_PLAYED")
-                                                    }
-                                                },
-                                                onPlayAll = {
-                                                    if (recentlyPlayed.isNotEmpty()) {
-                                                        viewModel.playAll(recentlyPlayed, sourceContext = "RECENTLY_PLAYED")
-                                                    }
-                                                },
+                                                onShuffleAll = { queue -> viewModel.shuffleAndPlay(queue, sourceContext = "RECENTLY_PLAYED") },
+                                                onPlayAll = { queue -> viewModel.playAll(queue, sourceContext = "RECENTLY_PLAYED") },
                                                 onClearHistory = { viewModel.clearRecentlyPlayed() },
                                                 onBackClick = { if (!viewModel.navigateBackTab()) viewModel.selectedTab.value = NavTab.HOME },
                                                 onPlayNext = { viewModel.playNext(it) },

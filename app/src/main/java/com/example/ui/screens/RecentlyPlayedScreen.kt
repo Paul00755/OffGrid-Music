@@ -58,10 +58,10 @@ enum class RecentlyPlayedSort(val displayName: String) {
 fun RecentlyPlayedScreen(
     recentlyPlayedSongs: List<Song>,
     playbackState: PlaybackState,
-    onSongClick: (Song) -> Unit,
+    onSongClick: (Song, List<Song>) -> Unit,
     onFavoriteToggle: (Song) -> Unit,
-    onShuffleAll: () -> Unit,
-    onPlayAll: () -> Unit = { if (recentlyPlayedSongs.isNotEmpty()) onSongClick(recentlyPlayedSongs.first()) },
+    onShuffleAll: (List<Song>) -> Unit,
+    onPlayAll: (List<Song>) -> Unit = { songs -> songs.firstOrNull()?.let { onSongClick(it, songs) } },
     onClearHistory: (() -> Unit)? = null,
     onBackClick: () -> Unit,
     onPlayNext: (Song) -> Unit = {},
@@ -390,7 +390,7 @@ fun RecentlyPlayedScreen(
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         FilledTonalButton(
-                                            onClick = onShuffleAll,
+                                            onClick = { onShuffleAll(sortedSongs) },
                                             shape = RoundedCornerShape(10.dp),
                                             colors = ButtonDefaults.filledTonalButtonColors(
                                                 containerColor = BentoCardDarkPurple,
@@ -404,7 +404,7 @@ fun RecentlyPlayedScreen(
                                         }
 
                                         Button(
-                                            onClick = onPlayAll,
+                                            onClick = { onPlayAll(sortedSongs) },
                                             shape = RoundedCornerShape(10.dp),
                                             colors = ButtonDefaults.buttonColors(
                                                 containerColor = BentoPrimary,
@@ -636,7 +636,7 @@ fun RecentlyPlayedScreen(
                                 SongItem(
                                     song = song,
                                     isPlaying = isPlaying,
-                                    onClick = { onSongClick(song) },
+                                    onClick = { onSongClick(song, filteredSongs) },
                                     onFavoriteToggle = { onFavoriteToggle(song) },
                                     onMoreClick = { selectedSongForMenu = song }
                                 )

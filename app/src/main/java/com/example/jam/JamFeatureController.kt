@@ -510,19 +510,27 @@ class JamFeatureController(
                 }
         }
         queueListenerJob = scope.launch {
-            repository.observeQueue(id).collectLatest { _queue.value = it }
+            repository.observeQueue(id)
+                .catch { error -> handleListenerFailure(id, error) }
+                .collectLatest { _queue.value = it }
         }
         participantListenerJob = scope.launch {
-            repository.observeParticipants(id).collectLatest { _participants.value = it }
+            repository.observeParticipants(id)
+                .catch { error -> handleListenerFailure(id, error) }
+                .collectLatest { _participants.value = it }
         }
         recommendationListenerJob = scope.launch {
-            repository.observeRecommendations(id).collectLatest { recommendations ->
+            repository.observeRecommendations(id)
+                .catch { error -> handleListenerFailure(id, error) }
+                .collectLatest { recommendations ->
                 _recommendations.value = recommendations
                 syncLocalTransfers(recommendations)
             }
         }
         featureRequestListenerJob = scope.launch {
-            repository.observeFeatureRequests(id).collectLatest { _featureRequests.value = it }
+            repository.observeFeatureRequests(id)
+                .catch { error -> handleListenerFailure(id, error) }
+                .collectLatest { _featureRequests.value = it }
         }
         heartbeatJob = scope.launch {
             while (_sessionId.value == id) {
@@ -659,6 +667,21 @@ class JamFeatureController(
         heartbeatJob?.cancel(); heartbeatJob = null
         driftJob?.cancel(); driftJob = null
         soloCloseJob?.cancel(); soloCloseJob = null
+    }
+
+    private fun handleListenerFailure(sessionId: String, error: Throwable) {
+        if (_sessionId.value != sessionId) return
+        val uid = authManager.currentUser?.uid.orEmpty()
+        val current = _session.value
+        val wasRemoved = uid.isNotBlank() && current?.kickedUids?.contains(uid) == true
+        val message = if (wasRemoved) {
+            current?.announcement?.forUser(uid) ?: "The host removed you from this Jam. You cannot rejoin this Jam room."
+        } else {
+            error.message?.takeIf(String::isNotBlank) ?: "Jam access ended. Your playback has been restored."
+        }
+        stopObserving(restorePlayback = true)
+        _page.value = JamPage.LANDING
+        _uiState.value = if (wasRemoved) JamUiState.Notice(message) else JamUiState.Error(message)
     }
 
     private fun currentAccountOrNull(): UserAccount? = userAccount.value ?: authManager.currentUser?.let {
