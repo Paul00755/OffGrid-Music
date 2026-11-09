@@ -24,15 +24,22 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
-/** WorkManager wrappers keep audio transfer resumable while the app is backgrounded or recreated. */
+/**
+ * Coordinates Jam local audio transfers both directly in the active foreground coroutine scope
+ * (for 0ms startup latency when votes are accepted) and via WorkManager fallback when backgrounded.
+ */
 object JamTransferWork {
+    private val activeUploads = ConcurrentHashMap.newKeySet<String>()
+    private val activeDownloads = ConcurrentHashMap.newKeySet<String>()
+
     private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
     private fun workManagerOrNull(context: Context): WorkManager? = runCatching {
@@ -52,10 +59,10 @@ object JamTransferWork {
                 .putString(JamUploadWorker.KEY_MIME, mimeType)
                 .build())
             .setConstraints(constraints())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
             .build()
         runCatching {
-            wm.enqueueUniqueWork(uploadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+            wm.enqueueUniqueWork(uploadWorkName(sessionId, recommendationId), ExistingWorkPolicy.REPLACE, request)
         }
     }
 
@@ -83,10 +90,167 @@ object JamTransferWork {
                 .putString(JamDownloadWorker.KEY_MIME, contentType.orEmpty())
                 .build())
             .setConstraints(constraints())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
             .build()
         runCatching {
-            wm.enqueueUniqueWork(downloadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+            wm.enqueueUniqueWork(downloadWorkName(sessionId, recommendationId), ExistingWorkPolicy.REPLACE, request)
+        }
+    }
+
+    suspend fun executeUploadDirect(
+        context: Context,
+        sessionId: String,
+        recommendationId: String,
+        sourceUri: Uri,
+        mimeType: String,
+        failOnFinalError: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        val key = "$sessionId:$recommendationId"
+        if (!activeUploads.add(key)) return@withContext true
+        val appCtx = context.applicationContext
+        val auth = AuthManager.getInstance(appCtx)
+        val firestore = FirebaseInitializer.getFirestore(appCtx) ?: run {
+            activeUploads.remove(key)
+            return@withContext false
+        }
+        val repository = JamRepository(firestore, auth, BuildConfig.JAM_INVITE_HOST)
+        val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
+        val localFile = File(appCtx.cacheDir, "jam-source-$recommendationId-${System.nanoTime()}.part")
+        try {
+            var copied = false
+            if (sourceUri.scheme?.lowercase() == "file") {
+                val src = sourceUri.path?.let(::File)
+                if (src != null && src.isFile && src.length() > 0L) {
+                    runCatching {
+                        src.inputStream().use { source -> localFile.outputStream().use(source::copyTo) }
+                        copied = localFile.length() > 0L
+                    }
+                }
+            }
+            if (!copied) {
+                appCtx.contentResolver.openInputStream(sourceUri)?.use { source -> localFile.outputStream().use(source::copyTo) }
+                    ?: throw IllegalStateException("The selected song could not be opened.")
+            }
+            if (localFile.length() !in 1..JamPeerTransfer.MAX_TRANSFER_BYTES) {
+                throw IllegalStateException("This song exceeds the 25 MB transfer limit.")
+            }
+            val checksum = sha256(localFile)
+            repository.preparePeerUpload(sessionId, recommendationId, checksum, localFile.length(), mimeType)
+            repository.beginLocalUpload(sessionId, recommendationId)
+            runCatching { repository.reportLocalUploadProgress(sessionId, recommendationId, 2) }
+            val recommendation = repository.getRecommendation(sessionId, recommendationId)
+                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
+            val senderUid = auth.currentUser?.uid ?: throw IllegalStateException("Sign in to transfer this song.")
+            val recipients = recommendation.eligibleUids.filter {
+                it != senderUid && recommendation.votes[it] == JamVote.ACCEPT &&
+                    recommendation.downloads[it]?.readyForPlayback != true
+            }
+            if (recipients.isEmpty()) {
+                repository.completeLocalUpload(sessionId, recommendationId)
+                return@withContext true
+            }
+            val lastReported = AtomicInteger(0)
+            recipients.forEachIndexed { index, recipientUid ->
+                val peerResult = JamPeerTransfer(appCtx, firestore).send(
+                    sessionId, recommendationId, senderUid, recipientUid, Uri.fromFile(localFile), mimeType
+                ) { perPeer ->
+                    val total = ((index * 100 + perPeer) / recipients.size).coerceIn(2, 100)
+                    val prev = lastReported.get()
+                    if (total == 100 || total - prev >= 4) {
+                        lastReported.set(total)
+                        progressScope.launch {
+                            runCatching { repository.reportLocalUploadProgress(sessionId, recommendationId, total) }
+                        }
+                    }
+                }
+                peerResult.file.delete()
+            }
+            repository.completeLocalUpload(sessionId, recommendationId)
+            true
+        } catch (error: Throwable) {
+            if (failOnFinalError) {
+                runCatching { repository.failLocalUpload(sessionId, recommendationId, error.message ?: "Upload failed.") }
+            }
+            false
+        } finally {
+            localFile.delete()
+            heartbeatJob.cancel()
+            progressScope.cancel()
+            activeUploads.remove(key)
+        }
+    }
+
+    suspend fun executeDownloadDirect(
+        context: Context,
+        sessionId: String,
+        recommendationId: String,
+        expectedChecksum: String,
+        track: JamTrack,
+        expectedFileSize: Long,
+        contentType: String?,
+        failOnFinalError: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        val key = "$sessionId:$recommendationId"
+        if (!activeDownloads.add(key)) return@withContext true
+        val appCtx = context.applicationContext
+        val auth = AuthManager.getInstance(appCtx)
+        val firestore = FirebaseInitializer.getFirestore(appCtx) ?: run {
+            activeDownloads.remove(key)
+            return@withContext false
+        }
+        val repository = JamRepository(firestore, auth, BuildConfig.JAM_INVITE_HOST)
+        val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
+        var temporary = File(appCtx.cacheDir, "jam-$recommendationId-${System.nanoTime()}.part")
+        try {
+            repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", 2)
+            val recommendation = repository.getRecommendation(sessionId, recommendationId)
+                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
+            val recipientUid = auth.currentUser?.uid ?: throw IllegalStateException("Sign in to receive this song.")
+            temporary.delete()
+            val lastReported = AtomicInteger(0)
+            val received = JamPeerTransfer(appCtx, firestore).receive(
+                sessionId, recommendationId, recommendation.proposerUid, recipientUid,
+                expectedFileSize
+            ) { percent ->
+                val clamped = percent.coerceIn(2, 99)
+                val prev = lastReported.get()
+                if (clamped - prev >= 4) {
+                    lastReported.set(clamped)
+                    progressScope.launch {
+                        runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", clamped) }
+                    }
+                }
+            }
+            temporary = received.file
+            repository.updateDownloadState(sessionId, recommendationId, "VERIFYING_FILE", 100)
+            val checksum = sha256(temporary)
+            val targetChecksum = expectedChecksum.takeIf(String::isNotBlank) ?: received.sha256
+            if (targetChecksum.isNotBlank() && !checksum.equals(targetChecksum, ignoreCase = true)) {
+                repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = "File verification failed.")
+                temporary.delete()
+                return@withContext false
+            }
+            if (!isPlayableAudio(temporary, track.durationMs)) {
+                repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = "The downloaded audio file could not be opened.")
+                temporary.delete()
+                return@withContext false
+            }
+            val resolvedMime = contentType?.takeIf(String::isNotBlank) ?: received.mimeType
+            JamRecommendationAssetStore.install(appCtx, temporary, recommendationId, checksum, track.copy(checksum = checksum), resolvedMime)
+            repository.updateDownloadState(sessionId, recommendationId, "READY_FOR_PLAYBACK", 100, checksum = checksum)
+            true
+        } catch (error: Throwable) {
+            if (failOnFinalError) {
+                runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = error.message ?: "Download failed.") }
+            }
+            false
+        } finally {
+            temporary.delete()
+            heartbeatJob.cancel()
+            progressScope.cancel()
+            activeDownloads.remove(key)
         }
     }
 
@@ -100,59 +264,19 @@ class JamUploadWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val recommendationId = inputData.getString(KEY_RECOMMENDATION) ?: return Result.failure()
         val uri = inputData.getString(KEY_URI)?.let(Uri::parse) ?: return Result.failure()
         val mime = inputData.getString(KEY_MIME) ?: "audio/mpeg"
-        val auth = AuthManager.getInstance(applicationContext)
-        val firestore = FirebaseInitializer.getFirestore(applicationContext) ?: return Result.retry()
-        val repository = JamRepository(firestore, auth, BuildConfig.JAM_INVITE_HOST)
-        val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
-        val localFile = File(applicationContext.cacheDir, "jam-source-$recommendationId.part")
-        return try {
-            if (uri.scheme == "file") {
-                val src = uri.path?.let(::File)
-                if (src != null && src.isFile) {
-                    src.inputStream().use { source -> localFile.outputStream().use(source::copyTo) }
-                } else {
-                    throw IllegalStateException("The selected song could not be opened.")
-                }
-            } else {
-                applicationContext.contentResolver.openInputStream(uri)?.use { source -> localFile.outputStream().use(source::copyTo) }
-                    ?: throw IllegalStateException("The selected song could not be opened.")
-            }
-            if (localFile.length() !in 1..JamPeerTransfer.MAX_TRANSFER_BYTES) throw IllegalStateException("This song exceeds the 25 MB transfer limit.")
-            val checksum = sha256(localFile)
-            repository.preparePeerUpload(sessionId, recommendationId, checksum, localFile.length(), mime)
-            repository.beginLocalUpload(sessionId, recommendationId)
-            val recommendation = repository.getRecommendation(sessionId, recommendationId)
-                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
-            val recipients = recommendation.eligibleUids.filter {
-                it != auth.currentUser?.uid && recommendation.votes[it] == JamVote.ACCEPT &&
-                    recommendation.downloads[it]?.readyForPlayback != true
-            }
-            if (recipients.isEmpty()) throw IllegalStateException("No Jam participant approved this transfer.")
-            recipients.forEachIndexed { index, recipientUid ->
-                val peerResult = JamPeerTransfer(applicationContext, firestore).send(
-                    sessionId, recommendationId, auth.currentUser?.uid ?: throw IllegalStateException("Sign in to transfer this song."),
-                    recipientUid, Uri.fromFile(localFile), mime
-                ) { perPeer ->
-                    val total = ((index * 100 + perPeer) / recipients.size).coerceIn(0, 100)
-                    if (total == 100 || total % 5 == 0) progressScope.launch {
-                        runCatching { repository.reportLocalUploadProgress(sessionId, recommendationId, total) }
-                    }
-                }
-                peerResult.file.delete()
-            }
-            repository.completeLocalUpload(sessionId, recommendationId)
-            localFile.delete()
-            Result.success()
-        } catch (error: Throwable) {
-            if (runAttemptCount >= MAX_ATTEMPTS) {
-                runCatching { repository.failLocalUpload(sessionId, recommendationId, error.message ?: "Upload failed.") }
-                Result.failure()
-            } else Result.retry()
-        } finally {
-            localFile.delete()
-            heartbeatJob.cancel()
-            progressScope.cancel()
+        val isFinalAttempt = runAttemptCount >= MAX_ATTEMPTS
+        val ok = JamTransferWork.executeUploadDirect(
+            context = applicationContext,
+            sessionId = sessionId,
+            recommendationId = recommendationId,
+            sourceUri = uri,
+            mimeType = mime,
+            failOnFinalError = isFinalAttempt
+        )
+        return when {
+            ok -> Result.success()
+            isFinalAttempt -> Result.failure()
+            else -> Result.retry()
         }
     }
 
@@ -169,62 +293,30 @@ class JamDownloadWorker(context: Context, params: WorkerParameters) : CoroutineW
     override suspend fun doWork(): Result {
         val sessionId = inputData.getString(KEY_SESSION) ?: return Result.failure()
         val recommendationId = inputData.getString(KEY_RECOMMENDATION) ?: return Result.failure()
-        val expectedChecksum = inputData.getString(KEY_CHECKSUM) ?: return Result.failure()
+        val expectedChecksum = inputData.getString(KEY_CHECKSUM).orEmpty()
         val track = JamTrack(
             sharedTrackId = inputData.getString(KEY_SHARED_TRACK_ID).orEmpty(),
             title = inputData.getString(KEY_TITLE).orEmpty(),
             artist = inputData.getString(KEY_ARTIST).orEmpty(),
             album = inputData.getString(KEY_ALBUM).orEmpty(),
             durationMs = inputData.getLong(KEY_DURATION, 0L),
-            checksum = expectedChecksum
+            checksum = expectedChecksum.takeIf(String::isNotBlank)
         )
-        val auth = AuthManager.getInstance(applicationContext)
-        val firestore = FirebaseInitializer.getFirestore(applicationContext) ?: return Result.retry()
-        val repository = firestore.let {
-            JamRepository(it, auth, BuildConfig.JAM_INVITE_HOST)
-        } ?: return Result.retry()
-        val progressScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
-        var temporary = File(applicationContext.cacheDir, "jam-$recommendationId.part")
-        return try {
-            repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", 0)
-            val recommendation = repository.getRecommendation(sessionId, recommendationId)
-                ?: throw IllegalStateException("This Jam recommendation is no longer available.")
-            val recipientUid = auth.currentUser?.uid ?: throw IllegalStateException("Sign in to receive this song.")
-            temporary.delete()
-            val received = JamPeerTransfer(applicationContext, firestore).receive(
-                sessionId, recommendationId, recommendation.proposerUid, recipientUid,
-                inputData.getLong(KEY_FILE_SIZE, 0L)
-            ) { percent ->
-                if (percent % 5 == 0) progressScope.launch {
-                    runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOADING", percent) }
-                }
-            }
-            temporary = received.file
-            repository.updateDownloadState(sessionId, recommendationId, "VERIFYING_FILE", 100)
-            val checksum = sha256(temporary)
-            if (!checksum.equals(expectedChecksum, ignoreCase = true)) {
-                repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = "File verification failed.")
-                temporary.delete()
-                return Result.failure()
-            }
-            if (!isPlayableAudio(temporary, track.durationMs)) {
-                repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = "The downloaded audio file could not be opened.")
-                temporary.delete()
-                return Result.failure()
-            }
-            JamRecommendationAssetStore.install(applicationContext, temporary, recommendationId, checksum, track, inputData.getString(KEY_MIME).orEmpty())
-            repository.updateDownloadState(sessionId, recommendationId, "READY_FOR_PLAYBACK", 100, checksum = checksum)
-            Result.success()
-        } catch (error: Throwable) {
-            if (runAttemptCount >= MAX_ATTEMPTS) {
-                runCatching { repository.updateDownloadState(sessionId, recommendationId, "DOWNLOAD_FAILED", 0, error = error.message ?: "Download failed.") }
-                Result.failure()
-            } else Result.retry()
-        } finally {
-            temporary.delete()
-            heartbeatJob.cancel()
-            progressScope.cancel()
+        val isFinalAttempt = runAttemptCount >= MAX_ATTEMPTS
+        val ok = JamTransferWork.executeDownloadDirect(
+            context = applicationContext,
+            sessionId = sessionId,
+            recommendationId = recommendationId,
+            expectedChecksum = expectedChecksum,
+            track = track,
+            expectedFileSize = inputData.getLong(KEY_FILE_SIZE, 0L),
+            contentType = inputData.getString(KEY_MIME),
+            failOnFinalError = isFinalAttempt
+        )
+        return when {
+            ok -> Result.success()
+            isFinalAttempt -> Result.failure()
+            else -> Result.retry()
         }
     }
 
@@ -254,15 +346,20 @@ private suspend fun keepJamTransferPresence(sessionId: String, repository: JamRe
 }
 
 private fun isPlayableAudio(file: File, expectedDurationMs: Long): Boolean {
+    if (!file.isFile || file.length() <= 0L) return false
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(file.absolutePath)
         val hasAudio = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        val toleranceMs = maxOf(10_000L, (expectedDurationMs * 0.03).toLong())
-        hasAudio != "no" && durationMs > 0L && kotlin.math.abs(durationMs - expectedDurationMs) <= toleranceMs
+        if (expectedDurationMs <= 0L || durationMs <= 0L) {
+            hasAudio != "no"
+        } else {
+            val toleranceMs = maxOf(15_000L, (expectedDurationMs * 0.08).toLong())
+            hasAudio != "no" && kotlin.math.abs(durationMs - expectedDurationMs) <= toleranceMs
+        }
     } catch (_: Throwable) {
-        false
+        file.length() > 1024L
     } finally {
         runCatching { retriever.release() }
     }
@@ -290,8 +387,8 @@ private object JamRecommendationAssetStore {
                 throw IllegalStateException("The verified audio file changed while it was being saved.")
             }
             if (!staging.renameTo(target)) {
+                staging.copyTo(target, overwrite = true)
                 staging.delete()
-                throw IllegalStateException("The audio file could not be registered locally.")
             }
         }
         val db = AppDatabase.getInstance(context)

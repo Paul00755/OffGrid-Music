@@ -283,7 +283,7 @@ service cloud.firestore {
         allow read: if member(sessionId)
           && (resource == null || resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
         allow create: if member(sessionId)
-          && featureEnabled(sessionId, 'localSongSharing')
+          && (featureEnabled(sessionId, 'localSongSharing') || host(sessionId))
           && request.resource.data.senderUid == request.auth.uid
           && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.recipientUid))
           && request.resource.data.fileSize > 0 && request.resource.data.fileSize <= 26214400

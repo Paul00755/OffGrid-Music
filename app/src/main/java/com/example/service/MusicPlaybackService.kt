@@ -362,6 +362,9 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
+            try {
+                PlaybackManager.activeInstance?.persistPlaybackStateNow()
+            } catch (_: Throwable) {}
             // Automatically leave any active Jam session when the user closes/swipes away the app
             try {
                 com.example.jam.JamFeatureController.activeInstance?.onAppClosed()
@@ -553,6 +556,9 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        try {
+            PlaybackManager.activeInstance?.persistPlaybackStateNow()
+        } catch (_: Throwable) {}
         unregisterScreenStateReceiver()
         asyncArtDecodeJob?.cancel()
         notificationArtworkRequestKey = null

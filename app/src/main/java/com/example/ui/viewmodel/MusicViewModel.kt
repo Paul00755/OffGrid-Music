@@ -1508,6 +1508,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         var lastSavedPos: Long = -1L
         var lastSaveTime: Long = 0L
         var lastSavedIsPlaying: Boolean? = null
+        var lastSavedQueueIndex: Int = -1
+        var lastSavedQueueHash: Int = 0
 
         viewModelScope.launch {
             playbackState.collect { state ->
@@ -1555,27 +1557,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
-                    // Throttle DataStore writes to prevent thread starvation and ANRs
-                    val now = System.currentTimeMillis()
-                    val isTrackChange = song.id != lastSavedSongId
-                    val isPauseTransition = !state.isPlaying && lastSavedIsPlaying == true
-                    val isThrottledTime = (now - lastSaveTime > 10000L) && kotlin.math.abs(state.positionMs - lastSavedPos) > 3000L
-                    lastSavedIsPlaying = state.isPlaying
-
-                    if (isTrackChange || isPauseTransition || isThrottledTime) {
-                        lastSavedSongId = song.id
-                        lastSavedPos = state.positionMs
-                        lastSaveTime = now
+                    // Do not overwrite the user's saved Up-Next queue with a temporary Jam room queue
+                    if (state.sourceContext != "JAM" && state.queue.isNotEmpty()) {
+                        val now = System.currentTimeMillis()
                         val queueIdsSnapshot = state.queue.map { it.id }
-                        val posSnapshot = state.positionMs
-                        val idxSnapshot = state.queueIndex
-                        viewModelScope.launch(Dispatchers.IO) {
-                            preferences.saveLastPlaybackState(
+                        val currentQueueHash = queueIdsSnapshot.hashCode()
+                        val isTrackChange = song.id != lastSavedSongId
+                        val isQueueChange = currentQueueHash != lastSavedQueueHash || state.queueIndex != lastSavedQueueIndex
+                        val isPauseTransition = !state.isPlaying && lastSavedIsPlaying == true
+                        val isThrottledTime = (now - lastSaveTime > 10000L) && kotlin.math.abs(state.positionMs - lastSavedPos) > 3000L
+                        lastSavedIsPlaying = state.isPlaying
+
+                        if (isTrackChange || isQueueChange || isPauseTransition || isThrottledTime) {
+                            lastSavedSongId = song.id
+                            lastSavedPos = state.positionMs
+                            lastSaveTime = now
+                            lastSavedQueueIndex = state.queueIndex
+                            lastSavedQueueHash = currentQueueHash
+                            val posSnapshot = state.positionMs
+                            val idxSnapshot = state.queueIndex.coerceIn(queueIdsSnapshot.indices)
+                            val durSnapshot = if (song.durationMs > 0L) song.durationMs else state.durationMs
+                            preferences.saveLastPlaybackStateSync(
                                 songId = song.id,
                                 position = posSnapshot,
                                 queueIds = queueIdsSnapshot,
-                                queueIndex = idxSnapshot
+                                queueIndex = idxSnapshot,
+                                duration = durSnapshot
                             )
+                            viewModelScope.launch(Dispatchers.IO) {
+                                preferences.saveLastPlaybackState(
+                                    songId = song.id,
+                                    position = posSnapshot,
+                                    queueIds = queueIdsSnapshot,
+                                    queueIndex = idxSnapshot,
+                                    duration = durSnapshot
+                                )
+                            }
                         }
                     }
                 } else {

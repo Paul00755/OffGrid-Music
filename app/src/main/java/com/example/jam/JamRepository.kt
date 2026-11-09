@@ -186,19 +186,27 @@ class JamRepository(
         positionMs: Long? = null,
         step: Int = 1,
         targetQueueItemId: String? = null,
-        hasActiveItem: Boolean = false
+        targetSharedTrackId: String? = null,
+        hasActiveItem: Boolean = false,
+        commandId: String = java.util.UUID.randomUUID().toString(),
+        isDirectSelect: Boolean = false
     ): JamPlaybackState {
         requireUid()
         val payload = mutableMapOf<String, Any>(
             "sessionId" to sessionId,
             "commandType" to type.name,
-            "commandId" to java.util.UUID.randomUUID().toString(),
+            "commandId" to commandId,
             "hasActiveItem" to hasActiveItem
         )
         if (isPlaying != null) payload["isPlaying"] = isPlaying
         if (positionMs != null) payload["positionMs"] = positionMs.coerceAtLeast(0L)
         if (type == JamPermissionKind.SKIP_TRACK) payload["step"] = if (step < 0) -1 else 1
         if (!targetQueueItemId.isNullOrBlank()) payload["queueItemId"] = targetQueueItemId
+        if (!targetSharedTrackId.isNullOrBlank() && !targetQueueItemId.isNullOrBlank()) {
+            payload["sharedTrackId"] = targetSharedTrackId
+            payload["resolvedByController"] = true
+            payload["isDirectSelect"] = isDirectSelect
+        }
         val result = call("submitJamPlaybackCommand", payload)
         return JamPlaybackState(
             sharedTrackId = result["sharedTrackId"] as? String,
@@ -905,8 +913,9 @@ class JamRepository(
         val id = sessionId(data); val session = sessionRef(id); val snapshot = session.get().await()
         val type = data["recommendationType"] as? String ?: ""
         val permissions = JamPermissions.from(snapshot.get("permissions"))
-        if (type == "LOCAL_SONG" && !permissions.allowLocalSongSharing) throw JamRepositoryException("Local song sharing is disabled.")
-        if (type == "SHARED_LIBRARY" && !permissions.allowSharedLibraryRecommendations) throw JamRepositoryException("Recommendations are disabled.")
+        val isHost = snapshot.getString("hostUid") == uid
+        if (type == "LOCAL_SONG" && !permissions.allowLocalSongSharing && !isHost) throw JamRepositoryException("Local song sharing is disabled.")
+        if (type == "SHARED_LIBRARY" && !permissions.allowSharedLibraryRecommendations && !isHost) throw JamRepositoryException("Recommendations are disabled.")
         val members = session.collection(PARTICIPANTS).get().await().documents
         val eligible = members.map { it.id }
         val required = if (type == "LOCAL_SONG") eligible.size else eligible.size / 2 + 1
@@ -1136,10 +1145,15 @@ class JamRepository(
         val type = data["commandType"] as? String ?: ""
         val kind = runCatching { JamPermissionKind.valueOf(type) }.getOrNull() ?: throw JamRepositoryException("Playback command is invalid.")
         val requestedQueueItemId = (data["queueItemId"] as? String)?.takeIf(String::isNotBlank)
+        val requestedSharedTrackId = (data["sharedTrackId"] as? String)?.takeIf(String::isNotBlank)
+        val resolvedByController = data["resolvedByController"] == true && requestedQueueItemId != null && requestedSharedTrackId != null
+        val isDirectSelect = data["isDirectSelect"] == true
         val callerPositionMs = (data["positionMs"] as? Number)?.toLong()?.coerceAtLeast(0L)
-        val needsQueueDocuments = kind == JamPermissionKind.SKIP_TRACK ||
-            requestedQueueItemId != null ||
-            (kind == JamPermissionKind.PLAY_PAUSE && data["hasActiveItem"] != true)
+        val needsQueueDocuments = !resolvedByController && (
+            kind == JamPermissionKind.SKIP_TRACK ||
+                requestedQueueItemId != null ||
+                (kind == JamPermissionKind.PLAY_PAUSE && data["hasActiveItem"] != true)
+            )
         val queue = if (needsQueueDocuments) {
             session.collection(QUEUE).orderBy("position").get().await().documents
         } else {
@@ -1169,32 +1183,46 @@ class JamRepository(
             val expectedPosition = if (playing) position + ((now - updatedAt).coerceAtLeast(0L) * speed).toLong() else position
             when (kind) {
                 JamPermissionKind.PLAY_PAUSE -> {
-                    val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
-                    if (requestedTarget != null && requestedTarget.id != itemId) {
-                        // Switching to a different queue item requires SKIP_TRACK and MANAGE_QUEUE permissions
-                        if (!currentPermissions.allows(JamPermissionKind.SKIP_TRACK, uid, currentHostUid) ||
-                            !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)
-                        ) {
-                            throw JamRepositoryException("Only users with queue control permission can select a different song from the queue.")
+                    if (resolvedByController && requestedQueueItemId != null && requestedSharedTrackId != null) {
+                        if (requestedQueueItemId != itemId && itemId.isNotBlank() && isDirectSelect) {
+                            if (!currentPermissions.allows(JamPermissionKind.SKIP_TRACK, uid, currentHostUid) ||
+                                !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)
+                            ) {
+                                throw JamRepositoryException("Only users with queue control permission can select a different song from the queue.")
+                            }
                         }
-                        val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                        sharedId = track["sharedTrackId"] as? String ?: ""
-                        itemId = requestedTarget.id
-                        position = 0L
-                        playing = data["isPlaying"] as? Boolean ?: true
-                    } else if (requestedTarget != null && requestedTarget.id == itemId) {
-                        position = callerPositionMs ?: if (playing) expectedPosition else position
-                        playing = data["isPlaying"] as? Boolean ?: true
-                    } else if ((itemId.isBlank() || (queue.isNotEmpty() && queue.none { it.id == itemId })) && queue.isNotEmpty()) {
-                        val firstTarget = queue.first()
-                        val track = firstTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                        sharedId = track["sharedTrackId"] as? String ?: ""
-                        itemId = firstTarget.id
-                        position = 0L
+                        val switched = requestedQueueItemId != itemId
+                        sharedId = requestedSharedTrackId
+                        itemId = requestedQueueItemId
+                        position = if (switched) (callerPositionMs ?: 0L) else (callerPositionMs ?: if (playing) expectedPosition else position)
                         playing = data["isPlaying"] as? Boolean ?: true
                     } else {
-                        position = callerPositionMs ?: if (playing) expectedPosition else position
-                        playing = data["isPlaying"] as? Boolean ?: !playing
+                        val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
+                        if (requestedTarget != null && requestedTarget.id != itemId) {
+                            if (!currentPermissions.allows(JamPermissionKind.SKIP_TRACK, uid, currentHostUid) ||
+                                !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)
+                            ) {
+                                throw JamRepositoryException("Only users with queue control permission can select a different song from the queue.")
+                            }
+                            val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                            sharedId = track["sharedTrackId"] as? String ?: ""
+                            itemId = requestedTarget.id
+                            position = 0L
+                            playing = data["isPlaying"] as? Boolean ?: true
+                        } else if (requestedTarget != null && requestedTarget.id == itemId) {
+                            position = callerPositionMs ?: if (playing) expectedPosition else position
+                            playing = data["isPlaying"] as? Boolean ?: true
+                        } else if ((itemId.isBlank() || (queue.isNotEmpty() && queue.none { it.id == itemId })) && queue.isNotEmpty()) {
+                            val firstTarget = queue.first()
+                            val track = firstTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                            sharedId = track["sharedTrackId"] as? String ?: ""
+                            itemId = firstTarget.id
+                            position = 0L
+                            playing = data["isPlaying"] as? Boolean ?: true
+                        } else {
+                            position = callerPositionMs ?: if (playing) expectedPosition else position
+                            playing = data["isPlaying"] as? Boolean ?: !playing
+                        }
                     }
                 }
                 JamPermissionKind.SEEK -> {
@@ -1203,47 +1231,58 @@ class JamRepository(
                     position = (callerPositionMs ?: 0L).coerceIn(0L, duration)
                 }
                 JamPermissionKind.SKIP_TRACK -> {
-                    if (queue.isEmpty()) throw JamRepositoryException("Add a track to the shared queue first.")
-                    val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
-                    if (requestedTarget != null) {
-                        if (requestedTarget.id != itemId && !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)) {
+                    if (resolvedByController && requestedQueueItemId != null && requestedSharedTrackId != null) {
+                        if (isDirectSelect && requestedQueueItemId != itemId && !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)) {
                             throw JamRepositoryException("Only users with queue control permission can jump to a specific song in the queue.")
                         }
-                        val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                        sharedId = track["sharedTrackId"] as? String ?: ""
-                        itemId = requestedTarget.id
-                        position = 0L
-                        playing = true
-                        step = 1
+                        sharedId = requestedSharedTrackId
+                        itemId = requestedQueueItemId
+                        position = callerPositionMs ?: 0L
+                        playing = data["isPlaying"] as? Boolean ?: true
+                        step = if ((data["step"] as? Number)?.toInt() == -1) -1 else 1
                     } else {
-                        val direction = if ((data["step"] as? Number)?.toInt() == -1) -1 else 1
-                        val currentIndex = queue.indexOfFirst { it.id == itemId }
-                        if (direction < 0 && playing && (callerPositionMs ?: expectedPosition) > 3_000L) {
-                            position = 0L
-                            step = -1
-                        } else {
-                            val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
-                            when {
-                                targetIndex < 0 -> {
-                                    val currentTrack = queue[currentIndex.coerceAtLeast(0)].get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                                    sharedId = currentTrack["sharedTrackId"] as? String ?: ""
-                                    itemId = queue[currentIndex.coerceAtLeast(0)].id
-                                    position = 0L
-                                }
-                                targetIndex >= queue.size -> {
-                                    position = callerPositionMs ?: expectedPosition
-                                    playing = false
-                                }
-                                else -> {
-                                    val target = queue[targetIndex]
-                                    val track = target.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
-                                    sharedId = track["sharedTrackId"] as? String ?: ""
-                                    itemId = target.id
-                                    position = 0L
-                                    playing = true
-                                }
+                        if (queue.isEmpty()) throw JamRepositoryException("Add a track to the shared queue first.")
+                        val requestedTarget = requestedQueueItemId?.let { targetId -> queue.firstOrNull { it.id == targetId } }
+                        if (requestedTarget != null) {
+                            if (requestedTarget.id != itemId && !currentPermissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, currentHostUid)) {
+                                throw JamRepositoryException("Only users with queue control permission can jump to a specific song in the queue.")
                             }
-                            step = direction
+                            val track = requestedTarget.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                            sharedId = track["sharedTrackId"] as? String ?: ""
+                            itemId = requestedTarget.id
+                            position = 0L
+                            playing = true
+                            step = 1
+                        } else {
+                            val direction = if ((data["step"] as? Number)?.toInt() == -1) -1 else 1
+                            val currentIndex = queue.indexOfFirst { it.id == itemId }
+                            if (direction < 0 && playing && (callerPositionMs ?: expectedPosition) > 3_000L) {
+                                position = 0L
+                                step = -1
+                            } else {
+                                val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
+                                when {
+                                    targetIndex < 0 -> {
+                                        val currentTrack = queue[currentIndex.coerceAtLeast(0)].get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                                        sharedId = currentTrack["sharedTrackId"] as? String ?: ""
+                                        itemId = queue[currentIndex.coerceAtLeast(0)].id
+                                        position = 0L
+                                    }
+                                    targetIndex >= queue.size -> {
+                                        position = callerPositionMs ?: expectedPosition
+                                        playing = false
+                                    }
+                                    else -> {
+                                        val target = queue[targetIndex]
+                                        val track = target.get("track") as? Map<*, *> ?: emptyMap<Any, Any>()
+                                        sharedId = track["sharedTrackId"] as? String ?: ""
+                                        itemId = target.id
+                                        position = 0L
+                                        playing = true
+                                    }
+                                }
+                                step = direction
+                            }
                         }
                     }
                 }

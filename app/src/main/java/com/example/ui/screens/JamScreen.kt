@@ -396,7 +396,10 @@ fun JamScreen(
                 permissions = permissionDraft,
                 participants = participants,
                 isHost = session?.hostUid != null && session.hostUid == currentUid,
-                onPermissionsChange = { permissionDraft = it },
+                onPermissionsChange = { updated ->
+                    permissionDraft = updated
+                    controller?.setPermissions(updated)
+                },
                 onBack = { controller?.openPage(JamPage.ACTIVE) },
                 onSave = {
                     controller?.setPermissions(permissionDraft)
@@ -1016,6 +1019,7 @@ private fun ActivePage(
 
     // Local reorderable state for smooth drag-to-reorder with auto-scroll in Shared Queue
     var displayedQueue by remember { mutableStateOf(queue) }
+    var lastCommittedJamOrderIds by remember { mutableStateOf<List<String>?>(null) }
     val queueListState = rememberLazyListState()
     val queueRowHeightPx = with(density) { 68.dp.toPx() }
     val reorderState = rememberReorderableLazyListState(
@@ -1031,12 +1035,29 @@ private fun ActivePage(
             }
         },
         onDragEnd = { _, _ ->
-            controller?.reorderQueueIds(displayedQueue.map { it.id })
+            val committedIds = displayedQueue.map { it.id }
+            lastCommittedJamOrderIds = committedIds
+            controller?.reorderQueueIds(committedIds)
         }
     )
-    LaunchedEffect(queue, reorderState.isDragging) {
-        if (!reorderState.isDragging) {
-            displayedQueue = queue
+    LaunchedEffect(queue, reorderState.isDragging, reorderState.isSettling) {
+        if (!reorderState.isDragging && !reorderState.isSettling) {
+            val incomingIds = queue.map { it.id }
+            val currentLocalIds = displayedQueue.map { it.id }
+            val expectedIds = lastCommittedJamOrderIds
+            if (expectedIds != null) {
+                if (incomingIds == expectedIds) {
+                    lastCommittedJamOrderIds = null
+                    displayedQueue = queue
+                } else if (incomingIds.size == currentLocalIds.size && incomingIds.toSet() == currentLocalIds.toSet()) {
+                    return@LaunchedEffect
+                } else {
+                    lastCommittedJamOrderIds = null
+                    displayedQueue = queue
+                }
+            } else {
+                displayedQueue = queue
+            }
         }
     }
 

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class JamIncomingVoteAlert(
@@ -105,19 +106,20 @@ class JamFeatureController(
     private var lastAppliedRevision = -1L
     private var lastAppliedTrackId: String? = null
     private var lastHandledEndTrackId: String? = null
+    private var lastAnchoredRevision = -1L
+    private var anchoredPositionMs = 0L
+    private var anchoredAtLocalWallMs = 0L
+    private var lastLocalCommandId: String? = null
+    private var lastLocalCommandAtMs = 0L
+    private var lastSeekOrApplyRealtimeMs = 0L
     private var restoredForUid: String? = null
     private var lastAnnouncementAtMs: Long = 0L
+    @Volatile private var pendingQueueOrderIds: List<String>? = null
+    @Volatile private var pendingQueueOrderAtMs: Long = 0L
     private val handlingEnd = AtomicBoolean(false)
 
     private val endedListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_READY && _sessionId.value != null) {
-                scope.launch {
-                    delay(220L)
-                    correctPlaybackDrift()
-                }
-                return
-            }
             if (playbackState != Player.STATE_ENDED) return
             val current = _session.value ?: return
             if (authManager.currentUser?.uid != current.hostUid) return
@@ -126,20 +128,11 @@ class JamFeatureController(
             lastHandledEndTrackId = trackId
             scope.launch {
                 try {
-                    repository.submitPlaybackCommand(current.id, JamPermissionKind.SKIP_TRACK, step = 1)
+                    skip(1)
                 } catch (error: Throwable) {
                     _uiState.value = JamUiState.Error(error.message ?: "Couldn't advance the shared queue.")
                 } finally {
                     handlingEnd.set(false)
-                }
-            }
-        }
-
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (isPlaying && _sessionId.value != null) {
-                scope.launch {
-                    delay(220L)
-                    correctPlaybackDrift()
                 }
             }
         }
@@ -321,8 +314,13 @@ class JamFeatureController(
             _uiState.value = JamUiState.Error("This track needs a title and artist before it can be shared.")
             return
         }
+        val insertNext = playbackManager.addToQueuePosition.equals("TOP_NEXT", ignoreCase = true)
         runAction {
-            repository.addTrack(sessionId, track)
+            if (insertNext) {
+                repository.playTrackNext(sessionId, track)
+            } else {
+                repository.addTrack(sessionId, track)
+            }
             _uiState.value = JamUiState.Idle
         }
     }
@@ -341,9 +339,15 @@ class JamFeatureController(
 
     fun addSharedLibrarySongToQueue(match: JamSharedLibraryMatch) {
         val sessionId = _sessionId.value ?: return
+        val insertNext = playbackManager.addToQueuePosition.equals("TOP_NEXT", ignoreCase = true)
         runAction {
-            repository.addTrack(sessionId, match.track)
-            _uiState.value = JamUiState.Notice("Added \"${match.track.title}\" to the shared queue.")
+            if (insertNext) {
+                repository.playTrackNext(sessionId, match.track)
+                _uiState.value = JamUiState.Notice("Added \"${match.track.title}\" to play next in the shared queue.")
+            } else {
+                repository.addTrack(sessionId, match.track)
+                _uiState.value = JamUiState.Notice("Added \"${match.track.title}\" to the shared queue.")
+            }
         }
     }
 
@@ -391,32 +395,66 @@ class JamFeatureController(
             current.permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, current.hostUid) &&
             (!isSwitch || (current.permissions.allows(JamPermissionKind.SKIP_TRACK, uid, current.hostUid) &&
                 current.permissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, current.hostUid)))
-        val targetItem = _queue.value.firstOrNull { it.id == queueItemId }
-        if (permitted && targetItem != null) {
-            val targetSong = matchLocalSong(targetItem.track, allSongs.value)
-            if (targetSong != null) {
-                playbackManager.applyJamPlaybackSnapshot(
-                    song = targetSong,
-                    positionMs = if (isSwitch) 0L else current.playback.estimatedPosition(),
-                    isPlaying = false,
-                    seekPosition = isSwitch
-                )
-            }
+        if (!permitted) {
+            _uiState.value = JamUiState.Error("You don't have permission to switch tracks in the shared queue.")
+            return
+        }
+        val targetItem = _queue.value.firstOrNull { it.id == queueItemId } ?: return
+        val targetPos = if (isSwitch) 0L else current.playback.estimatedPosition()
+        val nowMs = System.currentTimeMillis()
+        val cmdId = UUID.randomUUID().toString()
+        lastLocalCommandId = cmdId
+        lastLocalCommandAtMs = nowMs
+        anchoredPositionMs = targetPos
+        anchoredAtLocalWallMs = nowMs
+        lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
+        lastHandledEndTrackId = null
+
+        val optimisticPlayback = current.playback.copy(
+            sharedTrackId = targetItem.track.sharedTrackId,
+            queueItemId = targetItem.id,
+            isPlaying = true,
+            positionMs = targetPos,
+            updatedAtMs = nowMs,
+            commandId = cmdId,
+            commandType = JamPermissionKind.PLAY_PAUSE.name,
+            actorUid = uid
+        )
+        _session.value = current.copy(playback = optimisticPlayback)
+        val targetSong = matchLocalSong(targetItem.track, allSongs.value)
+        if (targetSong != null) {
+            _localTrackAvailable.value = true
+            lastAppliedTrackId = targetItem.track.sharedTrackId
+            playbackManager.applyJamPlaybackSnapshot(
+                song = targetSong,
+                positionMs = targetPos,
+                isPlaying = true,
+                seekPosition = isSwitch
+            )
         }
         scope.launch {
             runCatching {
                 val committed = repository.submitPlaybackCommand(
-                    current.id,
-                    JamPermissionKind.PLAY_PAUSE,
+                    sessionId = current.id,
+                    type = JamPermissionKind.PLAY_PAUSE,
                     isPlaying = true,
-                    targetQueueItemId = queueItemId,
-                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                    positionMs = targetPos,
+                    targetQueueItemId = targetItem.id,
+                    targetSharedTrackId = targetItem.track.sharedTrackId,
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank(),
+                    commandId = cmdId,
+                    isDirectSelect = true
                 )
-                delay(CONTROLLER_SYNC_CUSHION_MS)
+                lastAnchoredRevision = maxOf(lastAnchoredRevision, committed.revision)
+                lastAppliedRevision = maxOf(lastAppliedRevision, committed.revision)
                 val latest = _session.value
                 if (latest != null && latest.id == current.id && committed.revision >= latest.playback.revision) {
-                    _session.value = latest.copy(playback = committed)
-                    applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+                    _session.value = latest.copy(
+                        playback = committed.copy(
+                            positionMs = anchoredPositionMs,
+                            updatedAtMs = anchoredAtLocalWallMs
+                        )
+                    )
                 }
             }.onFailure { error ->
                 _uiState.value = JamUiState.Error(error.message ?: "Couldn't play the selected track.")
@@ -431,11 +469,15 @@ class JamFeatureController(
         val activeId = _session.value?.playback?.queueItemId
         val activeItem = current.firstOrNull { it.id == activeId }
         val others = current.filter { it.id != activeId }.shuffled()
-        val orderedIds = if (activeItem != null) {
-            listOf(activeItem.id) + others.map { it.id }
+        val reorderedItems = if (activeItem != null) {
+            listOf(activeItem) + others
         } else {
-            others.map { it.id }
+            others
         }
+        val orderedIds = reorderedItems.map { it.id }
+        pendingQueueOrderIds = orderedIds
+        pendingQueueOrderAtMs = System.currentTimeMillis()
+        _queue.value = reorderedItems.mapIndexed { idx, item -> item.copy(position = idx.toLong()) }
         runAction {
             repository.reorderQueue(id, orderedIds)
             _uiState.value = JamUiState.Notice("Shuffled the shared queue.")
@@ -464,11 +506,16 @@ class JamFeatureController(
         val currentMap = _queue.value.associateBy { it.id }
         val reordered = orderedIds.mapNotNull { currentMap[it] }
         if (reordered.size == _queue.value.size) {
-            _queue.value = reordered
+            pendingQueueOrderIds = orderedIds
+            pendingQueueOrderAtMs = System.currentTimeMillis()
+            _queue.value = reordered.mapIndexed { idx, item -> item.copy(position = idx.toLong()) }
         }
         scope.launch {
             runCatching { repository.reorderQueue(id, orderedIds) }
-                .onFailure { _uiState.value = JamUiState.Error(it.message ?: "Couldn't reorder the shared queue.") }
+                .onFailure {
+                    pendingQueueOrderIds = null
+                    _uiState.value = JamUiState.Error(it.message ?: "Couldn't reorder the shared queue.")
+                }
         }
     }
 
@@ -556,16 +603,34 @@ class JamFeatureController(
         val from = current.indexOfFirst { it.id == itemId }
         val to = (from + delta).coerceIn(0, current.lastIndex)
         if (from < 0 || from == to) return
-        val ids = current.map { it.id }.toMutableList().apply {
+        val reordered = current.toMutableList().apply {
             add(to, removeAt(from))
         }
+        val ids = reordered.map { it.id }
+        pendingQueueOrderIds = ids
+        pendingQueueOrderAtMs = System.currentTimeMillis()
+        _queue.value = reordered.mapIndexed { idx, item -> item.copy(position = idx.toLong()) }
         val id = _sessionId.value ?: return
         runAction { repository.reorderQueue(id, ids) }
     }
 
     fun setPermissions(permissions: JamPermissions) {
         val id = _sessionId.value ?: return
-        runAction { repository.updatePermissions(id, permissions) }
+        val previous = _session.value
+        if (previous != null && previous.id == id) {
+            // Apply permission update immediately in-memory so all Jam controls reflect changes in 0ms
+            _session.value = previous.copy(permissions = permissions)
+        }
+        scope.launch {
+            runCatching {
+                repository.updatePermissions(id, permissions)
+            }.onFailure { error ->
+                if (previous != null && _sessionId.value == id) {
+                    _session.value = previous
+                }
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't update Jam permissions.")
+            }
+        }
     }
 
     fun requestFeature(feature: JamFeature) {
@@ -576,6 +641,16 @@ class JamFeatureController(
 
     fun resolveFeatureRequest(feature: JamFeature, enableFeature: Boolean, blockRequester: Boolean = false) {
         val id = _sessionId.value ?: return
+        if (enableFeature) {
+            val current = _session.value
+            if (current != null && current.id == id) {
+                val updatedPerms = when (feature) {
+                    JamFeature.SHARED_RECOMMENDATIONS -> current.permissions.copy(allowSharedLibraryRecommendations = true)
+                    JamFeature.LOCAL_SONG_SHARING -> current.permissions.copy(allowLocalSongSharing = true)
+                }
+                _session.value = current.copy(permissions = updatedPerms)
+            }
+        }
         runAction { repository.resolveFeatureRequest(id, feature, enableFeature, blockRequester) }
     }
 
@@ -587,6 +662,11 @@ class JamFeatureController(
     private fun setPlaybackPlaying(isPlaying: Boolean) {
         val current = _session.value ?: return
         val uid = authManager.currentUser?.uid.orEmpty()
+        val permitted = current.started && current.permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, current.hostUid)
+        if (!permitted) {
+            _uiState.value = JamUiState.Error("You don't have permission to control playback.")
+            return
+        }
         val hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
         val activePos = if (hasActiveItem) {
             if (_localTrackAvailable.value && playbackManager.player.currentPosition >= 0L) {
@@ -597,50 +677,61 @@ class JamFeatureController(
         } else 0L
         val targetItem = _queue.value.firstOrNull { it.id == current.playback.queueItemId }
             ?: _queue.value.firstOrNull()
-        val permitted = current.started && current.permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, current.hostUid)
-        if (permitted && targetItem != null) {
-            if (!isPlaying) {
-                // Pause locally immediately at activePos so audio stops with zero delay,
-                // without advancing lastAppliedRevision ahead of the server.
-                playbackManager.pauseJamPlayback()
-                playbackManager.seekJamPlayback(activePos)
-                _session.value = current.copy(
-                    playback = current.playback.copy(
-                        isPlaying = false,
-                        positionMs = activePos,
-                        updatedAtMs = System.currentTimeMillis()
-                    )
+        val nowMs = System.currentTimeMillis()
+        val cmdId = UUID.randomUUID().toString()
+        lastLocalCommandId = cmdId
+        lastLocalCommandAtMs = nowMs
+        anchoredPositionMs = activePos
+        anchoredAtLocalWallMs = nowMs
+        lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
+
+        if (targetItem != null) {
+            val optimisticPlayback = current.playback.copy(
+                sharedTrackId = targetItem.track.sharedTrackId,
+                queueItemId = targetItem.id,
+                isPlaying = isPlaying,
+                positionMs = activePos,
+                updatedAtMs = nowMs,
+                commandId = cmdId,
+                commandType = JamPermissionKind.PLAY_PAUSE.name,
+                actorUid = uid
+            )
+            _session.value = current.copy(playback = optimisticPlayback)
+            val local = matchLocalSong(targetItem.track, allSongs.value)
+            if (local != null) {
+                _localTrackAvailable.value = true
+                lastAppliedTrackId = targetItem.track.sharedTrackId
+                playbackManager.applyJamPlaybackSnapshot(
+                    song = local,
+                    positionMs = activePos,
+                    isPlaying = isPlaying,
+                    seekPosition = !hasActiveItem || kotlin.math.abs(playbackManager.player.currentPosition - activePos) > 120L
                 )
-            } else {
-                // On Resume/Play, cue the player at activePos without starting early so the controller
-                // does not run 1-2s ahead of listeners while the Firestore transaction is in flight.
-                val local = matchLocalSong(targetItem.track, allSongs.value)
-                if (local != null) {
-                    playbackManager.applyJamPlaybackSnapshot(
-                        song = local,
-                        positionMs = activePos,
-                        isPlaying = false,
-                        seekPosition = kotlin.math.abs(playbackManager.player.currentPosition - activePos) > 40L
-                    )
-                }
             }
         }
         scope.launch {
             runCatching {
                 val committed = repository.submitPlaybackCommand(
-                    current.id,
-                    JamPermissionKind.PLAY_PAUSE,
+                    sessionId = current.id,
+                    type = JamPermissionKind.PLAY_PAUSE,
                     isPlaying = isPlaying,
                     positionMs = activePos,
-                    hasActiveItem = hasActiveItem
+                    targetQueueItemId = targetItem?.id,
+                    targetSharedTrackId = targetItem?.track?.sharedTrackId,
+                    hasActiveItem = hasActiveItem,
+                    commandId = cmdId,
+                    isDirectSelect = false
                 )
-                if (isPlaying) {
-                    delay(CONTROLLER_SYNC_CUSHION_MS)
-                }
+                lastAnchoredRevision = maxOf(lastAnchoredRevision, committed.revision)
+                lastAppliedRevision = maxOf(lastAppliedRevision, committed.revision)
                 val latest = _session.value
                 if (latest != null && latest.id == current.id && committed.revision >= latest.playback.revision) {
-                    _session.value = latest.copy(playback = committed)
-                    applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+                    _session.value = latest.copy(
+                        playback = committed.copy(
+                            positionMs = anchoredPositionMs,
+                            updatedAtMs = anchoredAtLocalWallMs
+                        )
+                    )
                 }
             }.onFailure { error ->
                 _uiState.value = JamUiState.Error(error.message ?: "Couldn't update Jam playback.")
@@ -651,49 +742,112 @@ class JamFeatureController(
     fun skip(step: Int) {
         val current = _session.value ?: return
         val uid = authManager.currentUser?.uid.orEmpty()
+        val permitted = current.started && current.permissions.allows(JamPermissionKind.SKIP_TRACK, uid, current.hostUid)
+        if (!permitted) {
+            _uiState.value = JamUiState.Error("You don't have permission to skip tracks.")
+            return
+        }
+        val q = _queue.value
+        if (q.isEmpty()) {
+            _uiState.value = JamUiState.Error("Add a track to the shared queue first.")
+            return
+        }
         val activePos = if (_localTrackAvailable.value && playbackManager.player.currentPosition >= 0L) {
             playbackManager.player.currentPosition.coerceAtLeast(0L)
         } else {
             current.playback.estimatedPosition()
         }
-        val permitted = current.started && current.permissions.allows(JamPermissionKind.SKIP_TRACK, uid, current.hostUid)
-        if (permitted && _queue.value.isNotEmpty()) {
-            val q = _queue.value
-            val currentIndex = q.indexOfFirst { it.id == current.playback.queueItemId }
-            val direction = if (step < 0) -1 else 1
-            if (direction < 0 && current.playback.isPlaying && activePos > 3_000L) {
-                playbackManager.pauseJamPlayback()
-                playbackManager.seekJamPlayback(0L)
-            } else {
-                val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
-                val targetItem = q.getOrNull(targetIndex)
-                if (targetItem != null) {
-                    val targetSong = matchLocalSong(targetItem.track, allSongs.value)
-                    if (targetSong != null) {
-                        playbackManager.applyJamPlaybackSnapshot(
-                            song = targetSong,
-                            positionMs = 0L,
-                            isPlaying = false,
-                            seekPosition = true
-                        )
-                    }
+        val currentIndex = q.indexOfFirst { it.id == current.playback.queueItemId }
+        val direction = if (step < 0) -1 else 1
+
+        val targetItem: JamQueueItem
+        val targetPos: Long
+        val targetPlaying: Boolean
+        if (direction < 0 && current.playback.isPlaying && activePos > 3_000L && currentIndex >= 0) {
+            targetItem = q[currentIndex]
+            targetPos = 0L
+            targetPlaying = true
+        } else {
+            val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
+            when {
+                targetIndex < 0 -> {
+                    targetItem = q[currentIndex.coerceAtLeast(0)]
+                    targetPos = 0L
+                    targetPlaying = true
+                }
+                targetIndex >= q.size -> {
+                    targetItem = q[currentIndex.coerceAtLeast(0)]
+                    targetPos = activePos
+                    targetPlaying = false
+                }
+                else -> {
+                    targetItem = q[targetIndex]
+                    targetPos = 0L
+                    targetPlaying = true
                 }
             }
         }
+
+        val nowMs = System.currentTimeMillis()
+        val cmdId = UUID.randomUUID().toString()
+        lastLocalCommandId = cmdId
+        lastLocalCommandAtMs = nowMs
+        anchoredPositionMs = targetPos
+        anchoredAtLocalWallMs = nowMs
+        lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
+        lastHandledEndTrackId = null
+
+        val optimisticPlayback = current.playback.copy(
+            sharedTrackId = targetItem.track.sharedTrackId,
+            queueItemId = targetItem.id,
+            isPlaying = targetPlaying,
+            positionMs = targetPos,
+            updatedAtMs = nowMs,
+            commandId = cmdId,
+            commandType = JamPermissionKind.SKIP_TRACK.name,
+            actorUid = uid
+        )
+        _session.value = current.copy(playback = optimisticPlayback)
+
+        val targetSong = matchLocalSong(targetItem.track, allSongs.value)
+        if (targetSong != null) {
+            _localTrackAvailable.value = true
+            lastAppliedTrackId = targetItem.track.sharedTrackId
+            playbackManager.applyJamPlaybackSnapshot(
+                song = targetSong,
+                positionMs = targetPos,
+                isPlaying = targetPlaying,
+                seekPosition = true
+            )
+        } else {
+            _localTrackAvailable.value = false
+            playbackManager.pauseJamPlayback()
+        }
+
         scope.launch {
             runCatching {
                 val committed = repository.submitPlaybackCommand(
-                    current.id,
-                    JamPermissionKind.SKIP_TRACK,
-                    positionMs = activePos,
-                    step = step,
-                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                    sessionId = current.id,
+                    type = JamPermissionKind.SKIP_TRACK,
+                    isPlaying = targetPlaying,
+                    positionMs = targetPos,
+                    step = direction,
+                    targetQueueItemId = targetItem.id,
+                    targetSharedTrackId = targetItem.track.sharedTrackId,
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank(),
+                    commandId = cmdId,
+                    isDirectSelect = false
                 )
-                delay(CONTROLLER_SYNC_CUSHION_MS)
+                lastAnchoredRevision = maxOf(lastAnchoredRevision, committed.revision)
+                lastAppliedRevision = maxOf(lastAppliedRevision, committed.revision)
                 val latest = _session.value
                 if (latest != null && latest.id == current.id && committed.revision >= latest.playback.revision) {
-                    _session.value = latest.copy(playback = committed)
-                    applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+                    _session.value = latest.copy(
+                        playback = committed.copy(
+                            positionMs = anchoredPositionMs,
+                            updatedAtMs = anchoredAtLocalWallMs
+                        )
+                    )
                 }
             }.onFailure { error ->
                 _uiState.value = JamUiState.Error(error.message ?: "Couldn't skip track.")
@@ -706,21 +860,47 @@ class JamFeatureController(
         val uid = authManager.currentUser?.uid.orEmpty()
         val safePos = positionMs.coerceAtLeast(0L)
         val permitted = current.started && current.permissions.allows(JamPermissionKind.SEEK, uid, current.hostUid)
-        if (permitted) {
-            playbackManager.seekJamPlayback(safePos)
+        if (!permitted) {
+            _uiState.value = JamUiState.Error("You don't have permission to seek playback.")
+            return
         }
+        val nowMs = System.currentTimeMillis()
+        val cmdId = UUID.randomUUID().toString()
+        lastLocalCommandId = cmdId
+        lastLocalCommandAtMs = nowMs
+        anchoredPositionMs = safePos
+        anchoredAtLocalWallMs = nowMs
+        lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
+
+        playbackManager.seekJamPlayback(safePos)
+        _session.value = current.copy(
+            playback = current.playback.copy(
+                positionMs = safePos,
+                updatedAtMs = nowMs,
+                commandId = cmdId,
+                commandType = JamPermissionKind.SEEK.name,
+                actorUid = uid
+            )
+        )
         scope.launch {
             runCatching {
                 val committed = repository.submitPlaybackCommand(
-                    current.id,
-                    JamPermissionKind.SEEK,
+                    sessionId = current.id,
+                    type = JamPermissionKind.SEEK,
                     positionMs = safePos,
-                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank(),
+                    commandId = cmdId
                 )
+                lastAnchoredRevision = maxOf(lastAnchoredRevision, committed.revision)
+                lastAppliedRevision = maxOf(lastAppliedRevision, committed.revision)
                 val latest = _session.value
                 if (latest != null && latest.id == current.id && committed.revision >= latest.playback.revision) {
-                    _session.value = latest.copy(playback = committed)
-                    applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+                    _session.value = latest.copy(
+                        playback = committed.copy(
+                            positionMs = anchoredPositionMs,
+                            updatedAtMs = anchoredAtLocalWallMs
+                        )
+                    )
                 }
             }.onFailure { error ->
                 _uiState.value = JamUiState.Error(error.message ?: "Couldn't seek playback.")
@@ -855,10 +1035,15 @@ class JamFeatureController(
         lastAppliedRevision = -1L
         lastAppliedTrackId = null
         lastHandledEndTrackId = null
+        lastAnchoredRevision = -1L
+        anchoredPositionMs = 0L
+        anchoredAtLocalWallMs = 0L
+        lastLocalCommandId = null
+        lastLocalCommandAtMs = 0L
+        lastSeekOrApplyRealtimeMs = 0L
 
         sessionListenerJob = scope.launch {
             var isInitialSessionEmission = true
-            var lastRemoteRevision = -1L
             repository.observeSession(id)
                 .catch { error ->
                     if (_sessionId.value == id) {
@@ -872,23 +1057,34 @@ class JamFeatureController(
                     val session = if (rawSession != null) {
                         val nowMs = System.currentTimeMillis()
                         val rawPb = rawSession.playback
-                        val isNewRemoteEvent = !isInitialSessionEmission &&
-                            rawPb.revision > lastRemoteRevision &&
-                            rawPb.actorUid != uid
-                        lastRemoteRevision = maxOf(lastRemoteRevision, rawPb.revision)
-                        val calibratedUpdatedAtMs = when {
-                            rawPb.updatedAtMs > nowMs -> (nowMs - 40L).coerceAtLeast(0L)
-                            isNewRemoteEvent && (nowMs - rawPb.updatedAtMs) in 6_000L..60_000L -> {
-                                // Only clamp if the two devices have extreme system clock skew (> 6s)
-                                (nowMs - 90L).coerceAtLeast(0L)
+                        if (rawPb.revision != lastAnchoredRevision) {
+                            val isOwnEcho = !rawPb.commandId.isNullOrBlank() && rawPb.commandId == lastLocalCommandId
+                            lastAnchoredRevision = rawPb.revision
+                            if (isOwnEcho) {
+                                // Keep the local anchor set when the controller issued this command
+                                lastAppliedRevision = maxOf(lastAppliedRevision, rawPb.revision)
+                            } else if (isInitialSessionEmission) {
+                                anchoredAtLocalWallMs = nowMs
+                                anchoredPositionMs = if (rawPb.isPlaying && rawPb.updatedAtMs > 0L && (nowMs - rawPb.updatedAtMs) in 5_000L..600_000L) {
+                                    rawPb.positionMs + (nowMs - rawPb.updatedAtMs)
+                                } else {
+                                    rawPb.positionMs
+                                }
+                            } else {
+                                // Live remote command arrived over Firestore WebSocket (~80ms transit time).
+                                // Anchor directly to this device's local clock so inter-device clock skew
+                                // (1-5s difference between phones) NEVER causes 2-5s seeks or jumps.
+                                anchoredAtLocalWallMs = nowMs
+                                val transitCompensationMs = if (rawPb.isPlaying && rawPb.actorUid != uid) 80L else 0L
+                                anchoredPositionMs = (rawPb.positionMs + transitCompensationMs).coerceAtLeast(0L)
                             }
-                            else -> rawPb.updatedAtMs
                         }
-                        if (calibratedUpdatedAtMs != rawPb.updatedAtMs) {
-                            rawSession.copy(playback = rawPb.copy(updatedAtMs = calibratedUpdatedAtMs))
-                        } else {
-                            rawSession
-                        }
+                        rawSession.copy(
+                            playback = rawPb.copy(
+                                positionMs = anchoredPositionMs,
+                                updatedAtMs = if (anchoredAtLocalWallMs > 0L) anchoredAtLocalWallMs else nowMs
+                            )
+                        )
                     } else null
                     isInitialSessionEmission = false
                     _session.value = session
@@ -935,7 +1131,30 @@ class JamFeatureController(
         queueListenerJob = scope.launch {
             repository.observeQueue(id)
                 .catch { error -> handleListenerFailure(id, error) }
-                .collectLatest { _queue.value = it }
+                .collectLatest { incoming ->
+                    val expectedIds = pendingQueueOrderIds
+                    val incomingIds = incoming.map { it.id }
+                    if (expectedIds != null) {
+                        if (incomingIds == expectedIds) {
+                            pendingQueueOrderIds = null
+                            _queue.value = incoming
+                        } else if (
+                            System.currentTimeMillis() - pendingQueueOrderAtMs < 4_500L &&
+                            incomingIds.size == expectedIds.size &&
+                            incomingIds.toSet() == expectedIds.toSet()
+                        ) {
+                            val byId = incoming.associateBy { it.id }
+                            _queue.value = expectedIds.mapIndexedNotNull { idx, itemId ->
+                                byId[itemId]?.copy(position = idx.toLong())
+                            }
+                        } else {
+                            pendingQueueOrderIds = null
+                            _queue.value = incoming
+                        }
+                    } else {
+                        _queue.value = incoming
+                    }
+                }
         }
         participantListenerJob = scope.launch {
             repository.observeParticipants(id)
@@ -1054,11 +1273,20 @@ class JamFeatureController(
         }
         val wasUnavailable = !_localTrackAvailable.value
         _localTrackAvailable.value = true
+        val isOwnAlreadyApplied = !playback.commandId.isNullOrBlank() &&
+            playback.commandId == lastLocalCommandId &&
+            lastAppliedTrackId == trackId &&
+            !wasUnavailable
+        if (isOwnAlreadyApplied) {
+            lastAppliedRevision = maxOf(lastAppliedRevision, playback.revision)
+            return
+        }
         val isNewTrack = lastAppliedTrackId != trackId
         val isNewRevision = playback.revision > lastAppliedRevision
         if (!isNewTrack && !isNewRevision && !wasUnavailable) return
         lastAppliedTrackId = trackId
         lastAppliedRevision = playback.revision
+        if (isNewTrack) lastHandledEndTrackId = null
 
         val expectedPosition = playback.estimatedPosition()
         val currentPlayerPos = playbackManager.player.currentPosition.coerceAtLeast(0L)
@@ -1066,17 +1294,14 @@ class JamFeatureController(
         val seekPosition = isNewTrack ||
             wasUnavailable ||
             playback.commandType == JamPermissionKind.SEEK.name ||
-            (!playback.isPlaying && driftFromExpected > 25L) ||
-            (playback.isPlaying && driftFromExpected > 75L)
-        playbackManager.applyJamPlaybackSnapshot(local, expectedPosition, playback.isPlaying, seekPosition)
-        if (playback.isPlaying) {
-            scope.launch {
-                delay(350L)
-                correctPlaybackDrift()
-                delay(550L)
-                correctPlaybackDrift()
-            }
+            playback.commandType == JamPermissionKind.SKIP_TRACK.name ||
+            (!playback.isPlaying && driftFromExpected > 80L) ||
+            (playback.isPlaying && driftFromExpected > 180L)
+        if (seekPosition) {
+            lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
         }
+        runCatching { playbackManager.player.setPlaybackSpeed(1f) }
+        playbackManager.applyJamPlaybackSnapshot(local, expectedPosition, playback.isPlaying, seekPosition)
     }
 
     private fun correctPlaybackDrift() {
@@ -1084,19 +1309,31 @@ class JamFeatureController(
         val playback = session.playback
         val trackId = playback.sharedTrackId ?: return
         if (!playback.isPlaying || trackId != lastAppliedTrackId || !_localTrackAvailable.value) return
+        val player = playbackManager.player
+        if (player.playbackState != Player.STATE_READY || !player.isPlaying) return
+        val nowRealtime = android.os.SystemClock.elapsedRealtime()
+        // Allow ExoPlayer to settle after any track switch, resume, or explicit seek so it never oscillates
+        if (nowRealtime - lastSeekOrApplyRealtimeMs < 3_500L) return
+
         val expected = playback.estimatedPosition()
-        val actual = playbackManager.player.currentPosition.coerceAtLeast(0L)
+        val duration = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        if (expected >= duration - 1_500L) return
+        val actual = player.currentPosition.coerceAtLeast(0L)
         val drift = expected - actual
         val absolute = kotlin.math.abs(drift)
         if (absolute >= SEEK_DRIFT_THRESHOLD_MS) {
+            lastSeekOrApplyRealtimeMs = nowRealtime
+            runCatching { player.setPlaybackSpeed(1f) }
             playbackManager.seekJamPlayback(expected)
         } else if (absolute >= SPEED_CORRECTION_THRESHOLD_MS) {
             val adjustedSpeed = if (drift > 0L) 1.02f else 0.98f
-            runCatching { playbackManager.player.setPlaybackSpeed(adjustedSpeed) }
+            runCatching { player.setPlaybackSpeed(adjustedSpeed) }
             scope.launch {
                 delay(SPEED_CORRECTION_DURATION_MS)
-                runCatching { playbackManager.player.setPlaybackSpeed(1f) }
+                runCatching { player.setPlaybackSpeed(1f) }
             }
+        } else if (player.playbackParameters.speed != 1f) {
+            runCatching { player.setPlaybackSpeed(1f) }
         }
     }
 
@@ -1372,16 +1609,49 @@ class JamFeatureController(
                 val uri = uriStr?.let { Uri.parse(it) }
                 val mime = prefs.getString("mime:${recommendation.id}", null)
                     ?: prefs.getString("mime_by_track:${recommendation.track.sharedTrackId}", null)
-                if (uri != null && !mime.isNullOrBlank()) {
+                    ?: "audio/mpeg"
+                if (uri != null) {
+                    scope.launch(Dispatchers.IO) {
+                        JamTransferWork.executeUploadDirect(
+                            context = context,
+                            sessionId = sessionId,
+                            recommendationId = recommendation.id,
+                            sourceUri = uri,
+                            mimeType = mime,
+                            failOnFinalError = false
+                        )
+                    }
                     JamTransferWork.enqueueUpload(context, sessionId, recommendation.id, uri, mime)
                 }
             }
             val ownDownload = recommendation.downloads[uid]
-            if (uid != recommendation.proposerUid && recommendation.status in setOf("UPLOADING", "DOWNLOADING") &&
-                recommendation.votes[uid] == JamVote.ACCEPT && (ownDownload == null || ownDownload.status in setOf("WAITING_TO_DOWNLOAD", "DOWNLOADING", "WAITING_FOR_UPLOAD"))) {
-                val checksum = recommendation.checksum ?: return@forEach
-                if (recommendation.fileSize <= 0L) return@forEach
-                JamTransferWork.enqueueDownload(context, sessionId, recommendation.id, checksum, recommendation.track, recommendation.fileSize, recommendation.contentType)
+            if (uid != recommendation.proposerUid &&
+                recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING", "DOWNLOADING") &&
+                recommendation.votes[uid] == JamVote.ACCEPT &&
+                (ownDownload == null || ownDownload.status in setOf("WAITING_TO_DOWNLOAD", "DOWNLOADING", "WAITING_FOR_UPLOAD"))
+            ) {
+                val checksum = recommendation.checksum.orEmpty()
+                val fileSize = recommendation.fileSize
+                scope.launch(Dispatchers.IO) {
+                    val ok = JamTransferWork.executeDownloadDirect(
+                        context = context,
+                        sessionId = sessionId,
+                        recommendationId = recommendation.id,
+                        expectedChecksum = checksum,
+                        track = recommendation.track,
+                        expectedFileSize = fileSize,
+                        contentType = recommendation.contentType,
+                        failOnFinalError = false
+                    )
+                    if (ok) {
+                        withContext(Dispatchers.Main) {
+                            applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+                        }
+                    }
+                }
+                if (checksum.isNotBlank() && fileSize > 0L) {
+                    JamTransferWork.enqueueDownload(context, sessionId, recommendation.id, checksum, recommendation.track, fileSize, recommendation.contentType)
+                }
             }
         }
     }
@@ -1415,10 +1685,9 @@ class JamFeatureController(
         private const val KEY_ACTIVE_INVITE_CODE = "active_invite_code"
         private const val KEY_ACTIVE_INVITE_URL = "active_invite_url"
         private const val MAX_MATCH_DURATION_DIFF_MS = 4_000L
-        private const val CONTROLLER_SYNC_CUSHION_MS = 90L
-        private const val DRIFT_CHECK_INTERVAL_MS = 1_200L
-        private const val SEEK_DRIFT_THRESHOLD_MS = 220L
-        private const val SPEED_CORRECTION_THRESHOLD_MS = 45L
-        private const val SPEED_CORRECTION_DURATION_MS = 850L
+        private const val DRIFT_CHECK_INTERVAL_MS = 3_000L
+        private const val SEEK_DRIFT_THRESHOLD_MS = 1_200L
+        private const val SPEED_CORRECTION_THRESHOLD_MS = 120L
+        private const val SPEED_CORRECTION_DURATION_MS = 900L
     }
 }

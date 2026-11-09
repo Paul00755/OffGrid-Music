@@ -560,8 +560,12 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = cloud.alwaysShuffleMode
                 prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = cloud.gesturePlaybackEnabled
                 prefs[PreferenceKeys.HIGH_REFRESH_RATE] = cloud.highRefreshRate
-                prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = cloud.addToQueuePosition
-                prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = cloud.playlistAddSongPosition
+                if (!bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)) {
+                    prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = cloud.addToQueuePosition
+                }
+                if (!bootCachePrefs.getBoolean("pref_playlist_add_song_position_explicit_v1", false)) {
+                    prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = cloud.playlistAddSongPosition
+                }
                 prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = cloud.playlistViewMode
                 prefs[PreferenceKeys.HOME_SECTIONS] = cloud.homeSections
                 prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = cloud.databaseStorageTier
@@ -642,8 +646,14 @@ class UserPreferencesRepository(private val context: Context) {
                         .putBoolean("pref_always_shuffle_mode", cloud.alwaysShuffleMode)
                         .putBoolean("pref_gesture_playback_enabled", cloud.gesturePlaybackEnabled)
                         .putBoolean("pref_high_refresh_rate", cloud.highRefreshRate)
-                        .putString("pref_add_to_queue_position", cloud.addToQueuePosition)
-                        .putString("pref_playlist_add_song_position", cloud.playlistAddSongPosition)
+                        .apply {
+                            if (!bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)) {
+                                putString("pref_add_to_queue_position", cloud.addToQueuePosition)
+                            }
+                            if (!bootCachePrefs.getBoolean("pref_playlist_add_song_position_explicit_v1", false)) {
+                                putString("pref_playlist_add_song_position", cloud.playlistAddSongPosition)
+                            }
+                        }
                         .putString("pref_playlist_view_mode", cloud.playlistViewMode)
                         .putString("pref_home_sections", cloud.homeSections)
                         .putString("pref_database_storage_tier", cloud.databaseStorageTier)
@@ -1096,30 +1106,48 @@ class UserPreferencesRepository(private val context: Context) {
     fun getShuffleModeSync(): Boolean = readBoolCached("shuffle_mode", false)
 
     val lastSongId: Flow<Long> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LAST_SONG_ID] ?: bootCachePrefs.getLong("last_song_id", -1L)
+        val cachedId = bootCachePrefs.getLong("last_song_id", -1L)
+        if (cachedId > 0L) cachedId else (prefs[PreferenceKeys.LAST_SONG_ID] ?: cachedId)
     }
 
     val lastPosition: Flow<Long> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LAST_POSITION] ?: bootCachePrefs.getLong("last_position", 0L)
+        if (bootCachePrefs.contains("last_position")) {
+            bootCachePrefs.getLong("last_position", 0L)
+        } else {
+            prefs[PreferenceKeys.LAST_POSITION] ?: 0L
+        }
     }
 
     val lastDuration: Flow<Long> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LAST_DURATION] ?: bootCachePrefs.getLong("last_duration", 0L)
+        val cachedDur = bootCachePrefs.getLong("last_duration", 0L)
+        if (cachedDur > 0L) cachedDur else (prefs[PreferenceKeys.LAST_DURATION] ?: 0L)
     }
 
     val lastQueueIds: Flow<List<Long>> = safeData.map { prefs ->
-        val raw = prefs[PreferenceKeys.LAST_QUEUE_IDS]
-            ?: bootCachePrefs.getString("last_queue_ids", "")
+        val cachedRaw = if (bootCachePrefs.contains("last_queue_ids")) {
+            bootCachePrefs.getString("last_queue_ids", null)
+        } else null
+        val raw = cachedRaw
+            ?: prefs[PreferenceKeys.LAST_QUEUE_IDS]
             ?: ""
         if (raw.isBlank()) emptyList() else raw.split(",").mapNotNull { it.toLongOrNull() }
     }
 
     val lastQueueIndex: Flow<Int> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LAST_QUEUE_INDEX] ?: bootCachePrefs.getInt("last_queue_index", 0)
+        if (bootCachePrefs.contains("last_queue_index")) {
+            bootCachePrefs.getInt("last_queue_index", 0)
+        } else {
+            prefs[PreferenceKeys.LAST_QUEUE_INDEX] ?: 0
+        }
     }
 
     val addToQueuePosition: Flow<String> = safeData.map { prefs ->
-        val raw = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM")
+        val explicitLocal = bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)
+        val raw = if (explicitLocal) {
+            readStringCached("add_to_queue_position", "BOTTOM")
+        } else {
+            prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM")
+        }
         if (raw.equals("TOP_NEXT", ignoreCase = true)) "TOP_NEXT" else "BOTTOM"
     }
     fun getAddToQueuePositionSync(): String {
@@ -1128,9 +1156,18 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val playlistAddSongPosition: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM")
+        val explicitLocal = bootCachePrefs.getBoolean("pref_playlist_add_song_position_explicit_v1", false)
+        val raw = if (explicitLocal) {
+            readStringCached("playlist_add_song_position", "BOTTOM")
+        } else {
+            prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM")
+        }
+        if (raw.equals("TOP", ignoreCase = true)) "TOP" else "BOTTOM"
     }
-    fun getPlaylistAddSongPositionSync(): String = readStringCached("playlist_add_song_position", "BOTTOM")
+    fun getPlaylistAddSongPositionSync(): String {
+        val raw = readStringCached("playlist_add_song_position", "BOTTOM")
+        return if (raw.equals("TOP", ignoreCase = true)) "TOP" else "BOTTOM"
+    }
 
     val playlistViewMode: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: readStringCached("playlist_view_mode", "GRID")
@@ -1837,26 +1874,34 @@ class UserPreferencesRepository(private val context: Context) {
      * and in `DataStore` so even if the user closes/swipes away the app milliseconds after reordering the queue,
      * the custom queue order is 100% preserved on next launch.
      */
-    suspend fun saveLastPlaybackState(songId: Long, position: Long, queueIds: List<Long>, queueIndex: Int, duration: Long = 0L) {
+    fun saveLastPlaybackStateSync(songId: Long, position: Long, queueIds: List<Long>, queueIndex: Int, duration: Long = 0L) {
         val serializedIds = queueIds.joinToString(",")
         try {
             bootCachePrefs.edit().apply {
                 putLong("last_song_id", songId)
-                putLong("last_position", position)
+                putLong("last_position", position.coerceAtLeast(0L))
                 putString("last_queue_ids", serializedIds)
-                putInt("last_queue_index", queueIndex)
+                putInt("last_queue_index", queueIndex.coerceAtLeast(0))
                 if (duration > 0L) {
                     putLong("last_duration", duration)
                 }
+                putLong("last_playback_saved_at", System.currentTimeMillis())
                 apply()
             }
         } catch (_: Exception) {}
+    }
+
+    suspend fun saveLastPlaybackState(songId: Long, position: Long, queueIds: List<Long>, queueIndex: Int, duration: Long = 0L) {
+        val safePos = position.coerceAtLeast(0L)
+        val safeIdx = queueIndex.coerceAtLeast(0)
+        saveLastPlaybackStateSync(songId, safePos, queueIds, safeIdx, duration)
+        val serializedIds = queueIds.joinToString(",")
 
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.LAST_SONG_ID] = songId
-            prefs[PreferenceKeys.LAST_POSITION] = position
+            prefs[PreferenceKeys.LAST_POSITION] = safePos
             prefs[PreferenceKeys.LAST_QUEUE_IDS] = serializedIds
-            prefs[PreferenceKeys.LAST_QUEUE_INDEX] = queueIndex
+            prefs[PreferenceKeys.LAST_QUEUE_INDEX] = safeIdx
             if (duration > 0L) {
                 prefs[PreferenceKeys.LAST_DURATION] = duration
             }
@@ -1880,10 +1925,16 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setPlaylistAddSongPosition(position: String) {
+        val normalized = if (position.equals("TOP", ignoreCase = true)) "TOP" else "BOTTOM"
         val now = System.currentTimeMillis()
-        writeStringCached("playlist_add_song_position", position, now)
+        try {
+            bootCachePrefs.edit()
+                .putBoolean("pref_playlist_add_song_position_explicit_v1", true)
+                .apply()
+        } catch (_: Exception) {}
+        writeStringCached("playlist_add_song_position", normalized, now)
         context.dataStore.edit { prefs ->
-            prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = position
+            prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = normalized
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }

@@ -744,19 +744,53 @@ class PlaybackManager(
         )
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-        scope.launch(Dispatchers.IO) {
-            try {
-                val curSong = _playbackState.value.currentSong
-                val songDur = if (curSong != null && curSong.durationMs > 0L) curSong.durationMs else (if (player.duration > 0L && player.duration != C.TIME_UNSET) player.duration else _playbackState.value.durationMs)
-                userPreferences.saveLastPlaybackState(
-                    songId = curSong?.id ?: 0L,
-                    position = player.currentPosition,
-                    queueIds = currentQueue.map { it.id },
-                    queueIndex = newQueueIndex,
-                    duration = songDur
-                )
-            } catch (_: Exception) {}
-        }
+        persistPlaybackStateNow()
+    }
+
+    fun persistPlaybackStateNow() {
+        try {
+            if (jamPlaybackActive || _playbackState.value.sourceContext == "JAM") return
+            val state = _playbackState.value
+            val queue = state.queue
+            if (queue.isEmpty()) return
+            val isOnMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+            val safeQueueIndex = if (isOnMain && player.currentMediaItemIndex in queue.indices) {
+                player.currentMediaItemIndex
+            } else {
+                state.queueIndex.coerceIn(queue.indices)
+            }
+            val curSong = queue.getOrNull(safeQueueIndex) ?: state.currentSong ?: queue.first()
+            val posMs = if (isOnMain) {
+                val p = player.currentPosition
+                if (p >= 0L && p != C.TIME_UNSET) p else state.positionMs.coerceAtLeast(0L)
+            } else {
+                _playbackPositionMs.value.coerceAtLeast(state.positionMs.coerceAtLeast(0L))
+            }
+            val songDur = when {
+                curSong.durationMs > 0L -> curSong.durationMs
+                isOnMain && player.duration > 0L && player.duration != C.TIME_UNSET -> player.duration
+                else -> state.durationMs.coerceAtLeast(0L)
+            }
+            val queueIds = queue.map { it.id }
+            userPreferences.saveLastPlaybackStateSync(
+                songId = curSong.id,
+                position = posMs,
+                queueIds = queueIds,
+                queueIndex = safeQueueIndex,
+                duration = songDur
+            )
+            scope.launch(Dispatchers.IO) {
+                try {
+                    userPreferences.saveLastPlaybackState(
+                        songId = curSong.id,
+                        position = posMs,
+                        queueIds = queueIds,
+                        queueIndex = safeQueueIndex,
+                        duration = songDur
+                    )
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
     }
 
     fun updateQueueOrder(newQueue: List<Song>) {
@@ -863,21 +897,7 @@ class PlaybackManager(
 
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-        scope.launch(Dispatchers.IO) {
-            try {
-                val curSong = _playbackState.value.currentSong
-                val songDur = if (curSong != null && curSong.durationMs > 0L) curSong.durationMs else _playbackState.value.durationMs
-                userPreferences.saveLastPlaybackState(
-                    songId = curSong?.id ?: 0L,
-                    position = player.currentPosition,
-                    queueIds = newQueue.map { it.id },
-                    queueIndex = newIndex,
-                    duration = songDur
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Error saving last playback state during queue update", e)
-            }
-        }
+        persistPlaybackStateNow()
     }
 
     fun removeFromQueue(index: Int) {
@@ -896,18 +916,7 @@ class PlaybackManager(
             currentSong = newCurrentSong,
             isPlaying = if (currentQueue.isEmpty()) false else player.isPlaying
         )
-        scope.launch(Dispatchers.IO) {
-            try {
-                val songDur = if (newCurrentSong != null && newCurrentSong.durationMs > 0L) newCurrentSong.durationMs else _playbackState.value.durationMs
-                userPreferences.saveLastPlaybackState(
-                    songId = newCurrentSong?.id ?: 0L,
-                    position = player.currentPosition,
-                    queueIds = currentQueue.map { it.id },
-                    queueIndex = newQueueIndex,
-                    duration = songDur
-                )
-            } catch (_: Exception) {}
-        }
+        persistPlaybackStateNow()
     }
 
     fun removeDuplicatesFromQueue(): Int {
@@ -985,19 +994,7 @@ class PlaybackManager(
             )
             updateNotificationLayout()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val curSong = _playbackState.value.currentSong
-                    val songDur = if (curSong != null && curSong.durationMs > 0L) curSong.durationMs else _playbackState.value.durationMs
-                    userPreferences.saveLastPlaybackState(
-                        songId = curSong?.id ?: 0L,
-                        position = player.currentPosition,
-                        queueIds = newQueue.map { it.id },
-                        queueIndex = newCurrentIndex,
-                        duration = songDur
-                    )
-                } catch (_: Exception) {}
-            }
+            persistPlaybackStateNow()
         }
 
         return removedCount
@@ -1053,18 +1050,7 @@ class PlaybackManager(
             queueIndex = activeIndex,
             currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
-        scope.launch(Dispatchers.IO) {
-            try {
-                val curSong = _playbackState.value.currentSong
-                userPreferences.saveLastPlaybackState(
-                    songId = curSong?.id ?: 0L,
-                    position = player.currentPosition,
-                    queueIds = currentQueue.map { it.id },
-                    queueIndex = activeIndex,
-                    duration = _playbackState.value.durationMs
-                )
-            } catch (_: Exception) {}
-        }
+        persistPlaybackStateNow()
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1134,18 +1120,7 @@ class PlaybackManager(
             queueIndex = activeIndex,
             currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
-        scope.launch(Dispatchers.IO) {
-            try {
-                val curSong = _playbackState.value.currentSong
-                userPreferences.saveLastPlaybackState(
-                    songId = curSong?.id ?: 0L,
-                    position = player.currentPosition,
-                    queueIds = currentQueue.map { it.id },
-                    queueIndex = activeIndex,
-                    duration = _playbackState.value.durationMs
-                )
-            } catch (_: Exception) {}
-        }
+        persistPlaybackStateNow()
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1259,12 +1234,8 @@ class PlaybackManager(
         set(value) {
             val changed = field != value
             field = value
-            if (changed && _playbackState.value.isShuffleEnabled != value) {
-                if (_playbackState.value.queue.isNotEmpty()) {
-                    toggleShuffle()
-                } else {
-                    _playbackState.value = _playbackState.value.copy(isShuffleEnabled = value)
-                }
+            if (changed && _playbackState.value.queue.isEmpty() && _playbackState.value.isShuffleEnabled != value) {
+                _playbackState.value = _playbackState.value.copy(isShuffleEnabled = value)
                 try {
                     updateNotificationLayout()
                     com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
@@ -1309,18 +1280,7 @@ class PlaybackManager(
             updateNotificationLayout()
             MusicPlaybackService.instance?.triggerNotificationUpdate()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val songDur = if (targetSong.durationMs > 0L) targetSong.durationMs else _playbackState.value.durationMs
-                    userPreferences.saveLastPlaybackState(
-                        songId = targetSong.id,
-                        position = 0L,
-                        queueIds = queue.map { it.id },
-                        queueIndex = index,
-                        duration = songDur
-                    )
-                } catch (_: Exception) {}
-            }
+            persistPlaybackStateNow()
         }
     }
 
@@ -1405,6 +1365,9 @@ class PlaybackManager(
         updateNotificationLayout()
         MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        if (sourceContext != "JAM") {
+            persistPlaybackStateNow()
+        }
     }
 
     var fadeInMs: Int = 1000
@@ -1581,6 +1544,7 @@ class PlaybackManager(
         }
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
     }
     private var hasTriggeredCrossfadeTransition = false
     var gaplessPlayback: Boolean = true
@@ -2394,6 +2358,7 @@ class PlaybackManager(
                 updateNotificationLayout()
                 MusicPlaybackService.instance?.triggerNotificationUpdate()
                 com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                persistPlaybackStateNow()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -2864,6 +2829,7 @@ class PlaybackManager(
         com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
     }
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
@@ -2883,6 +2849,7 @@ class PlaybackManager(
         com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
 
         if (duration > 0 && (player.isPlaying || player.playWhenReady)) {
             performVolumeRampDown(duration) {
@@ -2896,6 +2863,7 @@ class PlaybackManager(
                 _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = finalPos)
                 updateNotificationLayout()
                 com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                persistPlaybackStateNow()
             }
         } else {
             isFadingOutToPause = false
@@ -3165,6 +3133,7 @@ class PlaybackManager(
         player.seekTo(safePos)
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
     }
 
     fun seekForward(deltaMs: Long = 10000L) {
@@ -3244,6 +3213,7 @@ class PlaybackManager(
         }
         updateNotificationLayout()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
         return message
     }
 
