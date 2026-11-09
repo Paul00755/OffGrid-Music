@@ -3574,18 +3574,37 @@ class PlaybackManager(
             } catch (_: Exception) {}
         }
 
+        val resolvedPath = filePath ?: targetSong?.path
+        com.example.ui.components.ArtworkResolutionCache.cacheArtwork(songId, resolvedPath, artworkUri)
+
         scope.launch(Dispatchers.IO) {
+            val decodedThumb = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
+                context = context,
+                songId = songId,
+                uriStr = artworkUri,
+                path = resolvedPath,
+                forceReplace = true
+            )
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                songId = songId,
+                newArtworkUri = artworkUri,
+                path = resolvedPath,
+                preserveThumbnailCache = decodedThumb != null
+            )
             val bmp = ArtworkManager.decodeBitmapFromUri(context, artworkUri)
-                ?: ArtworkManager.getOrExtractArtworkUri(context, songId, targetSong?.path.orEmpty(), targetSong?.albumId ?: 0L)?.let {
+                ?: ArtworkManager.getOrExtractArtworkUri(context, songId, resolvedPath.orEmpty(), targetSong?.albumId ?: 0L)?.let {
                     ArtworkManager.decodeBitmapFromUri(context, it)
                 }
             if (bmp != null) {
-                ArtworkManager.putCachedNotificationBitmap(songId, bmp, targetSong?.path)
+                if (decodedThumb == null) {
+                    com.example.ui.components.ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, resolvedPath)
+                }
+                ArtworkManager.putCachedNotificationBitmap(songId, bmp, resolvedPath)
                 try {
                     val stream = java.io.ByteArrayOutputStream()
                     bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)
                     val bytes = stream.toByteArray()
-                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp, targetSong?.path)
+                    ArtworkManager.putNotificationArtwork(songId, bytes, bmp, resolvedPath)
                 } catch (_: Throwable) {}
             }
             withContext(Dispatchers.Main) {

@@ -147,22 +147,30 @@ object ArtworkResolutionCache {
     fun putThumbnailBitmap(songId: Long, imageBitmap: androidx.compose.ui.graphics.ImageBitmap, path: String? = null) {
         if (songId <= 0L) return
         val identity = trackIdentity(songId, path)
-        var isNew = false
+        var changed = false
         synchronized(thumbnailBitmapCache) {
-            isNew = thumbnailBitmapCache.get(identity) == null
+            val prev = thumbnailBitmapCache.get(identity)
+            changed = prev !== imageBitmap
             thumbnailBitmapCache.put(identity, imageBitmap)
             if (!path.isNullOrBlank()) {
                 val knownPath = trackArtworkPathById[songId]
                 if (knownPath == null || knownPath == normalizedTrackPath(path)) {
                     thumbnailBitmapCache.put("id:$songId", imageBitmap)
                 }
+            } else {
+                trackArtworkPathById[songId]?.let { knownPath ->
+                    thumbnailBitmapCache.put(trackIdentity(songId, knownPath), imageBitmap)
+                }
             }
         }
         thumbnailDecodedSignal.value = songId
-        if (isNew) {
+        if (changed) {
             val stamp = System.currentTimeMillis()
-            artworkUpdateSignals[identity]?.let { it.longValue = stamp }
-            artworkUpdateSignals["id:$songId"]?.let { it.longValue = stamp }
+            songArtworkVersions["id:$songId"] = stamp
+            songArtworkVersions[identity] = stamp
+            artworkUpdateSignals.computeIfAbsent(identity) { mutableLongStateOf(0L) }.longValue = stamp
+            artworkUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue = stamp
+            artworkUpdateSignal.longValue = stamp
         }
     }
 
@@ -461,16 +469,27 @@ object ArtworkResolutionCache {
         }
     }
 
-    fun notifyArtworkChanged(songId: Long, newArtworkUri: String? = null, path: String? = null) {
+    fun notifyArtworkChanged(
+        songId: Long,
+        newArtworkUri: String? = null,
+        path: String? = null,
+        preserveThumbnailCache: Boolean = false
+    ) {
         val now = System.currentTimeMillis()
+        if (!preserveThumbnailCache) {
+            synchronized(thumbnailBitmapCache) {
+                if (!path.isNullOrBlank()) {
+                    thumbnailBitmapCache.remove(trackIdentity(songId, path))
+                }
+                thumbnailBitmapCache.snapshot().keys
+                    .filter { it.startsWith("id:$songId:") || it == "id:$songId" }
+                    .forEach(thumbnailBitmapCache::remove)
+            }
+        }
         if (!newArtworkUri.isNullOrBlank()) {
             cacheArtwork(songId, path, newArtworkUri)
             if (path.isNullOrBlank()) manualCoverCache[songId] = newArtworkUri
         } else {
-            synchronized(thumbnailBitmapCache) {
-                if (!path.isNullOrBlank()) thumbnailBitmapCache.remove(trackIdentity(songId, path))
-                else thumbnailBitmapCache.snapshot().keys.filter { it.startsWith("id:$songId:") || it == "id:$songId" }.forEach(thumbnailBitmapCache::remove)
-            }
             cache.remove(songId)
             synchronized(trackArtworkCache) {
                 if (!path.isNullOrBlank()) trackArtworkCache.remove(trackIdentity(songId, path))
@@ -1047,6 +1066,16 @@ fun AlbumArtView(
                 }
                 ArtworkResolutionCache.cacheArtwork(currentSong.id, currentSong.path, finalUri)
                 val decoded = ArtworkResolutionCache.decodeAndCacheThumbnail(context, currentSong.id, finalUri, currentSong.path, forceReplace = true)
+                ArtworkResolutionCache.notifyArtworkChanged(
+                    songId = currentSong.id,
+                    newArtworkUri = finalUri,
+                    path = currentSong.path,
+                    preserveThumbnailCache = decoded != null
+                )
+                val activePlayback = com.example.service.PlaybackManager.activeInstance
+                if (activePlayback?.playbackState?.value?.currentSong?.id == currentSong.id) {
+                    activePlayback.updateCurrentSongArtwork(currentSong.id, finalUri, currentSong.path)
+                }
                 finalUri to decoded
             }
         } finally {
@@ -1134,18 +1163,37 @@ fun AlbumArtView(
                 // Step 2: For full-res views (Now Playing / Hero Spotlight), upgrade embedded artwork in the background
                 // AFTER the fast thumbnail/URI is already displayed on screen
                 if (!isThumbnail) {
-                    val upgradedUri = withContext(Dispatchers.IO) {
+                    val upgradedPair = withContext(Dispatchers.IO) {
                         if (!isActive || currentSongSnapshot.trackIdentityKey != latestTrackKey) return@withContext null
-                        ArtworkManager.upgradeEmbeddedArtworkToFullResIfNeeded(
+                        val upUri = ArtworkManager.upgradeEmbeddedArtworkToFullResIfNeeded(
                             context = context,
                             songId = songId,
                             filePath = currentSongSnapshot.path,
                             currentUri = fastPair.first
                         )
+                        if (!upUri.isNullOrBlank() && upUri != fastPair.first) {
+                            val upThumb = ArtworkResolutionCache.decodeAndCacheThumbnail(
+                                context = context,
+                                songId = songId,
+                                uriStr = upUri,
+                                path = currentSongSnapshot.path,
+                                forceReplace = true
+                            )
+                            upUri to upThumb
+                        } else null
                     }
-                    if (isActive && latestTrackKey == trackKey && !upgradedUri.isNullOrBlank() && upgradedUri != resolvedArtworkUri) {
-                        ArtworkResolutionCache.cacheArtwork(songId, currentSongSnapshot.path, upgradedUri)
-                        resolvedArtworkUri = upgradedUri
+                    if (isActive && latestTrackKey == trackKey && upgradedPair != null && upgradedPair.first != resolvedArtworkUri) {
+                        ArtworkResolutionCache.cacheArtwork(songId, currentSongSnapshot.path, upgradedPair.first)
+                        resolvedArtworkUri = upgradedPair.first
+                        if (upgradedPair.second != null) {
+                            resolvedThumbBmp = upgradedPair.second
+                        }
+                        ArtworkResolutionCache.notifyArtworkChanged(
+                            songId = songId,
+                            newArtworkUri = upgradedPair.first,
+                            path = currentSongSnapshot.path,
+                            preserveThumbnailCache = upgradedPair.second != null
+                        )
                     }
                 }
                 val hasHighResNow = ArtworkResolutionCache.hasHighResArtwork(context, songId, currentSongSnapshot.path)
@@ -1253,7 +1301,7 @@ fun AlbumArtView(
                 contentScale = ContentScale.Crop,
                 onSuccess = { state ->
                     asyncImageLoaded = true
-                    if (songId > 0L && resolvedThumbBmp == null) {
+                    if (songId > 0L && (!isThumbnail || resolvedThumbBmp == null)) {
                         val bmp = (state.result.drawable as? BitmapDrawable)?.bitmap
                         if (bmp != null && !bmp.isRecycled) {
                             val imgBmp = ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, songPath)

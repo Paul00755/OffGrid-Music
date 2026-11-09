@@ -959,18 +959,22 @@ private fun ActivePage(
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var libraryQuery by rememberSaveable { mutableStateOf("") }
     var showAllMatchesDialog by rememberSaveable { mutableStateOf(false) }
-    var localShareConsent by rememberSaveable { mutableStateOf(false) }
+    var localShareConsent by rememberSaveable { mutableStateOf(true) }
     var localShareMode by rememberSaveable { mutableStateOf(JamLocalShareMode.IN_APP_LIBRARY) }
     var queueExpanded by rememberSaveable { mutableStateOf(true) }
     var localFileError by rememberSaveable { mutableStateOf<String?>(null) }
+    var isPreparingShare by remember { mutableStateOf(false) }
     var selectedLocalAudio by remember { mutableStateOf<LocalAudioSelection?>(null) }
     var selectedInAppShare by remember { mutableStateOf<InAppLibraryAudioSelection?>(null) }
     val localAudioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             coroutineScope.launch {
+                isPreparingShare = true
+                localFileError = null
                 runCatching { withContext(Dispatchers.IO) { readLocalAudioMetadata(context.contentResolver, uri, context.cacheDir) } }
                     .onSuccess { selected ->
+                        isPreparingShare = false
                         if (queue.any { it.track.sharedTrackId == selected.track.sharedTrackId }) {
                             localFileError = "This song is already in the Jam shared library."
                         } else {
@@ -979,7 +983,10 @@ private fun ActivePage(
                             localFileError = null
                         }
                     }
-                    .onFailure { localFileError = it.message ?: "This audio file couldn't be read." }
+                    .onFailure {
+                        isPreparingShare = false
+                        localFileError = it.message ?: "This audio file couldn't be read."
+                    }
             }
         }
     }
@@ -1907,16 +1914,45 @@ private fun ActivePage(
 
                     // 2) Share a Local Audio File Card
                     JamCard {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Share a Local Song", color = BentoTextPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            Text(
-                                text = if (permissions.allowLocalSongSharing) "On · up to 25 MB" else "Off",
-                                color = if (permissions.allowLocalSongSharing) BentoPrimary else BentoTextSecondary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(BentoPrimary.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(20.dp))
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Share a Local Song",
+                                    color = BentoTextPrimary,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Direct device-to-device audio transfer after room vote",
+                                    color = BentoTextSecondary,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (permissions.allowLocalSongSharing) BentoPrimary.copy(alpha = 0.16f) else BentoCardPurple.copy(alpha = 0.45f)
+                            ) {
+                                Text(
+                                    text = if (permissions.allowLocalSongSharing) "UP TO 25 MB" else "OFF",
+                                    color = if (permissions.allowLocalSongSharing) BentoPrimary else BentoTextSecondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
                         }
                         if (!permissions.allowLocalSongSharing) {
                             Text("Local song sharing is currently off for this Jam.", color = BentoTextSecondary)
@@ -1936,11 +1972,6 @@ private fun ActivePage(
                             val unmatchedInAppCount = remember(songs, matchedIdsForLocalShare) {
                                 songs.count { !it.isMissing && !it.isCorrupted && it.durationMs > 0L && it.id !in matchedIdsForLocalShare }
                             }
-                            Text(
-                                "Supported audio files (MP3, M4A, AAC, FLAC, OGG, WAV up to 25 MB) transfer directly between devices after unanimous approval. Non-audio files are rejected.",
-                                color = BentoTextSecondary,
-                                style = MaterialTheme.typography.bodySmall
-                            )
 
                             // Two options: Share from In-App Library / Share from Local
                             JamLocalShareSourceSelector(
@@ -1956,66 +1987,155 @@ private fun ActivePage(
                                 }
                             )
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
-                                Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
+                            if (isPreparingShare) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(BentoCardPurple.copy(alpha = 0.45f))
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = BentoPrimary
+                                    )
+                                    Text(
+                                        "Preparing audio for room sharing…",
+                                        color = BentoTextPrimary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
 
                             // Selected In-App Library Song Preview + Start 30-second vote
                             selectedInAppShare?.let { inApp ->
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.5f)).padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(BentoPrimary.copy(alpha = 0.1f))
+                                        .border(1.dp, BentoPrimary.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    com.example.ui.components.AlbumArtView(
-                                        song = inApp.song,
-                                        modifier = Modifier.size(54.dp),
-                                        cornerRadius = 12
-                                    )
-                                    Column(Modifier.weight(1f)) {
-                                        Text(inApp.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text("${inApp.track.artist} · ${formatJamDuration(inApp.track.durationMs)} · ${formatJamSize(inApp.sizeBytes)}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        com.example.ui.components.AlbumArtView(
+                                            song = inApp.song,
+                                            modifier = Modifier.size(54.dp),
+                                            cornerRadius = 12
+                                        )
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                "READY TO SHARE FROM IN-APP LIBRARY",
+                                                color = BentoPrimary,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                inApp.track.title,
+                                                color = BentoTextPrimary,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                "${inApp.track.artist} · ${formatJamDuration(inApp.track.durationMs)} · ${formatJamSize(inApp.sizeBytes)}",
+                                                color = BentoTextSecondary,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        IconButton(onClick = { selectedInAppShare = null }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
+                                        }
                                     }
-                                    IconButton(onClick = { selectedInAppShare = null }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
+                                    JamButton("Start 30-second vote & Share", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                        controller?.recommendLocalTrack(inApp.track, inApp.uri, inApp.mimeType)
+                                        selectedInAppShare = null
                                     }
-                                }
-                                JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
-                                    controller?.recommendLocalTrack(inApp.track, inApp.uri, inApp.mimeType)
-                                    selectedInAppShare = null
                                 }
                             }
 
                             // Selected Local Storage Audio Preview + Start 30-second vote
                             selectedLocalAudio?.let { audio ->
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.5f)).padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(BentoPrimary.copy(alpha = 0.1f))
+                                        .border(1.dp, BentoPrimary.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (audio.artwork != null) {
-                                        androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
-                                    } else {
-                                        Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardSurface), contentAlignment = Alignment.Center) {
-                                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        if (audio.artwork != null) {
+                                            androidx.compose.foundation.Image(audio.artwork, null, modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
+                                        } else {
+                                            Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(BentoCardSurface), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.MusicNote, null, tint = BentoPrimary)
+                                            }
+                                        }
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                "READY TO SHARE FROM DEVICE STORAGE",
+                                                color = BentoPrimary,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                audio.track.title,
+                                                color = BentoTextPrimary,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                "${audio.track.artist} · ${formatJamDuration(audio.track.durationMs)} · ${formatJamSize(audio.sizeBytes)}",
+                                                color = BentoTextSecondary,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        IconButton(onClick = { selectedLocalAudio = null }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
                                         }
                                     }
-                                    Column(Modifier.weight(1f)) {
-                                        Text(audio.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text("${audio.track.artist} · ${formatJamDuration(audio.track.durationMs)} · ${formatJamSize(audio.sizeBytes)}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    JamButton("Start 30-second vote & Share", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                        controller?.recommendLocalTrack(audio.track, audio.uri, audio.mimeType)
+                                        selectedLocalAudio = null
                                     }
-                                    IconButton(onClick = { selectedLocalAudio = null }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
-                                    }
-                                }
-                                JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
-                                    controller?.recommendLocalTrack(audio.track, audio.uri, audio.mimeType)
-                                    selectedLocalAudio = null
                                 }
                             }
 
-                            localFileError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                            localFileError?.let {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    )
+                                }
+                            }
 
                             if (localShareMode == JamLocalShareMode.IN_APP_LIBRARY) {
                                 JamEmbeddedInAppLibraryBrowser(
@@ -2025,8 +2145,11 @@ private fun ActivePage(
                                     selectedSongId = selectedInAppShare?.song?.id,
                                     onSelectSongToShare = { song ->
                                         coroutineScope.launch {
+                                            isPreparingShare = true
+                                            localFileError = null
                                             withContext(Dispatchers.IO) { prepareInAppSongForLocalShare(context, song) }
                                                 .onSuccess { prepared ->
+                                                    isPreparingShare = false
                                                     if (queue.any { it.track.sharedTrackId == prepared.track.sharedTrackId }) {
                                                         localFileError = "This song is already in the Jam shared queue."
                                                     } else {
@@ -2035,14 +2158,54 @@ private fun ActivePage(
                                                         localFileError = null
                                                     }
                                                 }
-                                                .onFailure { localFileError = it.message ?: "This song couldn't be prepared for sharing." }
+                                                .onFailure {
+                                                    isPreparingShare = false
+                                                    localFileError = it.message ?: "This song couldn't be prepared for sharing."
+                                                }
                                         }
                                     }
                                 )
                             } else {
-                                JamButton("Choose Audio File (MP3 / Audio)", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
-                                    localAudioPicker.launch(arrayOf("audio/*"))
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(BentoCardPurple.copy(alpha = 0.35f))
+                                        .border(1.dp, BentoCardBorder, RoundedCornerShape(16.dp))
+                                        .padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        "Pick an audio file from your device folders",
+                                        color = BentoTextPrimary,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        "Supports MP3, M4A, AAC, FLAC, OGG, and WAV files up to 25 MB.",
+                                        color = BentoTextSecondary,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                    JamButton("Browse Device Audio Files", Icons.Default.Add, enabled = localShareConsent && !isPreparingShare && state !is JamUiState.Loading) {
+                                        localAudioPicker.launch(arrayOf("audio/*"))
+                                    }
                                 }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { localShareConsent = !localShareConsent }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
+                                Text(
+                                    "I have the right to share the selected audio with this Jam room.",
+                                    color = BentoTextSecondary,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     }

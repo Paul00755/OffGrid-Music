@@ -778,7 +778,9 @@ internal fun RichRecommendationPanel(
     }
 
     var activeSectionExpanded by rememberSaveable { mutableStateOf(true) }
-    var pastSectionExpanded by rememberSaveable { mutableStateOf(true) }
+    var pastSectionExpanded by rememberSaveable { mutableStateOf(false) }
+
+    val readyPastCount = remember(pastRecommendations) { pastRecommendations.count { it.status == "READY" } }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 1. Active Recommendations Card
@@ -788,12 +790,15 @@ internal fun RichRecommendationPanel(
                 .testTag("jam_active_recommendations_card"),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = BentoCardSurface),
-            border = BorderStroke(1.dp, BentoCardBorder),
+            border = BorderStroke(
+                width = if (activeRecommendations.isNotEmpty()) 1.5.dp else 1.dp,
+                color = if (activeRecommendations.isNotEmpty()) BentoPrimary.copy(alpha = 0.55f) else BentoCardBorder
+            ),
             elevation = CardDefaults.cardElevation(defaultElevation = if (glass.glassEnabled) 0.dp else 2.dp)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -801,13 +806,21 @@ internal fun RichRecommendationPanel(
                         .clickable { activeSectionExpanded = !activeSectionExpanded },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.HowToVote,
-                        contentDescription = null,
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (activeRecommendations.isNotEmpty()) BentoPrimary.copy(alpha = 0.2f) else BentoCardPurple,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.HowToVote,
+                                contentDescription = null,
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Active $title",
@@ -817,7 +830,7 @@ internal fun RichRecommendationPanel(
                         )
                         Text(
                             text = if (activeRecommendations.isNotEmpty()) {
-                                "${activeRecommendations.size} active vote/transfer in progress"
+                                "${activeRecommendations.size} live vote/transfer in progress"
                             } else {
                                 "No active votes right now"
                             },
@@ -876,6 +889,7 @@ internal fun RichRecommendationPanel(
                     selected = selectedRecommendationId == recommendation.id,
                     pendingVote = pendingVotes[recommendation.id],
                     resolvedSong = resolvedSong,
+                    isCompactHistory = false,
                     onVote = { onVote(recommendation.id, it) },
                     onRetryUpload = { onRetryUpload(recommendation.id) },
                     onRetryDownload = { onRetryDownload(recommendation.id) },
@@ -902,24 +916,40 @@ internal fun RichRecommendationPanel(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Schedule,
-                        contentDescription = null,
-                        tint = BentoTextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BentoCardPurple,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Past & Expired Recommendations",
+                            text = "Past & Expired ($title)",
                             color = BentoTextPrimary,
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        val summaryLine = buildString {
+                            if (readyPastCount > 0) append("$readyPastCount queued · ")
+                            append("${pastRecommendations.size - readyPastCount} expired/closed")
+                        }
                         Text(
-                            text = if (pastSectionExpanded) "Tap ^ to hide completed or expired votes" else "Tap to show ${pastRecommendations.size} past or expired item(s)",
+                            text = if (pastSectionExpanded) "Tap ^ to collapse history ($summaryLine)" else "Tap v to view ${pastRecommendations.size} past item(s) ($summaryLine)",
                             color = BentoTextSecondary,
-                            style = MaterialTheme.typography.labelSmall
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Surface(
@@ -928,7 +958,7 @@ internal fun RichRecommendationPanel(
                     ) {
                         Text(
                             text = "${pastRecommendations.size}",
-                            color = BentoTextSecondary,
+                            color = BentoPrimary,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -965,6 +995,7 @@ internal fun RichRecommendationPanel(
                         selected = selectedRecommendationId == recommendation.id,
                         pendingVote = pendingVotes[recommendation.id],
                         resolvedSong = resolvedSong,
+                        isCompactHistory = true,
                         onVote = { onVote(recommendation.id, it) },
                         onRetryUpload = { onRetryUpload(recommendation.id) },
                         onRetryDownload = { onRetryDownload(recommendation.id) },
@@ -985,12 +1016,14 @@ internal fun RichRecommendationCard(
     selected: Boolean,
     pendingVote: JamVote?,
     resolvedSong: Song?,
+    isCompactHistory: Boolean = false,
     onVote: (JamVote) -> Unit,
     onRetryUpload: () -> Unit,
     onRetryDownload: () -> Unit,
     onViewQueue: (() -> Unit)? = null
 ) {
     val glass = LocalGlassThemeConfig.current
+    var showHistoryDetails by rememberSaveable(recommendation.id) { mutableStateOf(false) }
     var nowMs by remember(recommendation.id, recommendation.status) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(recommendation.id, recommendation.status) {
         while (recommendation.status == "VOTING") {
@@ -1022,12 +1055,12 @@ internal fun RichRecommendationCard(
         nowMs < recommendation.deadlineAtMs
 
     val statusBadgeText = when {
-        pendingVote != null && recommendation.isVoting -> "Submitting vote…"
+        pendingVote != null && recommendation.isVoting -> "Submitting…"
         recommendation.status == "VOTING" -> "%02d:%02d left".format(remainingSec / 60, remainingSec % 60)
         recommendation.status == "APPROVED_PENDING_UPLOAD" -> "Approved · Preparing"
         recommendation.status == "UPLOADING" -> "Sending ${recommendation.uploadProgress}%"
-        recommendation.status == "DOWNLOADING" -> "Receiving Audio"
-        recommendation.status == "READY" -> "Ready to Add · Queued"
+        recommendation.status == "DOWNLOADING" -> "Syncing to Peers"
+        recommendation.status == "READY" -> "Queued"
         recommendation.status == "REJECTED" -> "Rejected"
         recommendation.status == "EXPIRED" -> "Expired"
         recommendation.status == "CANCELLED_PERMISSION_DISABLED" -> "Canceled"
@@ -1039,6 +1072,93 @@ internal fun RichRecommendationCard(
         "READY", "APPROVED_PENDING_UPLOAD" -> VoteAcceptGreen
         "REJECTED", "EXPIRED", "FAILED", "CANCELLED_PERMISSION_DISABLED" -> MaterialTheme.colorScheme.error
         else -> BentoPrimary
+    }
+
+    // Compact layout for Past / Expired items unless tapped to expand
+    if (isCompactHistory && !showHistoryDetails && recommendation.status != "FAILED") {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable { showHistoryDetails = true },
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = BentoCardSurface),
+            border = BorderStroke(1.dp, BentoCardBorder),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (resolvedSong != null) {
+                    AlbumArtView(
+                        song = resolvedSong,
+                        modifier = Modifier.size(44.dp),
+                        cornerRadius = 10
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(BentoCardPurple),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isLocalShare) Icons.Default.UploadFile else Icons.Default.MusicNote,
+                            contentDescription = null,
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = recommendation.track.title,
+                        color = BentoTextPrimary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${recommendation.track.artist} · by ${if (isProposer) "You" else proposerName} ($approvalCount/${recommendation.requiredApprovalCount} ✓)",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (recommendation.status == "READY" && onViewQueue != null) {
+                    TextButton(
+                        onClick = onViewQueue,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Queue", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = statusBadgeColor.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, statusBadgeColor.copy(alpha = 0.4f))
+                ) {
+                    Text(
+                        text = statusBadgeText,
+                        color = statusBadgeColor,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Show details",
+                    tint = BentoTextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        return
     }
 
     Card(
@@ -1104,6 +1224,18 @@ internal fun RichRecommendationCard(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
+                if (isCompactHistory) {
+                    IconButton(
+                        onClick = { showHistoryDetails = false },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Collapse details",
+                            tint = BentoTextSecondary
+                        )
+                    }
+                }
             }
 
             // Song info card with artwork, title, artist, duration
@@ -1153,24 +1285,36 @@ internal fun RichRecommendationCard(
                 }
             }
 
-            // Vote tally bar: "1 accepted · 0 rejected · 1 pending · Need N+"
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "$approvalCount accepted · $rejectionCount rejected · $pendingCount pending",
-                    color = BentoTextPrimary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = if (isLocalShare) "Unanimous (${recommendation.requiredApprovalCount}/${recommendation.eligibleUids.size})"
-                    else "Need ${recommendation.requiredApprovalCount}+",
-                    color = BentoPrimary,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
+            // Vote tally bar + visual progress meter
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "$approvalCount accepted · $rejectionCount rejected · $pendingCount pending",
+                        color = BentoTextPrimary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (isLocalShare) "Unanimous ($approvalCount/${recommendation.eligibleUids.size})"
+                        else "Need ${recommendation.requiredApprovalCount}+",
+                        color = BentoPrimary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                val approvalRatio = (approvalCount.toFloat() / recommendation.requiredApprovalCount.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                LinearProgressIndicator(
+                    progress = { approvalRatio },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(999.dp)),
+                    color = if (approvalRatio >= 1f) VoteAcceptGreen else BentoPrimary,
+                    trackColor = BentoCardPurple
                 )
             }
 
@@ -1225,8 +1369,8 @@ internal fun RichRecommendationCard(
                 }
             }
 
-            // Proposer auto-approval info banner (never show Accept/Reject to proposer for their own submission)
-            if (isProposer) {
+            // Proposer auto-approval info banner
+            if (isProposer && recommendation.isVoting) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1239,9 +1383,9 @@ internal fun RichRecommendationCard(
                     Icon(Icons.Default.Info, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(18.dp))
                     Text(
                         text = if (isLocalShare) {
-                            "You are counted as approving this shared song."
+                            "Your vote is counted automatically. Transfer begins once all listeners accept."
                         } else {
-                            "You are counted as approving this recommendation."
+                            "Your vote is counted automatically. Waiting for room approval."
                         },
                         color = BentoTextPrimary,
                         style = MaterialTheme.typography.bodySmall,
@@ -1359,22 +1503,56 @@ internal fun RichRecommendationCard(
             // Peer transfer progress for LOCAL_SONG
             if (isLocalShare && recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING", "DOWNLOADING", "READY", "FAILED")) {
                 HorizontalDivider(color = BentoCardBorder)
-                Text(
-                    text = "Device-to-Device Transfer Status",
-                    color = BentoTextPrimary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                if (recommendation.uploadStatus == "UPLOADING") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "Sending audio · ${recommendation.uploadProgress}%",
-                        color = BentoTextSecondary,
-                        style = MaterialTheme.typography.labelSmall
+                        text = "Audio Delivery & Peer Sync",
+                        color = BentoTextPrimary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
                     )
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = BentoCardPurple
+                    ) {
+                        Text(
+                            text = "Direct + Cloud Relay",
+                            color = BentoPrimary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                if (recommendation.uploadStatus == "UPLOADING") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Uploading encrypted audio stream…",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Text(
+                            text = "${recommendation.uploadProgress}%",
+                            color = BentoPrimary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     LinearProgressIndicator(
                         progress = { (recommendation.uploadProgress / 100f).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = BentoPrimary
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(999.dp)),
+                        color = BentoPrimary,
+                        trackColor = BentoCardPurple
                     )
                 }
                 recommendation.eligibleUids.forEach { uid ->
@@ -1382,15 +1560,15 @@ internal fun RichRecommendationCard(
                     val status = recommendation.downloads[uid] ?: JamDownloadState()
                     val statusLabel = when {
                         recommendation.status == "UPLOADING" && uid == recommendation.proposerUid -> "Sending · ${recommendation.uploadProgress}%"
-                        recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") -> "Waiting for sender"
+                        recommendation.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING") && status.status != "DOWNLOADING" && status.status != "READY_FOR_PLAYBACK" -> "Streaming from sender…"
                         else -> when (status.status) {
-                            "WAITING_FOR_UPLOAD" -> "Waiting for sender"
+                            "WAITING_FOR_UPLOAD" -> "Streaming from sender…"
                             "UPLOADING" -> "Sending directly"
-                            "WAITING_TO_DOWNLOAD" -> "Waiting to receive"
+                            "WAITING_TO_DOWNLOAD" -> "Connecting…"
                             "DOWNLOADING" -> "Receiving · ${status.progress}%"
-                            "VERIFYING_FILE" -> "Verifying audio"
+                            "VERIFYING_FILE" -> "Verifying SHA-256…"
                             "READY_FOR_PLAYBACK" -> "✓ Ready"
-                            "DOWNLOAD_FAILED" -> "Transfer failed · Retry required"
+                            "DOWNLOAD_FAILED" -> "Transfer failed · Retry"
                             else -> status.status.lowercase().replace('_', ' ')
                         }
                     }
@@ -1408,7 +1586,7 @@ internal fun RichRecommendationCard(
                             text = statusLabel,
                             color = if (status.status.endsWith("FAILED")) MaterialTheme.colorScheme.error
                             else if (status.status == "READY_FOR_PLAYBACK") VoteAcceptGreen
-                            else BentoTextSecondary,
+                            else BentoPrimary,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -1416,8 +1594,12 @@ internal fun RichRecommendationCard(
                     if (status.status == "DOWNLOADING") {
                         LinearProgressIndicator(
                             progress = { (status.progress / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = BentoPrimary
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(999.dp)),
+                            color = VoteAcceptGreen,
+                            trackColor = BentoCardPurple
                         )
                     }
                     if (uid == currentUid && status.status == "DOWNLOAD_FAILED") {
