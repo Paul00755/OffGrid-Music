@@ -3,11 +3,13 @@ package com.example.jam
 import android.content.Context
 import android.net.Uri
 import androidx.media3.common.Player
+import com.example.MainActivity
 import com.example.auth.AuthManager
 import com.example.auth.UserAccount
 import com.example.data.model.Song
 import com.example.service.PlaybackManager
 import com.example.service.PlaybackState
+import com.example.service.notification.OffGridFirebaseMessagingService
 import com.example.util.TagCleaner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +25,16 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+
+data class JamIncomingVoteAlert(
+    val recommendationId: String,
+    val proposerName: String,
+    val trackTitle: String,
+    val trackArtist: String,
+    val isLocalSong: Boolean
+)
 
 /** UI state and playback bridge for Jam; all audio continues through the app's existing player. */
 class JamFeatureController(
@@ -50,6 +61,10 @@ class JamFeatureController(
     val queue: StateFlow<List<JamQueueItem>> = _queue.asStateFlow()
     private val _recommendations = MutableStateFlow<List<JamRecommendation>>(emptyList())
     val recommendations: StateFlow<List<JamRecommendation>> = _recommendations.asStateFlow()
+    private val _pendingVotes = MutableStateFlow<Map<String, JamVote>>(emptyMap())
+    val pendingVotes: StateFlow<Map<String, JamVote>> = _pendingVotes.asStateFlow()
+    private val _incomingVoteAlert = MutableStateFlow<JamIncomingVoteAlert?>(null)
+    val incomingVoteAlert: StateFlow<JamIncomingVoteAlert?> = _incomingVoteAlert.asStateFlow()
     private val _featureRequests = MutableStateFlow<List<JamFeatureRequest>>(emptyList())
     val featureRequests: StateFlow<List<JamFeatureRequest>> = _featureRequests.asStateFlow()
     private val _invite = MutableStateFlow<JamInvite?>(null)
@@ -67,6 +82,7 @@ class JamFeatureController(
     private val _remoteLibraryIndex = MutableStateFlow(JamLibraryIndexSnapshot())
     private var localLibraryEntries: List<LocalLibraryEntry> = emptyList()
     private var localLibraryReadyForSession: String? = null
+    private val notifiedRecommendationIds = LinkedHashSet<String>()
 
     private sealed interface PendingAction {
         data object Create : PendingAction
@@ -369,13 +385,39 @@ class JamFeatureController(
 
     fun playQueueItem(queueItemId: String) {
         val current = _session.value ?: return
-        runAction {
-            repository.submitPlaybackCommand(
-                current.id,
-                JamPermissionKind.PLAY_PAUSE,
+        val uid = authManager.currentUser?.uid.orEmpty()
+        val isSwitch = queueItemId != current.playback.queueItemId
+        val permitted = current.started &&
+            current.permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, current.hostUid) &&
+            (!isSwitch || (current.permissions.allows(JamPermissionKind.SKIP_TRACK, uid, current.hostUid) &&
+                current.permissions.allows(JamPermissionKind.MANAGE_QUEUE, uid, current.hostUid)))
+        val targetItem = _queue.value.firstOrNull { it.id == queueItemId }
+        if (permitted && targetItem != null) {
+            val optimisticPlayback = current.playback.copy(
+                sharedTrackId = targetItem.track.sharedTrackId,
+                queueItemId = targetItem.id,
                 isPlaying = true,
-                targetQueueItemId = queueItemId
+                positionMs = if (isSwitch) 0L else current.playback.estimatedPosition(),
+                updatedAtMs = System.currentTimeMillis(),
+                revision = current.playback.revision + 1L,
+                commandType = JamPermissionKind.PLAY_PAUSE.name,
+                actorUid = uid
             )
+            _session.value = current.copy(playback = optimisticPlayback)
+            applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+        }
+        scope.launch {
+            runCatching {
+                repository.submitPlaybackCommand(
+                    current.id,
+                    JamPermissionKind.PLAY_PAUSE,
+                    isPlaying = true,
+                    targetQueueItemId = queueItemId,
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                )
+            }.onFailure { error ->
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't play the selected track.")
+            }
         }
     }
 
@@ -397,21 +439,88 @@ class JamFeatureController(
         }
     }
 
+    fun dismissIncomingVoteAlert() {
+        _incomingVoteAlert.value = null
+    }
+
+    fun removeDuplicateSongsFromQueue() {
+        val id = _sessionId.value ?: return
+        runAction {
+            val removed = repository.removeDuplicateTracks(id)
+            _uiState.value = if (removed > 0) {
+                JamUiState.Notice("Removed $removed duplicate song(s) from the shared queue.")
+            } else {
+                JamUiState.Notice("All songs in the shared queue are already unique.")
+            }
+        }
+    }
+
+    fun reorderQueueIds(orderedIds: List<String>) {
+        val id = _sessionId.value ?: return
+        if (orderedIds.size <= 1) return
+        val currentMap = _queue.value.associateBy { it.id }
+        val reordered = orderedIds.mapNotNull { currentMap[it] }
+        if (reordered.size == _queue.value.size) {
+            _queue.value = reordered
+        }
+        scope.launch {
+            runCatching { repository.reorderQueue(id, orderedIds) }
+                .onFailure { _uiState.value = JamUiState.Error(it.message ?: "Couldn't reorder the shared queue.") }
+        }
+    }
+
+    fun resolveSongForTrack(track: JamTrack, songs: List<Song> = allSongs.value): Song? {
+        _sharedLibraryMatches.value.firstOrNull { it.matchKey == track.sharedTrackId }?.song?.let { return it }
+        return matchLocalSong(track, songs)
+    }
+
     fun recommendLocalTrack(track: JamTrack, uri: Uri, mimeType: String) {
         val id = _sessionId.value ?: return
         runAction {
+            val stagedUri = withContext(Dispatchers.IO) {
+                runCatching {
+                    val stagingDir = File(context.cacheDir, "jam_staged_uploads").apply { mkdirs() }
+                    val stagedFile = File(stagingDir, "staged_${System.currentTimeMillis()}_${track.sharedTrackId.take(16)}.part")
+                    val inputStream = if (uri.scheme?.lowercase() == "file") {
+                        val filePath = uri.path ?: error("Invalid local file path.")
+                        File(filePath).inputStream()
+                    } else {
+                        context.contentResolver.openInputStream(uri)
+                    }
+                    inputStream?.use { input ->
+                        stagedFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    } ?: error("Couldn't read the selected audio file.")
+                    if (!stagedFile.isFile || stagedFile.length() <= 0L) error("Selected audio file is empty.")
+                    Uri.fromFile(stagedFile)
+                }.getOrElse { uri }
+            }
             val recommendationId = repository.createRecommendation(id, JamRecommendationType.LOCAL_SONG, track)
             context.getSharedPreferences(TRANSFER_PREFS, Context.MODE_PRIVATE).edit()
-                .putString("source:$recommendationId", uri.toString())
+                .putString("source:$recommendationId", stagedUri.toString())
                 .putString("mime:$recommendationId", mimeType)
                 .apply()
+            _uiState.value = JamUiState.Notice("Started 30s vote for local song \"${track.title}\".")
             syncLocalTransfers(_recommendations.value)
         }
     }
 
     fun vote(recommendationId: String, vote: JamVote) {
         val id = _sessionId.value ?: return
-        runAction { repository.voteRecommendation(id, recommendationId, vote) }
+        if (_pendingVotes.value.containsKey(recommendationId)) return
+        _pendingVotes.value = _pendingVotes.value + (recommendationId to vote)
+        if (_incomingVoteAlert.value?.recommendationId == recommendationId) {
+            _incomingVoteAlert.value = null
+        }
+        scope.launch {
+            try {
+                repository.voteRecommendation(id, recommendationId, vote)
+            } catch (error: Throwable) {
+                _pendingVotes.value = _pendingVotes.value - recommendationId
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't submit your vote.")
+            }
+        }
     }
 
     fun retryDownload(recommendationId: String) {
@@ -467,23 +576,133 @@ class JamFeatureController(
 
     private fun setPlaybackPlaying(isPlaying: Boolean) {
         val current = _session.value ?: return
-        runAction {
-            repository.submitPlaybackCommand(
-                current.id,
-                JamPermissionKind.PLAY_PAUSE,
-                isPlaying = isPlaying
+        val uid = authManager.currentUser?.uid.orEmpty()
+        val hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+        val activePos = if (hasActiveItem) {
+            if (_localTrackAvailable.value && playbackManager.player.currentPosition >= 0L) {
+                playbackManager.player.currentPosition.coerceAtLeast(0L)
+            } else {
+                current.playback.estimatedPosition()
+            }
+        } else 0L
+        val targetItem = _queue.value.firstOrNull { it.id == current.playback.queueItemId }
+            ?: _queue.value.firstOrNull()
+        val permitted = current.started && current.permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, current.hostUid)
+        if (permitted && targetItem != null) {
+            val optimisticPlayback = current.playback.copy(
+                sharedTrackId = targetItem.track.sharedTrackId,
+                queueItemId = targetItem.id,
+                isPlaying = isPlaying,
+                positionMs = activePos,
+                updatedAtMs = System.currentTimeMillis(),
+                revision = current.playback.revision + 1L,
+                commandType = JamPermissionKind.PLAY_PAUSE.name,
+                actorUid = uid
             )
+            _session.value = current.copy(playback = optimisticPlayback)
+            applyPlaybackSnapshot(_session.value, _queue.value, allSongs.value)
+        }
+        scope.launch {
+            runCatching {
+                repository.submitPlaybackCommand(
+                    current.id,
+                    JamPermissionKind.PLAY_PAUSE,
+                    isPlaying = isPlaying,
+                    positionMs = activePos,
+                    hasActiveItem = hasActiveItem
+                )
+            }.onFailure { error ->
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't update Jam playback.")
+            }
         }
     }
 
     fun skip(step: Int) {
         val current = _session.value ?: return
-        runAction { repository.submitPlaybackCommand(current.id, JamPermissionKind.SKIP_TRACK, step = step) }
+        val uid = authManager.currentUser?.uid.orEmpty()
+        val activePos = if (_localTrackAvailable.value && playbackManager.player.currentPosition >= 0L) {
+            playbackManager.player.currentPosition.coerceAtLeast(0L)
+        } else {
+            current.playback.estimatedPosition()
+        }
+        val permitted = current.started && current.permissions.allows(JamPermissionKind.SKIP_TRACK, uid, current.hostUid)
+        if (permitted && _queue.value.isNotEmpty()) {
+            val q = _queue.value
+            val currentIndex = q.indexOfFirst { it.id == current.playback.queueItemId }
+            val direction = if (step < 0) -1 else 1
+            if (direction < 0 && current.playback.isPlaying && activePos > 3_000L) {
+                val optimistic = current.playback.copy(
+                    positionMs = 0L,
+                    updatedAtMs = System.currentTimeMillis(),
+                    revision = current.playback.revision + 1L,
+                    commandType = JamPermissionKind.SKIP_TRACK.name,
+                    actorUid = uid
+                )
+                _session.value = current.copy(playback = optimistic)
+                applyPlaybackSnapshot(_session.value, q, allSongs.value)
+            } else {
+                val targetIndex = if (currentIndex < 0) 0 else currentIndex + direction
+                val targetItem = q.getOrNull(targetIndex)
+                if (targetItem != null) {
+                    val optimistic = current.playback.copy(
+                        sharedTrackId = targetItem.track.sharedTrackId,
+                        queueItemId = targetItem.id,
+                        positionMs = 0L,
+                        isPlaying = true,
+                        updatedAtMs = System.currentTimeMillis(),
+                        revision = current.playback.revision + 1L,
+                        commandType = JamPermissionKind.SKIP_TRACK.name,
+                        actorUid = uid
+                    )
+                    _session.value = current.copy(playback = optimistic)
+                    applyPlaybackSnapshot(_session.value, q, allSongs.value)
+                }
+            }
+        }
+        scope.launch {
+            runCatching {
+                repository.submitPlaybackCommand(
+                    current.id,
+                    JamPermissionKind.SKIP_TRACK,
+                    positionMs = activePos,
+                    step = step,
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                )
+            }.onFailure { error ->
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't skip track.")
+            }
+        }
     }
 
     fun seek(positionMs: Long) {
         val current = _session.value ?: return
-        runAction { repository.submitPlaybackCommand(current.id, JamPermissionKind.SEEK, positionMs = positionMs) }
+        val uid = authManager.currentUser?.uid.orEmpty()
+        val safePos = positionMs.coerceAtLeast(0L)
+        val permitted = current.started && current.permissions.allows(JamPermissionKind.SEEK, uid, current.hostUid)
+        if (permitted) {
+            playbackManager.seekJamPlayback(safePos)
+            val optimistic = current.playback.copy(
+                positionMs = safePos,
+                updatedAtMs = System.currentTimeMillis(),
+                revision = current.playback.revision + 1L,
+                commandType = JamPermissionKind.SEEK.name,
+                actorUid = uid
+            )
+            _session.value = current.copy(playback = optimistic)
+            lastAppliedRevision = optimistic.revision
+        }
+        scope.launch {
+            runCatching {
+                repository.submitPlaybackCommand(
+                    current.id,
+                    JamPermissionKind.SEEK,
+                    positionMs = safePos,
+                    hasActiveItem = !current.playback.queueItemId.isNullOrBlank()
+                )
+            }.onFailure { error ->
+                _uiState.value = JamUiState.Error(error.message ?: "Couldn't seek playback.")
+            }
+        }
     }
 
     fun closeJam() {
@@ -599,6 +818,9 @@ class JamFeatureController(
         _participants.value = emptyList()
         _queue.value = emptyList()
         _recommendations.value = emptyList()
+        _pendingVotes.value = emptyMap()
+        _incomingVoteAlert.value = null
+        notifiedRecommendationIds.clear()
         _featureRequests.value = emptyList()
         _remoteLibraryIndex.value = JamLibraryIndexSnapshot()
         _sharedLibraryMatches.value = emptyList()
@@ -612,6 +834,8 @@ class JamFeatureController(
         lastHandledEndTrackId = null
 
         sessionListenerJob = scope.launch {
+            var isInitialSessionEmission = true
+            var lastRemoteRevision = -1L
             repository.observeSession(id)
                 .catch { error ->
                     if (_sessionId.value == id) {
@@ -620,9 +844,31 @@ class JamFeatureController(
                         _page.value = JamPage.LANDING
                     }
                 }
-                .collectLatest { session ->
-                    _session.value = session
+                .collectLatest { rawSession ->
                     val uid = authManager.currentUser?.uid
+                    val session = if (rawSession != null) {
+                        val nowMs = System.currentTimeMillis()
+                        val rawPb = rawSession.playback
+                        val isNewRemoteEvent = !isInitialSessionEmission &&
+                            rawPb.revision > lastRemoteRevision &&
+                            rawPb.actorUid != uid
+                        lastRemoteRevision = maxOf(lastRemoteRevision, rawPb.revision)
+                        val calibratedUpdatedAtMs = when {
+                            isNewRemoteEvent && kotlin.math.abs(nowMs - rawPb.updatedAtMs) in 90L..30_000L -> {
+                                // Calibrate against local wall clock to eliminate inter-device system clock skew
+                                (nowMs - 35L).coerceAtLeast(0L)
+                            }
+                            rawPb.updatedAtMs > nowMs -> nowMs
+                            else -> rawPb.updatedAtMs
+                        }
+                        if (calibratedUpdatedAtMs != rawPb.updatedAtMs) {
+                            rawSession.copy(playback = rawPb.copy(updatedAtMs = calibratedUpdatedAtMs))
+                        } else {
+                            rawSession
+                        }
+                    } else null
+                    isInitialSessionEmission = false
+                    _session.value = session
                     if (session != null && uid != null && uid in session.kickedUids) {
                         val removalMessage = session.announcement?.forUser(uid)
                             ?: "The host removed you from this Jam. You cannot rejoin this Jam room."
@@ -691,12 +937,62 @@ class JamFeatureController(
                 }
         }
         recommendationListenerJob = scope.launch {
+            var isFirstEmission = true
             repository.observeRecommendations(id)
                 .catch { error -> handleListenerFailure(id, error) }
                 .collectLatest { recommendations ->
-                _recommendations.value = recommendations
-                syncLocalTransfers(recommendations)
-            }
+                    _recommendations.value = recommendations
+                    val uid = authManager.currentUser?.uid
+                    if (uid != null) {
+                        // Clear any pending optimistic votes that have now been confirmed by Firestore
+                        val confirmedIds = recommendations.filter { it.votes[uid] != JamVote.PENDING || !it.isVoting }.map { it.id }.toSet()
+                        if (confirmedIds.isNotEmpty() && _pendingVotes.value.keys.any { it in confirmedIds }) {
+                            _pendingVotes.value = _pendingVotes.value - confirmedIds
+                        }
+                        // Clear incoming alert if the recommendation is no longer waiting for this user's vote
+                        val currentAlertId = _incomingVoteAlert.value?.recommendationId
+                        if (currentAlertId != null) {
+                            val rec = recommendations.firstOrNull { it.id == currentAlertId }
+                            if (rec == null || !rec.isVoting || rec.votes[uid] != JamVote.PENDING) {
+                                _incomingVoteAlert.value = null
+                            }
+                        }
+                        val nowMs = System.currentTimeMillis()
+                        recommendations.forEach { rec ->
+                            if (isFirstEmission && rec.deadlineAtMs - nowMs < 2_000L) {
+                                notifiedRecommendationIds.add(rec.id)
+                                return@forEach
+                            }
+                            if (rec.isVoting && rec.proposerUid != uid && rec.votes[uid] == JamVote.PENDING &&
+                                nowMs < rec.deadlineAtMs && notifiedRecommendationIds.add(rec.id)) {
+                                val proposer = _participants.value.firstOrNull { it.uid == rec.proposerUid }?.displayName
+                                    ?.takeIf(String::isNotBlank) ?: rec.proposerName.ifBlank { "A listener" }
+                                val messageBody = "$proposer has recommended a song & is waiting for your vote approval"
+                                if (!MainActivity.isActivityAlive) {
+                                    OffGridFirebaseMessagingService.showJamRecommendationNotification(
+                                        context = context.applicationContext,
+                                        title = "OffGrid Jam · Vote Requested",
+                                        body = "$messageBody (${rec.track.title})",
+                                        sessionId = id,
+                                        recommendationId = rec.id,
+                                        kind = if (rec.type == JamRecommendationType.LOCAL_SONG) "jam_local_song" else "jam_recommendation",
+                                        recipientUid = uid
+                                    )
+                                } else {
+                                    _incomingVoteAlert.value = JamIncomingVoteAlert(
+                                        recommendationId = rec.id,
+                                        proposerName = proposer,
+                                        trackTitle = rec.track.title,
+                                        trackArtist = rec.track.artist,
+                                        isLocalSong = rec.type == JamRecommendationType.LOCAL_SONG
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    isFirstEmission = false
+                    syncLocalTransfers(recommendations)
+                }
         }
         featureRequestListenerJob = scope.launch {
             repository.observeFeatureRequests(id)
@@ -742,7 +1038,13 @@ class JamFeatureController(
         lastAppliedRevision = playback.revision
 
         val expectedPosition = playback.estimatedPosition()
-        val seekPosition = isNewTrack || wasUnavailable || playback.commandType == JamPermissionKind.SEEK.name
+        val currentPlayerPos = playbackManager.player.currentPosition.coerceAtLeast(0L)
+        val driftFromExpected = kotlin.math.abs(currentPlayerPos - expectedPosition)
+        val seekPosition = isNewTrack ||
+            wasUnavailable ||
+            playback.commandType == JamPermissionKind.SEEK.name ||
+            (!playback.isPlaying && driftFromExpected > 45L) ||
+            (playback.isPlaying && driftFromExpected > 110L)
         playbackManager.applyJamPlaybackSnapshot(local, expectedPosition, playback.isPlaying, seekPosition)
     }
 
@@ -869,11 +1171,36 @@ class JamFeatureController(
             fingerprintMatches.singleOrNull()?.let { return it }
             if (fingerprintMatches.size > 1) return null
         }
+        val trackPrefix = track.sharedTrackId.take(24)
         if (!track.checksum.isNullOrBlank()) {
-            val trackPrefix = track.sharedTrackId.take(24)
             val checksumPrefix = track.checksum.take(16)
-            return songs.firstOrNull { song ->
+            songs.firstOrNull { song ->
                 song.path.contains(trackPrefix) && song.path.contains(checksumPrefix) && java.io.File(song.path).isFile
+            }?.let { return it }
+        }
+        if (trackPrefix.isNotBlank()) {
+            songs.firstOrNull { song ->
+                song.path.contains("jam_shared") && song.path.contains(trackPrefix) && java.io.File(song.path).isFile
+            }?.let { return it }
+            val sharedDir = File(context.filesDir, "jam_shared")
+            if (sharedDir.isDirectory) {
+                val downloadedFile = sharedDir.listFiles()?.firstOrNull { file ->
+                    file.isFile && file.length() > 0L && file.name.startsWith("$trackPrefix-") && !file.name.endsWith(".part")
+                }
+                if (downloadedFile != null) {
+                    val fileUri = Uri.fromFile(downloadedFile).toString()
+                    return Song(
+                        id = (downloadedFile.absolutePath.hashCode().toLong() and 0x7fffffffL) + 900_000_000L,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album.ifBlank { "Jam Shared" },
+                        durationMs = track.durationMs,
+                        contentUriString = fileUri,
+                        artworkUri = null,
+                        path = downloadedFile.absolutePath,
+                        dateAdded = downloadedFile.lastModified() / 1000L
+                    )
+                }
             }
         }
         val idMatch = songs.firstOrNull {
@@ -928,6 +1255,9 @@ class JamFeatureController(
         _participants.value = emptyList()
         _queue.value = emptyList()
         _recommendations.value = emptyList()
+        _pendingVotes.value = emptyMap()
+        _incomingVoteAlert.value = null
+        notifiedRecommendationIds.clear()
         _featureRequests.value = emptyList()
         _remoteLibraryIndex.value = JamLibraryIndexSnapshot()
         _sharedLibraryMatches.value = emptyList()
@@ -1046,9 +1376,9 @@ class JamFeatureController(
         private const val KEY_ACTIVE_INVITE_CODE = "active_invite_code"
         private const val KEY_ACTIVE_INVITE_URL = "active_invite_url"
         private const val MAX_MATCH_DURATION_DIFF_MS = 4_000L
-        private const val DRIFT_CHECK_INTERVAL_MS = 2_500L
-        private const val SEEK_DRIFT_THRESHOLD_MS = 650L
-        private const val SPEED_CORRECTION_THRESHOLD_MS = 120L
-        private const val SPEED_CORRECTION_DURATION_MS = 1_800L
+        private const val DRIFT_CHECK_INTERVAL_MS = 1_500L
+        private const val SEEK_DRIFT_THRESHOLD_MS = 380L
+        private const val SPEED_CORRECTION_THRESHOLD_MS = 75L
+        private const val SPEED_CORRECTION_DURATION_MS = 1_200L
     }
 }

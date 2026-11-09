@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -87,12 +88,33 @@ fun JamQrScannerDialog(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val hasDeliveredResult = remember { AtomicBoolean(false) }
+    val isDisposed = remember { AtomicBoolean(false) }
     var scannerMessage by remember { mutableStateOf<String?>(null) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val cameraProviderRef = remember { java.util.concurrent.atomic.AtomicReference<ProcessCameraProvider?>(null) }
+    val previewRef = remember { java.util.concurrent.atomic.AtomicReference<Preview?>(null) }
+    val analysisRef = remember { java.util.concurrent.atomic.AtomicReference<ImageAnalysis?>(null) }
+
+    val releaseCameraHardware = remember {
+        {
+            runCatching { analysisRef.getAndSet(null)?.clearAnalyzer() }
+            runCatching { previewRef.getAndSet(null)?.setSurfaceProvider(null) }
+            runCatching { cameraProviderRef.getAndSet(null)?.unbindAll() }
+            runCatching {
+                ProcessCameraProvider.getInstance(context).let { future ->
+                    if (future.isDone) {
+                        future.get()?.unbindAll()
+                    }
+                }
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
-            runCatching { cameraExecutor.shutdown() }
+            isDisposed.set(true)
+            releaseCameraHardware()
+            runCatching { cameraExecutor.shutdownNow() }
         }
     }
 
@@ -107,6 +129,7 @@ fun JamQrScannerDialog(
             val code = decoded?.let(::extractJamInviteCode).orEmpty()
             if (code.length >= 12) {
                 if (hasDeliveredResult.compareAndSet(false, true)) {
+                    releaseCameraHardware()
                     onCodeScanned(code)
                 }
             } else {
@@ -116,11 +139,16 @@ fun JamQrScannerDialog(
     }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            isDisposed.set(true)
+            releaseCameraHardware()
+            onDismiss()
+        },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Card(
             modifier = Modifier
+                .widthIn(max = 420.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 24.dp)
                 .testTag("jam_qr_scanner_dialog"),
@@ -160,7 +188,11 @@ fun JamQrScannerDialog(
                         )
                     }
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            isDisposed.set(true)
+                            releaseCameraHardware()
+                            onDismiss()
+                        },
                         modifier = Modifier.testTag("close_qr_scanner_button")
                     ) {
                         Icon(
@@ -191,9 +223,15 @@ fun JamQrScannerDialog(
                             cameraProviderFuture.addListener({
                                 val cameraProvider = runCatching { cameraProviderFuture.get() }.getOrNull()
                                     ?: return@addListener
+                                if (isDisposed.get() || hasDeliveredResult.get()) {
+                                    runCatching { cameraProvider.unbindAll() }
+                                    return@addListener
+                                }
+                                cameraProviderRef.set(cameraProvider)
                                 val preview = Preview.Builder().build().also {
                                     it.setSurfaceProvider(previewView.surfaceProvider)
                                 }
+                                previewRef.set(preview)
                                 val reader = createQrReader()
                                 val analysis = ImageAnalysis.Builder()
                                     .setTargetResolution(Size(1280, 720))
@@ -202,11 +240,12 @@ fun JamQrScannerDialog(
                                     .also { imageAnalysis ->
                                         imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
                                             try {
-                                                if (!hasDeliveredResult.get()) {
+                                                if (!isDisposed.get() && !hasDeliveredResult.get()) {
                                                     val raw = decodeQrFromImageProxy(reader, imageProxy)
                                                     val code = raw?.let(::extractJamInviteCode).orEmpty()
                                                     if (code.length >= 12 && hasDeliveredResult.compareAndSet(false, true)) {
                                                         previewView.post {
+                                                            releaseCameraHardware()
                                                             onCodeScanned(code)
                                                         }
                                                     }
@@ -216,20 +255,23 @@ fun JamQrScannerDialog(
                                             }
                                         }
                                     }
+                                analysisRef.set(analysis)
 
                                 runCatching {
                                     cameraProvider.unbindAll()
-                                    val selector = if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                                        CameraSelector.DEFAULT_BACK_CAMERA
-                                    } else {
-                                        CameraSelector.DEFAULT_FRONT_CAMERA
+                                    if (!isDisposed.get() && !hasDeliveredResult.get()) {
+                                        val selector = if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                                            CameraSelector.DEFAULT_BACK_CAMERA
+                                        } else {
+                                            CameraSelector.DEFAULT_FRONT_CAMERA
+                                        }
+                                        cameraProvider.bindToLifecycle(
+                                            lifecycleOwner,
+                                            selector,
+                                            preview,
+                                            analysis
+                                        )
                                     }
-                                    cameraProvider.bindToLifecycle(
-                                        lifecycleOwner,
-                                        selector,
-                                        preview,
-                                        analysis
-                                    )
                                 }.onFailure {
                                     previewView.post {
                                         scannerMessage = "Camera preview unavailable. You can also scan a QR image from your gallery."
@@ -237,6 +279,9 @@ fun JamQrScannerDialog(
                                 }
                             }, ContextCompat.getMainExecutor(ctx))
                             previewView
+                        },
+                        onRelease = {
+                            releaseCameraHardware()
                         }
                     )
 

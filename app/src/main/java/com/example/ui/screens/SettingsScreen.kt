@@ -134,10 +134,9 @@ data class HomeSectionDescriptor(
 )
 
 fun normalizeHomeSectionKey(key: String): String {
-    return when (key.uppercase()) {
-        "SPEED_DIAL" -> "speed_dial"
+    return when (key.trim().uppercase()) {
         "HERO_SPOTLIGHT", "CONTINUE_LISTENING" -> "continue_listening"
-        "QUICK_ACTIONS" -> "quick_actions"
+        "SPEED_DIAL", "QUICK_ACTIONS" -> "quick_actions"
         "STATS", "LISTENING_STATS" -> "listening_stats"
         "MOST_PLAYED" -> "most_played"
         "PLAYLISTS", "MOST_PLAYED_PLAYLISTS" -> "most_played_playlists"
@@ -145,7 +144,7 @@ fun normalizeHomeSectionKey(key: String): String {
         "RECENTLY_ADDED" -> "recently_added"
         "ARTISTS", "TOP_ARTISTS" -> "top_artists"
         "ALBUMS", "TOP_ALBUMS" -> "top_albums"
-        else -> key.lowercase()
+        else -> key.trim().lowercase()
     }
 }
 

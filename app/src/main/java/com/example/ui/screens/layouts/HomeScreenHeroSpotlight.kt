@@ -94,15 +94,6 @@ fun HomeScreenHeroSpotlight(
     val listState = rememberLazyListState()
     val featuredSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
-    // Deduplicate continue_listening when Hero Spotlight stage already features the active song
-    val effectiveSections = remember(homeSections, featuredSong) {
-        if (featuredSong != null) {
-            homeSections.filterNot { it.equals("continue_listening", ignoreCase = true) }
-        } else {
-            homeSections
-        }
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -151,7 +142,7 @@ fun HomeScreenHeroSpotlight(
 
                         Column {
                             Text(
-                                text = "HERO SPOTLIGHT",
+                                text = if (allSongs.isEmpty()) "OffGrid Music" else "HERO SPOTLIGHT",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BentoPrimary,
@@ -232,285 +223,60 @@ fun HomeScreenHeroSpotlight(
                 }
             }
 
-            // 2. Immersive Full-Bleed Hero Spotlight Amphitheater Stage (Non-Boxy!)
-            if (featuredSong != null) {
-                item(key = "hero_spotlight_banner_${featuredSong.id}", contentType = "hero_banner") {
-                    val isCurrentActive = playbackState.currentSong?.id == featuredSong.id
-                    val isFav = favoriteSongs.any { it.id == featuredSong.id }
-                    var showHeroSongMenu by remember(featuredSong.id) { mutableStateOf(false) }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(276.dp)
-                            .clip(RoundedCornerShape(34.dp))
-                            .border(
-                                width = 1.5.dp,
-                                brush = Brush.linearGradient(
-                                    listOf(
-                                        BentoPrimary.copy(alpha = 0.65f),
-                                        BentoAccentPinkText.copy(alpha = 0.35f)
-                                    )
-                                ),
-                                shape = RoundedCornerShape(34.dp)
-                            )
-                            .clickable { onOpenNowPlaying() }
+            if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+                item(key = "hero_scanning_banner", contentType = "scanning_banner") {
+                    com.example.ui.components.BentoCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        backgroundColor = BentoCardSurface
                     ) {
-                        // Full-bleed background cover artwork with atmospheric scrim
-                        AlbumArtView(
-                            song = featuredSong,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .blur(18.dp),
-                            cornerRadius = 0
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        0.0f to Color.Black.copy(alpha = 0.32f),
-                                        0.45f to Color.Black.copy(alpha = 0.65f),
-                                        1.0f to Color.Black.copy(alpha = 0.92f)
-                                    )
-                                )
-                        )
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(20.dp),
-                            verticalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            // Top Frosted Circular Actions (Right-Aligned)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        onClick = {
-                                            HapticUtils.performClickHaptic(context)
-                                            showHeroSongMenu = true
-                                        },
-                                        shape = CircleShape,
-                                        color = Color.White.copy(alpha = 0.16f),
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.QueueMusic,
-                                                contentDescription = "Song Actions",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Surface(
-                                        onClick = {
-                                            HapticUtils.performClickHaptic(context)
-                                            onFavoriteToggle(featuredSong)
-                                        },
-                                        shape = CircleShape,
-                                        color = if (isFav) BentoAccentPinkText.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.16f),
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                contentDescription = "Favorite",
-                                                tint = if (isFav) BentoAccentPinkText else Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Center Circular Spotlight Medallion + Dramatic Typography
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(92.dp)
-                                        .clip(CircleShape)
-                                        .border(2.dp, BentoPrimary, CircleShape)
-                                        .padding(3.dp)
-                                        .clip(CircleShape)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f, fill = false)
                                 ) {
-                                    AlbumArtView(
-                                        song = featuredSong,
-                                        modifier = Modifier.fillMaxSize(),
-                                        cornerRadius = 100,
-                                        forceHighResOnline = true
-                                    )
-                                }
-
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(
-                                        text = featuredSong.displayTitle,
-                                        fontSize = 21.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = BentoPrimary
                                     )
                                     Text(
-                                        text = featuredSong.displayArtist,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        text = "Scanning Music Library...",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = BentoPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (featuredSong.displayAlbum.isNotEmpty()) {
-                                        Text(
-                                            text = featuredSong.displayAlbum,
-                                            fontSize = 12.sp,
-                                            color = Color.White.copy(alpha = 0.72f),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
                                 }
+                                Text(
+                                    text = "${scanProgress.validTracksFound} tracks indexed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = BentoTextSecondary
+                                )
                             }
-
-                            // Bottom Live Progress + Pill Controls
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                if (isCurrentActive && playbackState.durationMs > 0) {
-                                    com.example.ui.components.RealtimeTrackProgressBar(
-                                        playbackPositionFlow = playbackPositionFlow,
-                                        isActive = true,
-                                        durationMs = playbackState.durationMs,
-                                        height = 3.5.dp,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = BentoPrimary,
-                                        modifier = Modifier
-                                            .weight(1.4f)
-                                            .height(44.dp)
-                                            .clickable {
-                                                HapticUtils.performClickHaptic(context)
-                                                if (isCurrentActive) {
-                                                    onTogglePlayPause()
-                                                } else {
-                                                    onSongClick(featuredSong)
-                                                }
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isCurrentActive && playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                contentDescription = "Play",
-                                                tint = BentoOnPrimary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = if (isCurrentActive && playbackState.isPlaying) "Pause Stage" else "Play Stage",
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = BentoOnPrimary
-                                            )
-                                        }
-                                    }
-
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color.White.copy(alpha = 0.16f),
-                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.30f)),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(44.dp)
-                                            .clickable {
-                                                HapticUtils.performClickHaptic(context)
-                                                onQuickShuffle()
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = Color.White, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Shuffle Mix", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                        }
-                                    }
-                                }
-                            }
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape),
+                                color = BentoPrimary,
+                                trackColor = BentoBorder.copy(alpha = 0.30f)
+                            )
                         }
                     }
-
-                    if (showHeroSongMenu) {
-                        com.example.ui.components.SongActionMenu(
-                            expanded = true,
-                            song = featuredSong,
-                            onDismissRequest = { showHeroSongMenu = false },
-                            onPlayNow = {
-                                if (isCurrentActive) {
-                                    onTogglePlayPause()
-                                } else {
-                                    onSongClick(featuredSong)
-                                }
-                            },
-                            onPlayNext = { onPlayNext(featuredSong) },
-                            onAddToQueue = { onAddToQueue(featuredSong) },
-                            onAddToPlaylist = { onAddToPlaylist(featuredSong) },
-                            onFavoriteToggle = { onFavoriteToggle(featuredSong) },
-                            onEditTags = if (onEditTags != null) { { onEditTags(featuredSong) } } else null,
-                            onDeleteSong = { onDeleteSong(featuredSong) }
-                        )
-                    }
                 }
             }
 
-            // 3. Floating Capsule Category Strip
-            item(key = "hero_spotlight_categories", contentType = "categories") {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
-                ) {
-                    item(key = "cat_lib") {
-                        SpotlightCategoryCapsule(icon = Icons.Default.LibraryMusic, label = "Library", badge = "${allSongs.size}", onClick = onOpenLibrary)
-                    }
-                    item(key = "cat_fav") {
-                        SpotlightCategoryCapsule(icon = Icons.Default.Favorite, label = "Favorites", badge = "${favoriteSongs.size}", onClick = onOpenFavorites)
-                    }
-                    item(key = "cat_pl") {
-                        SpotlightCategoryCapsule(icon = Icons.Default.QueueMusic, label = "Playlists", badge = "${allPlaylists.size}", onClick = onOpenPlaylists)
-                    }
-                    item(key = "cat_rec") {
-                        SpotlightCategoryCapsule(icon = Icons.Default.History, label = "Recent", badge = null, onClick = onOpenRecentlyPlayed)
-                    }
-                    item(key = "cat_stats") {
-                        SpotlightCategoryCapsule(icon = Icons.Default.BarChart, label = "Stats Studio", badge = null, onClick = onOpenStatsDetail)
-                    }
-                }
-            }
-
-            // 4. Authoritative Dynamic Home Sections with Hero Spotlight Component Styling
+            // 2. Authoritative Dynamic Home Sections with Hero Spotlight Component Styling
             renderHomeFeedSections(
-                homeSections = effectiveSections,
+                homeSections = homeSections,
                 speedDialSongs = speedDialSongs,
                 continueSong = featuredSong,
                 playbackState = playbackState,

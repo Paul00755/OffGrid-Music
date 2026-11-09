@@ -68,15 +68,22 @@ class AudioFocusManager(
     @Volatile private var recordingCallbackRegistered: Boolean = false
     @Volatile private var modeListenerRegistered: Boolean = false
 
+    private val pendingCameraOpenRunnables = mutableMapOf<String, Runnable>()
+
     @Volatile var autoPauseCamera: Boolean = false
         set(value) {
             field = value
-            if (!value) {
+            if (value) {
+                registerCameraCallbackIfNeeded()
+            } else {
                 synchronized(this) {
+                    cancelPendingCameraOpenRunnablesLocked()
+                    activeCameraIds.clear()
                     if (activeInterruptions.contains(InterruptionSource.CAMERA)) {
                         endInterruptionLocked(InterruptionSource.CAMERA)
                     }
                 }
+                unregisterOnlyCameraAvailabilityCallback()
             }
         }
 
@@ -114,12 +121,30 @@ class AudioFocusManager(
 
     private val cameraAvailabilityCallback = object : CameraManager.AvailabilityCallback() {
         override fun onCameraUnavailable(cameraId: String) {
-            if (!cameraRegistrationReady) return
-            onCameraOpened(cameraId)
+            if (!cameraRegistrationReady || !autoPauseCamera) return
+            // Ignore background system camera checks (e.g. lockscreen Face Unlock or idle Screen Attention)
+            // when the screen is off or non-interactive.
+            if (!isDeviceScreenInteractive()) return
+            synchronized(this@AudioFocusManager) {
+                pendingCameraOpenRunnables.remove(cameraId)?.let { mainHandler.removeCallbacks(it) }
+                val runnable = Runnable {
+                    synchronized(this@AudioFocusManager) {
+                        pendingCameraOpenRunnables.remove(cameraId)
+                        if (autoPauseCamera && isDeviceScreenInteractive()) {
+                            onCameraOpened(cameraId)
+                        }
+                    }
+                }
+                pendingCameraOpenRunnables[cameraId] = runnable
+                mainHandler.postDelayed(runnable, 450L)
+            }
         }
 
         override fun onCameraAvailable(cameraId: String) {
             if (!cameraRegistrationReady) return
+            synchronized(this@AudioFocusManager) {
+                pendingCameraOpenRunnables.remove(cameraId)?.let { mainHandler.removeCallbacks(it) }
+            }
             onCameraClosed(cameraId)
         }
     }
@@ -156,7 +181,9 @@ class AudioFocusManager(
         } else null
 
     init {
-        registerCameraCallbackIfNeeded()
+        if (autoPauseCamera) {
+            registerCameraCallbackIfNeeded()
+        }
         registerPlaybackCallbackIfNeeded()
         registerRecordingCallbackIfNeeded()
         registerModeChangedListenerIfNeeded()
@@ -349,11 +376,7 @@ class AudioFocusManager(
         }
     }
 
-    fun unregisterCameraCallback() {
-        cancelTransientVerificationChecksLocked()
-        unregisterPlaybackCallback()
-        unregisterRecordingCallback()
-        unregisterModeChangedListener()
+    private fun unregisterOnlyCameraAvailabilityCallback() {
         if (!cameraCallbackRegistered) return
         try {
             cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
@@ -362,6 +385,23 @@ class AudioFocusManager(
             cameraCallbackRegistered = false
             cameraRegistrationReady = false
         }
+    }
+
+    private fun cancelPendingCameraOpenRunnablesLocked() {
+        if (pendingCameraOpenRunnables.isEmpty()) return
+        for (runnable in pendingCameraOpenRunnables.values) {
+            mainHandler.removeCallbacks(runnable)
+        }
+        pendingCameraOpenRunnables.clear()
+    }
+
+    fun unregisterCameraCallback() {
+        cancelTransientVerificationChecksLocked()
+        cancelPendingCameraOpenRunnablesLocked()
+        unregisterPlaybackCallback()
+        unregisterRecordingCallback()
+        unregisterModeChangedListener()
+        unregisterOnlyCameraAvailabilityCallback()
     }
 
     private fun cancelTransientVerificationChecksLocked() {
@@ -387,15 +427,25 @@ class AudioFocusManager(
             return true
         }
 
+        // When AudioManager is in MODE_NORMAL and we actively hold audio focus, brief background
+        // VOICE_COMMUNICATION / SIGNALLING streams or VOICE_COMMUNICATION mic probes from Bluetooth
+        // earbuds (e.g. HFP keepalive), IMS, or voice assistants are not active phone calls.
+        val allowVoiceCommInNormalMode = !hasAudioFocus
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val configs = try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
             for (config in configs) {
                 val usage = config.audioAttributes?.usage ?: continue
-                if (usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
-                    usage == AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING ||
-                    usage == AudioAttributes.USAGE_NOTIFICATION_RINGTONE ||
-                    usage == AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST ||
+                if (usage == AudioAttributes.USAGE_NOTIFICATION_RINGTONE ||
                     usage == AudioAttributes.USAGE_ALARM
+                ) {
+                    return true
+                }
+                if (allowVoiceCommInNormalMode && (
+                        usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
+                        usage == AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING ||
+                        usage == AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST
+                    )
                 ) {
                     return true
                 }
@@ -406,10 +456,14 @@ class AudioFocusManager(
             val recConfigs = try { audioManager?.activeRecordingConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
             for (rec in recConfigs) {
                 val src = try { rec.clientAudioSource } catch (_: Throwable) { -1 }
-                if (src == android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION ||
-                    src == android.media.MediaRecorder.AudioSource.VOICE_CALL ||
+                if (src == android.media.MediaRecorder.AudioSource.VOICE_CALL ||
                     src == android.media.MediaRecorder.AudioSource.VOICE_DOWNLINK ||
                     src == android.media.MediaRecorder.AudioSource.VOICE_UPLINK
+                ) {
+                    return true
+                }
+                if (allowVoiceCommInNormalMode &&
+                    src == android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
                 ) {
                     return true
                 }
@@ -534,17 +588,29 @@ class AudioFocusManager(
             return !explicitVideoProvider.invoke() && ownMediaCount > 0
         }
 
+        // When the device screen is off / non-interactive and no call or external video is active,
+        // any transient focus loss comes from a background system service or silent notification
+        // and must never pause music for 2–5 seconds while the device sits idle.
+        if (!isDeviceScreenInteractive()) {
+            return true
+        }
+
         return false
     }
 
     private fun handleNotificationDuckOrContinueLocked() {
-        if (reduceVolumeOnNotification) {
+        val shouldDuckVolume = reduceVolumeOnNotification && (
+            hasActiveNotificationOrSystemStream() ||
+            isDeviceScreenInteractive() ||
+            externalVideoOrMediaActiveProvider != null
+        )
+        if (shouldDuckVolume) {
             Log.d(TAG, "Notification/hotspot focus loss detected: ducking volume by 40% (to 60% of current volume) without pausing")
             wasDuckedByTransientFocus = true
             try { onDuckRequested(DEFAULT_NOTIFICATION_DUCK_VOLUME) } catch (_: Throwable) {}
             scheduleDuckRestoreSafetyFallbackLocked()
         } else {
-            Log.d(TAG, "Notification/hotspot focus loss detected with ducking disabled: continuing playback without pause")
+            Log.d(TAG, "Silent idle/notification focus loss detected: continuing playback at full volume without pause")
         }
     }
 

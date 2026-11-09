@@ -74,7 +74,8 @@ class MusicApplication : Application(), ImageLoaderFactory, androidx.work.Config
             val bootPrefs = getSharedPreferences("offgrid_boot_cache", android.content.Context.MODE_PRIVATE)
             val now = System.currentTimeMillis()
             val lastMaint = bootPrefs.getLong("last_db_maintenance_ms", 0L)
-            if (now - lastMaint > 24L * 60L * 60L * 1000L) {
+            val isActivelyPlaying = com.example.service.PlaybackManager.activeInstance?.playbackState?.value?.isPlaying == true
+            if (!isActivelyPlaying && now - lastMaint > 24L * 60L * 60L * 1000L) {
                 bootPrefs.edit().putLong("last_db_maintenance_ms", now).apply()
                 AppDatabase.performMaintenance(this)
             }

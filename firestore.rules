@@ -141,7 +141,7 @@ service cloud.firestore {
           || joiningJam(sessionId)
         );
         allow update: if member(sessionId) && (participantUid == request.auth.uid || host(sessionId))
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'lastSeenAt', 'role'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'lastSeenAt', 'role', 'fcmToken'])
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || host(sessionId));
         allow delete: if member(sessionId) && (
           participantUid == request.auth.uid
@@ -281,18 +281,21 @@ service cloud.firestore {
 
       match /peerTransfers/{transferId} {
         allow read: if member(sessionId)
-          && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+          && (resource == null || resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
         allow create: if member(sessionId)
           && featureEnabled(sessionId, 'localSongSharing')
           && request.resource.data.senderUid == request.auth.uid
           && exists(/databases/$(database)/documents/jamSessions/$(sessionId)/participants/$(request.resource.data.recipientUid))
           && request.resource.data.fileSize > 0 && request.resource.data.fileSize <= 26214400
           && request.resource.data.keys().hasOnly([
-            'recommendationId', 'senderUid', 'recipientUid', 'mimeType', 'fileSize', 'sha256', 'offerSdp', 'status', 'createdAtMs'
+            'recommendationId', 'senderUid', 'recipientUid', 'mimeType', 'fileSize', 'sha256', 'offerSdp', 'status', 'createdAtMs',
+            'mode', 'chunkIndex', 'chunkTotal', 'chunkBase64', 'ackedChunkIndex'
           ]);
         allow update: if member(sessionId)
           && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answerSdp', 'status', 'completedAtMs']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'answerSdp', 'status', 'completedAtMs', 'offerSdp', 'mode', 'chunkIndex', 'chunkTotal', 'chunkBase64', 'ackedChunkIndex'
+          ]);
         allow delete: if member(sessionId)
           && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
       }

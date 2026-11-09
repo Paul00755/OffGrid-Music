@@ -95,7 +95,8 @@ class MusicPlaybackService : MediaSessionService() {
     private var notificationArtworkRequestKey: String? = null
     private var failedNotificationArtworkKey: String? = null
     private var notificationArtworkRetryAfterMs = 0L
-    private val notificationUpdateGate = NotificationUpdateGate()
+    private val notificationUpdateGate = NotificationUpdateGate(minimumPlayingIntervalMs = 2_000L)
+    private val idleNotificationUpdateGate = NotificationUpdateGate(minimumPlayingIntervalMs = 15_000L)
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -432,7 +433,14 @@ class MusicPlaybackService : MediaSessionService() {
                 artworkIdentityHash = System.identityHashCode(cachedBmp)
             )
             val currentPositionMs = player.currentPosition.coerceAtLeast(0L)
-            if (!notificationUpdateGate.shouldUpdate(
+            val isInteractive = try {
+                val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+                pm?.isInteractive ?: true
+            } catch (_: Throwable) {
+                true
+            }
+            val activeGate = if (isInteractive) notificationUpdateGate else idleNotificationUpdateGate
+            if (!activeGate.shouldUpdate(
                     key = updateKey,
                     positionMs = currentPositionMs,
                     isPlaying = isPlaying,

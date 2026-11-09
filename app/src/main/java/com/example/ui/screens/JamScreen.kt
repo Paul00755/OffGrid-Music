@@ -107,12 +107,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.example.data.model.Song
 import com.example.jam.JamAccessMode
 import com.example.jam.JamFeatureController
 import com.example.jam.JamFeature
 import com.example.jam.JamFeatureRequest
+import com.example.jam.JamIncomingVoteAlert
 import com.example.jam.JamDownloadState
 import com.example.jam.JamPage
 import com.example.jam.JamParticipant
@@ -129,7 +134,10 @@ import com.example.jam.JamQueueItem
 import com.example.jam.JamSession
 import com.example.jam.JamUiState
 import com.example.jam.extractJamInviteCode
+import com.example.ui.components.AlbumArtView
 import com.example.ui.components.JamQrScannerDialog
+import com.example.ui.components.rememberReorderableLazyListState
+import com.example.ui.components.reorderableDragHandle
 import com.example.ui.theme.BentoCardBorder
 import com.example.ui.theme.BentoCardPurple
 import com.example.ui.theme.BentoCardSurface
@@ -161,6 +169,8 @@ fun JamScreen(
     val participants = controller?.participants?.collectAsStateWithLifecycle()?.value.orEmpty()
     val queue = controller?.queue?.collectAsStateWithLifecycle()?.value.orEmpty()
     val recommendations = controller?.recommendations?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val pendingVotes = controller?.pendingVotes?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val incomingVoteAlert = controller?.incomingVoteAlert?.collectAsStateWithLifecycle()?.value
     val featureRequests = controller?.featureRequests?.collectAsStateWithLifecycle()?.value.orEmpty()
     val selectedRecommendationId = controller?.selectedRecommendationId?.collectAsStateWithLifecycle()?.value
     val invite = controller?.invite?.collectAsStateWithLifecycle()?.value
@@ -356,6 +366,8 @@ fun JamScreen(
                 participants = participants,
                 queue = queue,
                 recommendations = recommendations,
+                pendingVotes = pendingVotes,
+                incomingVoteAlert = incomingVoteAlert,
                 featureRequests = featureRequests,
                 selectedRecommendationId = selectedRecommendationId,
                 songs = songs,
@@ -921,6 +933,8 @@ private fun ActivePage(
     participants: List<JamParticipant>,
     queue: List<JamQueueItem>,
     recommendations: List<JamRecommendation>,
+    pendingVotes: Map<String, JamVote>,
+    incomingVoteAlert: JamIncomingVoteAlert?,
     featureRequests: List<JamFeatureRequest>,
     selectedRecommendationId: String?,
     songs: List<Song>,
@@ -938,13 +952,16 @@ private fun ActivePage(
     onBackRequest: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var libraryQuery by rememberSaveable { mutableStateOf("") }
     var showAllMatchesDialog by rememberSaveable { mutableStateOf(false) }
     var localShareConsent by rememberSaveable { mutableStateOf(false) }
+    var localShareMode by rememberSaveable { mutableStateOf(JamLocalShareMode.IN_APP_LIBRARY) }
     var queueExpanded by rememberSaveable { mutableStateOf(true) }
     var localFileError by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedLocalAudio by remember { mutableStateOf<LocalAudioSelection?>(null) }
+    var selectedInAppShare by remember { mutableStateOf<InAppLibraryAudioSelection?>(null) }
     val localAudioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -955,6 +972,7 @@ private fun ActivePage(
                             localFileError = "This song is already in the Jam shared library."
                         } else {
                             selectedLocalAudio = selected
+                            selectedInAppShare = null
                             localFileError = null
                         }
                     }
@@ -981,6 +999,13 @@ private fun ActivePage(
     val canSkip = permissions.allows(JamPermissionKind.SKIP_TRACK, permissionUid, hostUid)
     val canAddTracks = permissions.allows(JamPermissionKind.ADD_TO_QUEUE, permissionUid, hostUid)
     val canManageQueue = permissions.allows(JamPermissionKind.MANAGE_QUEUE, permissionUid, hostUid)
+    // Switching to a different track in the queue requires Play/Pause, Skip, AND Queue Control permissions
+    val canSwitchQueueTrack = roomStarted && canPlayPause && canSkip && canManageQueue
+    // Playing a matched library song immediately requires Add Tracks, Play/Pause, AND Skip permissions
+    val canPlayMatchedNow = roomStarted && canAddTracks && canPlayPause && canSkip
+    val hasDuplicateQueueTracks = remember(queue) {
+        queue.map { it.track.sharedTrackId }.distinct().size < queue.size
+    }
 
     val durationMs = currentItem?.track?.durationMs?.coerceAtLeast(1L) ?: 1L
     var selectedRoomTab by rememberSaveable(session?.id) { mutableStateOf(0) }
@@ -988,6 +1013,32 @@ private fun ActivePage(
     var requestClockMs by remember(session?.id) { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedFeatureRequest by remember { mutableStateOf<JamFeatureRequest?>(null) }
     var blockFeatureRequester by remember { mutableStateOf(false) }
+
+    // Local reorderable state for smooth drag-to-reorder with auto-scroll in Shared Queue
+    var displayedQueue by remember { mutableStateOf(queue) }
+    val queueListState = rememberLazyListState()
+    val queueRowHeightPx = with(density) { 68.dp.toPx() }
+    val reorderState = rememberReorderableLazyListState(
+        listState = queueListState,
+        itemHeightPx = queueRowHeightPx,
+        headerItemCount = 0,
+        onMove = { fromIndex, toIndex ->
+            if (fromIndex in displayedQueue.indices && toIndex in displayedQueue.indices && fromIndex != toIndex) {
+                val mutable = displayedQueue.toMutableList()
+                val moved = mutable.removeAt(fromIndex)
+                mutable.add(toIndex, moved)
+                displayedQueue = mutable
+            }
+        },
+        onDragEnd = { _, _ ->
+            controller?.reorderQueueIds(displayedQueue.map { it.id })
+        }
+    )
+    LaunchedEffect(queue, reorderState.isDragging) {
+        if (!reorderState.isDragging) {
+            displayedQueue = queue
+        }
+    }
 
     LaunchedEffect(selectedRecommendationId) {
         if (!selectedRecommendationId.isNullOrBlank()) {
@@ -1037,7 +1088,7 @@ private fun ActivePage(
         AllMatchingSongsDialog(
             matches = sharedLibraryMatches,
             canAddTracks = canAddTracks,
-            canPlayPause = canPlayPause,
+            canPlayNow = canPlayMatchedNow,
             canRecommend = permissions.allowSharedLibraryRecommendations,
             isHost = isHost,
             onAddAll = { shuffle -> controller?.addAllMatchingSongsToQueue(shuffle = shuffle) },
@@ -1142,6 +1193,21 @@ private fun ActivePage(
                 }
             )
         }
+        if (incomingVoteAlert != null) {
+            item(key = "incoming-vote-${incomingVoteAlert.recommendationId}") {
+                JamIncomingVoteBanner(
+                    alert = incomingVoteAlert,
+                    isSubmittingVote = pendingVotes.containsKey(incomingVoteAlert.recommendationId),
+                    onAccept = { controller?.vote(incomingVoteAlert.recommendationId, JamVote.ACCEPT) },
+                    onReject = { controller?.vote(incomingVoteAlert.recommendationId, JamVote.REJECT) },
+                    onView = {
+                        selectedRoomTab = if (incomingVoteAlert.isLocalSong) 2 else 1
+                        controller?.dismissIncomingVoteAlert()
+                    },
+                    onDismiss = { controller?.dismissIncomingVoteAlert() }
+                )
+            }
+        }
         if (activeFeatureRequests.isNotEmpty()) {
             itemsIndexed(activeFeatureRequests, key = { _, request -> "request-${request.feature.documentId}" }) { _, request ->
                 JamFeatureRequestBanner(
@@ -1184,14 +1250,17 @@ private fun ActivePage(
         item {
             JamCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val localArtwork = currentItem?.track?.let { track ->
-                        resolveTrackArtwork(track.sharedTrackId, track.title, track.artist, sharedLibraryMatches, songs)
+                    val nowPlayingSong = remember(currentItem?.track, sharedLibraryMatches, songs) {
+                        currentItem?.track?.let { track ->
+                            controller?.resolveSongForTrack(track, songs)
+                                ?: resolveSongForTrack(track, sharedLibraryMatches, songs)
+                        }
                     }
-                    if (!localArtwork.isNullOrBlank()) {
-                        AsyncImage(
-                            model = localArtwork,
-                            contentDescription = null,
-                            modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
+                    if (nowPlayingSong != null) {
+                        AlbumArtView(
+                            song = nowPlayingSong,
+                            modifier = Modifier.size(72.dp),
+                            cornerRadius = 16
                         )
                     } else {
                         Box(
@@ -1389,7 +1458,7 @@ private fun ActivePage(
         if (selectedRoomTab == 0) item {
             JamAccordion(
                 title = "Shared Queue",
-                summary = "${queue.size} tracks",
+                summary = "${queue.size} tracks${if (canManageQueue && queue.size > 1) " · Drag ≡ to reorder" else ""}",
                 icon = Icons.Default.QueueMusic,
                 expanded = queueExpanded,
                 onToggle = { queueExpanded = !queueExpanded }
@@ -1437,38 +1506,126 @@ private fun ActivePage(
                         }
                     }
                 }
-                if (queue.isEmpty()) {
+                // Queue management toolbar (Remove Duplicates + Shuffle Queue) like Up-Next Queue
+                if (canManageQueue && queue.size > 1) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { controller?.removeDuplicateSongsFromQueue() },
+                            modifier = Modifier.weight(1f).testTag("jam_queue_remove_duplicates_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, if (hasDuplicateQueueTracks) BentoPrimary else BentoCardBorder),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                tint = if (hasDuplicateQueueTracks) BentoPrimary else BentoTextSecondary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Remove Duplicates",
+                                color = if (hasDuplicateQueueTracks) BentoPrimary else BentoTextPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { controller?.shuffleQueue() },
+                            modifier = Modifier.weight(1f).testTag("jam_queue_shuffle_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, BentoCardBorder),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Shuffle Queue",
+                                color = BentoTextPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                if (displayedQueue.isEmpty()) {
                     Text(
                         text = "No songs queued yet. Open Recommendations to add or suggest matching songs, or share a local audio file.",
                         color = BentoTextSecondary,
                         style = MaterialTheme.typography.bodySmall
                     )
-                }
-                queue.forEachIndexed { index, item ->
-                    val isCurrentTrack = item.id == currentItem?.id
-                    val itemArtwork = resolveTrackArtwork(
-                        item.track.sharedTrackId,
-                        item.track.title,
-                        item.track.artist,
-                        sharedLibraryMatches,
-                        songs
-                    )
-                    RedesignedQueueRow(
-                        index = index,
-                        item = item,
-                        artworkUri = itemArtwork,
-                        isCurrent = isCurrentTrack,
-                        canPlay = roomStarted && canPlayPause,
-                        canManage = canManageQueue,
-                        canRecommend = permissions.allowSharedLibraryRecommendations,
-                        onPlayNow = { controller?.playQueueItem(item.id) },
-                        onRecommend = { controller?.recommendSharedTrack(item.track) },
-                        onRemove = { controller?.removeQueueItem(item.id) },
-                        onMoveUp = { controller?.moveQueueItem(item.id, -1) },
-                        onMoveDown = { controller?.moveQueueItem(item.id, 1) },
-                        isFirst = index == 0,
-                        isLast = index == queue.lastIndex
-                    )
+                } else {
+                    val queueMaxHeight = (displayedQueue.size * 72).coerceIn(140, 440).dp
+                    LazyColumn(
+                        state = queueListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 72.dp, max = queueMaxHeight),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(
+                            items = displayedQueue,
+                            key = { _, item -> item.id }
+                        ) { index, item ->
+                            val isCurrentTrack = item.id == currentItem?.id
+                            val isDraggingItem = reorderState.draggedKey == item.id
+                            val itemSong = remember(item.track, sharedLibraryMatches, songs) {
+                                controller?.resolveSongForTrack(item.track, songs)
+                                    ?: resolveSongForTrack(item.track, sharedLibraryMatches, songs)
+                            }
+                            val canPlayThisRow = if (isCurrentTrack) {
+                                roomStarted && canPlayPause
+                            } else {
+                                canSwitchQueueTrack
+                            }
+                            val dragModifier = if (canManageQueue && displayedQueue.size > 1) {
+                                Modifier.reorderableDragHandle(
+                                    state = reorderState,
+                                    getIndex = { displayedQueue.indexOfFirst { it.id == item.id }.coerceAtLeast(0) },
+                                    getMinIndex = { 0 },
+                                    getMaxIndex = { (displayedQueue.size - 1).coerceAtLeast(0) },
+                                    getKey = { item.id }
+                                )
+                            } else null
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .zIndex(if (isDraggingItem) 10f else 0f)
+                                    .graphicsLayer {
+                                        translationY = if (isDraggingItem) reorderState.dragOffsetY else 0f
+                                        scaleX = if (isDraggingItem) 1.02f else 1f
+                                        scaleY = if (isDraggingItem) 1.02f else 1f
+                                    }
+                            ) {
+                                RedesignedQueueRow(
+                                    index = index,
+                                    item = item,
+                                    resolvedSong = itemSong,
+                                    isCurrent = isCurrentTrack,
+                                    isDragging = isDraggingItem,
+                                    canPlay = canPlayThisRow,
+                                    canManage = canManageQueue,
+                                    canRecommend = permissions.allowSharedLibraryRecommendations,
+                                    dragHandleModifier = dragModifier,
+                                    onPlayNow = { controller?.playQueueItem(item.id) },
+                                    onRecommend = { controller?.recommendSharedTrack(item.track) },
+                                    onRemove = { controller?.removeQueueItem(item.id) },
+                                    onMoveUp = { controller?.moveQueueItem(item.id, -1) },
+                                    onMoveDown = { controller?.moveQueueItem(item.id, 1) },
+                                    isFirst = index == 0,
+                                    isLast = index == displayedQueue.lastIndex
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1490,6 +1647,7 @@ private fun ActivePage(
                         currentUid = currentUid,
                         hostUid = hostUid,
                         selectedRecommendationId = selectedRecommendationId,
+                        pendingVotes = pendingVotes,
                         songs = songs,
                         sharedLibraryMatches = sharedLibraryMatches,
                         onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
@@ -1611,7 +1769,7 @@ private fun ActivePage(
                             EnhancedSharedLibraryMatchRow(
                                 match = match,
                                 canAddTracks = canAddTracks,
-                                canPlayPause = canPlayPause,
+                                canPlayNow = canPlayMatchedNow,
                                 canRecommend = permissions.allowSharedLibraryRecommendations,
                                 isHost = isHost,
                                 onPlayNow = { controller?.playSharedLibrarySongNow(match) },
@@ -1678,9 +1836,10 @@ private fun ActivePage(
                     currentQueueItemId = currentItem?.id,
                     songs = songs,
                     sharedLibraryMatches = sharedLibraryMatches,
+                    canSwitchTrack = canSwitchQueueTrack,
                     onViewAllQueue = { selectedRoomTab = 0 },
                     onPlayQueueItem = { itemId ->
-                        if (roomStarted && canPlayPause) controller?.playQueueItem(itemId)
+                        if (canSwitchQueueTrack) controller?.playQueueItem(itemId)
                     }
                 )
             }
@@ -1716,6 +1875,7 @@ private fun ActivePage(
                         currentUid = currentUid,
                         hostUid = hostUid,
                         selectedRecommendationId = selectedRecommendationId,
+                        pendingVotes = pendingVotes,
                         songs = songs,
                         sharedLibraryMatches = sharedLibraryMatches,
                         onVote = { recommendationId, vote -> controller?.vote(recommendationId, vote) },
@@ -1749,15 +1909,64 @@ private fun ActivePage(
                                 TextButton(onClick = onPermissions) { Text("All Permissions", color = BentoPrimary) }
                             }
                         } else {
+                            val matchedIdsForLocalShare = remember(sharedLibraryMatches) {
+                                sharedLibraryMatches.map { it.song.id }.toSet()
+                            }
+                            val unmatchedInAppCount = remember(songs, matchedIdsForLocalShare) {
+                                songs.count { !it.isMissing && !it.isCorrupted && it.durationMs > 0L && it.id !in matchedIdsForLocalShare }
+                            }
                             Text(
                                 "Supported audio files (MP3, M4A, AAC, FLAC, OGG, WAV up to 25 MB) transfer directly between devices after unanimous approval. Non-audio files are rejected.",
                                 color = BentoTextSecondary,
                                 style = MaterialTheme.typography.bodySmall
                             )
+
+                            // Two options: Share from In-App Library / Share from Local
+                            JamLocalShareSourceSelector(
+                                selectedMode = localShareMode,
+                                unmatchedCount = unmatchedInAppCount,
+                                onSelectInAppLibrary = {
+                                    localShareMode = JamLocalShareMode.IN_APP_LIBRARY
+                                    localFileError = null
+                                },
+                                onSelectLocalStorage = {
+                                    localShareMode = JamLocalShareMode.LOCAL_STORAGE
+                                    localFileError = null
+                                }
+                            )
+
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = localShareConsent, onCheckedChange = { localShareConsent = it })
                                 Text("I have the right to share the selected audio.", color = BentoTextSecondary, style = MaterialTheme.typography.bodySmall)
                             }
+
+                            // Selected In-App Library Song Preview + Start 30-second vote
+                            selectedInAppShare?.let { inApp ->
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.5f)).padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    com.example.ui.components.AlbumArtView(
+                                        song = inApp.song,
+                                        modifier = Modifier.size(54.dp),
+                                        cornerRadius = 12
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(inApp.track.title, color = BentoTextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("${inApp.track.artist} · ${formatJamDuration(inApp.track.durationMs)} · ${formatJamSize(inApp.sizeBytes)}", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    IconButton(onClick = { selectedInAppShare = null }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear selection", tint = BentoTextSecondary)
+                                    }
+                                }
+                                JamButton("Start 30-second vote", Icons.Default.Groups, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                    controller?.recommendLocalTrack(inApp.track, inApp.uri, inApp.mimeType)
+                                    selectedInAppShare = null
+                                }
+                            }
+
+                            // Selected Local Storage Audio Preview + Start 30-second vote
                             selectedLocalAudio?.let { audio ->
                                 Row(
                                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BentoCardPurple.copy(alpha = 0.5f)).padding(10.dp),
@@ -1784,10 +1993,36 @@ private fun ActivePage(
                                     selectedLocalAudio = null
                                 }
                             }
-                            JamButton("Choose Audio File (MP3 / Audio)", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
-                                localAudioPicker.launch(arrayOf("audio/*"))
-                            }
+
                             localFileError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+
+                            if (localShareMode == JamLocalShareMode.IN_APP_LIBRARY) {
+                                JamEmbeddedInAppLibraryBrowser(
+                                    allSongs = songs,
+                                    sharedLibraryMatches = sharedLibraryMatches,
+                                    queue = queue,
+                                    selectedSongId = selectedInAppShare?.song?.id,
+                                    onSelectSongToShare = { song ->
+                                        coroutineScope.launch {
+                                            withContext(Dispatchers.IO) { prepareInAppSongForLocalShare(context, song) }
+                                                .onSuccess { prepared ->
+                                                    if (queue.any { it.track.sharedTrackId == prepared.track.sharedTrackId }) {
+                                                        localFileError = "This song is already in the Jam shared queue."
+                                                    } else {
+                                                        selectedInAppShare = prepared
+                                                        selectedLocalAudio = null
+                                                        localFileError = null
+                                                    }
+                                                }
+                                                .onFailure { localFileError = it.message ?: "This song couldn't be prepared for sharing." }
+                                        }
+                                    }
+                                )
+                            } else {
+                                JamButton("Choose Audio File (MP3 / Audio)", Icons.Default.Add, enabled = localShareConsent && state !is JamUiState.Loading) {
+                                    localAudioPicker.launch(arrayOf("audio/*"))
+                                }
+                            }
                         }
                     }
                 }
@@ -1798,9 +2033,10 @@ private fun ActivePage(
                     currentQueueItemId = currentItem?.id,
                     songs = songs,
                     sharedLibraryMatches = sharedLibraryMatches,
+                    canSwitchTrack = canSwitchQueueTrack,
                     onViewAllQueue = { selectedRoomTab = 0 },
                     onPlayQueueItem = { itemId ->
-                        if (roomStarted && canPlayPause) controller?.playQueueItem(itemId)
+                        if (canSwitchQueueTrack) controller?.playQueueItem(itemId)
                     }
                 )
             }
@@ -2169,12 +2405,18 @@ private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAu
     try {
         resolver.openFileDescriptor(uri, "r")?.use { descriptor -> retriever.setDataSource(descriptor.fileDescriptor) }
             ?: throw IllegalArgumentException("This file couldn't be opened.")
-        val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim().orEmpty()
-        val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim().orEmpty()
+        val rawTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim().orEmpty()
+        val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim().orEmpty()
         val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.trim().orEmpty()
         val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-        if (title.isBlank() || artist.isBlank() || duration <= 0L) {
-            throw IllegalArgumentException("This audio file needs readable title, artist, and duration metadata.")
+        val fallbackTitle = com.example.util.TagCleaner.cleanTitle(
+            displayName.substringBeforeLast('.', displayName),
+            rawArtist
+        ).ifBlank { displayName.substringBeforeLast('.', displayName).trim() }
+        val title = rawTitle.ifBlank { fallbackTitle }.ifBlank { "Shared Audio Track" }
+        val artist = rawArtist.ifBlank { "Unknown Artist" }
+        if (duration <= 0L) {
+            throw IllegalArgumentException("This audio file needs a valid readable duration.")
         }
         val artwork = retriever.embeddedPicture?.let { bytes ->
             android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()

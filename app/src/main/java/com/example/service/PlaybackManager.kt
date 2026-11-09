@@ -1329,7 +1329,8 @@ class PlaybackManager(
         startIndex: Int = 0,
         sourceContext: String = "UNKNOWN",
         forceShuffle: Boolean? = null,
-        startPlayback: Boolean = true
+        startPlayback: Boolean = true,
+        initialPositionMs: Long = 0L
     ) {
         if (jamPlaybackActive && sourceContext != "JAM") return
         if (songs.isEmpty()) return
@@ -1359,15 +1360,16 @@ class PlaybackManager(
 
         val actualIndex = if (useShuffle) 0 else targetIndex.coerceIn(currentQueue.indices)
         val selectedSongFromQueue = currentQueue.getOrNull(actualIndex) ?: songs[targetIndex]
+        val safeInitialPos = initialPositionMs.coerceAtLeast(0L)
 
-        currentPositionMs = 0L
-        _playbackPositionMs.value = 0L
+        currentPositionMs = safeInitialPos
+        _playbackPositionMs.value = safeInitialPos
         _playbackState.value = _playbackState.value.copy(
             isShuffleEnabled = useShuffle,
             queue = currentQueue,
             queueIndex = actualIndex,
             currentSong = selectedSongFromQueue,
-            positionMs = 0L,
+            positionMs = safeInitialPos,
             durationMs = selectedSongFromQueue.durationMs,
             isPlaying = startPlayback,
             playbackError = null,
@@ -1381,7 +1383,7 @@ class PlaybackManager(
             buildMediaItem(s, loadArtworkBytes = false)
         }
         if (mediaItems.isNotEmpty()) {
-            player.setMediaItems(mediaItems, actualIndex, 0L)
+            player.setMediaItems(mediaItems, actualIndex, safeInitialPos)
             if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ALL) {
                 player.repeatMode = Player.REPEAT_MODE_ALL
             } else if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
@@ -1461,6 +1463,7 @@ class PlaybackManager(
             player.shuffleModeEnabled = false
             _playbackState.value = _playbackState.value.copy(repeatMode = Player.REPEAT_MODE_OFF, isShuffleEnabled = false)
 
+            val safePos = positionMs.coerceAtLeast(0L)
             val songChanged = _playbackState.value.currentSong?.id != song.id || player.mediaItemCount == 0
             if (songChanged) {
                 playQueue(
@@ -1468,20 +1471,24 @@ class PlaybackManager(
                     startIndex = 0,
                     sourceContext = "JAM",
                     forceShuffle = false,
-                    startPlayback = isPlaying
+                    startPlayback = isPlaying,
+                    initialPositionMs = if (seekPosition) safePos else 0L
                 )
+            } else if (seekPosition) {
+                seekTo(safePos)
             }
-            if (seekPosition) seekTo(positionMs)
 
             if (isPlaying) {
                 if (player.playbackState == Player.STATE_ENDED) {
-                    seekTo(positionMs.coerceAtLeast(0L))
+                    seekTo(safePos)
+                    player.prepare()
+                } else if (player.playbackState == Player.STATE_IDLE) {
                     player.prepare()
                 }
-                if (!player.isPlaying && !player.playWhenReady) {
+                if (!player.isPlaying || !player.playWhenReady || !_playbackState.value.isPlaying) {
                     play()
                 }
-            } else if (player.isPlaying || player.playWhenReady) {
+            } else if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) {
                 pause()
             }
         } finally {

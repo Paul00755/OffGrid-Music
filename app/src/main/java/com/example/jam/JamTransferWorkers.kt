@@ -35,7 +35,15 @@ import java.util.concurrent.TimeUnit
 object JamTransferWork {
     private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
+    private fun workManagerOrNull(context: Context): WorkManager? = runCatching {
+        WorkManager.getInstance(context.applicationContext)
+    }.recoverCatching {
+        WorkManager.initialize(context.applicationContext, androidx.work.Configuration.Builder().build())
+        WorkManager.getInstance(context.applicationContext)
+    }.getOrNull()
+
     fun enqueueUpload(context: Context, sessionId: String, recommendationId: String, sourceUri: Uri, mimeType: String) {
+        val wm = workManagerOrNull(context) ?: return
         val request = OneTimeWorkRequestBuilder<JamUploadWorker>()
             .setInputData(Data.Builder()
                 .putString(JamUploadWorker.KEY_SESSION, sessionId)
@@ -46,7 +54,9 @@ object JamTransferWork {
             .setConstraints(constraints())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(uploadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+        runCatching {
+            wm.enqueueUniqueWork(uploadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+        }
     }
 
     fun enqueueDownload(
@@ -58,6 +68,7 @@ object JamTransferWork {
         fileSize: Long,
         contentType: String?
     ) {
+        val wm = workManagerOrNull(context) ?: return
         val request = OneTimeWorkRequestBuilder<JamDownloadWorker>()
             .setInputData(Data.Builder()
                 .putString(JamDownloadWorker.KEY_SESSION, sessionId)
@@ -74,7 +85,9 @@ object JamTransferWork {
             .setConstraints(constraints())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(downloadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+        runCatching {
+            wm.enqueueUniqueWork(downloadWorkName(sessionId, recommendationId), ExistingWorkPolicy.KEEP, request)
+        }
     }
 
     fun uploadWorkName(sessionId: String, recommendationId: String) = "jam-upload-$sessionId-$recommendationId"
@@ -94,8 +107,17 @@ class JamUploadWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val heartbeatJob = progressScope.launch { keepJamTransferPresence(sessionId, repository, auth) }
         val localFile = File(applicationContext.cacheDir, "jam-source-$recommendationId.part")
         return try {
-            applicationContext.contentResolver.openInputStream(uri)?.use { source -> localFile.outputStream().use(source::copyTo) }
-                ?: throw IllegalStateException("The selected song could not be opened.")
+            if (uri.scheme == "file") {
+                val src = uri.path?.let(::File)
+                if (src != null && src.isFile) {
+                    src.inputStream().use { source -> localFile.outputStream().use(source::copyTo) }
+                } else {
+                    throw IllegalStateException("The selected song could not be opened.")
+                }
+            } else {
+                applicationContext.contentResolver.openInputStream(uri)?.use { source -> localFile.outputStream().use(source::copyTo) }
+                    ?: throw IllegalStateException("The selected song could not be opened.")
+            }
             if (localFile.length() !in 1..JamPeerTransfer.MAX_TRANSFER_BYTES) throw IllegalStateException("This song exceeds the 25 MB transfer limit.")
             val checksum = sha256(localFile)
             repository.preparePeerUpload(sessionId, recommendationId, checksum, localFile.length(), mime)

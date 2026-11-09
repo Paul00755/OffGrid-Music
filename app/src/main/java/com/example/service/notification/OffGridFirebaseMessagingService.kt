@@ -80,7 +80,7 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
         const val EXTRA_UPDATE_RELEASE_NOTES = "com.example.EXTRA_UPDATE_RELEASE_NOTES"
         const val EXTRA_UPDATE_APK_URL = "com.example.EXTRA_UPDATE_APK_URL"
 
-        private fun showJamRecommendationNotification(
+        fun showJamRecommendationNotification(
             context: Context,
             title: String,
             body: String,

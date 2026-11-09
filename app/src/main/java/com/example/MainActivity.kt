@@ -124,15 +124,39 @@ class MainActivity : ComponentActivity() {
 
             val displayScale by viewModel.displayScale.collectAsStateWithLifecycle()
             val currentDensity = androidx.compose.ui.platform.LocalDensity.current
-            val baseDensityFactor = remember(currentDensity.density, currentDensity.fontScale, displayScale) {
-                val scaleMultiplier = when (displayScale.uppercase()) {
-                    "COMFORT" -> 1.08f
-                    // Compact should be visibly smaller on phones with dense system display settings.
-                    "COMPACT" -> 0.86f
-                    else -> 1.0f
+            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+            val baseDensityFactor = remember(
+                currentDensity.density,
+                currentDensity.fontScale,
+                configuration.screenWidthDp,
+                configuration.screenHeightDp,
+                 configuration.smallestScreenWidthDp,
+                displayScale
+            ) {
+                val rawShortestDp = configuration.smallestScreenWidthDp.takeIf { it > 0 }?.toFloat()
+                    ?: minOf(configuration.screenWidthDp, configuration.screenHeightDp).toFloat().coerceAtLeast(320f)
+
+                // Ideal reference baseline from the target phone layout (~412dp effective shortest width).
+                // Phones (< 580dp shortest width) normalize toward 412dp so small phones (320-384dp),
+                // standard phones (390-412dp), and large phones (430-480dp) render with identical,
+                // proportional UI sizing and zero clipping. Foldables (580-839dp) and tablets (840dp+)
+                // use a balanced ergonomic scale while preserving responsive multi-pane/max-width layouts.
+                val deviceAdaptiveFactor = when {
+                    rawShortestDp < 580f -> (rawShortestDp / 412f).coerceIn(0.76f, 1.15f)
+                    rawShortestDp < 840f -> 1.04f
+                    else -> 1.08f
                 }
-                val safeDensity = (currentDensity.density * scaleMultiplier).coerceIn(0.5f, 5.0f)
-                val safeFontScale = (currentDensity.fontScale * scaleMultiplier).coerceIn(0.5f, 3.0f)
+
+                val userScaleMultiplier = when (displayScale.uppercase()) {
+                    "COMFORT" -> 1.08f
+                    "COMPACT" -> 0.90f
+                    else -> 1.0f // DEFAULT matches the 412dp reference screenshots
+                }
+
+                val safeDensity = (currentDensity.density * deviceAdaptiveFactor * userScaleMultiplier).coerceIn(0.75f, 5.0f)
+                // Compose sp.toPx() = sp * density * fontScale, so density already scales sp proportionally.
+                // Clamp system fontScale to a safe range so extreme OS font settings never clip single-line UI.
+                val safeFontScale = currentDensity.fontScale.coerceIn(0.92f, 1.06f)
                 androidx.compose.ui.unit.Density(
                     density = safeDensity,
                     fontScale = safeFontScale

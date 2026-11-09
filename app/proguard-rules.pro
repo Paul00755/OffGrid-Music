@@ -87,3 +87,14 @@
     volatile <fields>;
 }
 
+# ==============================================================================
+# WebRTC (OffGrid Jam Peer-to-Peer Audio Transfer) & WorkManager Workers
+# ==============================================================================
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class com.example.jam.** { *; }
+
+

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.HowToVote
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
@@ -53,6 +55,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -91,13 +94,16 @@ import com.example.jam.JamAccessMode
 import com.example.jam.JamDownloadState
 import com.example.jam.JamFeature
 import com.example.jam.JamFeatureRequest
+import com.example.jam.JamIncomingVoteAlert
 import com.example.jam.JamParticipant
 import com.example.jam.JamPermissions
 import com.example.jam.JamQueueItem
 import com.example.jam.JamRecommendation
 import com.example.jam.JamRecommendationType
 import com.example.jam.JamSharedLibraryMatch
+import com.example.jam.JamTrack
 import com.example.jam.JamVote
+import com.example.ui.components.AlbumArtView
 import com.example.ui.theme.BentoCardBorder
 import com.example.ui.theme.BentoCardPurple
 import com.example.ui.theme.BentoCardSurface
@@ -107,9 +113,120 @@ import com.example.ui.theme.BentoScreenBackground
 import com.example.ui.theme.BentoTextPrimary
 import com.example.ui.theme.BentoTextSecondary
 import com.example.ui.theme.LocalGlassThemeConfig
+import com.example.util.TagCleaner
 import kotlinx.coroutines.delay
 
 private val VoteAcceptGreen = Color(0xFF1DB954)
+
+/**
+ * In-app real-time alert banner shown when another participant recommends or shares a song
+ * while OffGrid Music is in the foreground.
+ */
+@Composable
+internal fun JamIncomingVoteBanner(
+    alert: JamIncomingVoteAlert,
+    isSubmittingVote: Boolean,
+    onAccept: () -> Unit,
+    onReject: () -> Unit,
+    onView: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val glass = LocalGlassThemeConfig.current
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("jam_incoming_vote_banner"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (glass.isDark) Color(0xFF231C38) else Color(0xFFF1ECFF)
+        ),
+        border = BorderStroke(1.5.dp, BentoPrimary),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = BentoPrimary.copy(alpha = 0.2f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${alert.proposerName} has recommended a song & is waiting for your vote approval",
+                        color = BentoTextPrimary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${alert.trackTitle} · ${alert.trackArtist}",
+                        color = BentoPrimary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Dismiss alert", tint = BentoTextSecondary, modifier = Modifier.size(18.dp))
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onAccept,
+                    enabled = !isSubmittingVote,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = VoteAcceptGreen, contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    if (isSubmittingVote) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    } else {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Accept", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                OutlinedButton(
+                    onClick = onReject,
+                    enabled = !isSubmittingVote,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Reject", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                }
+                TextButton(onClick = onView) {
+                    Text("View", color = BentoPrimary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
 
 /**
  * 2-column Bento summary grid displaying the Host's independent permission & feature settings.
@@ -522,6 +639,7 @@ internal fun SharedQueuePreviewStrip(
     currentQueueItemId: String?,
     songs: List<Song>,
     sharedLibraryMatches: List<JamSharedLibraryMatch>,
+    canSwitchTrack: Boolean,
     onViewAllQueue: () -> Unit,
     onPlayQueueItem: (String) -> Unit
 ) {
@@ -574,12 +692,14 @@ internal fun SharedQueuePreviewStrip(
                 ) {
                     queue.take(10).forEach { item ->
                         val isCurrent = item.id == currentQueueItemId
-                        val artworkUri = resolveTrackArtwork(item.track.sharedTrackId, item.track.title, item.track.artist, sharedLibraryMatches, songs)
+                        val resolvedSong = remember(item.track, sharedLibraryMatches, songs) {
+                            resolveSongForTrack(item.track, sharedLibraryMatches, songs)
+                        }
                         Column(
                             modifier = Modifier
                                 .width(64.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { onPlayQueueItem(item.id) },
+                                .clickable(enabled = canSwitchTrack) { onPlayQueueItem(item.id) },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -593,11 +713,11 @@ internal fun SharedQueuePreviewStrip(
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (!artworkUri.isNullOrBlank()) {
-                                    AsyncImage(
-                                        model = artworkUri,
-                                        contentDescription = item.track.title,
-                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))
+                                if (resolvedSong != null) {
+                                    AlbumArtView(
+                                        song = resolvedSong,
+                                        modifier = Modifier.fillMaxSize(),
+                                        cornerRadius = 12
                                     )
                                 } else {
                                     Icon(Icons.Default.MusicNote, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(24.dp))
@@ -632,6 +752,7 @@ internal fun RichRecommendationPanel(
     currentUid: String,
     hostUid: String,
     selectedRecommendationId: String?,
+    pendingVotes: Map<String, JamVote>,
     songs: List<Song>,
     sharedLibraryMatches: List<JamSharedLibraryMatch>,
     onVote: (String, JamVote) -> Unit,
@@ -692,19 +813,17 @@ internal fun RichRecommendationPanel(
         }
 
         recommendations.take(12).forEach { recommendation ->
+            val resolvedSong = remember(recommendation.track, sharedLibraryMatches, songs) {
+                resolveSongForTrack(recommendation.track, sharedLibraryMatches, songs)
+            }
             RichRecommendationCard(
                 recommendation = recommendation,
                 participants = participants,
                 currentUid = currentUid,
                 hostUid = hostUid,
                 selected = selectedRecommendationId == recommendation.id,
-                artworkUri = resolveTrackArtwork(
-                    recommendation.track.sharedTrackId,
-                    recommendation.track.title,
-                    recommendation.track.artist,
-                    sharedLibraryMatches,
-                    songs
-                ),
+                pendingVote = pendingVotes[recommendation.id],
+                resolvedSong = resolvedSong,
                 onVote = { onVote(recommendation.id, it) },
                 onRetryUpload = { onRetryUpload(recommendation.id) },
                 onRetryDownload = { onRetryDownload(recommendation.id) },
@@ -721,7 +840,8 @@ internal fun RichRecommendationCard(
     currentUid: String,
     hostUid: String,
     selected: Boolean,
-    artworkUri: String?,
+    pendingVote: JamVote?,
+    resolvedSong: Song?,
     onVote: (JamVote) -> Unit,
     onRetryUpload: () -> Unit,
     onRetryDownload: () -> Unit,
@@ -741,21 +861,34 @@ internal fun RichRecommendationCard(
         ?.takeIf(String::isNotBlank) ?: recommendation.proposerName
     val isProposer = currentUid == recommendation.proposerUid
     val remainingSec = (((recommendation.deadlineAtMs - nowMs).coerceAtLeast(0L) + 999L) / 1000L).toInt()
+    val effectiveVotes = remember(recommendation.votes, currentUid, pendingVote) {
+        if (pendingVote != null && recommendation.votes[currentUid] == JamVote.PENDING) {
+            recommendation.votes + (currentUid to pendingVote)
+        } else {
+            recommendation.votes
+        }
+    }
+    val approvalCount = effectiveVotes.values.count { it == JamVote.ACCEPT }
+    val rejectionCount = effectiveVotes.values.count { it == JamVote.REJECT }
+    val pendingCount = effectiveVotes.values.count { it == JamVote.PENDING }
+
     val canVote = recommendation.isVoting &&
         !isProposer &&
+        pendingVote == null &&
         recommendation.votes[currentUid] == JamVote.PENDING &&
         nowMs < recommendation.deadlineAtMs
 
-    val statusBadgeText = when (recommendation.status) {
-        "VOTING" -> "%02d:%02d left".format(remainingSec / 60, remainingSec % 60)
-        "APPROVED_PENDING_UPLOAD" -> "Approved · Preparing"
-        "UPLOADING" -> "Sending ${recommendation.uploadProgress}%"
-        "DOWNLOADING" -> "Receiving Audio"
-        "READY" -> "Ready to Add · Queued"
-        "REJECTED" -> "Rejected"
-        "EXPIRED" -> "Expired"
-        "CANCELLED_PERMISSION_DISABLED" -> "Canceled"
-        "FAILED" -> "Transfer Failed"
+    val statusBadgeText = when {
+        pendingVote != null && recommendation.isVoting -> "Submitting vote…"
+        recommendation.status == "VOTING" -> "%02d:%02d left".format(remainingSec / 60, remainingSec % 60)
+        recommendation.status == "APPROVED_PENDING_UPLOAD" -> "Approved · Preparing"
+        recommendation.status == "UPLOADING" -> "Sending ${recommendation.uploadProgress}%"
+        recommendation.status == "DOWNLOADING" -> "Receiving Audio"
+        recommendation.status == "READY" -> "Ready to Add · Queued"
+        recommendation.status == "REJECTED" -> "Rejected"
+        recommendation.status == "EXPIRED" -> "Expired"
+        recommendation.status == "CANCELLED_PERMISSION_DISABLED" -> "Canceled"
+        recommendation.status == "FAILED" -> "Transfer Failed"
         else -> recommendation.status
     }
 
@@ -840,11 +973,11 @@ internal fun RichRecommendationCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (!artworkUri.isNullOrBlank()) {
-                    AsyncImage(
-                        model = artworkUri,
-                        contentDescription = null,
-                        modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp))
+                if (resolvedSong != null) {
+                    AlbumArtView(
+                        song = resolvedSong,
+                        modifier = Modifier.size(54.dp),
+                        cornerRadius = 12
                     )
                 } else {
                     Box(
@@ -884,7 +1017,7 @@ internal fun RichRecommendationCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "${recommendation.approvalCount} accepted · ${recommendation.rejectionCount} rejected · ${recommendation.pendingCount} pending",
+                    text = "$approvalCount accepted · $rejectionCount rejected · $pendingCount pending",
                     color = BentoTextPrimary,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
@@ -929,6 +1062,24 @@ internal fun RichRecommendationCard(
                         Text("Reject", fontWeight = FontWeight.Bold)
                     }
                 }
+            } else if (pendingVote != null && recommendation.isVoting) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BentoPrimary.copy(alpha = 0.14f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = BentoPrimary)
+                    Text(
+                        text = if (pendingVote == JamVote.ACCEPT) "Submitting your approval…" else "Submitting your rejection…",
+                        color = BentoTextPrimary,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             // Proposer auto-approval info banner (never show Accept/Reject to proposer for their own submission)
@@ -963,7 +1114,7 @@ internal fun RichRecommendationCard(
                     val name = participant?.displayName ?: if (uid == currentUid) "You" else "Listener"
                     val isMemberHost = uid == hostUid || participant?.isHost == true
                     val isMemberProposer = uid == recommendation.proposerUid
-                    val vote = if (isMemberProposer) JamVote.ACCEPT else recommendation.votes[uid] ?: JamVote.PENDING
+                    val vote = if (isMemberProposer) JamVote.ACCEPT else effectiveVotes[uid] ?: JamVote.PENDING
                     val badgeLabel = when {
                         isMemberProposer -> "Auto-✓"
                         vote == JamVote.ACCEPT -> "✓ Accepted"
@@ -1151,7 +1302,7 @@ internal fun RichRecommendationCard(
 internal fun EnhancedSharedLibraryMatchRow(
     match: JamSharedLibraryMatch,
     canAddTracks: Boolean,
-    canPlayPause: Boolean,
+    canPlayNow: Boolean,
     canRecommend: Boolean,
     isHost: Boolean,
     onPlayNow: () -> Unit,
@@ -1167,7 +1318,7 @@ internal fun EnhancedSharedLibraryMatchRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(BentoCardPurple.copy(alpha = 0.45f))
-            .clickable {
+            .clickable(enabled = canAddTracks || canRecommend || isHost) {
                 when {
                     canAddTracks -> onAddToQueue()
                     canRecommend -> onRecommend()
@@ -1178,20 +1329,11 @@ internal fun EnhancedSharedLibraryMatchRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        if (!match.song.artworkUri.isNullOrBlank()) {
-            AsyncImage(
-                model = match.song.artworkUri,
-                contentDescription = null,
-                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(10.dp))
-            )
-        } else {
-            Box(
-                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(BentoCardSurface),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.MusicNote, contentDescription = null, tint = BentoPrimary)
-            }
-        }
+        AlbumArtView(
+            song = match.song,
+            modifier = Modifier.size(46.dp),
+            cornerRadius = 10
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = match.song.displayTitle,
@@ -1259,7 +1401,7 @@ internal fun EnhancedSharedLibraryMatchRow(
             }
         }
 
-        // Per-song Action Menu ("⋮") with options matching the user's selected access
+        // Per-song Action Menu ("⋮") with options strictly matching the user's selected access
         if (canAddTracks || canRecommend) {
             Box {
                 IconButton(
@@ -1277,7 +1419,7 @@ internal fun EnhancedSharedLibraryMatchRow(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false }
                 ) {
-                    if (canAddTracks && canPlayPause) {
+                    if (canPlayNow) {
                         DropdownMenuItem(
                             text = { Text("Play Now") },
                             leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = BentoPrimary) },
@@ -1323,13 +1465,14 @@ internal fun EnhancedSharedLibraryMatchRow(
 
 /**
  * Full-screen dialog for "View All Matching Songs" with search, bulk Include All / Shuffle & Include All,
- * and per-song action menus.
+ * and per-song action menus. Uses an opaque solid surface color and dark scrim backdrop so text
+ * never bleeds through when glass/gradient theme is active or off.
  */
 @Composable
 internal fun AllMatchingSongsDialog(
     matches: List<JamSharedLibraryMatch>,
     canAddTracks: Boolean,
-    canPlayPause: Boolean,
+    canPlayNow: Boolean,
     canRecommend: Boolean,
     isHost: Boolean,
     onAddAll: (Boolean) -> Unit,
@@ -1340,6 +1483,7 @@ internal fun AllMatchingSongsDialog(
     onOpenPermissions: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val glass = LocalGlassThemeConfig.current
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val filtered = remember(matches, searchQuery) {
         val q = searchQuery.trim()
@@ -1350,124 +1494,135 @@ internal fun AllMatchingSongsDialog(
                 it.song.displayAlbum.contains(q, ignoreCase = true)
         }
     }
+    val solidDialogSurfaceColor = if (glass.isDark) Color(0xFF14141F) else Color(0xFFF7F7FC)
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.88f),
-            shape = RoundedCornerShape(24.dp),
-            color = BentoScreenBackground,
-            border = BorderStroke(1.dp, BentoCardBorder)
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.72f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            Surface(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.88f)
+                    .clickable(enabled = false) {},
+                shape = RoundedCornerShape(24.dp),
+                color = solidDialogSurfaceColor,
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.dp, BentoCardBorder)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "All Matching Songs (${matches.size})",
-                            color = BentoTextPrimary,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Available on every connected device in this Jam",
-                            color = BentoTextSecondary,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = BentoTextPrimary)
-                    }
-                }
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    label = { Text("Search ${matches.size} matching songs") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary) },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search", tint = BentoTextSecondary)
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (canAddTracks && matches.isNotEmpty()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                onAddAll(false)
-                                onDismiss()
-                            },
-                            modifier = Modifier.weight(1f).height(44.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
-                        ) {
-                            Icon(Icons.Default.PlaylistAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Include All (${matches.size})", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                onAddAll(true)
-                                onDismiss()
-                            },
-                            modifier = Modifier.weight(1f).height(44.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, BentoPrimary)
-                        ) {
-                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Shuffle All", color = BentoPrimary, fontWeight = FontWeight.Bold, maxLines = 1)
-                        }
-                    }
-                }
-
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    itemsIndexed(filtered, key = { _, m -> m.matchKey }) { _, match ->
-                        EnhancedSharedLibraryMatchRow(
-                            match = match,
-                            canAddTracks = canAddTracks,
-                            canPlayPause = canPlayPause,
-                            canRecommend = canRecommend,
-                            isHost = isHost,
-                            onPlayNow = { onPlayNow(match) },
-                            onPlayNext = { onPlayNext(match) },
-                            onAddToQueue = { onAddToQueue(match) },
-                            onRecommend = { onRecommend(match) },
-                            onOpenPermissions = onOpenPermissions
-                        )
-                    }
-                    if (filtered.isEmpty()) {
-                        item {
+                        Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "No matching songs fit \"$searchQuery\".",
-                                color = BentoTextSecondary,
-                                modifier = Modifier.padding(vertical = 24.dp)
+                                text = "All Matching Songs (${matches.size})",
+                                color = BentoTextPrimary,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
                             )
+                            Text(
+                                text = "Available on every connected device in this Jam",
+                                color = BentoTextSecondary,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = BentoTextPrimary)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Search ${matches.size} matching songs") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear search", tint = BentoTextSecondary)
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (canAddTracks && matches.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    onAddAll(false)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                            ) {
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Include All (${matches.size})", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    onAddAll(true)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, BentoPrimary)
+                            ) {
+                                Icon(Icons.Default.Shuffle, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Shuffle All", color = BentoPrimary, fontWeight = FontWeight.Bold, maxLines = 1)
+                            }
+                        }
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(filtered, key = { _, m -> m.matchKey }) { _, match ->
+                            EnhancedSharedLibraryMatchRow(
+                                match = match,
+                                canAddTracks = canAddTracks,
+                                canPlayNow = canPlayNow,
+                                canRecommend = canRecommend,
+                                isHost = isHost,
+                                onPlayNow = { onPlayNow(match) },
+                                onPlayNext = { onPlayNext(match) },
+                                onAddToQueue = { onAddToQueue(match) },
+                                onRecommend = { onRecommend(match) },
+                                onOpenPermissions = onOpenPermissions
+                            )
+                        }
+                        if (filtered.isEmpty()) {
+                            item {
+                                Text(
+                                    text = "No matching songs fit \"$searchQuery\".",
+                                    color = BentoTextSecondary,
+                                    modifier = Modifier.padding(vertical = 24.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1478,18 +1633,20 @@ internal fun AllMatchingSongsDialog(
 
 /**
  * Redesigned Queue Row (Reference Image 5 Panel 6: Shared Queue & Playback) that displays
- * track index / live playing indicator, album art thumbnail, full readable title & artist,
- * duration, play-on-tap, and a compact "⋮" menu so titles are never crushed.
+ * track index / live playing indicator, album art thumbnail via AlbumArtView, full readable title & artist,
+ * duration, permission-gated play-on-tap, drag handle for auto-scrolling reorder, and a compact "⋮" menu.
  */
 @Composable
 internal fun RedesignedQueueRow(
     index: Int,
     item: JamQueueItem,
-    artworkUri: String?,
+    resolvedSong: Song?,
     isCurrent: Boolean,
+    isDragging: Boolean = false,
     canPlay: Boolean,
     canManage: Boolean,
     canRecommend: Boolean,
+    dragHandleModifier: Modifier? = null,
     onPlayNow: () -> Unit,
     onRecommend: () -> Unit,
     onRemove: () -> Unit,
@@ -1504,9 +1661,15 @@ internal fun RedesignedQueueRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(if (isCurrent) BentoPrimary.copy(alpha = 0.16f) else BentoCardPurple.copy(alpha = 0.4f))
+            .background(
+                when {
+                    isDragging -> BentoPrimary.copy(alpha = 0.24f)
+                    isCurrent -> BentoPrimary.copy(alpha = 0.16f)
+                    else -> BentoCardPurple.copy(alpha = 0.4f)
+                }
+            )
             .then(
-                if (isCurrent) Modifier.border(1.dp, BentoPrimary.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+                if (isCurrent || isDragging) Modifier.border(1.dp, BentoPrimary.copy(alpha = 0.65f), RoundedCornerShape(16.dp))
                 else Modifier
             )
             .clickable(enabled = canPlay) { onPlayNow() }
@@ -1536,12 +1699,12 @@ internal fun RedesignedQueueRow(
             }
         }
 
-        // Artwork thumbnail
-        if (!artworkUri.isNullOrBlank()) {
-            AsyncImage(
-                model = artworkUri,
-                contentDescription = null,
-                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))
+        // Artwork thumbnail via AlbumArtView (extracts embedded cover art for local MP3s/M4As)
+        if (resolvedSong != null) {
+            AlbumArtView(
+                song = resolvedSong,
+                modifier = Modifier.size(44.dp),
+                cornerRadius = 10
             )
         } else {
             Box(
@@ -1574,6 +1737,24 @@ internal fun RedesignedQueueRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+
+        // Drag handle for auto-scroll queue reordering when user has MANAGE_QUEUE permission
+        if (canManage && dragHandleModifier != null) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .then(dragHandleModifier)
+                    .testTag("queue_drag_handle_${item.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DragHandle,
+                    contentDescription = "Drag to reorder ${item.track.title}",
+                    tint = if (isDragging) BentoPrimary else BentoTextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         // Compact More Options menu ("⋮") so title/artist always have generous horizontal room
@@ -1650,19 +1831,45 @@ internal fun RedesignedQueueRow(
     }
 }
 
-internal fun resolveTrackArtwork(
-    sharedTrackId: String,
-    title: String,
-    artist: String,
+internal fun resolveSongForTrack(
+    track: JamTrack,
     sharedLibraryMatches: List<JamSharedLibraryMatch>,
     songs: List<Song>
-): String? {
-    return sharedLibraryMatches.firstOrNull { it.matchKey == sharedTrackId }?.song?.artworkUri
-        ?: songs.firstOrNull {
-            it.displayTitle.equals(title, ignoreCase = true) &&
-                it.displayArtist.equals(artist, ignoreCase = true)
-        }?.artworkUri
+): Song? {
+    sharedLibraryMatches.firstOrNull { it.matchKey == track.sharedTrackId }?.song?.let { return it }
+    if (!track.checksum.isNullOrBlank()) {
+        val trackPrefix = track.sharedTrackId.take(24)
+        val checksumPrefix = track.checksum.take(16)
+        songs.firstOrNull { song ->
+            song.path.contains(trackPrefix) && song.path.contains(checksumPrefix)
+        }?.let { return it }
+    }
+    val cleanedTrackTitle = normalizeArtworkMatchTitle(TagCleaner.cleanTitle(track.title, "").ifBlank { track.title })
+    val cleanedTrackArtist = normalizeArtworkMatchArtist(TagCleaner.cleanArtist(track.artist).ifBlank { track.artist })
+    songs.firstOrNull { song ->
+        val localTitle = normalizeArtworkMatchTitle(TagCleaner.cleanTitle(song.displayTitle, "").ifBlank { song.displayTitle })
+        val localArtist = normalizeArtworkMatchArtist(TagCleaner.cleanArtist(song.displayArtist).ifBlank { song.displayArtist })
+        localTitle.isNotBlank() && localTitle == cleanedTrackTitle &&
+            (localArtist == cleanedTrackArtist || cleanedTrackArtist.isBlank() || localArtist.contains(cleanedTrackArtist) || cleanedTrackArtist.contains(localArtist))
+    }?.let { return it }
+    return songs.firstOrNull { song ->
+        val localTitle = normalizeArtworkMatchTitle(song.displayTitle)
+        localTitle.isNotBlank() && localTitle == cleanedTrackTitle &&
+            kotlin.math.abs(song.durationMs - track.durationMs) <= 6_000L
+    }
 }
+
+private fun normalizeArtworkMatchTitle(value: String): String = value.lowercase()
+    .replace(Regex("\\.(mp3|m4a|mp4|aac|flac|ogg|wav)$"), " ")
+    .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+    .trim()
+    .split(Regex("\\s+"))
+    .dropLastWhile { it in setOf("audio", "video", "song", "lyrics", "lyric", "official", "tamil", "telugu", "malayalam", "hindi", "mp3", "mp4") }
+    .joinToString(" ")
+
+private fun normalizeArtworkMatchArtist(value: String): String = value.lowercase()
+    .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+    .trim()
 
 internal fun formatDurationMmSs(durationMs: Long): String {
     val totalSeconds = (durationMs / 1000L).coerceAtLeast(0L)

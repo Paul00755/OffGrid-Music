@@ -212,9 +212,58 @@ fun HomeScreen(
     val topArtistsFlow = remember(filterStartTimeMs) { getTopArtistsSince(filterStartTimeMs, 8) }
     val topAlbumsFlow = remember(filterStartTimeMs) { getTopAlbumsSince(filterStartTimeMs, 8) }
 
-    val mostPlayedFilteredSongs by mostPlayedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-    val topArtists by topArtistsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-    val topAlbums by topAlbumsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawMostPlayedFilteredSongs by mostPlayedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawTopArtists by topArtistsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val rawTopAlbums by topAlbumsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val mostPlayedFilteredSongs = remember(rawMostPlayedFilteredSongs, allSongs, selectedMostPlayedFilter) {
+        if (rawMostPlayedFilteredSongs.isNotEmpty()) {
+            rawMostPlayedFilteredSongs
+        } else if (selectedMostPlayedFilter == MostPlayedFilter.ALL_TIME) {
+            allSongs.filter { it.playCount > 0 }.sortedByDescending { it.playCount }.take(10)
+        } else {
+            emptyList()
+        }
+    }
+
+    val topArtists = remember(rawTopArtists, allSongs) {
+        if (rawTopArtists.isNotEmpty()) {
+            rawTopArtists
+        } else {
+            allSongs
+                .filter { it.displayArtist.isNotBlank() && !it.displayArtist.equals("Unknown Artist", ignoreCase = true) }
+                .groupBy { it.displayArtist.trim() }
+                .map { (artistName, songs) ->
+                    ArtistStat(
+                        name = artistName,
+                        playCount = songs.sumOf { it.playCount },
+                        totalDurationMs = songs.sumOf { it.durationMs }
+                    )
+                }
+                .sortedWith(compareByDescending<ArtistStat> { it.playCount }.thenByDescending { it.totalDurationMs })
+                .take(8)
+        }
+    }
+
+    val topAlbums = remember(rawTopAlbums, allSongs) {
+        if (rawTopAlbums.isNotEmpty()) {
+            rawTopAlbums
+        } else {
+            allSongs
+                .filter { it.displayAlbum.isNotBlank() && !it.displayAlbum.equals("Unknown Album", ignoreCase = true) }
+                .groupBy { it.displayAlbum.trim() }
+                .map { (albumName, songs) ->
+                    AlbumStat(
+                        name = albumName,
+                        artist = songs.first().displayArtist,
+                        playCount = songs.sumOf { it.playCount },
+                        artworkUri = songs.firstOrNull { !it.artworkUri.isNullOrBlank() }?.artworkUri
+                    )
+                }
+                .sortedWith(compareByDescending<AlbumStat> { it.playCount }.thenBy { it.name })
+                .take(8)
+        }
+    }
 
     // Current/Last Song for "Continue Listening"
     val continueSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
@@ -250,7 +299,10 @@ fun HomeScreen(
             addAll(recentlyPlayed.take(12))
             addAll(recentlyAdded.take(12))
             topAlbums.take(8).forEach { album ->
-                if (!album.artworkUri.isNullOrBlank()) {
+                val matchingSong = allSongs.firstOrNull { it.displayAlbum.equals(album.name, ignoreCase = true) }
+                if (matchingSong != null) {
+                    add(matchingSong)
+                } else if (!album.artworkUri.isNullOrBlank()) {
                     val syntheticAlbumSongId = (album.name.hashCode().toLong() and 0x7FFFFFFFL) + 10_000_000_000L
                     add(
                         Song(
@@ -331,6 +383,7 @@ fun HomeScreen(
                             translationX = 0f
                         }
                     }
+                    .statusBarsPadding()
                     .verticalScroll(rememberScrollState())
                     .navigationBarsPadding()
             ) {

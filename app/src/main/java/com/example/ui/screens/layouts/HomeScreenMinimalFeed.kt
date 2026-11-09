@@ -86,15 +86,6 @@ fun HomeScreenMinimalFeed(
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
     val listState = rememberLazyListState()
 
-    // Deduplicate continue_listening because Minimal Stream includes the sleek capsule stream bar
-    val effectiveSections = remember(homeSections, currentSong) {
-        if (currentSong != null) {
-            homeSections.filterNot { it.equals("continue_listening", ignoreCase = true) }
-        } else {
-            homeSections
-        }
-    }
-
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -182,143 +173,13 @@ fun HomeScreenMinimalFeed(
                         }
                     }
 
-                    // Frameless Hairline Editorial Navigation Strip
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        item(key = "min_chip_lib") {
-                            MinimalEditorialNavTab(label = "LIBRARY", count = allSongs.size, onClick = onOpenLibrary)
-                        }
-                        item(key = "min_chip_fav") {
-                            MinimalEditorialNavTab(label = "FAVORITES", count = favoriteSongs.size, onClick = onOpenFavorites)
-                        }
-                        item(key = "min_chip_pl") {
-                            MinimalEditorialNavTab(label = "PLAYLISTS", count = allPlaylists.size, onClick = onOpenPlaylists)
-                        }
-                        item(key = "min_chip_rec") {
-                            MinimalEditorialNavTab(label = "HISTORY", count = null, onClick = onOpenRecentlyPlayed)
-                        }
-                        item(key = "min_chip_stats") {
-                            MinimalEditorialNavTab(label = "ANALYTICS", count = null, onClick = onOpenStatsDetail)
-                        }
-                    }
-
                     HorizontalDivider(thickness = 0.5.dp, color = BentoBorder.copy(alpha = 0.5f))
                 }
             }
 
-            // 2. Sleek Floating Capsule Stream Pill (Round 50% Capsule, Non-Boxy!)
-            if (currentSong != null) {
-                item(key = "minimal_now_playing_${currentSong.id}", contentType = "now_playing_strip") {
-                    val isCurrentActive = playbackState.currentSong?.id == currentSong.id
-                    val isFav = favoriteSongs.any { it.id == currentSong.id }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = BentoCardSurface.copy(alpha = 0.65f),
-                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpenNowPlaying() }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                AlbumArtView(
-                                    song = currentSong,
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(CircleShape),
-                                    cornerRadius = 50
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (isCurrentActive && playbackState.isPlaying) "STREAMING NOW" else "ON DECK",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = BentoPrimary,
-                                        letterSpacing = 1.2.sp
-                                    )
-                                    Text(
-                                        text = currentSong.displayTitle,
-                                        fontSize = 14.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = BentoTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = currentSong.displayArtist,
-                                        fontSize = 11.5.sp,
-                                        color = BentoTextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        onFavoriteToggle(currentSong)
-                                    },
-                                    modifier = Modifier.size(34.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                        contentDescription = "Favorite",
-                                        tint = if (isFav) BentoAccentPinkText else BentoTextSecondary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = {
-                                        HapticUtils.performClickHaptic(context)
-                                        if (isCurrentActive) {
-                                            onTogglePlayPause()
-                                        } else {
-                                            onSongClick(currentSong)
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .size(42.dp)
-                                        .clip(CircleShape)
-                                        .background(BentoPrimary)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isCurrentActive && playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play",
-                                        tint = BentoOnPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        if (isCurrentActive && playbackState.durationMs > 0) {
-                            com.example.ui.components.RealtimeTrackProgressBar(
-                                playbackPositionFlow = playbackPositionFlow,
-                                isActive = true,
-                                durationMs = playbackState.durationMs,
-                                height = 2.dp,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 18.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 3. Authoritative Dynamic Home Sections with Frameless Minimal Stream Styling
+            // 2. Authoritative Dynamic Home Sections with Frameless Minimal Stream Styling
             renderHomeFeedSections(
-                homeSections = effectiveSections,
+                homeSections = homeSections,
                 speedDialSongs = speedDialSongs,
                 continueSong = currentSong,
                 playbackState = playbackState,
