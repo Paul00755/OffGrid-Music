@@ -1005,6 +1005,7 @@ class MainActivity : ComponentActivity() {
                                     transcribeLyricsPreview = viewModel.transcribeLyricsPreview.collectAsState().value,
                                     onSaveTranscribedLyrics = { preview -> viewModel.saveTranscribedLyrics(preview) },
                                     onDiscardTranscribedLyrics = { viewModel.discardTranscribedLyrics() },
+                                    onRetranscribedLyrics = { preview -> viewModel.retranscribeLyrics(preview) },
                                     onTranslateLyrics = { song, lang -> viewModel.translateLyricsForSong(song, lang) },
                                     onTranscribeAudio = { song, lang -> viewModel.transcribeAudioForSong(song, lang) },
                                     onUndoLyricsChanges = { songId -> viewModel.undoLyricsChanges(songId) },

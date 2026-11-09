@@ -966,7 +966,7 @@ private fun ActivePage(
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             coroutineScope.launch {
-                runCatching { withContext(Dispatchers.IO) { readLocalAudioMetadata(context.contentResolver, uri) } }
+                runCatching { withContext(Dispatchers.IO) { readLocalAudioMetadata(context.contentResolver, uri, context.cacheDir) } }
                     .onSuccess { selected ->
                         if (queue.any { it.track.sharedTrackId == selected.track.sharedTrackId }) {
                             localFileError = "This song is already in the Jam shared library."
@@ -2360,32 +2360,50 @@ private data class LocalAudioSelection(
     val artwork: androidx.compose.ui.graphics.ImageBitmap?
 )
 
-private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAudioSelection {
-    val details = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-            (if (nameIndex >= 0) cursor.getString(nameIndex) else null) to (if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L)
-        } else null
-    }
+private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri, cacheDir: java.io.File): LocalAudioSelection {
+    val details = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                (if (nameIndex >= 0) cursor.getString(nameIndex) else null) to (if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L)
+            } else null
+        }
+    }.getOrNull()
     val displayName = details?.first.orEmpty()
-    var size = details?.second ?: -1L
-    if (size <= 0L) {
-        size = 0L
+
+    val stagingDir = java.io.File(cacheDir, "jam_staged_uploads").apply { mkdirs() }
+    val cutoffMs = System.currentTimeMillis() - 30 * 60_000L
+    stagingDir.listFiles()?.forEach { f ->
+        if (f.isFile && f.lastModified() < cutoffMs) runCatching { f.delete() }
+    }
+    val stagedFile = java.io.File(stagingDir, "jam_doc_${System.currentTimeMillis()}.part")
+    var size = 0L
+    try {
         resolver.openInputStream(uri)?.use { stream ->
-            val buffer = ByteArray(8192)
-            while (true) {
-                val count = stream.read(buffer)
-                if (count < 0) break
-                size += count
-                if (size > MAX_JAM_AUDIO_BYTES) throw IllegalArgumentException("Audio files must be 25 MB or smaller.")
+            stagedFile.outputStream().use { output ->
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    size += count
+                    if (size > MAX_JAM_AUDIO_BYTES) {
+                        throw IllegalArgumentException("Audio files must be 25 MB or smaller.")
+                    }
+                    output.write(buffer, 0, count)
+                }
             }
         } ?: throw IllegalArgumentException("This file couldn't be opened.")
+    } catch (e: Throwable) {
+        stagedFile.delete()
+        if (e is IllegalArgumentException) throw e
+        throw IllegalArgumentException("This file couldn't be opened.")
     }
-    if (size !in 4..MAX_JAM_AUDIO_BYTES) throw IllegalArgumentException("Audio files must be between 4 bytes and 25 MB.")
-    resolver.openInputStream(uri)?.use { input ->
-        if (input.read() < 0) throw IllegalArgumentException("This file is empty or unreadable.")
-    } ?: throw IllegalArgumentException("This file couldn't be opened.")
+
+    if (size !in 4..MAX_JAM_AUDIO_BYTES || !stagedFile.isFile) {
+        stagedFile.delete()
+        throw IllegalArgumentException("Audio files must be between 4 bytes and 25 MB.")
+    }
     val extensionMime = when (displayName.substringAfterLast('.', "").lowercase()) {
         "mp3" -> "audio/mpeg"
         "m4a", "mp4" -> "audio/mp4"
@@ -2395,16 +2413,15 @@ private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAu
         "wav" -> "audio/wav"
         else -> null
     }
-    val detectedMimeType = resolver.getType(uri)?.lowercase()?.takeIf(String::isNotBlank)
+    val detectedMimeType = runCatching { resolver.getType(uri)?.lowercase()?.takeIf(String::isNotBlank) }.getOrNull()
     if (detectedMimeType != null && detectedMimeType !in ALLOWED_JAM_AUDIO_MIMES) {
+        stagedFile.delete()
         throw IllegalArgumentException("Only audio files are supported. Choose an MP3, M4A, AAC, FLAC, OGG, or WAV file.")
     }
-    val mimeType = detectedMimeType ?: extensionMime
-        ?: throw IllegalArgumentException("Choose an MP3, M4A, AAC, FLAC, OGG, or WAV file.")
+    val mimeType = detectedMimeType ?: extensionMime ?: "audio/mpeg"
     val retriever = MediaMetadataRetriever()
     try {
-        resolver.openFileDescriptor(uri, "r")?.use { descriptor -> retriever.setDataSource(descriptor.fileDescriptor) }
-            ?: throw IllegalArgumentException("This file couldn't be opened.")
+        retriever.setDataSource(stagedFile.absolutePath)
         val rawTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.trim().orEmpty()
         val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.trim().orEmpty()
         val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.trim().orEmpty()
@@ -2416,22 +2433,37 @@ private fun readLocalAudioMetadata(resolver: ContentResolver, uri: Uri): LocalAu
         val title = rawTitle.ifBlank { fallbackTitle }.ifBlank { "Shared Audio Track" }
         val artist = rawArtist.ifBlank { "Unknown Artist" }
         if (duration <= 0L) {
+            stagedFile.delete()
             throw IllegalArgumentException("This audio file needs a valid readable duration.")
         }
-        val artwork = retriever.embeddedPicture?.let { bytes ->
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-        }
+        val artwork = runCatching {
+            retriever.embeddedPicture?.let { bytes ->
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sampleSize = 1
+                while (bounds.outWidth / sampleSize > 256 || bounds.outHeight / sampleSize > 256) {
+                    sampleSize *= 2
+                }
+                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)?.asImageBitmap()
+            }
+        }.getOrNull()
         val candidate = com.example.jam.JamTrack("", title.take(180), artist.take(180), album.take(180), duration)
         return LocalAudioSelection(
-            uri = uri,
+            uri = Uri.fromFile(stagedFile),
             track = candidate.copy(sharedTrackId = com.example.jam.sharedTrackId(candidate)),
             mimeType = mimeType,
             sizeBytes = size,
             artwork = artwork
         )
     } catch (error: IllegalArgumentException) {
+        stagedFile.delete()
         throw error
     } catch (_: Throwable) {
+        stagedFile.delete()
         throw IllegalArgumentException("This audio file is unreadable or corrupted.")
     } finally {
         runCatching { retriever.release() }

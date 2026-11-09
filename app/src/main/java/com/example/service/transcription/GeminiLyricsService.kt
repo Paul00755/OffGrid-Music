@@ -96,7 +96,8 @@ class GeminiLyricsService(
     suspend fun translateLyrics(
         existingLrc: String,
         targetLanguage: TranscribeLanguage,
-        apiKey: String
+        apiKey: String,
+        previousAttempt: String? = null
     ): Result<Pair<String, String?>> = withContext(Dispatchers.IO) {
         val cleanKey = apiKey.trim()
         if (cleanKey.isBlank()) {
@@ -109,7 +110,7 @@ class GeminiLyricsService(
             return@withContext Result.failure(IllegalArgumentException("Source lyrics are empty."))
         }
 
-        val prompt = buildTranslationPrompt(existingLrc, targetLanguage)
+        val prompt = buildTranslationPrompt(existingLrc, targetLanguage, previousAttempt)
         var lastError: Exception? = null
 
         for (model in TRANSLATE_MODELS) {
@@ -148,7 +149,8 @@ class GeminiLyricsService(
         audioFile: File,
         song: Song?,
         targetLanguage: TranscribeLanguage,
-        apiKey: String
+        apiKey: String,
+        previousAttempt: String? = null
     ): Result<Pair<String, String?>> = withContext(Dispatchers.IO) {
         val cleanKey = apiKey.trim()
         if (cleanKey.isBlank()) {
@@ -172,7 +174,7 @@ class GeminiLyricsService(
             )
         }
 
-        val prompt = buildTranscriptionPrompt(song, targetLanguage)
+        val prompt = buildTranscriptionPrompt(song, targetLanguage, previousAttempt)
         var lastError: Exception? = null
 
         for (model in TRANSCRIBE_MODELS) {
@@ -199,7 +201,22 @@ class GeminiLyricsService(
         Result.failure(lastError ?: IllegalStateException("Audio transcription returned an empty result."))
     }
 
-    private fun buildTranslationPrompt(lrcText: String, targetLanguage: TranscribeLanguage): String {
+    private fun buildTranslationPrompt(
+        lrcText: String,
+        targetLanguage: TranscribeLanguage,
+        previousAttempt: String? = null
+    ): String {
+        val correctionBlock = if (!previousAttempt.isNullOrBlank()) {
+            """
+
+RE-TRANSCRIBE / CORRECTION MODE:
+The user requested a re-transcription/re-translation with corrections because the previous draft had inaccuracies.
+Carefully review the Previous Draft below against the Input Lyrics, fix any awkward phrasing, mistranslated words, script errors, or missed Tanglish/multilingual nuances, while strictly keeping every [mm:ss.xx] timestamp intact:
+Previous Draft to Improve:
+${previousAttempt.take(8000)}
+"""
+        } else ""
+
         return """
 You are an expert multilingual music lyricist and translator.
 Translate the following synchronized lyrics into ${targetLanguage.englishName} (${targetLanguage.nativeName}).
@@ -212,19 +229,34 @@ CRITICAL REQUIREMENTS:
 5. If destination is English, translate non-English lyrics into natural English poetic lyric lines while preserving timestamps.
 6. Preserve non-vocal audio markers such as ♪ and 🎼. Use ♪ or 🎼 with a timestamp for clearly audible instrumental or melodic passages that have no sung words; do not add markers where vocals are present or invent musical breaks.
 7. Use natural punctuation that matches the sung phrasing and emotion, including commas, periods, apostrophes, question marks, exclamation marks, and ellipses when appropriate. Do not change, omit, or embellish the words to force punctuation.
-8. Return ONLY the raw LRC text lines. Do NOT include markdown code blocks (no ```lrc or ```), no intro, and no explanations.
+8. Return ONLY the raw LRC text lines. Do NOT include markdown code blocks (no ```lrc or ```), no intro, and no explanations.$correctionBlock
 
 Input Lyrics:
 $lrcText
 """.trimIndent()
     }
 
-    private fun buildTranscriptionPrompt(song: Song?, targetLanguage: TranscribeLanguage): String {
+    private fun buildTranscriptionPrompt(
+        song: Song?,
+        targetLanguage: TranscribeLanguage,
+        previousAttempt: String? = null
+    ): String {
         val songContext = if (song != null) {
             "Track: \"${song.displayTitle}\" by \"${song.displayArtist}\""
         } else {
             "Audio Recording"
         }
+
+        val correctionBlock = if (!previousAttempt.isNullOrBlank()) {
+            """
+
+RE-TRANSCRIBE WITH CORRECTIONS:
+The user requested a fresh re-transcription to fix errors in the previous attempt.
+Listen closely to the audio again and compare it with the Previous Attempt below. Correct any misheard words, spelling/script mistakes, missing vocal lines, or inaccurate [mm:ss.xx] timestamps so the lyrics and timing are significantly more accurate:
+Previous Attempt to Correct:
+${previousAttempt.take(8000)}
+"""
+        } else ""
 
         return """
 You are an expert audio transcription system specialized in music vocals and lyrics synchronization.
@@ -238,7 +270,7 @@ CRITICAL REQUIREMENTS:
 5. Do NOT guess timestamps using arbitrary fixed intervals; synchronize with the actual sung vocal phrases.
 6. Preserve clearly audible instrumental or melodic passages with a timestamp and ♪ or 🎼. Do not insert music markers over sung vocals or invent instrumental breaks.
 7. Use natural punctuation matching the sung phrasing and emotion (commas, periods, apostrophes, question marks, exclamation marks, or ellipses when appropriate) without changing or embellishing the words.
-8. Return ONLY the standard LRC formatted lyrics lines. Do NOT include markdown wrappers (no ```lrc), explanations, or notes.
+8. Return ONLY the standard LRC formatted lyrics lines. Do NOT include markdown wrappers (no ```lrc), explanations, or notes.$correctionBlock
 """.trimIndent()
     }
 

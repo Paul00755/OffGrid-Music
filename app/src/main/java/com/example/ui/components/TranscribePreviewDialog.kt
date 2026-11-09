@@ -38,7 +38,8 @@ import com.example.util.LrcParser
 fun TranscribePreviewDialog(
     preview: TranscribeLyricsPreview,
     onSave: (TranscribeLyricsPreview) -> Unit,
-    onDiscard: () -> Unit
+    onDiscard: () -> Unit,
+    onRetranscribe: ((TranscribeLyricsPreview) -> Unit)? = null
 ) {
     val isTranslate = preview.mode == AudioTranscribeMode.TRANSLATE
 
@@ -324,7 +325,32 @@ fun TranscribePreviewDialog(
                     lineHeight = 14.sp
                 )
 
-                // Actions: Save or Discard/Undo
+                // Actions: Discard/Undo, Re-transcribe, and Save
+                if (onRetranscribe != null) {
+                    OutlinedButton(
+                        onClick = {
+                            val (parsedPlain, parsedSynced) = LrcParser.parseLrcContent(editableLyrics)
+                            val currentPreview = preview.copy(
+                                plainLyrics = parsedPlain ?: editableLyrics.trim(),
+                                syncedLyricsJson = parsedSynced ?: if (editableLyrics.contains("[")) preview.syncedLyricsJson else null
+                            )
+                            onRetranscribe(currentPreview)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isTranslate) "Re-translate with Corrections" else "Re-transcribe with Corrections",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)

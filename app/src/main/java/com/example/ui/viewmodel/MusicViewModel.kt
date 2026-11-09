@@ -2693,6 +2693,141 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _transcribeLyricsPreview.value = null
     }
 
+    /**
+     * Re-runs the transcription or translation process for the previewed song,
+     * invalidating the local cache and passing the previous attempt to Gemini so
+     * misheard words, script mistakes, or timing drifts are corrected.
+     */
+    fun retranscribeLyrics(preview: com.example.service.transcription.TranscribeLyricsPreview) = viewModelScope.launch(Dispatchers.IO) {
+        if (_isTranscribingLyrics.value) return@launch
+
+        val previousDraft = if (!preview.syncedLyricsJson.isNullOrBlank()) {
+            com.example.util.LrcParser.formatSyncedJsonToLrc(preview.syncedLyricsJson) ?: preview.plainLyrics
+        } else {
+            preview.plainLyrics
+        }
+
+        val current = _currentLyrics.value
+        val sourceHash = if (preview.mode == AudioTranscribeMode.TRANSLATE && current != null) {
+            LyricsTranslationCache.computeSourceLyricsHash(current.plainLyrics, current.syncedLyricsJson)
+        } else null
+
+        LyricsTranslationCache.invalidate(
+            context = getApplication(),
+            songId = preview.song.id,
+            mode = preview.mode,
+            targetLang = preview.targetLanguage,
+            sourceLyricsHash = sourceHash
+        )
+
+        val apiKey = secureApiKeyStore.getApiKey()
+        if (apiKey.isNullOrBlank()) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                preferences.setTranscribeTranslateEnabled(false)
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        withContext(Dispatchers.Main) {
+            _transcribeLyricsPreview.value = null
+            _isTranscribingLyrics.value = true
+            _transcribeStatusMessage.value = if (preview.mode == AudioTranscribeMode.TRANSLATE) {
+                "Re-translating & refining lyrics (${preview.targetLanguage.englishName})..."
+            } else {
+                "Re-transcribing vocals with corrections..."
+            }
+            _transcribeErrorMessage.value = null
+        }
+
+        try {
+            val result = if (preview.mode == AudioTranscribeMode.TRANSLATE) {
+                val inputLrc = if (current != null && !current.syncedLyricsJson.isNullOrBlank()) {
+                    com.example.util.LrcParser.formatSyncedJsonToLrc(current.syncedLyricsJson) ?: (current.plainLyrics ?: previousDraft)
+                } else {
+                    current?.plainLyrics?.takeIf(String::isNotBlank) ?: previousDraft
+                }
+                geminiLyricsService.translateLyrics(
+                    existingLrc = inputLrc,
+                    targetLanguage = preview.targetLanguage,
+                    apiKey = apiKey,
+                    previousAttempt = previousDraft
+                )
+            } else {
+                val targetFile = File(preview.song.path)
+                if (!targetFile.exists() || targetFile.length() == 0L) {
+                    withContext(Dispatchers.Main) {
+                        _transcribeErrorMessage.value = "Audio file not accessible: ${preview.song.displayTitle}"
+                        _isTranscribingLyrics.value = false
+                        _transcribeStatusMessage.value = null
+                    }
+                    return@launch
+                }
+                geminiLyricsService.transcribeAudio(
+                    audioFile = targetFile,
+                    song = preview.song,
+                    targetLanguage = preview.targetLanguage,
+                    apiKey = apiKey,
+                    previousAttempt = previousDraft
+                )
+            }
+
+            if (result.isFailure) {
+                val ex = result.exceptionOrNull()
+                val err = when (ex) {
+                    is SecurityException -> {
+                        preferences.setTranscribeTranslateEnabled(false)
+                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                    }
+                    is java.io.IOException -> "Network error connecting to Gemini API. Please check your internet connection."
+                    else -> ex?.message ?: "Re-transcription failed."
+                }
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = err
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            val (plainResult, syncedJsonResult) = result.getOrThrow()
+            LyricsTranslationCache.put(
+                context = getApplication(),
+                songId = preview.song.id,
+                mode = preview.mode,
+                targetLang = preview.targetLanguage,
+                sourceLyricsHash = sourceHash,
+                plainLyrics = plainResult,
+                syncedLyricsJson = syncedJsonResult
+            )
+
+            withContext(Dispatchers.Main) {
+                _transcribeLyricsPreview.value = com.example.service.transcription.TranscribeLyricsPreview(
+                    song = preview.song,
+                    mode = preview.mode,
+                    targetLanguage = preview.targetLanguage,
+                    plainLyrics = plainResult,
+                    syncedLyricsJson = syncedJsonResult,
+                    source = if (preview.mode == AudioTranscribeMode.TRANSLATE) {
+                        "Translated (${preview.targetLanguage.englishName})"
+                    } else {
+                        "Transcribed (${preview.targetLanguage.englishName})"
+                    }
+                )
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = e.message ?: "Re-transcription error occurred"
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+        }
+    }
+
     fun undoLyricsChanges(songId: Long) = viewModelScope.launch(Dispatchers.IO) {
         if (!previousLyricsHistory.containsKey(songId)) return@launch
         val previous = previousLyricsHistory.remove(songId)

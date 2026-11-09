@@ -126,6 +126,7 @@ fun NowPlayingScreen(
     transcribeLyricsPreview: TranscribeLyricsPreview? = null,
     onSaveTranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
     onDiscardTranscribedLyrics: () -> Unit = {},
+    onRetranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
     onTranslateLyrics: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
     onTranscribeAudio: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
     onUndoLyricsChanges: (Long) -> Unit = {},
@@ -920,6 +921,7 @@ fun NowPlayingScreen(
                         transcribeLyricsPreview = transcribeLyricsPreview,
                         onSaveTranscribedLyrics = onSaveTranscribedLyrics,
                         onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                        onRetranscribedLyrics = onRetranscribedLyrics,
                         onTranslateLyrics = onTranslateLyrics,
                         onTranscribeAudio = onTranscribeAudio,
                         onUndoLyricsChanges = onUndoLyricsChanges,
@@ -1620,6 +1622,7 @@ fun NowPlayingScreen(
                 transcribeLyricsPreview = transcribeLyricsPreview,
                 onSaveTranscribedLyrics = onSaveTranscribedLyrics,
                 onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                onRetranscribedLyrics = onRetranscribedLyrics,
                 onTranslateLyrics = onTranslateLyrics,
                 onTranscribeAudio = onTranscribeAudio,
                 onUndoLyricsChanges = onUndoLyricsChanges,
@@ -1724,7 +1727,8 @@ fun NowPlayingScreen(
             TranscribePreviewDialog(
                 preview = transcribeLyricsPreview,
                 onSave = { editedPreview -> onSaveTranscribedLyrics(editedPreview) },
-                onDiscard = onDiscardTranscribedLyrics
+                onDiscard = onDiscardTranscribedLyrics,
+                onRetranscribe = { currentPreview -> onRetranscribedLyrics(currentPreview) }
             )
         }
     }
@@ -1782,6 +1786,7 @@ private fun LyricsPanelContent(
     transcribeLyricsPreview: TranscribeLyricsPreview? = null,
     onSaveTranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
     onDiscardTranscribedLyrics: () -> Unit = {},
+    onRetranscribedLyrics: (TranscribeLyricsPreview) -> Unit = {},
     onTranslateLyrics: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
     onTranscribeAudio: (Song, TranscribeLanguage) -> Unit = { _, _ -> },
     onUndoLyricsChanges: (Long) -> Unit = {},
@@ -2490,7 +2495,8 @@ private fun LyricsPanelContent(
             TranscribePreviewDialog(
                 preview = transcribeLyricsPreview,
                 onSave = { editedPreview -> onSaveTranscribedLyrics(editedPreview) },
-                onDiscard = onDiscardTranscribedLyrics
+                onDiscard = onDiscardTranscribedLyrics,
+                onRetranscribe = { currentPreview -> onRetranscribedLyrics(currentPreview) }
             )
         }
 

@@ -118,26 +118,75 @@ internal fun prepareInAppSongForLocalShare(
         "This song is unavailable or corrupted."
     }
 
-    val directFile = song.path.takeIf(String::isNotBlank)?.let(::File)
-    val canReadDirectFile = directFile != null && directFile.isFile && directFile.canRead() && directFile.length() > 0L
-
     val contentUri = song.contentUriString.takeIf(String::isNotBlank)?.let(Uri::parse)
-    val resolvedUri: Uri
-    val resolvedSize: Long
+    val directFile = song.path.takeIf(String::isNotBlank)?.let(::File)
 
-    if (canReadDirectFile && directFile != null) {
-        resolvedUri = Uri.fromFile(directFile)
-        resolvedSize = directFile.length()
-    } else if (contentUri != null) {
-        resolvedUri = contentUri
-        resolvedSize = resolveContentUriSize(context.contentResolver, contentUri)
-    } else {
+    val stagingDir = File(context.cacheDir, "jam_staged_uploads").apply { mkdirs() }
+    // Clean up staged files older than 30 minutes to keep cache tidy
+    val cutoffMs = System.currentTimeMillis() - 30 * 60_000L
+    stagingDir.listFiles()?.forEach { f ->
+        if (f.isFile && f.lastModified() < cutoffMs) runCatching { f.delete() }
+    }
+
+    val stagedFile = File(stagingDir, "jam_lib_${song.id}_${System.currentTimeMillis()}.part")
+    var stagedOk = false
+
+    if (contentUri != null) {
+        runCatching {
+            context.contentResolver.openInputStream(contentUri)?.use { input ->
+                stagedFile.outputStream().use { output ->
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read < 0) break
+                        total += read
+                        if (total > MAX_JAM_SHARE_BYTES) {
+                            throw IllegalArgumentException(
+                                "Audio files must be 25 MB or smaller to share in Jam."
+                            )
+                        }
+                        output.write(buf, 0, read)
+                    }
+                }
+            }
+            stagedOk = stagedFile.isFile && stagedFile.length() >= 4L
+        }.onFailure { err ->
+            stagedFile.delete()
+            if (err is IllegalArgumentException) throw err
+        }
+    }
+
+    if (!stagedOk && directFile != null && directFile.isFile && directFile.length() > 0L) {
+        if (directFile.length() > MAX_JAM_SHARE_BYTES) {
+            stagedFile.delete()
+            throw IllegalArgumentException(
+                "Audio files must be 25 MB or smaller to share in Jam (this file is ${"%.1f".format(directFile.length() / (1024.0 * 1024.0))} MB)."
+            )
+        }
+        runCatching {
+            directFile.inputStream().use { input ->
+                stagedFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            stagedOk = stagedFile.isFile && stagedFile.length() >= 4L
+        }.onFailure {
+            stagedFile.delete()
+        }
+    }
+
+    if (!stagedOk) {
+        stagedFile.delete()
         throw IllegalArgumentException("This song's audio file could not be accessed.")
     }
 
+    val resolvedSize = stagedFile.length()
     if (resolvedSize !in 4..MAX_JAM_SHARE_BYTES) {
+        stagedFile.delete()
         throw IllegalArgumentException("Audio files must be 25 MB or smaller to share in Jam (this file is ${"%.1f".format(resolvedSize / (1024.0 * 1024.0))} MB).")
     }
+    val resolvedUri = Uri.fromFile(stagedFile)
 
     val ext = song.format.lowercase().ifBlank {
         song.path.substringAfterLast('.', "").lowercase()
@@ -341,7 +390,13 @@ internal fun JamEmbeddedInAppLibraryBrowser(
     var selectedSort by rememberSaveable { mutableStateOf(SortOption.TITLE) }
     var sortAscending by rememberSaveable { mutableStateOf(true) }
     var filterFavoritesOnly by rememberSaveable { mutableStateOf(false) }
-    var drillDownGroup by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) } // (type, key)
+    var drillDownType by rememberSaveable { mutableStateOf<String?>(null) }
+    var drillDownKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val drillDownGroup: Pair<String, String>? = remember(drillDownType, drillDownKey) {
+        val t = drillDownType
+        val k = drillDownKey
+        if (t != null && k != null) t to k else null
+    }
 
     // Compute the set of matched songs to exclude from the In-App Library browser
     val matchedSongIds = remember(sharedLibraryMatches) {
@@ -554,7 +609,10 @@ internal fun JamEmbeddedInAppLibraryBrowser(
             ) {
                 if (drillDownGroup != null) {
                     Surface(
-                        onClick = { drillDownGroup = null },
+                        onClick = {
+                            drillDownType = null
+                            drillDownKey = null
+                        },
                         shape = CircleShape,
                         color = BentoCardSurface,
                         border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
@@ -658,7 +716,8 @@ internal fun JamEmbeddedInAppLibraryBrowser(
                         .background(if (isSelected) BentoPrimary else BentoCardSurface)
                         .clickable {
                             selectedCategory = category
-                            drillDownGroup = null
+                            drillDownType = null
+                            drillDownKey = null
                         }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
@@ -794,7 +853,10 @@ internal fun JamEmbeddedInAppLibraryBrowser(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(BentoCardSurface)
-                                    .clickable { drillDownGroup = "ALBUM" to albumName }
+                                    .clickable {
+                                        drillDownType = "ALBUM"
+                                        drillDownKey = albumName
+                                    }
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -823,7 +885,10 @@ internal fun JamEmbeddedInAppLibraryBrowser(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(BentoCardSurface)
-                                    .clickable { drillDownGroup = "ARTIST" to artistName }
+                                    .clickable {
+                                        drillDownType = "ARTIST"
+                                        drillDownKey = artistName
+                                    }
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -851,7 +916,10 @@ internal fun JamEmbeddedInAppLibraryBrowser(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(BentoCardSurface)
-                                    .clickable { drillDownGroup = "FOLDER" to folderPath }
+                                    .clickable {
+                                        drillDownType = "FOLDER"
+                                        drillDownKey = folderPath
+                                    }
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)

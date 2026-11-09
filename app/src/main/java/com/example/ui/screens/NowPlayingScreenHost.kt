@@ -121,6 +121,7 @@ fun NowPlayingScreenHost(
             transcribeLyricsPreview = viewModel.transcribeLyricsPreview.collectAsState().value,
             onSaveTranscribedLyrics = { viewModel.saveTranscribedLyrics(it) },
             onDiscardTranscribedLyrics = { viewModel.discardTranscribedLyrics() },
+            onRetranscribedLyrics = { viewModel.retranscribeLyrics(it) },
             onTranslateLyrics = { song, lang -> viewModel.translateLyricsForSong(song, lang) },
             onTranscribeAudio = { song, lang -> viewModel.transcribeAudioForSong(song, lang) },
             onUndoLyricsChanges = { songId -> viewModel.undoLyricsChanges(songId) },

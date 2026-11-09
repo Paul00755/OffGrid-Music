@@ -172,7 +172,7 @@ dependencies {
   implementation(platform(libs.firebase.bom))
 
   implementation("com.google.firebase:firebase-analytics")
-  implementation("io.github.webrtc-sdk:android:150.7871.04")
+  // implementation("io.github.webrtc-sdk:android:150.7871.04")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.camera.camera2)

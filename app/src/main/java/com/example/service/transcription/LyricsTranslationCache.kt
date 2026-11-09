@@ -125,6 +125,25 @@ object LyricsTranslationCache {
     }
 
     @Synchronized
+    fun invalidate(
+        context: Context,
+        songId: Long,
+        mode: AudioTranscribeMode,
+        targetLang: TranscribeLanguage,
+        sourceLyricsHash: String? = null
+    ) {
+        try {
+            val dir = getCacheDir(context)
+            val fileName = buildCacheFileName(songId, mode, targetLang, sourceLyricsHash)
+            val file = File(dir, fileName)
+            if (file.exists()) file.delete()
+            // Also delete any matching prefix for this songId + mode + targetLang
+            val prefix = "${songId}_${mode.id}_${targetLang.code}"
+            dir.listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
     fun clearCache(context: Context) {
         try {
             val dir = getCacheDir(context)

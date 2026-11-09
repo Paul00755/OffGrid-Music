@@ -761,10 +761,31 @@ internal fun RichRecommendationPanel(
     onViewQueue: (() -> Unit)? = null
 ) {
     val glass = LocalGlassThemeConfig.current
-    val activeVotesCount = recommendations.count { it.isVoting }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val hasVotingItems = remember(recommendations) { recommendations.any { it.status == "VOTING" } }
+    LaunchedEffect(hasVotingItems, recommendations.size) {
+        while (hasVotingItems) {
+            nowMs = System.currentTimeMillis()
+            delay(500L)
+        }
+    }
+
+    val (activeRecommendations, pastRecommendations) = remember(recommendations, nowMs) {
+        recommendations.partition { rec ->
+            (rec.status == "VOTING" && nowMs < rec.deadlineAtMs) ||
+                rec.status in setOf("APPROVED_PENDING_UPLOAD", "UPLOADING", "DOWNLOADING")
+        }
+    }
+
+    var activeSectionExpanded by rememberSaveable { mutableStateOf(true) }
+    var pastSectionExpanded by rememberSaveable { mutableStateOf(true) }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 1. Active Recommendations Card
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("jam_active_recommendations_card"),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = BentoCardSurface),
             border = BorderStroke(1.dp, BentoCardBorder),
@@ -774,7 +795,12 @@ internal fun RichRecommendationPanel(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { activeSectionExpanded = !activeSectionExpanded },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         imageVector = Icons.Default.HowToVote,
                         contentDescription = null,
@@ -782,27 +808,52 @@ internal fun RichRecommendationPanel(
                         modifier = Modifier.size(22.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = title,
-                        color = BentoTextPrimary,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Active $title",
+                            color = BentoTextPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (activeRecommendations.isNotEmpty()) {
+                                "${activeRecommendations.size} active vote/transfer in progress"
+                            } else {
+                                "No active votes right now"
+                            },
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                     Surface(
                         shape = RoundedCornerShape(999.dp),
-                        color = if (activeVotesCount > 0) BentoPrimary.copy(alpha = 0.2f) else BentoCardPurple
+                        color = if (activeRecommendations.isNotEmpty()) BentoPrimary.copy(alpha = 0.2f) else BentoCardPurple
                     ) {
                         Text(
-                            text = if (activeVotesCount > 0) "$activeVotesCount active vote${if (activeVotesCount == 1) "" else "s"}" else "${recommendations.size} total",
-                            color = if (activeVotesCount > 0) BentoPrimary else BentoTextSecondary,
+                            text = "${activeRecommendations.size} active",
+                            color = if (activeRecommendations.isNotEmpty()) BentoPrimary else BentoTextSecondary,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
+                    if (activeRecommendations.isNotEmpty()) {
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { activeSectionExpanded = !activeSectionExpanded },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("toggle_active_recommendations")
+                        ) {
+                            Icon(
+                                imageVector = if (activeSectionExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (activeSectionExpanded) "Collapse active recommendations" else "Expand active recommendations",
+                                tint = BentoTextSecondary
+                            )
+                        }
+                    }
                 }
-                if (recommendations.isEmpty()) {
+                if (activeRecommendations.isEmpty()) {
                     Text(
                         text = emptyMessage,
                         color = BentoTextSecondary,
@@ -812,23 +863,115 @@ internal fun RichRecommendationPanel(
             }
         }
 
-        recommendations.take(12).forEach { recommendation ->
-            val resolvedSong = remember(recommendation.track, sharedLibraryMatches, songs) {
-                resolveSongForTrack(recommendation.track, sharedLibraryMatches, songs)
+        if (activeSectionExpanded) {
+            activeRecommendations.take(12).forEach { recommendation ->
+                val resolvedSong = remember(recommendation.track, sharedLibraryMatches, songs) {
+                    resolveSongForTrack(recommendation.track, sharedLibraryMatches, songs)
+                }
+                RichRecommendationCard(
+                    recommendation = recommendation,
+                    participants = participants,
+                    currentUid = currentUid,
+                    hostUid = hostUid,
+                    selected = selectedRecommendationId == recommendation.id,
+                    pendingVote = pendingVotes[recommendation.id],
+                    resolvedSong = resolvedSong,
+                    onVote = { onVote(recommendation.id, it) },
+                    onRetryUpload = { onRetryUpload(recommendation.id) },
+                    onRetryDownload = { onRetryDownload(recommendation.id) },
+                    onViewQueue = onViewQueue
+                )
             }
-            RichRecommendationCard(
-                recommendation = recommendation,
-                participants = participants,
-                currentUid = currentUid,
-                hostUid = hostUid,
-                selected = selectedRecommendationId == recommendation.id,
-                pendingVote = pendingVotes[recommendation.id],
-                resolvedSong = resolvedSong,
-                onVote = { onVote(recommendation.id, it) },
-                onRetryUpload = { onRetryUpload(recommendation.id) },
-                onRetryDownload = { onRetryDownload(recommendation.id) },
-                onViewQueue = onViewQueue
-            )
+        }
+
+        // 2. Past / Expired Recommendations Section with "^" / "v" Collapse Toggle
+        if (pastRecommendations.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("jam_past_recommendations_header_card"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = BentoCardSurface),
+                border = BorderStroke(1.dp, BentoCardBorder),
+                elevation = CardDefaults.cardElevation(defaultElevation = if (glass.glassEnabled) 0.dp else 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { pastSectionExpanded = !pastSectionExpanded }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = BentoTextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Past & Expired Recommendations",
+                            color = BentoTextPrimary,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (pastSectionExpanded) "Tap ^ to hide completed or expired votes" else "Tap to show ${pastRecommendations.size} past or expired item(s)",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = BentoCardPurple
+                    ) {
+                        Text(
+                            text = "${pastRecommendations.size}",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    IconButton(
+                        onClick = { pastSectionExpanded = !pastSectionExpanded },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(BentoCardPurple.copy(alpha = 0.65f))
+                            .testTag("toggle_past_recommendations")
+                    ) {
+                        Icon(
+                            imageVector = if (pastSectionExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (pastSectionExpanded) "Collapse past and expired recommendations" else "Expand past and expired recommendations",
+                            tint = BentoPrimary
+                        )
+                    }
+                }
+            }
+
+            if (pastSectionExpanded) {
+                pastRecommendations.take(12).forEach { recommendation ->
+                    val resolvedSong = remember(recommendation.track, sharedLibraryMatches, songs) {
+                        resolveSongForTrack(recommendation.track, sharedLibraryMatches, songs)
+                    }
+                    RichRecommendationCard(
+                        recommendation = recommendation,
+                        participants = participants,
+                        currentUid = currentUid,
+                        hostUid = hostUid,
+                        selected = selectedRecommendationId == recommendation.id,
+                        pendingVote = pendingVotes[recommendation.id],
+                        resolvedSong = resolvedSong,
+                        onVote = { onVote(recommendation.id, it) },
+                        onRetryUpload = { onRetryUpload(recommendation.id) },
+                        onRetryDownload = { onRetryDownload(recommendation.id) },
+                        onViewQueue = onViewQueue
+                    )
+                }
+            }
         }
     }
 }
