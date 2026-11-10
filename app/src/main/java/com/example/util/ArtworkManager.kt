@@ -452,6 +452,9 @@ object ArtworkManager {
                 val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
                 if (bmp != null) {
                     putCachedNotificationBitmap(songId, bmp, filePath)
+                    if (ArtworkResolutionCache.getThumbnailBitmap(songId, filePath) == null) {
+                        ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, filePath)
+                    }
                     val stream = ByteArrayOutputStream()
                     bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream)
                     stream.toByteArray()
@@ -524,8 +527,14 @@ object ArtworkManager {
                             ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, localUri)
                         }
                         ArtworkResolutionCache.cacheArtwork(songId, filePath, localUri)
-                        ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, filePath)
-                        ArtworkResolutionCache.notifyArtworkChanged(songId, localUri, filePath)
+                        val decodedThumb = ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, localUri, filePath, forceReplace = true)
+                            ?: ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bmp, filePath)
+                        ArtworkResolutionCache.notifyArtworkChanged(
+                            songId = songId,
+                            newArtworkUri = localUri,
+                            path = filePath,
+                            preserveThumbnailCache = decodedThumb != null
+                        )
                         try {
                             CoroutineScope(Dispatchers.IO).launch {
                                 try {
@@ -674,6 +683,8 @@ object ArtworkManager {
                                         val upgradedUri = Uri.fromFile(targetFile).toString()
                                         ArtworkResolutionCache.markHighResArtworkCached(context, songId, filePath, upgradedUri)
                                         ArtworkResolutionCache.cacheArtwork(songId, filePath, upgradedUri)
+                                        val decodedThumb = ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, upgradedUri, filePath, forceReplace = true)
+                                            ?: ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, fullBmp, filePath)
                                         try {
                                             val loader = coil.Coil.imageLoader(context)
                                             loader.memoryCache?.keys?.filter {
@@ -682,7 +693,12 @@ object ArtworkManager {
                                                 loader.memoryCache?.remove(key)
                                             }
                                         } catch (_: Throwable) {}
-                                        ArtworkResolutionCache.notifyArtworkChanged(songId, upgradedUri, filePath)
+                                        ArtworkResolutionCache.notifyArtworkChanged(
+                                            songId = songId,
+                                            newArtworkUri = upgradedUri,
+                                            path = filePath,
+                                            preserveThumbnailCache = decodedThumb != null
+                                        )
                                         return@withPermit upgradedUri
                                     }
                                 }
@@ -946,7 +962,8 @@ object ArtworkManager {
                                     putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                     val uriStr = Uri.fromFile(persistentFile).toString()
                                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
-                                    ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
+                                    val thumb = ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
+                                    ArtworkResolutionCache.notifyArtworkChanged(songId, uriStr, filePath, preserveThumbnailCache = thumb != null)
                                     return@withPermit uriStr
                                 }
                             }
@@ -981,7 +998,8 @@ object ArtworkManager {
                                 putNotificationArtwork(songId, savedBytes, bitmap, filePath)
                                 val uriStr = Uri.fromFile(persistentFile).toString()
                                 ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
-                                ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
+                                val thumb = ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, filePath)
+                                ArtworkResolutionCache.notifyArtworkChanged(songId, uriStr, filePath, preserveThumbnailCache = thumb != null)
                                 return@withPermit uriStr
                             }
                         }
@@ -1002,7 +1020,8 @@ object ArtworkManager {
                     putNotificationArtwork(songId, savedBytes, mediaStoreBmp, filePath)
                     val uriStr = Uri.fromFile(persistentFile).toString()
                     ArtworkResolutionCache.cacheArtwork(songId, filePath, uriStr)
-                    ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, mediaStoreBmp, filePath)
+                    val thumb = ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, mediaStoreBmp, filePath)
+                    ArtworkResolutionCache.notifyArtworkChanged(songId, uriStr, filePath, preserveThumbnailCache = thumb != null)
                     return@withPermit uriStr
                 }
             }
@@ -1165,7 +1184,8 @@ object ArtworkManager {
 
                     val newUri = Uri.fromFile(destFile).toString()
                     ManualTagStore.markArtworkManuallyEdited(context, songId, songPath.orEmpty(), newUri)
-                    ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
+                    val decodedThumb = ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
+                        ?: ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(songId, bitmap, songPath)
 
                     try {
                         val loader = coil.Coil.imageLoader(context)
@@ -1183,7 +1203,12 @@ object ArtworkManager {
                         loader.enqueue(warmReq)
                     } catch (_: Exception) {}
 
-                    ArtworkResolutionCache.notifyArtworkChanged(songId, newUri, songPath)
+                    ArtworkResolutionCache.notifyArtworkChanged(
+                        songId = songId,
+                        newArtworkUri = newUri,
+                        path = songPath,
+                        preserveThumbnailCache = decodedThumb != null
+                    )
                     return@withContext newUri
                 } else {
                     if (writeBytesAtomically(destFile, rawBytes, songId)) {
@@ -1194,8 +1219,13 @@ object ArtworkManager {
                         }
                         val newUri = Uri.fromFile(destFile).toString()
                         ManualTagStore.markArtworkManuallyEdited(context, songId, songPath.orEmpty(), newUri)
-                        ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
-                        ArtworkResolutionCache.notifyArtworkChanged(songId, newUri, songPath)
+                        val decodedThumb = ArtworkResolutionCache.decodeAndCacheThumbnail(context, songId, newUri, songPath, forceReplace = true)
+                        ArtworkResolutionCache.notifyArtworkChanged(
+                            songId = songId,
+                            newArtworkUri = newUri,
+                            path = songPath,
+                            preserveThumbnailCache = decodedThumb != null
+                        )
                         return@withContext newUri
                     }
                 }

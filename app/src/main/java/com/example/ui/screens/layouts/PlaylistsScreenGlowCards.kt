@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +29,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.Playlist
 import com.example.data.model.SmartPlaylist
 import com.example.ui.components.PlaylistCover
+import com.example.ui.components.playlistGridReorderItem
+import com.example.ui.components.rememberLazyGridPlaylistReorderState
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
 
@@ -47,11 +50,20 @@ fun PlaylistsScreenGlowCards(
     onDeleteSmartPlaylist: (SmartPlaylist) -> Unit,
     onUpdatePlaylistArtwork: (Playlist) -> Unit,
     onImportM3u: (() -> Unit)? = null,
+    onReorderPlaylists: (List<Playlist>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val gridState = rememberLazyGridState()
+    val gridReorderState = rememberLazyGridPlaylistReorderState(
+        context = context,
+        playlists = playlists,
+        gridState = gridState,
+        onReorderPlaylists = onReorderPlaylists
+    )
 
     LazyVerticalGrid(
+        state = gridState,
         columns = GridCells.Adaptive(minSize = 160.dp),
         modifier = modifier
             .fillMaxSize()
@@ -162,8 +174,8 @@ fun PlaylistsScreenGlowCards(
             }
         }
 
-        // Regular Playlists Glowing Cards
-        items(playlists, key = { it.id }) { playlist ->
+        // Regular Playlists Glowing Cards (Hold & Drag Reorderable)
+        items(gridReorderState.orderedPlaylists, key = { it.id }) { playlist ->
             var menuExpanded by remember { mutableStateOf(false) }
             Surface(
                 shape = RoundedCornerShape(20.dp),
@@ -180,6 +192,7 @@ fun PlaylistsScreenGlowCards(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .playlistGridReorderItem(gridReorderState, playlist.id)
                     .clickable { onPlaylistClick(playlist) }
             ) {
                 Column(

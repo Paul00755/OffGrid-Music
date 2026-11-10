@@ -31,6 +31,8 @@ import com.example.data.model.Playlist
 import com.example.data.model.SmartPlaylist
 import com.example.ui.components.FastScrollbar
 import com.example.ui.components.PlaylistCover
+import com.example.ui.components.playlistListReorderItem
+import com.example.ui.components.rememberLazyListPlaylistReorderState
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
 
@@ -51,20 +53,28 @@ fun PlaylistsScreenCompactList(
     onUpdatePlaylistArtwork: (Playlist) -> Unit,
     onImportM3u: (() -> Unit)? = null,
     onBackClick: (() -> Unit)? = null,
+    onReorderPlaylists: (List<Playlist>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     var filterQuery by remember { mutableStateOf("") }
 
+    val reorderState = rememberLazyListPlaylistReorderState(
+        context = context,
+        playlists = playlists,
+        listState = listState,
+        onReorderPlaylists = onReorderPlaylists
+    )
+
     val filteredSmartPlaylists = remember(smartPlaylists, filterQuery) {
         if (filterQuery.isBlank()) smartPlaylists
         else smartPlaylists.filter { it.name.contains(filterQuery, ignoreCase = true) }
     }
 
-    val filteredPlaylists = remember(playlists, filterQuery) {
-        if (filterQuery.isBlank()) playlists
-        else playlists.filter { it.name.contains(filterQuery, ignoreCase = true) }
+    val filteredPlaylists = remember(reorderState.orderedPlaylists, filterQuery) {
+        if (filterQuery.isBlank()) reorderState.orderedPlaylists
+        else reorderState.orderedPlaylists.filter { it.name.contains(filterQuery, ignoreCase = true) }
     }
 
     fun formatDuration(ms: Long): String {
@@ -362,6 +372,10 @@ fun PlaylistsScreenCompactList(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(
+                            if (filterQuery.isBlank()) Modifier.playlistListReorderItem(reorderState, playlist.id)
+                            else Modifier
+                        )
                         .clickable { onPlaylistClick(playlist) }
                 ) {
                     Row(
@@ -482,10 +496,7 @@ fun PlaylistsScreenCompactList(
         FastScrollbar(
             listState = listState,
             totalItems = filteredPlaylists.size + filteredSmartPlaylists.size + 3,
-            itemIndexToLabel = { idx ->
-                val plIdx = (idx - filteredSmartPlaylists.size - 2).coerceIn(0, (filteredPlaylists.size - 1).coerceAtLeast(0))
-                filteredPlaylists.getOrNull(plIdx)?.name?.firstOrNull()?.uppercaseChar()?.toString()
-            },
+            itemIndexToLabel = null,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(bottom = 100.dp, end = 2.dp)

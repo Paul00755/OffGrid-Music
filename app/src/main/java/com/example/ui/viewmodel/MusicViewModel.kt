@@ -547,7 +547,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val allFolders: StateFlow<List<FolderInfo>> = repository.allFolders.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    val allPlaylists: StateFlow<List<Playlist>> = repository.allPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    private val _optimisticPlaylistOrderIds = MutableStateFlow<List<Long>?>(null)
+
+    val allPlaylists: StateFlow<List<Playlist>> = combine(
+        repository.allPlaylists,
+        preferences.playlistCustomOrder,
+        _optimisticPlaylistOrderIds
+    ) { playlists, persistedOrderIds, optimisticIds ->
+        val orderIds = optimisticIds ?: persistedOrderIds
+        if (orderIds.isEmpty() || playlists.size <= 1) {
+            playlists
+        } else {
+            val rankMap = orderIds.withIndex().associate { (index, id) -> id to index }
+            val ordered = playlists.filter { rankMap.containsKey(it.id) }
+                .sortedBy { rankMap[it.id] ?: Int.MAX_VALUE }
+            val remaining = playlists.filterNot { rankMap.containsKey(it.id) }
+            ordered + remaining
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun reorderPlaylists(newOrder: List<Playlist>) {
+        val ids = newOrder.map { it.id }.distinct()
+        _optimisticPlaylistOrderIds.value = ids
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setPlaylistCustomOrder(ids)
+            }
+        }
+    }
+
     val mostPlayedPlaylists: StateFlow<List<Playlist>> = repository.mostPlayedPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val smartPlaylists: StateFlow<List<com.example.data.model.SmartPlaylist>> = repository.smartPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -1549,7 +1577,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                     val resolvedUri = com.example.util.ArtworkManager.getOrExtractArtworkUri(getApplication(), song.id, song.path, song.albumId)
                                     if (!resolvedUri.isNullOrBlank()) {
                                         repository.updateSongArtwork(song.id, resolvedUri)
-                                        com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, resolvedUri, song.path)
+                                        val decoded = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(getApplication(), song.id, resolvedUri, song.path)
+                                        com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                                            songId = song.id,
+                                            newArtworkUri = resolvedUri,
+                                            path = song.path,
+                                            preserveThumbnailCache = decoded != null
+                                        )
                                         playbackManager.updateCurrentSongArtwork(song.id, resolvedUri, song.path)
                                     }
                                 }
@@ -2183,10 +2217,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val finalArt = updatedSong.artworkUri ?: com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(getApplication(), updatedSong.id, updatedSong.path)
             com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id, updatedSong.path)
             if (!finalArt.isNullOrBlank()) {
-                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(updatedSong.id, finalArt, updatedSong.path)
+                val decodedThumb = withContext(Dispatchers.IO) {
+                    com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
+                        context = getApplication(),
+                        songId = updatedSong.id,
+                        uriStr = finalArt,
+                        path = updatedSong.path,
+                        forceReplace = true
+                    )
+                }
+                com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                    songId = updatedSong.id,
+                    newArtworkUri = finalArt,
+                    path = updatedSong.path,
+                    preserveThumbnailCache = decodedThumb != null
+                )
                 try {
                     val bmp = com.example.util.ArtworkManager.decodeBitmapFromUri(getApplication(), finalArt, 512)
                     if (bmp != null) {
+                        if (decodedThumb == null) {
+                            com.example.ui.components.ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(updatedSong.id, bmp, updatedSong.path)
+                        }
                         com.example.util.ArtworkManager.putCachedNotificationBitmap(updatedSong.id, bmp, updatedSong.path)
                         val stream = java.io.ByteArrayOutputStream()
                         bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, stream)

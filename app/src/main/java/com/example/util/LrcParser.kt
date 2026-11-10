@@ -152,8 +152,13 @@ object LrcParser {
             }
 
             if (lineTimes.isNotEmpty()) {
-                val cleanText = trimmed.replace(Regex("\\[\\d{1,3}:\\d{2}(?:[\\.:]\\d{1,3})?\\]"), "").trim()
-                val finalText = if (cleanText.isEmpty()) "♪" else cleanText
+                val cleanText = trimmed
+                    .replace(Regex("\\[\\d{1,3}:\\d{2}(?:[\\.:]\\d{1,3})?\\]"), "")
+                    .replace("🎼", "♪")
+                    .replace("🎵", "♪")
+                    .replace("🎶", "♪")
+                    .trim()
+                val finalText = if (cleanText.isEmpty() || cleanText.all { it == '♪' || it.isWhitespace() }) "♪" else cleanText
                 for (timeMs in lineTimes) {
                     parsedLines.add(LrcLine(timeMs, finalText))
                 }

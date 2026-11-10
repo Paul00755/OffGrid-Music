@@ -597,6 +597,8 @@ fun SettingsScreen(
     onSetAutoPlayOnAppStartup: (Boolean) -> Unit = {},
     isTranscribeTranslateEnabled: Boolean = false,
     onSetTranscribeTranslateEnabled: (Boolean) -> Unit = {},
+    audioTranscribeTargetLang: String = "ta",
+    onSetAudioTranscribeTargetLang: (String) -> Unit = {},
     hasUserApiKey: Boolean = false,
     maskedApiKey: String? = null,
     isKeyValidating: Boolean = false,
@@ -2699,6 +2701,60 @@ fun SettingsScreen(
                                                         Spacer(modifier = Modifier.width(4.dp))
                                                         Text("Save & Validate Key", fontSize = 11.5.sp, color = Color.Black, fontWeight = FontWeight.Bold)
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Default Transcribe / Translate Language Selector (including Tanglish)
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Default Transcribe / Translate Language",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoTextSecondary
+                                )
+                                val selectedTranscribeLang = TranscribeLanguage.fromCode(audioTranscribeTargetLang)
+                                TranscribeLanguage.entries.chunked(3).forEach { rowLangs ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        rowLangs.forEach { lang ->
+                                            val isSelected = selectedTranscribeLang == lang
+                                            Surface(
+                                                onClick = {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onSetAudioTranscribeTargetLang(lang.code)
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.22f) else BentoCardPurple,
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isSelected) Color(0xFF00E5FF) else BentoBorder.copy(alpha = 0.4f)
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally
+                                                ) {
+                                                    Text(
+                                                        text = lang.englishName,
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        color = if (isSelected) Color(0xFF00E5FF) else BentoTextPrimary
+                                                    )
+                                                    Text(
+                                                        text = lang.nativeName,
+                                                        fontSize = 10.sp,
+                                                        color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.85f) else BentoTextSecondary
+                                                    )
                                                 }
                                             }
                                         }

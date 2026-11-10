@@ -60,20 +60,30 @@ fun PlaylistsScreenMagazineHero(
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
-    // Spotlight the Most Played Playlist on top (falling back to largest playlist or first playlist)
-    val featuredPlaylist = remember(mostPlayedPlaylists, playlists) {
-        val topPlayedId = mostPlayedPlaylists.firstOrNull()?.id
-        playlists.firstOrNull { it.id == topPlayedId }
-            ?: mostPlayedPlaylists.firstOrNull()
-            ?: playlists.maxByOrNull { it.songCount }
-            ?: playlists.firstOrNull()
+    // Order all playlists in Magazine Hero strictly by Most Played rank first;
+    // for playlists not played even once, arrange by track count descending then playlist name ascending.
+    val rankedPlaylists = remember(mostPlayedPlaylists, playlists) {
+        if (playlists.isEmpty()) {
+            emptyList()
+        } else {
+            val playRankMap = mostPlayedPlaylists.withIndex().associate { (idx, pl) -> pl.id to idx }
+            val played = playlists.filter { playRankMap.containsKey(it.id) }
+                .sortedBy { playRankMap[it.id] ?: Int.MAX_VALUE }
+            val unplayed = playlists.filterNot { playRankMap.containsKey(it.id) }
+                .sortedWith(compareByDescending<Playlist> { it.songCount }.thenBy { it.name.lowercase() })
+            played + unplayed
+        }
+    }
+
+    val featuredPlaylist = remember(rankedPlaylists) {
+        rankedPlaylists.firstOrNull()
     }
     val isMostPlayedSpotlight = remember(mostPlayedPlaylists, featuredPlaylist) {
         featuredPlaylist != null && mostPlayedPlaylists.any { it.id == featuredPlaylist.id }
     }
-    val otherPlaylists = remember(playlists, featuredPlaylist) {
-        if (featuredPlaylist == null) emptyList()
-        else playlists.filter { it.id != featuredPlaylist.id }
+    val otherPlaylists = remember(rankedPlaylists) {
+        if (rankedPlaylists.size <= 1) emptyList()
+        else rankedPlaylists.drop(1)
     }
 
     fun formatDuration(ms: Long): String {
@@ -717,10 +727,7 @@ fun PlaylistsScreenMagazineHero(
         FastScrollbar(
             listState = listState,
             totalItems = otherPlaylists.size + smartPlaylists.size + 4,
-            itemIndexToLabel = { idx ->
-                val plIndex = (idx - 3).coerceIn(0, (otherPlaylists.size - 1).coerceAtLeast(0))
-                otherPlaylists.getOrNull(plIndex)?.name?.firstOrNull()?.uppercaseChar()?.toString()
-            },
+            itemIndexToLabel = null,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(bottom = 100.dp, end = 2.dp)

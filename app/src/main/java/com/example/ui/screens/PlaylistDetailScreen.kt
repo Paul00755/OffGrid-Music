@@ -904,7 +904,7 @@ fun PlaylistDetailScreen(
             FastScrollbar(
                 listState = listState,
                 totalItems = displaySongs.size + 3,
-                itemIndexToLabel = fastScrollAlphabetProvider,
+                itemIndexToLabel = null,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = 2.dp)

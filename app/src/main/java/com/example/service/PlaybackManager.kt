@@ -99,9 +99,11 @@ class PlaybackManager(
         onResumeRequested = { resumeFromInterruption() },
         onDuckRequested = { duckVol ->
             isAudioFocusDucked = true
+            // Reduce 40% of the currently playing song's volume (retain 60% of current song volume)
             duckTargetVolume = duckVol.coerceIn(0.05f, 1.0f)
             try {
-                player.volume = minOf(player.volume, duckTargetVolume)
+                val baseVol = if (player.volume > duckTargetVolume) 1.0f else player.volume.coerceAtLeast(duckTargetVolume)
+                player.volume = (baseVol * duckTargetVolume).coerceIn(0.05f, 1.0f)
                 _crossfadePlayer?.let { cf ->
                     if (cf.isPlaying) cf.volume = minOf(cf.volume, duckTargetVolume)
                 }
@@ -111,7 +113,11 @@ class PlaybackManager(
             isAudioFocusDucked = false
             try {
                 if (!isFadingOutToPause && !isCrossfadeTransitioning) {
+                    val startVol = player.volume
                     player.volume = 1.0f
+                    if (startVol in 0.05f..0.95f) {
+                        performVolumeRampUp(durationMs = 140, startVolume = startVol, targetVolume = 1.0f)
+                    }
                 }
             } catch (_: Throwable) {}
         }
@@ -3810,44 +3816,18 @@ class PlaybackManager(
         val isEligibleForHighResUpgrade = preferHighRes && !com.example.ui.components.ArtworkResolutionCache.hasHighResArtwork(context, song.id, song.path)
 
         if ((isMissingArtwork || isEligibleForHighResUpgrade) &&
-            com.example.ui.components.ArtworkResolutionCache.shouldAttemptArtworkLookup(song.id, song.path) &&
-            com.example.ui.components.ArtworkResolutionCache.tryAcquireOnlineFetch(song.id, song.path, preferHighRes)
+            com.example.ui.components.ArtworkResolutionCache.shouldAttemptArtworkLookup(song.id, song.path)
         ) {
-            val startGen = com.example.util.ManualTagStore.getArtworkEditGeneration(context, song.id, song.path)
-            try {
-                val onlineUrl = com.example.util.OnlineArtistImageFetcher.getSongArtworkUrl(
-                    context = context,
-                    title = song.displayTitle,
-                    artist = song.displayArtist,
-                    album = song.displayAlbum,
-                    preferUltraHd = preferHighRes,
-                    cacheEnabled = cacheEnabled,
-                    songId = song.id,
-                    filePath = song.path
-                )
-                if (!onlineUrl.isNullOrBlank() &&
-                    !com.example.util.ManualTagStore.isArtworkManuallyEdited(context, song.id, song.path) &&
-                    com.example.util.ManualTagStore.getArtworkEditGeneration(context, song.id, song.path) == startGen
-                ) {
-                    val savedLocal = if (cacheEnabled) {
-                        com.example.util.ArtworkManager.saveFetchedArtworkLocally(
-                            context = context,
-                            songId = song.id,
-                            url = onlineUrl,
-                            filePath = song.path,
-                            isHighRes = preferHighRes,
-                            expectedArtworkGeneration = startGen
-                        ) ?: onlineUrl
-                    } else onlineUrl
-                    if (savedLocal.isNotBlank()) {
-                        authUri = savedLocal
-                    }
-                } else if (onlineUrl.isNullOrBlank() && isMissingArtwork) {
-                    com.example.ui.components.ArtworkResolutionCache.markArtworkLookupFailed(song.id, song.path)
-                }
-            } catch (_: Throwable) {
-            } finally {
-                com.example.ui.components.ArtworkResolutionCache.releaseOnlineFetch(song.id, song.path, preferHighRes)
+            val onlinePair = com.example.ui.components.ArtworkResolutionCache.fetchOrAwaitOnlineArtwork(
+                context = context,
+                song = song,
+                upgradeToHighRes = preferHighRes,
+                isCacheEnabled = cacheEnabled
+            )
+            if (onlinePair != null && onlinePair.first.isNotBlank()) {
+                authUri = onlinePair.first
+            } else if (onlinePair == null && isMissingArtwork) {
+                com.example.ui.components.ArtworkResolutionCache.markArtworkLookupFailed(song.id, song.path)
             }
         }
         return authUri
@@ -3860,6 +3840,9 @@ class PlaybackManager(
                 com.example.ui.components.ArtworkResolutionCache.getAuthoritativeArtwork(context, song, false)?.also {
                     if (it.isNotBlank()) {
                         com.example.ui.components.ArtworkResolutionCache.cacheArtwork(song.id, song.path, it)
+                        if (com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path) == null) {
+                            com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(context, song.id, it, song.path)
+                        }
                     }
                 }
             } catch (_: Throwable) { null }
@@ -3879,23 +3862,32 @@ class PlaybackManager(
                         val bmp = android.graphics.BitmapFactory.decodeByteArray(initialBytes, 0, initialBytes.size)
                         if (bmp != null) {
                             com.example.util.ArtworkManager.putCachedNotificationBitmap(song.id, bmp, song.path)
+                            if (com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path) == null) {
+                                com.example.ui.components.ArtworkResolutionCache.cacheDecodedBitmapAsThumbnail(song.id, bmp, song.path)
+                            }
                         }
                     } catch (_: Throwable) {}
                 }
                 withContext(Dispatchers.Main) {
                     if (_playbackState.value.currentSong?.let { it.id == song.id && it.path == song.path } == true) {
-                        updateNotificationLayout()
-                        MusicPlaybackService.instance?.triggerNotificationUpdate()
-                        com.example.widget.WidgetBitmapRenderer.invalidateSong(song.id)
-                        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                        if (!initialLocalUri.isNullOrBlank() && _playbackState.value.currentSong?.artworkUri.isNullOrBlank()) {
+                            updateCurrentSongArtwork(song.id, initialLocalUri, song.path)
+                        } else {
+                            updateNotificationLayout()
+                            MusicPlaybackService.instance?.triggerNotificationUpdate()
+                            com.example.widget.WidgetBitmapRenderer.invalidateSong(song.id)
+                            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                        }
                     }
                 }
             }
 
             // Next, if artwork is missing (Case A) or eligible for High-Res upgrade when High-Res is ON (Case B),
             // retrieve and upgrade in the background without blocking playback startup!
+            val versionBeforeUpgrade = com.example.ui.components.ArtworkResolutionCache.getSongArtworkVersion(song.id, song.path)
             val upgradedUri = resolveAndUpgradeTrackArtworkIfNeeded(song)
-            if (!upgradedUri.isNullOrBlank() && upgradedUri != initialLocalUri) {
+            val versionAfterUpgrade = com.example.ui.components.ArtworkResolutionCache.getSongArtworkVersion(song.id, song.path)
+            if (!upgradedUri.isNullOrBlank() && (upgradedUri != initialLocalUri || versionAfterUpgrade != versionBeforeUpgrade)) {
                 val upgradedBytes = com.example.util.ArtworkManager.getNotificationArtworkBytes(
                     context = context,
                     songId = song.id,

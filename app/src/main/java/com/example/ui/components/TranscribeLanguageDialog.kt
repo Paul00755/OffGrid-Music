@@ -117,34 +117,39 @@ fun TranscribeLanguageDialog(
                         color = BentoTextSecondary
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TranscribeLanguage.entries.forEach { lang ->
-                            val isSelected = selectedLang == lang
-                            Surface(
-                                onClick = { selectedLang = lang },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.22f) else BentoCardPurple,
-                                border = BorderStroke(1.dp, if (isSelected) Color(0xFF00E5FF) else BentoBorder.copy(alpha = 0.4f))
+                    val allLanguages = TranscribeLanguage.entries
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        allLanguages.chunked(3).forEach { rowLangs ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = lang.englishName,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color(0xFF00E5FF) else BentoTextPrimary
-                                    )
-                                    Text(
-                                        text = lang.nativeName,
-                                        fontSize = 10.sp,
-                                        color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.85f) else BentoTextSecondary
-                                    )
+                                rowLangs.forEach { lang ->
+                                    val isSelected = selectedLang == lang
+                                    Surface(
+                                        onClick = { selectedLang = lang },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.22f) else BentoCardPurple,
+                                        border = BorderStroke(1.dp, if (isSelected) Color(0xFF00E5FF) else BentoBorder.copy(alpha = 0.4f))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Text(
+                                                text = lang.englishName,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) Color(0xFF00E5FF) else BentoTextPrimary
+                                            )
+                                            Text(
+                                                text = lang.nativeName,
+                                                fontSize = 10.sp,
+                                                color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.85f) else BentoTextSecondary
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

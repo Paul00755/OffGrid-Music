@@ -146,6 +146,7 @@ class UserPreferencesRepository(private val context: Context) {
         val ADD_TO_QUEUE_POSITION = stringPreferencesKey("add_to_queue_position") // "BOTTOM" or "TOP_NEXT"
         val PLAYLIST_ADD_SONG_POSITION = stringPreferencesKey("playlist_add_song_position") // "BOTTOM" or "TOP"
         val PLAYLIST_VIEW_MODE = stringPreferencesKey("playlist_view_mode") // "GRID" or "LIST"
+        val PLAYLIST_CUSTOM_ORDER = stringPreferencesKey("playlist_custom_order") // comma-separated playlist IDs
         val LIBRARY_SORT_OPTION = stringPreferencesKey("library_sort_option")
         val LIBRARY_SORT_ASCENDING = booleanPreferencesKey("library_sort_ascending")
 
@@ -2397,6 +2398,24 @@ class UserPreferencesRepository(private val context: Context) {
 
     fun setLastNotifiedUpdateTagSync(tag: String) {
         writeStringCached("last_notified_update_tag", tag)
+    }
+
+    val playlistCustomOrder: Flow<List<Long>> = safeData.map { prefs ->
+        val raw = prefs[PreferenceKeys.PLAYLIST_CUSTOM_ORDER] ?: readStringCached("playlist_custom_order", "")
+        if (raw.isBlank()) emptyList()
+        else raw.split(",").mapNotNull { it.trim().toLongOrNull() }.distinct()
+    }
+
+    fun getPlaylistCustomOrderSync(): List<Long> {
+        val raw = readStringCached("playlist_custom_order", "")
+        if (raw.isBlank()) return emptyList()
+        return raw.split(",").mapNotNull { it.trim().toLongOrNull() }.distinct()
+    }
+
+    suspend fun setPlaylistCustomOrder(orderedIds: List<Long>) {
+        val serialized = orderedIds.distinct().joinToString(",")
+        writeStringCached("playlist_custom_order", serialized)
+        context.dataStore.edit { it[PreferenceKeys.PLAYLIST_CUSTOM_ORDER] = serialized }
     }
 
     suspend fun clearAllForTesting() {

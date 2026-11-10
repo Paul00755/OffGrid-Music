@@ -27,6 +27,7 @@ enum class AudioTranscribeMode(val id: String, val displayName: String, val desc
 enum class TranscribeLanguage(val code: String, val englishName: String, val nativeName: String) {
     ENGLISH("en", "English", "English"),
     TAMIL("ta", "Tamil", "தமிழ்"),
+    TANGLISH("tanglish", "Tanglish", "Tam + Eng"),
     HINDI("hi", "Hindi", "हिन्दी"),
     MALAYALAM("ml", "Malayalam", "മലയാളം");
 

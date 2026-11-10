@@ -179,6 +179,8 @@ fun SettingsTabRoute(
         onSetAutoPlayOnAppStartup = { viewModel.setAutoPlayOnAppStartup(it) },
         isTranscribeTranslateEnabled = viewModel.isTranscribeTranslateEnabled.collectAsState().value,
         onSetTranscribeTranslateEnabled = { viewModel.setTranscribeTranslateEnabled(it) },
+        audioTranscribeTargetLang = viewModel.audioTranscribeTargetLang.collectAsState().value,
+        onSetAudioTranscribeTargetLang = { viewModel.setAudioTranscribeTargetLang(it) },
         hasUserApiKey = viewModel.hasUserApiKey.collectAsState().value,
         maskedApiKey = viewModel.maskedApiKey.collectAsState().value,
         isKeyValidating = viewModel.isKeyValidating.collectAsState().value,

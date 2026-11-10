@@ -792,6 +792,7 @@ class MainActivity : ComponentActivity() {
                                                     onOpenSearch = { viewModel.navigateToTab(NavTab.SEARCH) },
                                                     onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
                                                     onOpenSettings = { viewModel.openSettings() },
+                                                    onReorderPlaylists = { viewModel.reorderPlaylists(it) },
                                                     playlistsLayout = playlistsLayout
                                                 )
                                             }

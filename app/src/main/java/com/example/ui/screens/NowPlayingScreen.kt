@@ -1751,8 +1751,14 @@ fun cleanLyricDisplayText(text: String): String {
     cleaned = cleaned.replace(Regex("""\([-+]\d+(?:\.\d+)?(?:s|ms)\)""", RegexOption.IGNORE_CASE), "")
     // Remove any metadata tags like [by: ...], [ti: ...], etc.
     cleaned = cleaned.replace(Regex("""\[(?:ti|ar|al|by|length|re|ve):[^\]]*\]""", RegexOption.IGNORE_CASE), "")
-    cleaned = cleaned.trim()
-    return if (cleaned.isEmpty()) "♪" else cleaned
+    // Replace any musical score/note emojis with the bold musical note character ♪
+    cleaned = cleaned
+        .replace("🎼", "♪")
+        .replace("🎵", "♪")
+        .replace("🎶", "♪")
+        .replace(Regex("""^\[?\(?(?:music|instrumental|bgm)\)?\]?$""", RegexOption.IGNORE_CASE), "♪")
+        .trim()
+    return if (cleaned.isEmpty() || cleaned.all { it == '♪' || it.isWhitespace() }) "♪" else cleaned
 }
 
 @Composable
@@ -1925,7 +1931,7 @@ private fun LyricsPanelContent(
                         ) {
                             Icon(
                                 imageVector = if (hasLyrics) Icons.Default.Translate else Icons.Default.GraphicEq,
-                                contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (🎼)",
+                                contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (♪)",
                                 tint = Color(0xFF00E5FF),
                                 modifier = Modifier.size(18.dp)
                             )
@@ -2458,7 +2464,7 @@ private fun LyricsPanelContent(
                                 ) {
                                     Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Transcribe Audio (🎼)", fontSize = 12.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
+                                    Text("Transcribe Audio (♪)", fontSize = 12.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
                                 }
                             }
                         }

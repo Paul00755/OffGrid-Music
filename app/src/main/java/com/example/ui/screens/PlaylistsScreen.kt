@@ -11,8 +11,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,6 +56,10 @@ import com.example.scanner.M3uParser
 import com.example.ui.components.BentoCard
 import com.example.ui.components.FastScrollbar
 import com.example.ui.components.PlaylistCover
+import com.example.ui.components.playlistGridReorderItem
+import com.example.ui.components.playlistListReorderItem
+import com.example.ui.components.rememberLazyGridPlaylistReorderState
+import com.example.ui.components.rememberLazyListPlaylistReorderState
 import com.example.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,6 +91,7 @@ fun PlaylistsScreen(
     onOpenSearch: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onReorderPlaylists: (List<Playlist>) -> Unit = {},
     playlistsLayout: String = "GLOW_CARDS",
     modifier: Modifier = Modifier
 ) {
@@ -381,6 +388,7 @@ fun PlaylistsScreen(
                 },
                 onImportM3u = launchM3uPicker,
                 onBackClick = onBackClick,
+                onReorderPlaylists = onReorderPlaylists,
                 modifier = modifier
             )
         }
@@ -406,22 +414,14 @@ fun PlaylistsScreen(
                     artworkPickerLauncher.launch("image/*")
                 },
                 onImportM3u = launchM3uPicker,
+                onReorderPlaylists = onReorderPlaylists,
                 modifier = modifier
             )
         }
         PlaylistsLayout.BENTO_GRID -> {
-            Box(
-                modifier = modifier.fillMaxSize(),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // 1. Bento Grid Top Bar
+            val bentoHeaderContent: @Composable () -> Unit = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // 1. Bento Grid Top Bar (scrolls alongside playlists when user scrolls down)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -711,113 +711,166 @@ fun PlaylistsScreen(
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                     }
+                }
+            }
 
-                    if (playlists.isEmpty()) {
-                        BentoCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            backgroundColor = BentoCardSurface
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.QueueMusic,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Text(
-                                    text = "No Playlists Created",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
-                                )
-                                Text(
-                                    text = "Tap + to create custom playlists or use the import icon to import single or multiple .M3U / .M3U8 playlists.",
-                                    fontSize = 12.sp,
-                                    color = BentoTextSecondary
-                                )
-                            }
+            Box(
+                modifier = modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                if (playlists.isEmpty()) {
+                    LazyColumn(
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        item(key = "bento_scrollable_header", contentType = "header") {
+                            bentoHeaderContent()
                         }
-                    } else {
-                        if (playlistViewMode == "GRID") {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                contentPadding = PaddingValues(bottom = 120.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
+                        item(key = "bento_empty_state", contentType = "empty") {
+                            BentoCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                backgroundColor = BentoCardSurface
                             ) {
-                                items(playlists, key = { it.id }, contentType = { "playlist_grid_card" }) { playlist ->
-                                    PlaylistGridCard(
-                                        playlist = playlist,
-                                        onClick = { onPlaylistClick(playlist) },
-                                        onPlayNow = { onPlayNow(playlist) },
-                                        onPlayNext = { onPlayNext(playlist) },
-                                        onAddToQueue = { onAddToQueue(playlist) },
-                                        onRename = {
-                                            playlistToRename = playlist
-                                            renamePlaylistText = playlist.name
-                                        },
-                                        onChangeCover = {
-                                            selectedPlaylistForArtwork = playlist.id
-                                            artworkPickerLauncher.launch("image/*")
-                                        },
-                                        onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
-                                        onDelete = { playlistToDelete = playlist }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QueueMusic,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Text(
+                                        text = "No Playlists Created",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                    Text(
+                                        text = "Tap + to create custom playlists or use the import icon to import single or multiple .M3U / .M3U8 playlists.",
+                                        fontSize = 12.sp,
+                                        color = BentoTextSecondary
                                     )
                                 }
                             }
-                        } else {
-                            val listState = rememberLazyListState()
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                            ) {
-                                LazyColumn(
-                                    state = listState,
-                                    contentPadding = PaddingValues(bottom = 120.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    items(playlists, key = { it.id }, contentType = { "playlist_list_card" }) { playlist ->
-                                        PlaylistListCard(
-                                            playlist = playlist,
-                                            onClick = { onPlaylistClick(playlist) },
-                                            onPlayNow = { onPlayNow(playlist) },
-                                            onPlayNext = { onPlayNext(playlist) },
-                                            onAddToQueue = { onAddToQueue(playlist) },
-                                            onRename = {
-                                                playlistToRename = playlist
-                                                renamePlaylistText = playlist.name
-                                            },
-                                            onChangeCover = {
-                                                selectedPlaylistForArtwork = playlist.id
-                                                artworkPickerLauncher.launch("image/*")
-                                            },
-                                            onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
-                                            onDelete = { playlistToDelete = playlist }
-                                        )
-                                    }
-                                }
-
-                                FastScrollbar(
-                                    listState = listState,
-                                    totalItems = playlists.size,
-                                    bottomPadding = 120.dp,
-                                    modifier = Modifier.align(Alignment.CenterEnd)
+                        }
+                    }
+                } else if (playlistViewMode == "GRID") {
+                    val gridState = rememberLazyGridState()
+                    val gridReorderState = rememberLazyGridPlaylistReorderState(
+                        context = context,
+                        playlists = playlists,
+                        gridState = gridState,
+                        onReorderPlaylists = onReorderPlaylists
+                    )
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Fixed(2),
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        item(
+                            key = "bento_scrollable_header",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "header"
+                        ) {
+                            bentoHeaderContent()
+                        }
+                        items(
+                            items = gridReorderState.orderedPlaylists,
+                            key = { it.id },
+                            contentType = { "playlist_grid_card" }
+                        ) { playlist ->
+                            PlaylistGridCard(
+                                playlist = playlist,
+                                onClick = { onPlaylistClick(playlist) },
+                                onPlayNow = { onPlayNow(playlist) },
+                                onPlayNext = { onPlayNext(playlist) },
+                                onAddToQueue = { onAddToQueue(playlist) },
+                                onRename = {
+                                    playlistToRename = playlist
+                                    renamePlaylistText = playlist.name
+                                },
+                                onChangeCover = {
+                                    selectedPlaylistForArtwork = playlist.id
+                                    artworkPickerLauncher.launch("image/*")
+                                },
+                                onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
+                                onDelete = { playlistToDelete = playlist },
+                                modifier = Modifier.playlistGridReorderItem(gridReorderState, playlist.id)
+                            )
+                        }
+                    }
+                } else {
+                    val listState = rememberLazyListState()
+                    val listReorderState = rememberLazyListPlaylistReorderState(
+                        context = context,
+                        playlists = playlists,
+                        listState = listState,
+                        onReorderPlaylists = onReorderPlaylists
+                    )
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp)
+                        ) {
+                            item(key = "bento_scrollable_header", contentType = "header") {
+                                bentoHeaderContent()
+                            }
+                            items(
+                                items = listReorderState.orderedPlaylists,
+                                key = { it.id },
+                                contentType = { "playlist_list_card" }
+                            ) { playlist ->
+                                PlaylistListCard(
+                                    playlist = playlist,
+                                    onClick = { onPlaylistClick(playlist) },
+                                    onPlayNow = { onPlayNow(playlist) },
+                                    onPlayNext = { onPlayNext(playlist) },
+                                    onAddToQueue = { onAddToQueue(playlist) },
+                                    onRename = {
+                                        playlistToRename = playlist
+                                        renamePlaylistText = playlist.name
+                                    },
+                                    onChangeCover = {
+                                        selectedPlaylistForArtwork = playlist.id
+                                        artworkPickerLauncher.launch("image/*")
+                                    },
+                                    onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
+                                    onDelete = { playlistToDelete = playlist },
+                                    modifier = Modifier.playlistListReorderItem(listReorderState, playlist.id)
                                 )
                             }
                         }
+
+                        FastScrollbar(
+                            listState = listState,
+                            totalItems = listReorderState.orderedPlaylists.size + 1,
+                            itemIndexToLabel = null,
+                            bottomPadding = 120.dp,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 2.dp)
+                        )
                     }
                 }
             }
@@ -1103,7 +1156,8 @@ private fun PlaylistGridCard(
     onRename: () -> Unit = {},
     onChangeCover: () -> Unit,
     onRemoveCover: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val durationMins = playlist.totalDurationMs / (1000 * 60)
@@ -1112,7 +1166,7 @@ private fun PlaylistGridCard(
 
     // Full-bleed Bento Mosaic Tile with organic 28.dp squircle silhouette and glassmorphic bottom scrim
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .aspectRatio(0.88f)
             .clip(RoundedCornerShape(28.dp))
@@ -1364,12 +1418,13 @@ private fun PlaylistListCard(
     onRename: () -> Unit = {},
     onChangeCover: () -> Unit,
     onRemoveCover: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(BentoCardSurface)

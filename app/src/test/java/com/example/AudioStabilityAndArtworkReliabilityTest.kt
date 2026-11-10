@@ -276,6 +276,66 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertEquals(1, resumeCount)
     }
 
+    @Test
+    fun testNotificationDuckableFocusLossNeverPausesWhenAutoPauseSystemAudioEnabled() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var currentVolume = 0.60f // e.g., device/song volume at 60%
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            },
+            onDuckRequested = { duckMultiplier ->
+                // Reduces 40% of the currently playing song's volume (retains 60% of 60% = 0.36f)
+                currentVolume = 0.60f * duckMultiplier
+            },
+            onRestoreVolumeRequested = {
+                currentVolume = 0.60f
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.reduceVolumeOnNotification = true
+
+        // Notification arrives with AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK while autoPauseSystemAudio is ON
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertTrue("Notification duckable focus loss must NEVER pause playback when autoPauseSystemAudio is ON", isPlaying)
+        assertEquals(0, pauseCount)
+        assertEquals(0.36f, currentVolume, 0.001f)
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue(isPlaying)
+        assertEquals(0, pauseCount)
+        assertEquals(0, resumeCount)
+        assertEquals(0.60f, currentVolume, 0.001f)
+    }
+
+    @Test
+    fun testLyricsMusicalNoteNormalizationAndTanglishSupport() {
+        val tanglish = com.example.service.transcription.TranscribeLanguage.fromCode("tanglish")
+        assertEquals(com.example.service.transcription.TranscribeLanguage.TANGLISH, tanglish)
+        assertEquals("Tanglish", tanglish.englishName)
+
+        assertEquals("♪", com.example.ui.screens.cleanLyricDisplayText("[01:12.00] 🎼"))
+        assertEquals("♪", com.example.ui.screens.cleanLyricDisplayText("🎼"))
+        assertEquals("OMG பொண்ணு", com.example.ui.screens.cleanLyricDisplayText("[00:15.20] OMG பொண்ணு"))
+
+        val parsed = com.example.util.LrcParser.parseLrcToLines("[00:05.00] 🎼\n[00:10.00] OMG ponnu")
+        assertEquals(2, parsed.size)
+        assertEquals("♪", parsed[0].text)
+        assertEquals("OMG ponnu", parsed[1].text)
+    }
+
     // =========================================================================
     // Priority 2 & 6: Startup Disk Cache Warmup & High-Res On-Demand Tracking
     // =========================================================================

@@ -137,7 +137,7 @@ class MusicRepository(
         return libraryScanner.detectAndImportNewSongs()
     }
 
-    val mostPlayedPlaylists: Flow<List<Playlist>> = playlistDao.getMostPlayedPlaylistsWithDetails(10).map { list ->
+    val mostPlayedPlaylists: Flow<List<Playlist>> = playlistDao.getMostPlayedPlaylistsWithDetails(1000).map { list ->
         list.map { item ->
             Playlist(
                 id = item.id,
@@ -769,7 +769,19 @@ class MusicRepository(
         )
 
         if (!finalArtworkUri.isNullOrBlank()) {
-            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(song.id, finalArtworkUri, song.path)
+            val decoded = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
+                context = context,
+                songId = song.id,
+                uriStr = finalArtworkUri,
+                path = song.path,
+                forceReplace = didModifyArtworkInCall
+            )
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                songId = song.id,
+                newArtworkUri = finalArtworkUri,
+                path = song.path,
+                preserveThumbnailCache = decoded != null
+            )
         }
 
         com.example.util.OnlineArtistImageFetcher.updateSongMetadataCacheKeys(
