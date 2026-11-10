@@ -492,6 +492,7 @@ class JamRepository(
         val invite = firestore.collection("jamInvitations").document(inviteHash)
         val maxParticipants = ((data["maxParticipants"] as? Number)?.toInt() ?: MAX_PARTICIPANTS)
             .coerceIn(2, MAX_PARTICIPANTS)
+        val currentVersion = com.example.BuildConfig.VERSION_NAME.trim()
         val playback = mapOf("sharedTrackId" to "", "queueItemId" to "", "isPlaying" to false, "positionMs" to 0L,
             "playbackSpeed" to 1.0, "updatedAt" to Timestamp.now(), "revision" to 0L, "commandId" to "",
             "commandType" to "CREATE", "actorUid" to uid, "step" to 0)
@@ -499,10 +500,12 @@ class JamRepository(
             tx.set(session, mapOf("hostUid" to uid, "status" to "ACTIVE", "participantCount" to 1,
                 "maxParticipants" to maxParticipants, "started" to false, "formerHostUids" to emptyList<String>(),
                 "kickedUids" to emptyList<String>(), "inviteCodeHash" to inviteHash, "createdAt" to Timestamp.now(),
-                "permissions" to data["permissions"], "playback" to playback, "revision" to 1L, "queueRevision" to 0L))
+                "permissions" to data["permissions"], "playback" to playback, "revision" to 1L, "queueRevision" to 0L,
+                "hostAppVersion" to currentVersion))
             tx.set(member, participantRecord(uid, data["displayName"] as? String, data["photoUrl"] as? String, true) + mapOf("invitationHash" to inviteHash))
             tx.set(invite, mapOf("sessionId" to id, "active" to true, "createdAt" to Timestamp.now(),
-                "expiresAt" to Timestamp(java.util.Date(System.currentTimeMillis() + INVITE_LIFETIME_MS))))
+                "expiresAt" to Timestamp(java.util.Date(System.currentTimeMillis() + INVITE_LIFETIME_MS)),
+                "hostAppVersion" to currentVersion))
             null
         }.await()
         return mapOf("sessionId" to id, "invitationCode" to code)
@@ -514,6 +517,10 @@ class JamRepository(
         val invitation = firestore.collection("jamInvitations").document(invitationDigest(code))
         val info = invitation.get().await()
         val id = info.getString("sessionId") ?: throw JamRepositoryException("This invitation is invalid or has been revoked.")
+        val inviteHostVersion = info.getString("hostAppVersion")?.trim()
+        if (!inviteHostVersion.isNullOrBlank()) {
+            verifySameAppVersion(inviteHostVersion)
+        }
         val session = sessionRef(id)
         val member = session.collection(PARTICIPANTS).document(uid)
         val alreadyMember = runCatching { member.get().await().exists() }.getOrDefault(false)
@@ -525,6 +532,9 @@ class JamRepository(
                 throw JamRepositoryException("This invitation has expired or was revoked.")
             }
             if (sessionSnapshot.getString("status") != "ACTIVE") throw JamRepositoryException("This Jam has ended.")
+            val resolvedHostVersion = sessionSnapshot.getString("hostAppVersion")?.takeIf(String::isNotBlank)
+                ?: inviteSnapshot.getString("hostAppVersion")?.takeIf(String::isNotBlank)
+            verifySameAppVersion(resolvedHostVersion)
             val kickedUids = (sessionSnapshot.get("kickedUids") as? List<*>)?.filterIsInstance<String>().orEmpty()
             if (uid in kickedUids) {
                 throw JamRepositoryException("The host removed you from this Jam. You cannot rejoin this Jam room.")
@@ -545,6 +555,45 @@ class JamRepository(
             id
         }.await()
         return mapOf("sessionId" to id)
+    }
+
+    private fun verifySameAppVersion(hostAppVersionRaw: String?) {
+        val localRaw = com.example.BuildConfig.VERSION_NAME.trim()
+        val localVer = com.example.update.AppVersion.parse(localRaw)
+        val hostTrimmed = hostAppVersionRaw?.trim().orEmpty()
+        if (hostTrimmed.isBlank()) {
+            throw JamVersionMismatchException(
+                currentVersion = localVer.displayString,
+                requiredVersion = localVer.displayString,
+                needsLocalUpdate = false,
+                message = "The host is using an older version of OffGrid Music. Both users must have the same latest version (${localVer.displayString}) installed to access Jam."
+            )
+        }
+        val hostVer = com.example.update.AppVersion.parse(hostTrimmed)
+        val versionsMatch = if (localVer.isValid && hostVer.isValid) {
+            localVer.compareTo(hostVer) == 0
+        } else {
+            localRaw.equals(hostTrimmed, ignoreCase = true)
+        }
+        if (!versionsMatch) {
+            val needsLocalUpdate = hostVer.isValid && localVer.isValid && hostVer.isNewerThan(localVer)
+            if (needsLocalUpdate) {
+                throw JamVersionMismatchException(
+                    currentVersion = localVer.displayString,
+                    requiredVersion = hostVer.displayString,
+                    needsLocalUpdate = true,
+                    message = "Version mismatch: You have ${localVer.displayString} installed, while this Jam runs on the latest version (${hostVer.displayString}). Update OffGrid Music to the latest version to join."
+                )
+            } else {
+                val hostDisplay = if (hostVer.isValid) hostVer.displayString else hostTrimmed
+                throw JamVersionMismatchException(
+                    currentVersion = localVer.displayString,
+                    requiredVersion = localVer.displayString,
+                    needsLocalUpdate = false,
+                    message = "Version mismatch: The host is on an older version ($hostDisplay) while you have ${localVer.displayString}. Both users must have the same latest version (${localVer.displayString}) installed to access Jam."
+                )
+            }
+        }
     }
 
     private suspend fun heartbeatClient(uid: String, data: Map<String, Any>): Map<String, Any?> {
@@ -1567,7 +1616,8 @@ class JamRepository(
     private fun participantRecord(uid: String, displayName: String?, photo: String?, host: Boolean) = mapOf(
         "uid" to uid, "displayName" to displayName?.trim()?.take(80)?.ifBlank { "Listener" }.orEmpty().ifBlank { "Listener" },
         "photoUrl" to photo?.takeIf { it.startsWith("https://") }?.take(500).orEmpty(), "role" to if (host) "HOST" else "PARTICIPANT",
-        "joinedAt" to Timestamp.now(), "lastSeenAt" to Timestamp.now())
+        "joinedAt" to Timestamp.now(), "lastSeenAt" to Timestamp.now(),
+        "appVersion" to com.example.BuildConfig.VERSION_NAME.trim())
 
     private fun generateInviteCode(): String {
         val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -1594,7 +1644,8 @@ class JamRepository(
         photoUrl = snapshot.getString("photoUrl")?.takeIf(String::isNotBlank),
         joinedAtMs = snapshot.getTimestamp("joinedAt")?.toDate()?.time ?: 0L,
         lastSeenAtMs = snapshot.getTimestamp("lastSeenAt")?.toDate()?.time ?: 0L,
-        isHost = snapshot.getString("role") == "HOST"
+        isHost = snapshot.getString("role") == "HOST",
+        appVersion = snapshot.getString("appVersion").orEmpty()
     )
 
     private fun featureRequestFrom(snapshot: DocumentSnapshot): JamFeatureRequest? {
@@ -1695,7 +1746,14 @@ class JamRepository(
         return "https://$host/jam/${code.lowercase()}"
     }
 
-    class JamRepositoryException(message: String) : IllegalStateException(message)
+    open class JamRepositoryException(message: String) : IllegalStateException(message)
+
+    class JamVersionMismatchException(
+        val currentVersion: String,
+        val requiredVersion: String,
+        val needsLocalUpdate: Boolean,
+        message: String
+    ) : JamRepositoryException(message)
 
     companion object {
         const val MAX_PARTICIPANTS = 10

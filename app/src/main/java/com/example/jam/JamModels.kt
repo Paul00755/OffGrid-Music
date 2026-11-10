@@ -114,7 +114,8 @@ data class JamParticipant(
     val photoUrl: String? = null,
     val joinedAtMs: Long = 0L,
     val lastSeenAtMs: Long = 0L,
-    val isHost: Boolean = false
+    val isHost: Boolean = false,
+    val appVersion: String = ""
 ) {
     val isConnected: Boolean get() = lastSeenAtMs > 0L && System.currentTimeMillis() - lastSeenAtMs < 6 * 60_000L
 }
@@ -213,7 +214,8 @@ data class JamSession(
     val playback: JamPlaybackState,
     val revision: Long,
     val queueRevision: Long,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    val hostAppVersion: String = ""
 ) {
     val isActive: Boolean get() = status == STATUS_ACTIVE
 
@@ -266,7 +268,8 @@ data class JamSession(
                 revision = snapshot.getLong("revision") ?: 0L,
                 queueRevision = snapshot.getLong("queueRevision") ?: 0L,
                 createdAtMs = snapshot.getTimestamp("createdAt")?.toDate()?.time
-                    ?: snapshot.getLong("createdAtMs") ?: 0L
+                    ?: snapshot.getLong("createdAtMs") ?: 0L,
+                hostAppVersion = snapshot.getString("hostAppVersion").orEmpty()
             )
         }
     }
@@ -324,6 +327,13 @@ sealed interface JamUiState {
     data object Loading : JamUiState
     data class Error(val message: String) : JamUiState
     data class Notice(val message: String) : JamUiState
+    data class VersionMismatch(
+        val message: String,
+        val currentVersion: String,
+        val requiredVersion: String,
+        val needsLocalUpdate: Boolean,
+        val releaseUrl: String = com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL
+    ) : JamUiState
 }
 
 internal fun sharedTrackId(track: JamTrack): String {

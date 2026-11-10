@@ -45,6 +45,7 @@ class PlaybackAndQueueFeaturesTest {
         playbackScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
         sleepTimerManager = SleepTimerManager(playbackScope) {}
         playbackManager = PlaybackManager(context, playbackScope, sleepTimerManager)
+        playbackManager.alwaysShuffleMode = false
     }
 
     @org.junit.After

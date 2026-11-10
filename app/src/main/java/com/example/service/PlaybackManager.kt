@@ -223,17 +223,60 @@ class PlaybackManager(
 
     private val forwardingListeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
 
+    private fun resolveEffectiveDurationMs(song: Song? = _playbackState.value.currentSong): Long {
+        val playerDur = try { player.duration } catch (_: Throwable) { C.TIME_UNSET }
+        if (playerDur > 0L && playerDur != C.TIME_UNSET) return playerDur
+        val songDur = song?.durationMs ?: 0L
+        if (songDur > 0L) return songDur
+        val stateDur = _playbackState.value.durationMs
+        if (stateDur > 0L) return stateDur
+        val queueSongDur = _playbackState.value.queue.getOrNull(_playbackState.value.queueIndex)?.durationMs ?: 0L
+        return if (queueSongDur > 0L) queueSongDur else 0L
+    }
+
+    private fun resolveEffectivePositionMs(): Long {
+        val statePos = maxOf(currentPositionMs, _playbackPositionMs.value, _playbackState.value.positionMs).coerceAtLeast(0L)
+        val pbState = try { player.playbackState } catch (_: Throwable) { Player.STATE_IDLE }
+        val dur = resolveEffectiveDurationMs()
+        if (pbState == Player.STATE_IDLE) {
+            return if (dur > 0L) statePos.coerceIn(0L, dur) else statePos
+        }
+        val p = try { player.currentPosition } catch (_: Throwable) { C.TIME_UNSET }
+        val raw = if (p >= 0L && p != C.TIME_UNSET) {
+            if (p == 0L && statePos > 0L && !player.isPlaying) statePos else p
+        } else {
+            statePos
+        }
+        return if (dur > 0L) raw.coerceIn(0L, dur) else raw.coerceAtLeast(0L)
+    }
+
     private fun buildLiveMediaMetadata(
         song: Song,
         base: androidx.media3.common.MediaMetadata? = null
     ): androidx.media3.common.MediaMetadata {
         return try {
+            val effectiveDur = resolveEffectiveDurationMs(song)
+            val extras = android.os.Bundle().apply {
+                base?.extras?.let { putAll(it) }
+                if (effectiveDur > 0L) {
+                    putLong("android.media.metadata.DURATION", effectiveDur)
+                }
+            }
             val builder = (base?.buildUpon() ?: androidx.media3.common.MediaMetadata.Builder())
                 .setTitle(song.displayTitle)
                 .setDisplayTitle(song.displayTitle)
                 .setArtist(song.displayArtist)
                 .setAlbumTitle(song.displayAlbum)
                 .setAlbumArtist(song.displayArtist)
+                .setIsPlayable(true)
+                .setMediaType(androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC)
+                .setExtras(extras)
+
+            if (effectiveDur > 0L) {
+                try {
+                    builder.setDurationMs(effectiveDur)
+                } catch (_: Throwable) {}
+            }
 
             val artBytes = ArtworkManager.getCachedNotificationArtwork(song.id, song.path)
             if (artBytes != null && artBytes.isNotEmpty()) {
@@ -267,7 +310,9 @@ class PlaybackManager(
                 androidx.media3.common.FlagSet.Builder()
                     .addAll(
                         Player.EVENT_MEDIA_METADATA_CHANGED,
-                        Player.EVENT_TIMELINE_CHANGED
+                        Player.EVENT_TIMELINE_CHANGED,
+                        Player.EVENT_POSITION_DISCONTINUITY,
+                        Player.EVENT_AVAILABLE_COMMANDS_CHANGED
                     )
                     .build()
             )
@@ -289,6 +334,102 @@ class PlaybackManager(
         override fun removeListener(listener: Player.Listener) {
             forwardingListeners.remove(listener)
             super.removeListener(listener)
+        }
+
+        override fun getDuration(): Long {
+            val d = super.getDuration()
+            if (d > 0L && d != C.TIME_UNSET) return d
+            val resolved = resolveEffectiveDurationMs()
+            return if (resolved > 0L) resolved else C.TIME_UNSET
+        }
+
+        override fun getContentDuration(): Long = duration
+
+        override fun getCurrentPosition(): Long = resolveEffectivePositionMs()
+
+        override fun getContentPosition(): Long = currentPosition
+
+        override fun getBufferedPosition(): Long {
+            val b = super.getBufferedPosition()
+            val c = currentPosition
+            return if (b >= c && b != C.TIME_UNSET) b else c
+        }
+
+        override fun getCurrentTimeline(): androidx.media3.common.Timeline {
+            val baseTimeline = super.getCurrentTimeline()
+            if (baseTimeline.isEmpty) return baseTimeline
+            return object : androidx.media3.exoplayer.source.ForwardingTimeline(baseTimeline) {
+                override fun getWindow(
+                    windowIndex: Int,
+                    window: Window,
+                    defaultPositionProjectionUs: Long
+                ): Window {
+                    super.getWindow(windowIndex, window, defaultPositionProjectionUs)
+                    val queueSong = _playbackState.value.queue.getOrNull(windowIndex)
+                        ?: if (windowIndex == currentMediaItemIndex) _playbackState.value.currentSong else null
+                    val fallbackDurMs = queueSong?.durationMs?.takeIf { it > 0L } ?: resolveEffectiveDurationMs(queueSong)
+                    if ((window.durationUs <= 0L || window.durationUs == C.TIME_UNSET) && fallbackDurMs > 0L) {
+                        window.durationUs = androidx.media3.common.util.Util.msToUs(fallbackDurMs)
+                    }
+                    if (fallbackDurMs > 0L) {
+                        window.isSeekable = true
+                    }
+                    return window
+                }
+
+                override fun getPeriod(
+                    periodIndex: Int,
+                    period: Period,
+                    setIds: Boolean
+                ): Period {
+                    super.getPeriod(periodIndex, period, setIds)
+                    val windowSong = _playbackState.value.queue.getOrNull(period.windowIndex)
+                        ?: _playbackState.value.currentSong
+                    val fallbackDurMs = windowSong?.durationMs?.takeIf { it > 0L } ?: resolveEffectiveDurationMs(windowSong)
+                    if ((period.durationUs <= 0L || period.durationUs == C.TIME_UNSET) && fallbackDurMs > 0L) {
+                        period.durationUs = androidx.media3.common.util.Util.msToUs(fallbackDurMs)
+                    }
+                    return period
+                }
+            }
+        }
+
+        override fun getAvailableCommands(): Player.Commands {
+            val base = super.getAvailableCommands()
+            val hasLoadedSong = _playbackState.value.currentSong != null || super.getMediaItemCount() > 0
+            if (!hasLoadedSong) return base
+            return base.buildUpon()
+                .addAll(
+                    Player.COMMAND_PLAY_PAUSE,
+                    Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                    Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_GET_TIMELINE,
+                    Player.COMMAND_GET_METADATA
+                )
+                .build()
+        }
+
+        override fun isCommandAvailable(command: Int): Boolean {
+            val hasLoadedSong = _playbackState.value.currentSong != null || super.getMediaItemCount() > 0
+            if (hasLoadedSong && command in setOf(
+                    Player.COMMAND_PLAY_PAUSE,
+                    Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                    Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_GET_TIMELINE,
+                    Player.COMMAND_GET_METADATA
+                )
+            ) {
+                return true
+            }
+            return super.isCommandAvailable(command)
         }
 
         override fun getMediaMetadata(): androidx.media3.common.MediaMetadata {
@@ -349,11 +490,15 @@ class PlaybackManager(
         }
 
         override fun seekTo(positionMs: Long) {
-            if (jamPlaybackActive) this@PlaybackManager.seekTo(positionMs) else super.seekTo(positionMs)
+            this@PlaybackManager.seekTo(positionMs)
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
-            if (jamPlaybackActive) this@PlaybackManager.seekTo(positionMs) else super.seekTo(mediaItemIndex, positionMs)
+            if (jamPlaybackActive || mediaItemIndex == currentMediaItemIndex) {
+                this@PlaybackManager.seekTo(positionMs)
+            } else {
+                super.seekTo(mediaItemIndex, positionMs)
+            }
         }
 
         override fun setRepeatMode(repeatMode: Int) {
@@ -606,11 +751,27 @@ class PlaybackManager(
     }
 
     private fun buildMediaItem(song: Song, loadArtworkBytes: Boolean = false): MediaItem {
+        val effectiveDur = song.durationMs.takeIf { it > 0L } ?: _playbackState.value.durationMs.takeIf { it > 0L } ?: 0L
+        val extras = android.os.Bundle().apply {
+            if (effectiveDur > 0L) {
+                putLong("android.media.metadata.DURATION", effectiveDur)
+            }
+        }
         val metadata = androidx.media3.common.MediaMetadata.Builder()
             .setTitle(song.displayTitle)
+            .setDisplayTitle(song.displayTitle)
             .setArtist(song.displayArtist)
             .setAlbumTitle(song.displayAlbum)
+            .setAlbumArtist(song.displayArtist)
+            .setIsPlayable(true)
+            .setMediaType(androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC)
+            .setExtras(extras)
             .apply {
+                if (effectiveDur > 0L) {
+                    try {
+                        setDurationMs(effectiveDur)
+                    } catch (_: Throwable) {}
+                }
                 val art = song.artworkUri?.takeIf { it.isNotBlank() }
                     ?: com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
                     ?: song.contentUriString.takeIf { it.startsWith("http") }
@@ -1163,6 +1324,9 @@ class PlaybackManager(
         player.playWhenReady = false
         player.volume = 1.0f
         isRestoringPlayback = false
+        notifyLiveMetadataChanged()
+        updateNotificationLayout()
+        MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
     }
 
@@ -2492,6 +2656,8 @@ class PlaybackManager(
                         if (player.isPlaying || player.playWhenReady) {
                             startProgressTracker()
                         }
+                        notifyLiveMetadataChanged()
+                        MusicPlaybackService.instance?.triggerNotificationUpdate()
                     }
                     Player.STATE_IDLE -> {
                         // Keep state consistent
@@ -3047,7 +3213,12 @@ class PlaybackManager(
 
     fun skipToPrevious() {
         if (dispatchJamCommand(JamPlaybackAction.SKIP_PREVIOUS)) return
-        if (player.currentPosition > 3000L) {
+        val effectivePos = maxOf(
+            if (player.currentPosition >= 0L && player.currentPosition != C.TIME_UNSET) player.currentPosition else 0L,
+            currentPositionMs,
+            _playbackState.value.positionMs
+        )
+        if (effectivePos > 3000L) {
             cancelCrossfade(resetVolume = true)
             fadeJob?.cancel()
             fadeJob = null
@@ -3131,7 +3302,9 @@ class PlaybackManager(
         _playbackPositionMs.value = safePos
         _playbackState.value = _playbackState.value.copy(positionMs = safePos)
         player.seekTo(safePos)
+        notifyLiveMetadataChanged()
         updateNotificationLayout()
+        MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         persistPlaybackStateNow()
     }
@@ -3370,6 +3543,8 @@ class PlaybackManager(
 
                             if (totalDur > 0L && _playbackState.value.durationMs != totalDur) {
                                 _playbackState.value = _playbackState.value.copy(durationMs = totalDur)
+                                notifyLiveMetadataChanged()
+                                MusicPlaybackService.instance?.triggerNotificationUpdate()
                             }
                         }
 

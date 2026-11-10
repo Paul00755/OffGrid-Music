@@ -427,11 +427,30 @@ private fun LandingPage(
     ) {
         JamHeader(title = "OffGrid Jam", subtitle = "Listen together, on your own music files")
         JamCard {
-            Icon(Icons.Default.Groups, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(38.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Groups, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(38.dp))
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = BentoPrimary.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.32f))
+                ) {
+                    Text(
+                        text = "OffGrid ${com.example.update.AppVersion.parse(com.example.BuildConfig.VERSION_NAME).displayString}",
+                        color = BentoPrimary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Text("One queue. Everyone in sync.", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
             Text(
-                "Create a listening room, invite up to ${JamRepositoryLimit.PARTICIPANTS} people, and play tracks each person already has on their device.",
+                "Create a listening room, invite up to ${JamRepositoryLimit.PARTICIPANTS} people, and play tracks each person already has on their device. All participants must run the same latest OffGrid version.",
                 color = BentoTextSecondary,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -2445,6 +2464,7 @@ private fun JamButton(text: String, icon: androidx.compose.ui.graphics.vector.Im
 
 @Composable
 private fun JamStatus(state: JamUiState) {
+    val context = LocalContext.current
     when (state) {
         JamUiState.Idle -> Unit
         JamUiState.Loading -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = BentoPrimary) }
@@ -2453,6 +2473,88 @@ private fun JamStatus(state: JamUiState) {
         }
         is JamUiState.Notice -> JamCard {
             Text(state.message, color = BentoPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        }
+        is JamUiState.VersionMismatch -> JamCard {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = if (state.needsLocalUpdate) "Latest OffGrid Update Required" else "Host Needs Latest OffGrid Update",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = state.message,
+                    color = BentoTextPrimary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoCardPurple.copy(alpha = 0.55f),
+                        border = BorderStroke(1.dp, BentoCardBorder)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Text("Your Version", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+                            Text(state.currentVersion, color = BentoTextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = BentoPrimary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Text("Required Latest", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+                            Text(state.requiredVersion, color = BentoPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                if (state.needsLocalUpdate) {
+                    Button(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(state.releaseUrl)).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("jam_update_app_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary)
+                    ) {
+                        Text("Download Latest Version (${state.requiredVersion})", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            val shareText = "Update OffGrid Music to the latest version (${state.requiredVersion}) so we can join the same Jam session: ${com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL}"
+                            runCatching {
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, shareText)
+                                        },
+                                        "Share Latest OffGrid Update"
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("jam_share_update_link_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, BentoPrimary)
+                    ) {
+                        Text("Share Latest Update Link with Host", color = BentoPrimary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
     }
 }
@@ -2469,7 +2571,11 @@ private fun ParticipantRow(participant: JamParticipant) {
         }
         Column(Modifier.weight(1f)) {
             Text(participant.displayName, color = BentoTextPrimary, fontWeight = FontWeight.Medium)
-            Text(if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+            val statusLabel = if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…"
+            val verSuffix = participant.appVersion.takeIf(String::isNotBlank)?.let {
+                " · ${com.example.update.AppVersion.parse(it).displayString}"
+            }.orEmpty()
+            Text("$statusLabel$verSuffix", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
         }
         if (participant.isHost) Text("HOST", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
     }
@@ -2491,7 +2597,11 @@ private fun CompactParticipantRow(participant: JamParticipant, trailing: @Compos
         }
         Column(Modifier.weight(1f)) {
             Text(participant.displayName, color = BentoTextPrimary, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
+            val statusLabel = if (participant.isHost) "Host" else if (participant.isConnected) "Connected" else "Reconnecting…"
+            val verSuffix = participant.appVersion.takeIf(String::isNotBlank)?.let {
+                " · ${com.example.update.AppVersion.parse(it).displayString}"
+            }.orEmpty()
+            Text("$statusLabel$verSuffix", color = BentoTextSecondary, style = MaterialTheme.typography.labelSmall)
         }
         if (participant.isHost) Text("HOST", color = BentoPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         trailing?.invoke()

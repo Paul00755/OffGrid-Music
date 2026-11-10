@@ -179,6 +179,62 @@ class AppUpdateRepository(
     }
 
     /**
+     * Records a peer's observed OffGrid version from a Jam session or invitation.
+     * If the peer is running a newer version than installed locally, updates [_updateState] immediately
+     * so both the Jam version gate and in-app update dialog know an update is required.
+     */
+    fun recordObservedPeerVersion(rawVersion: String?) {
+        val trimmed = rawVersion?.trim().orEmpty()
+        if (trimmed.isBlank()) return
+        val peerVer = AppVersion.parse(trimmed)
+        if (!peerVer.isValid || peerVer.isPreRelease) return
+        if (!peerVer.isNewerThan(installedVersion)) return
+
+        val normalizedTag = if (peerVer.buildNumber > 0L) {
+            "v${peerVer.major}.${peerVer.minor}.${peerVer.patch}-build.${peerVer.buildNumber}"
+        } else {
+            "v${peerVer.major}.${peerVer.minor}.${peerVer.patch}"
+        }
+        onRemoteReleaseNotification(
+            tagName = normalizedTag,
+            title = "OffGrid Music ${peerVer.displayString}",
+            notes = "• Latest OffGrid Music release required to create or join Jam sessions.",
+            releaseUrl = GITHUB_RELEASES_URL,
+            forceShowDialog = false
+        )
+    }
+
+    /**
+     * Fast pre-flight verification before creating or joining a Jam session to ensure the user has
+     * the latest stable version of OffGrid Music installed.
+     */
+    suspend fun verifyLatestVersionForJam(): UpdateCheckResult = withContext(Dispatchers.IO) {
+        val current = _updateState.value
+        if (current is UpdateCheckResult.UpdateAvailable) {
+            return@withContext current
+        }
+        val currentInstalled = installedVersion
+        val cachedJson = runCatching { preferences.cachedLatestReleaseJson.first() }.getOrDefault("")
+        if (cachedJson.isNotBlank()) {
+            val cachedRelease = ReleaseInfo.fromJsonString(cachedJson)
+            if (cachedRelease != null && cachedRelease.version.isNewerThan(currentInstalled)) {
+                val avail = UpdateCheckResult.UpdateAvailable(cachedRelease, isDismissed = false)
+                _updateState.value = avail
+                return@withContext avail
+            }
+        }
+        val lastCheck = runCatching { preferences.lastUpdateCheckTimestamp.first() }.getOrDefault(0L)
+        val now = System.currentTimeMillis()
+        if (lastCheck > 0L && (now - lastCheck) < 10 * 60_000L && current is UpdateCheckResult.UpToDate) {
+            return@withContext current
+        }
+        val freshResult = kotlinx.coroutines.withTimeoutOrNull(3_500L) {
+            checkForUpdates(isManual = true)
+        }
+        freshResult ?: _updateState.value
+    }
+
+    /**
      * Ingests release metadata received from an FCM push notification or notification tap intent,
      * ensuring consistent state between FCM notifications and the in-app update dialog without duplicates.
      */

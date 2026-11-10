@@ -129,13 +129,28 @@ class MusicPlaybackService : MediaSessionService() {
                             Notification.FLAG_ONGOING_EVENT or
                             Notification.FLAG_NO_CLEAR
                     mediaNotification.notification.visibility = Notification.VISIBILITY_PUBLIC
+                    mediaNotification.notification.`when` = 0L
 
                     // CRITICAL: Replace Media3's default deleteIntent (which sends KEYCODE_MEDIA_STOP and kills
                     // the MediaSession + Control Centre player when the user clears the lockscreen notification)
                     // with a non-destructive restore intent that keeps the Control Centre notification alive!
                     mediaNotification.notification.deleteIntent = createDismissRestorePendingIntent()
 
-                    // Ensure large icon artwork and text are directly embedded into the notification using authoritative cache
+                    // Ensure large icon artwork, compact actions, and text are directly embedded into the notification using authoritative cache
+                    try {
+                        mediaNotification.notification.extras.putBoolean(Notification.EXTRA_SHOW_WHEN, false)
+                        val actionCount = mediaNotification.notification.actions?.size ?: 0
+                        if (actionCount > 0 && !mediaNotification.notification.extras.containsKey(Notification.EXTRA_COMPACT_ACTIONS)) {
+                            val compactIndices = when {
+                                actionCount >= 4 -> intArrayOf(1, 2, 3)
+                                actionCount == 3 -> intArrayOf(0, 1, 2)
+                                actionCount == 2 -> intArrayOf(0, 1)
+                                else -> intArrayOf(0)
+                            }
+                            mediaNotification.notification.extras.putIntArray(Notification.EXTRA_COMPACT_ACTIONS, compactIndices)
+                        }
+                    } catch (_: Throwable) {}
+
                     try {
                         val currentSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong
                             ?: mediaSession.player.currentMediaItem?.let { mi ->
@@ -415,13 +430,18 @@ class MusicPlaybackService : MediaSessionService() {
             val cachedBmp = currentSong?.let {
                 com.example.util.ArtworkManager.getCachedNotificationBitmap(it.id, it.path)
             }
+            val effectiveDurationMs = player.duration.takeIf { it > 0L }
+                ?: managerState?.durationMs?.takeIf { it > 0L }
+                ?: currentSong?.durationMs?.takeIf { it > 0L }
+                ?: metadata?.durationMs?.takeIf { it > 0L }
+                ?: 0L
             val updateKey = NotificationUpdateKey(
                 mediaId = player.currentMediaItem?.mediaId ?: currentSong?.id?.toString(),
                 title = currentSong?.displayTitle ?: metadata?.title?.toString(),
                 artist = currentSong?.displayArtist ?: metadata?.artist?.toString(),
                 album = currentSong?.displayAlbum ?: metadata?.albumTitle?.toString(),
                 artworkUri = currentSong?.artworkUri ?: metadata?.artworkUri?.toString(),
-                durationMs = player.duration,
+                durationMs = effectiveDurationMs,
                 playbackState = player.playbackState,
                 isPlaying = player.isPlaying,
                 playWhenReady = player.playWhenReady,
@@ -435,7 +455,9 @@ class MusicPlaybackService : MediaSessionService() {
                 isFavorite = currentSong?.isFavorite,
                 artworkIdentityHash = System.identityHashCode(cachedBmp)
             )
-            val currentPositionMs = player.currentPosition.coerceAtLeast(0L)
+            val currentPositionMs = player.currentPosition.takeIf { it > 0L }
+                ?: managerState?.positionMs?.takeIf { it > 0L }
+                ?: 0L
             val isInteractive = try {
                 val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
                 pm?.isInteractive ?: true

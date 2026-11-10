@@ -81,6 +81,8 @@ class JamFeatureController(
     private val _libraryIndexStatus = MutableStateFlow(JamLibraryIndexStatus())
     val libraryIndexStatus: StateFlow<JamLibraryIndexStatus> = _libraryIndexStatus.asStateFlow()
     private val _remoteLibraryIndex = MutableStateFlow(JamLibraryIndexSnapshot())
+    private val localLibraryEntriesLock = Any()
+    private val appUpdateRepository = com.example.update.AppUpdateRepository.getInstance(context)
     private var localLibraryEntries: List<LocalLibraryEntry> = emptyList()
     private var localLibraryReadyForSession: String? = null
     private val notifiedRecommendationIds = LinkedHashSet<String>()
@@ -219,6 +221,11 @@ class JamFeatureController(
             pendingAction = PendingAction.Create
             return true
         }
+        val knownUpdate = appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable
+        if (knownUpdate != null) {
+            _uiState.value = buildLocalUpdateRequiredState(knownUpdate.release)
+            return false
+        }
         _uiState.value = JamUiState.Idle
         _page.value = JamPage.CREATE
         return false
@@ -229,6 +236,11 @@ class JamFeatureController(
         if (authManager.currentUser == null) {
             pendingAction = PendingAction.Join(code)
             return true
+        }
+        val knownUpdate = appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable
+        if (knownUpdate != null) {
+            _uiState.value = buildLocalUpdateRequiredState(knownUpdate.release)
+            return false
         }
         if (code.isNullOrBlank()) {
             _uiState.value = JamUiState.Idle
@@ -275,16 +287,40 @@ class JamFeatureController(
     }
 
     fun clearError() {
-        if (_uiState.value is JamUiState.Error) _uiState.value = JamUiState.Idle
+        if (_uiState.value is JamUiState.Error || _uiState.value is JamUiState.VersionMismatch) {
+            _uiState.value = JamUiState.Idle
+        }
     }
 
     fun cancelPendingAction() {
         pendingAction = null
     }
 
+    private fun buildLocalUpdateRequiredState(release: com.example.update.ReleaseInfo): JamUiState.VersionMismatch {
+        val currentDisplay = appUpdateRepository.installedVersion.displayString
+        val latestDisplay = release.version.displayString
+        return JamUiState.VersionMismatch(
+            message = "Update required: You are using OffGrid Music $currentDisplay, while $latestDisplay is the latest release. Both users must have the same latest version installed to create or join a Jam.",
+            currentVersion = currentDisplay,
+            requiredVersion = latestDisplay,
+            needsLocalUpdate = true,
+            releaseUrl = release.apkDownloadUrl?.takeIf(String::isNotBlank) ?: release.htmlUrl
+        )
+    }
+
+    private suspend fun ensureLatestVersionForJam(): Boolean {
+        val checkResult = appUpdateRepository.verifyLatestVersionForJam()
+        if (checkResult is com.example.update.UpdateCheckResult.UpdateAvailable) {
+            _uiState.value = buildLocalUpdateRequiredState(checkResult.release)
+            return false
+        }
+        return true
+    }
+
     fun createJam(permissions: JamPermissions, maxParticipants: Int) {
         val account = currentAccountOrNull() ?: run { requestCreate(); return }
         runAction {
+            if (!ensureLatestVersionForJam()) return@runAction
             val invite = repository.createSession(
                 displayName = resolvedDisplayName(account),
                 photoUrl = account.photoUrl,
@@ -305,6 +341,7 @@ class JamFeatureController(
         val account = currentAccountOrNull() ?: run { requestJoin(normalized); return }
         _page.value = JamPage.JOIN
         runAction {
+            if (!ensureLatestVersionForJam()) return@runAction
             val id = repository.joinByCode(
                 code = normalized,
                 displayName = resolvedDisplayName(account),
@@ -1248,6 +1285,36 @@ class JamFeatureController(
                     } else null
                     isInitialSessionEmission = false
                     _session.value = session
+                    if (session != null && session.hostAppVersion.isNotBlank()) {
+                        appUpdateRepository.recordObservedPeerVersion(session.hostAppVersion)
+                        val localVer = appUpdateRepository.installedVersion
+                        val hostVer = com.example.update.AppVersion.parse(session.hostAppVersion)
+                        val matches = if (localVer.isValid && hostVer.isValid) {
+                            localVer.compareTo(hostVer) == 0
+                        } else {
+                            com.example.BuildConfig.VERSION_NAME.trim().equals(session.hostAppVersion.trim(), ignoreCase = true)
+                        }
+                        if (!matches && uid != null && session.hostUid != uid) {
+                            val needsLocalUpdate = hostVer.isValid && localVer.isValid && hostVer.isNewerThan(localVer)
+                            stopObserving(restorePlayback = true)
+                            _page.value = JamPage.LANDING
+                            val knownReleaseUrl = (appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable)
+                                ?.release?.let { it.apkDownloadUrl?.takeIf(String::isNotBlank) ?: it.htmlUrl }
+                                ?: com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL
+                            _uiState.value = JamUiState.VersionMismatch(
+                                message = if (needsLocalUpdate) {
+                                    "Version mismatch: You have ${localVer.displayString} installed, while this Jam requires ${hostVer.displayString}. Update OffGrid Music to join."
+                                } else {
+                                    "Version mismatch: The host is on ${if (hostVer.isValid) hostVer.displayString else session.hostAppVersion}, while you have ${localVer.displayString}. Both users must have the same latest version installed."
+                                },
+                                currentVersion = localVer.displayString,
+                                requiredVersion = if (needsLocalUpdate) hostVer.displayString else localVer.displayString,
+                                needsLocalUpdate = needsLocalUpdate,
+                                releaseUrl = knownReleaseUrl
+                            )
+                            return@collectLatest
+                        }
+                    }
                     if (session != null && uid != null && uid in session.kickedUids) {
                         val removalMessage = session.announcement?.forUser(uid)
                             ?: "The host removed you from this Jam. You cannot rejoin this Jam room."
@@ -1319,8 +1386,13 @@ class JamFeatureController(
         participantListenerJob = scope.launch {
             repository.observeParticipants(id)
                 .catch { error -> handleListenerFailure(id, error) }
-                .collectLatest {
-                    _participants.value = it
+                .collectLatest { participantsList ->
+                    participantsList.forEach { p ->
+                        if (p.appVersion.isNotBlank()) {
+                            appUpdateRepository.recordObservedPeerVersion(p.appVersion)
+                        }
+                    }
+                    _participants.value = participantsList
                     updateSharedLibraryMatches()
                 }
         }
@@ -1890,9 +1962,26 @@ class JamFeatureController(
             _uiState.value = JamUiState.Loading
             try {
                 block()
-                if (_uiState.value !is JamUiState.Error && _uiState.value !is JamUiState.Notice) {
+                if (_uiState.value !is JamUiState.Error &&
+                    _uiState.value !is JamUiState.Notice &&
+                    _uiState.value !is JamUiState.VersionMismatch
+                ) {
                     _uiState.value = JamUiState.Idle
                 }
+            } catch (mismatch: JamRepository.JamVersionMismatchException) {
+                if (mismatch.needsLocalUpdate) {
+                    appUpdateRepository.recordObservedPeerVersion(mismatch.requiredVersion)
+                }
+                val knownReleaseUrl = (appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable)
+                    ?.release?.let { it.apkDownloadUrl?.takeIf(String::isNotBlank) ?: it.htmlUrl }
+                    ?: com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL
+                _uiState.value = JamUiState.VersionMismatch(
+                    message = mismatch.message ?: "Both users must have the same latest version of OffGrid Music installed to access Jam.",
+                    currentVersion = mismatch.currentVersion,
+                    requiredVersion = mismatch.requiredVersion,
+                    needsLocalUpdate = mismatch.needsLocalUpdate,
+                    releaseUrl = knownReleaseUrl
+                )
             } catch (error: Throwable) {
                 _uiState.value = JamUiState.Error(error.message ?: "Jam couldn't complete that action.")
             }
