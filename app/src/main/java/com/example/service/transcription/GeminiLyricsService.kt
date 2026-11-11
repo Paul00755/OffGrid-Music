@@ -37,8 +37,8 @@ class GeminiLyricsService(
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 
     /**
@@ -110,12 +110,13 @@ class GeminiLyricsService(
             return@withContext Result.failure(IllegalArgumentException("Source lyrics are empty."))
         }
 
+        val isCorrectionPass = !previousAttempt.isNullOrBlank()
         val prompt = buildTranslationPrompt(existingLrc, targetLanguage, previousAttempt)
         var lastError: Exception? = null
 
         for (model in TRANSLATE_MODELS) {
             try {
-                val responseText = executeGeminiTextRequest(model, cleanKey, prompt)
+                val responseText = executeGeminiTextRequest(model, cleanKey, prompt, isCorrectionPass)
                 if (responseText.isNotBlank()) {
                     val cleanResponse = cleanLrcTextResponse(responseText)
                     val (plain, syncedJson) = LrcParser.parseLrcContent(cleanResponse)
@@ -174,12 +175,13 @@ class GeminiLyricsService(
             )
         }
 
+        val isCorrectionPass = !previousAttempt.isNullOrBlank()
         val prompt = buildTranscriptionPrompt(song, targetLanguage, previousAttempt)
         var lastError: Exception? = null
 
         for (model in TRANSCRIBE_MODELS) {
             try {
-                val responseText = executeGeminiAudioRequest(model, cleanKey, prompt, audioBase64, mimeType)
+                val responseText = executeGeminiAudioRequest(model, cleanKey, prompt, audioBase64, mimeType, isCorrectionPass)
                 if (responseText.isNotBlank()) {
                     val cleanResponse = cleanLrcTextResponse(responseText)
                     val (plain, syncedJson) = LrcParser.parseLrcContent(cleanResponse)
@@ -209,10 +211,14 @@ class GeminiLyricsService(
         val correctionBlock = if (!previousAttempt.isNullOrBlank()) {
             """
 
-RE-TRANSCRIBE / CORRECTION MODE:
-The user requested a re-transcription/re-translation with corrections because the previous draft had inaccuracies.
-Carefully review the Previous Draft below against the Input Lyrics, fix any awkward phrasing, mistranslated words, script errors, or missed Tanglish/multilingual nuances, while strictly keeping every [mm:ss.xx] timestamp intact:
-Previous Draft to Improve:
+RE-TRANSLATE / DEEP CORRECTION AUDIT MODE:
+The user explicitly requested a re-translation with correction because the previous draft had inaccuracies in letters, words, or phrasing.
+Perform a strict line-by-line phonetic and semantic audit comparing the Previous Draft against the Input Lyrics:
+1. Check every single word and syllable for Tamil/Indian phonetic accuracy: verify short vs. long vowels (குறில் vs. நெடில்: அ/ஆ, இ/ஈ, உ/ஊ, எ/ஏ, ஒ/ஓ), retroflex vs. dental consonants (ல/ள/ழ, ன/ண/ந, ர/ற), and proper Pulli (்) placement.
+2. Verify that colloquial/spoken Tamil forms (பேச்சுத் தமிழ், e.g., "வாரேன்", "போறேன்", "கண்ணு", "பொண்ணு") match the actual sung words rather than stiff textbook translations or hallucinated words.
+3. Ensure all English words and acronyms (such as "OMG", "Baby", "Love", "Party", "DJ", "Single") are kept in Latin script and NOT transliterated into Tamil letters.
+4. Keep every [mm:ss.xx] timestamp 100% identical to the Input Lyrics.
+Previous Draft to Audit & Correct:
 ${previousAttempt.take(8000)}
 """
         } else ""
@@ -220,12 +226,14 @@ ${previousAttempt.take(8000)}
         val languageSpecificRules = when (targetLanguage) {
             TranscribeLanguage.TANGLISH -> """
 3. DESTINATION IS TANGLISH (Tamil in English/Latin alphabet + English):
-   - Convert any Tamil script (தமிழ்) or other script into natural, readable Romanized Tamil (Tanglish) using the English alphabet (e.g. "உயிரின் உயிரே" -> "Uyirin uyire", "என்னை கொல்லாதே" -> "Ennai kollathey").
+   - Convert any Tamil script (தமிழ்) or other script into natural, accurate Romanized Tamil (Tanglish) using the English alphabet (e.g. "உயிரின் உயிரே" -> "Uyirin uyire", "என்னை கொல்லாதே" -> "Ennai kollathey").
+   - Distinguish short and long vowels naturally in Romanization (e.g. "Kanna" vs "Kaana", "Ponnu", "Thalli pogathey").
    - Keep all English words, phrases, and acronyms in their exact standard English spelling (e.g. "OMG ponnu", "Don't stop the party", "Baby").
    - Do NOT output Tamil Unicode characters (அ-ஔ, க-ன) when Tanglish is selected."""
             TranscribeLanguage.TAMIL -> """
-3. DESTINATION IS TAMIL (தமிழ்) WITH CODE-SWITCHED ENGLISH PRESERVATION:
-   - If the input contains Tanglish (Tamil words written in Latin/English script), convert the Tamil words into accurate, natural Tamil script (e.g. "Uyirin uyire" -> "உயிரின் உயிரே", "Ennai kollathey" -> "என்னை கொல்லாதே").
+3. DESTINATION IS TAMIL (தமிழ்) WITH HIGH-PRECISION ORTHOGRAPHY & CODE-SWITCHED ENGLISH PRESERVATION:
+   - Convert Tanglish (Tamil words written in Latin/English script) or source lines into accurate, natural Tamil script (தமிழ்) matching the exact sung Tamil words (e.g. "Uyirin uyire" -> "உயிரின் உயிரே", "Ennai kollathey" -> "என்னை கொல்லாதே").
+   - TAMIL LETTER & VOWEL PRECISION: Pay strict attention to short vs. long vowels (குறில்/நெடில்), proper consonant distinctions (ல/ள/ழ, ன/ண/ந, ர/ற), Pulli (மெய்யெழுத்து ்), and natural poetic/colloquial Tamil phrasing (e.g. "பொண்ணு", "கண்ணே", "தள்ளிப் போகாதே").
    - CRITICAL TANGLISH / ENGLISH RULE: Whenever a word, acronym, or phrase in the song is an English word or acronym (for example "OMG" in "OMG Ponnu" -> "OMG பொண்ணு", or words like "Baby", "Love", "Party", "Sorry", "DJ", "Girl"), KEEP the English word/acronym in English Latin script ("OMG", NOT "ஓஎம்ஜி" or "ஓ.எம்.ஜி"). Never transliterate English words or acronyms into Tamil letters."""
             TranscribeLanguage.ENGLISH -> """
 3. DESTINATION IS ENGLISH:
@@ -236,7 +244,7 @@ ${previousAttempt.take(8000)}
         }
 
         return """
-You are an expert multilingual music lyricist and translator.
+You are an expert multilingual music lyricist, Tamil phonetics specialist, and LRC translator.
 Translate/transliterate the following synchronized lyrics into ${targetLanguage.englishName} (${targetLanguage.nativeName}).
 
 CRITICAL REQUIREMENTS:
@@ -257,11 +265,21 @@ $lrcText
         targetLanguage: TranscribeLanguage,
         previousAttempt: String? = null
     ): String {
+        val durationContext = if (song != null && song.durationMs > 0L) {
+            val totalSec = song.durationMs / 1000L
+            val min = totalSec / 60L
+            val sec = totalSec % 60L
+            String.format(java.util.Locale.US, "%02d:%02d (%d ms)", min, sec, song.durationMs)
+        } else null
+
         val songContext = if (song != null) {
             buildString {
                 append("Track: \"${song.displayTitle}\" by \"${song.displayArtist}\"")
                 if (song.displayAlbum.isNotBlank() && !song.displayAlbum.equals("Unknown Album", ignoreCase = true)) {
                     append(" (Album/Movie: \"${song.displayAlbum}\")")
+                }
+                if (durationContext != null) {
+                    append(", Total Track Duration: $durationContext")
                 }
             }
         } else {
@@ -271,10 +289,14 @@ $lrcText
         val correctionBlock = if (!previousAttempt.isNullOrBlank()) {
             """
 
-RE-TRANSCRIBE WITH CORRECTIONS:
-The user requested a fresh re-transcription to fix errors in the previous attempt.
-Listen closely to the audio again and compare it with the Previous Attempt below. Correct any misheard words, spelling/script mistakes, English words wrongly written in native script, missing vocal lines, or inaccurate [mm:ss.xx] timestamps so the lyrics and timing are significantly more accurate:
-Previous Attempt to Correct:
+RE-TRANSCRIBE WITH DEEP CORRECTION AUDIT:
+The user requested a high-precision re-transcription because the Previous Attempt had errors in timestamps, words, or letters.
+Perform a rigorous line-by-line audit of the audio against the Previous Attempt below:
+1. TIMESTAMP RE-ALIGNMENT: Listen to the exact millisecond each vocal line begins in the audio. Fix any timestamps that are early, late, or drifting, anchoring each `[mm:ss.xx]` tag to the exact first sung syllable of the phrase (within ±0.05s accuracy).
+2. PHONETIC & LETTER VERIFICATION: Re-listen carefully to rapid syllables, background harmonies, and high-energy chorus hooks. Correct any misheard words, wrong Tamil letters (check குறில் vs. நெடில் vowel lengths, ல/ள/ழ, ன/ண/ந, ர/ற, and Pulli ்), or word-boundary merges (புணர்ச்சி).
+3. COMPLETE COVERAGE: Ensure no pallavi, anupallavi, charanam, rap bridge, or repeated hook lines were skipped or truncated.
+4. TANGLISH / ENGLISH CHECK: Ensure English words/acronyms (like "OMG", "Baby", "Love") are written in English Latin letters and Tamil words are written in the requested target script.
+Previous Attempt to Audit & Correct:
 ${previousAttempt.take(8000)}
 """
         } else ""
@@ -282,12 +304,17 @@ ${previousAttempt.take(8000)}
         val languageInstruction = when (targetLanguage) {
             TranscribeLanguage.TANGLISH -> """
 3. DESTINATION LANGUAGE IS TANGLISH (Romanized Tamil in English letters + English):
-   - Transcribe all Tamil sung words phonetically in natural, conversational Romanized Tamil using the English alphabet (e.g., "OMG ponnu", "Uyirin uyire", "Ennai kollathey", "Vaathi coming").
+   - Transcribe all Tamil sung words phonetically in natural, accurate Romanized Tamil using the English alphabet (e.g., "OMG ponnu", "Uyirin uyire", "Ennai kollathey", "Vaathi coming", "Thalli pogathey").
+   - Accurately reflect short vs. long vowel sounds and geminated consonants (e.g., "kanna" vs "kaana", "ullam", "azhagiye").
    - Keep all English sung words, hooks, and acronyms in standard English spelling (e.g., "OMG", "Baby", "Love", "Party").
    - Do NOT use Tamil Unicode script (தமிழ்) when Tanglish is selected."""
             TranscribeLanguage.TAMIL -> """
-3. DESTINATION LANGUAGE IS TAMIL (தமிழ்) WITH ENGLISH WORD PRESERVATION:
+3. DESTINATION LANGUAGE IS TAMIL (தமிழ்) WITH STUDIO-GRADE PHONETIC ACCURACY & ENGLISH WORD PRESERVATION:
    - Write Tamil vocal words in accurate, natural Tamil script (தமிழ்).
+   - TAMIL VOCAL & ORTHOGRAPHIC PRECISION:
+     * Listen carefully to vowel lengths (குறில் vs. நெடில்: அ/ஆ, இ/ஈ, உ/ஊ, எ/ஏ, ஒ/ஓ) so sung words are spelled with their true meaning (e.g., "கண்ணே" vs "காணே", "உயிரே", "அழகியே").
+     * Distinguish retroflex, palatal, and alveolar consonants accurately (ல / ள / ழ, ன / ண / ந, ர / ற) and include proper Pulli (்) on pure consonants.
+     * Accurately transcribe both poetic literary Tamil (செந்தமிழ்) and colloquial/spoken cinema Tamil (பேச்சுத் தமிழ், e.g., "பொண்ணு", "கண்ணு", "வாடா", "போடா", "சுத்துதே") exactly as sung by the vocalist.
    - CRITICAL TANGLISH / ENGLISH RULE: Indian and Tamil songs frequently mix English words, acronyms, and hooks with Tamil vocals (e.g., "OMG Ponnu" from Sarkar). Whenever the singer sings an English word, acronym, or phrase (such as "OMG", "Baby", "Love", "Sorry", "Party", "Single", "Breakup", "Queen", "King", "DJ"), you MUST keep that English word/acronym in English Latin letters (e.g., "OMG பொண்ணு", NOT "ஓஎம்ஜி பொண்ணு"). NEVER transliterate English words or acronyms into Tamil letters."""
             TranscribeLanguage.ENGLISH -> """
 3. DESTINATION LANGUAGE IS ENGLISH:
@@ -300,19 +327,21 @@ ${previousAttempt.take(8000)}
         }
 
         return """
-You are an elite multilingual studio vocal transcription and LRC synchronization engine.
+You are an elite multilingual studio vocal transcription, Tamil lyrics specialist, and LRC synchronization engine.
 Listen carefully to the entire vocal performance in this audio ($songContext) and transcribe every sung line into synchronized LRC format.
 
 CRITICAL REQUIREMENTS:
-1. VOCAL FOCUS & COMPLETENESS:
-   - Isolate and transcribe lead vocals, duet/chorus vocals, rap verses, and distinct vocal hooks across the full track from start to finish, even during dense percussion or background instrumentation.
-   - Use the track metadata ($songContext) as context to accurately recognize the song's signature hook phrases, proper nouns, and multilingual expressions.
-2. EXACT SYNCHRONIZATION:
-   - Every line MUST start with an accurate timestamp in standard format: [mm:ss.xx] Lyric line
-   - Align each timestamp to the exact onset of the vocal phrase. Do NOT space timestamps at artificial fixed intervals.
+1. VOCAL ISOLATION & COMPLETENESS:
+   - Isolate and transcribe lead vocals, duet/chorus vocals, rap verses, humming hooks, and backing vocal call-and-response lines across the full track from 00:00 to the end${if (durationContext != null) " ($durationContext)" else ""}, even during dense Kuthu percussion or heavy instrumentation.
+   - Use the track metadata ($songContext) to recognize the song's canonical hook phrases, movie/song context, proper nouns, and lyricist vocabulary.
+   - Transcribe every repeated chorus or pallavi line at each timestamp it is sung; never summarize with "Chorus x2" or skip repeated lines.
+2. MILLISECOND-ACCURATE SYNCHRONIZATION:
+   - Every line MUST start with an accurate timestamp in standard LRC format: [mm:ss.xx] Lyric line
+   - Lock each `[mm:ss.xx]` timestamp to the exact acoustic onset of the first sung syllable of that line (within 50ms precision).
+   - Never guess or space timestamps at uniform fixed intervals (such as every 2.00s or 4.00s); follow the singer's real vocal phrasing, breath pauses, and tempo changes.
 $languageInstruction
 4. INSTRUMENTAL BREAKS SYMBOL:
-   - For clearly audible instrumental intros, interludes, or outros with no sung words, output a timestamp followed ONLY by the musical note character: ♪ (for example: [00:00.00] ♪).
+   - For clearly audible instrumental intros, BGMs, interludes, or outros with no sung words (lasting ≥ 4 seconds), output a timestamp at the start of the instrumental section followed ONLY by the musical note character: ♪ (for example: [00:00.00] ♪).
    - NEVER use the 🎼, 🎵, or 🎶 emojis anywhere in the output. Do not insert ♪ over sung vocals.
 5. NATURAL PUNCTUATION:
    - Use natural punctuation matching the sung phrasing and emotion (commas, periods, apostrophes, question marks, exclamation marks, or ellipses when appropriate) without altering the sung words.
@@ -360,7 +389,12 @@ $languageInstruction
         return translatedSyncedJson
     }
 
-    private fun executeGeminiTextRequest(model: String, apiKey: String, prompt: String): String {
+    private fun executeGeminiTextRequest(
+        model: String,
+        apiKey: String,
+        prompt: String,
+        isCorrectionPass: Boolean = false
+    ): String {
         val url = "$BASE_URL$model:generateContent"
         val requestJson = JSONObject().apply {
             val contents = JSONArray().apply {
@@ -374,8 +408,8 @@ $languageInstruction
             }
             put("contents", contents)
             put("generationConfig", JSONObject().apply {
-                put("temperature", 0.2)
-                put("topP", 0.95)
+                put("temperature", if (isCorrectionPass) 0.05 else 0.1)
+                put("topP", 0.9)
             })
         }
 
@@ -404,7 +438,8 @@ $languageInstruction
         apiKey: String,
         prompt: String,
         audioBase64: String,
-        mimeType: String
+        mimeType: String,
+        isCorrectionPass: Boolean = false
     ): String {
         val url = "$BASE_URL$model:generateContent"
         val requestJson = JSONObject().apply {
@@ -425,8 +460,8 @@ $languageInstruction
             }
             put("contents", contents)
             put("generationConfig", JSONObject().apply {
-                put("temperature", 0.2)
-                put("topP", 0.9)
+                put("temperature", if (isCorrectionPass) 0.05 else 0.1)
+                put("topP", 0.85)
             })
         }
 

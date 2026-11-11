@@ -83,6 +83,15 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE isMissing = 0")
     suspend fun getValidSongsOnce(): List<SongEntity>
 
+    @Query("SELECT * FROM songs WHERE isMissing = 0 ORDER BY dateAdded ASC, id ASC")
+    suspend fun getValidSongsSequentialAsc(): List<SongEntity>
+
+    @Query("UPDATE songs SET title = :title, path = :path WHERE id = :songId")
+    suspend fun updateSongTitleAndPath(songId: Long, title: String, path: String)
+
+    @Query("DELETE FROM songs WHERE path = :path AND id != :keepSongId AND isMissing = 1")
+    suspend fun deleteMissingSongAtPath(path: String, keepSongId: Long)
+
     @Query("UPDATE songs SET isMissing = 1 WHERE path = :path")
     suspend fun markMissing(path: String)
 

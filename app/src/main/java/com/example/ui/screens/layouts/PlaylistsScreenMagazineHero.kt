@@ -728,9 +728,10 @@ fun PlaylistsScreenMagazineHero(
             listState = listState,
             totalItems = otherPlaylists.size + smartPlaylists.size + 4,
             itemIndexToLabel = null,
+            minItemsToShow = 4,
+            bottomPadding = 120.dp,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(bottom = 100.dp, end = 2.dp)
         )
     }
 }

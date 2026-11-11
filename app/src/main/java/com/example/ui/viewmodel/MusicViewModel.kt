@@ -480,6 +480,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFullDeviceScanSync())
 
+    val storeIndexedSongsLocally: StateFlow<Boolean> = preferences.storeIndexedSongsLocally
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getStoreIndexedSongsLocallySync())
+
+    val localSongSyncProgress: StateFlow<com.example.data.repository.LocalSongSyncProgress> = repository.localSongSyncProgress
+    private var localSongSyncJob: kotlinx.coroutines.Job? = null
+
     val allSongs: StateFlow<List<Song>> = kotlinx.coroutines.flow.combine(repository.allSongs, ignoreAudioDuration, maxSongDuration) { list, minSec, maxSec ->
         list.filter {
             val durSec = (it.durationMs / 1000L).toInt()
@@ -815,8 +822,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val sampledSongs = if (selectedSpeedDial.isEmpty()) ArrayList<Song>(9) else null
                     var signature = songs.size.toLong()
 
+                    val activeSong = playbackState.value.currentSong
+                    var latestActiveSong: Song? = null
+
                     songs.forEachIndexed { index, song ->
                         signature = signature * 31L + song.id * 17L + (song.artworkUri?.hashCode()?.toLong() ?: 0L)
+
+                        if (activeSong != null && (song.id == activeSong.id || (song.path.isNotBlank() && song.path == activeSong.path))) {
+                            latestActiveSong = song
+                        }
 
                         if (sampledSongs != null) {
                             if (index < 9) {
@@ -827,6 +841,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         } else if (song.id in selectedIds) {
                             refreshedById[song.id] = song
+                        }
+                    }
+                    if (activeSong != null && latestActiveSong != null) {
+                        val dbSong = latestActiveSong!!
+                        if (dbSong.title != activeSong.title ||
+                            dbSong.artist != activeSong.artist ||
+                            dbSong.album != activeSong.album ||
+                            dbSong.artworkUri != activeSong.artworkUri ||
+                            dbSong.path != activeSong.path ||
+                            dbSong.isManuallyEdited != activeSong.isManuallyEdited
+                        ) {
+                            playbackManager.updateSongInQueue(dbSong)
                         }
                     }
                     val updatedSpeedDial = if (sampledSongs != null) {
@@ -1197,9 +1223,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setFullDeviceScan(enabled: Boolean) = viewModelScope.launch {
+    fun setFullDeviceScan(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setFullDeviceScan(enabled)
+        }
+        if (preferences.isOnboardingCompleted.first()) {
+            val maxMs = if (maxSongDuration.value >= 300) Long.MAX_VALUE else maxSongDuration.value * 1000L
+            repository.quickScanAndCleanLibrary(ignoreAudioDuration.value * 1000L, maxMs, enabled)
+        }
+    }
+
+    fun setStoreIndexedSongsLocally(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                preferences.setStoreIndexedSongsLocally(enabled)
+            }
+            if (enabled) {
+                triggerLocalSongSyncIfEnabled(forceStart = true)
+            } else {
+                localSongSyncJob?.cancel()
+                localSongSyncJob = null
+                repository.resetLocalSongSyncProgress()
+            }
+        }
+    }
+
+    fun triggerLocalSongSyncIfEnabled(forceStart: Boolean = false) {
+        if (!forceStart && !preferences.getStoreIndexedSongsLocallySync()) return
+        if (localSongSyncJob?.isActive == true) return
+        localSongSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            if (!forceStart && !preferences.storeIndexedSongsLocally.first()) return@launch
+            val activePlayingId = playbackManager.playbackState.value.currentSong?.id
+            repository.syncIndexedSongsToLocalStorage(
+                context = getApplication(),
+                skipPlayingSongId = activePlayingId
+            )
         }
     }
 
@@ -1431,9 +1489,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val masked = if (hasKey) secureApiKeyStore.getMaskedApiKey() else null
                 _hasUserApiKey.value = hasKey
                 _maskedApiKey.value = masked
-                if (preferences.isTranscribeTranslateEnabled.first() && !hasKey) {
-                    preferences.setTranscribeTranslateEnabled(false)
-                }
             } catch (_: Throwable) {}
         }
 
@@ -1651,6 +1706,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 maxAudioDurationMs = maxMs,
                 forceFullScan = isFull
             )
+            if (preferences.storeIndexedSongsLocally.first()) {
+                triggerLocalSongSyncIfEnabled(forceStart = true)
+            }
         }
     }
 
@@ -1671,6 +1729,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 forceFullScan = isFull,
                 skipIfAlreadyScanning = false
             )
+            if (preferences.storeIndexedSongsLocally.first()) {
+                triggerLocalSongSyncIfEnabled(forceStart = true)
+            }
         }
     }
 
@@ -1708,6 +1769,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 forceFullScan = isFull,
                 skipIfAlreadyScanning = true
             )
+            if (preferences.storeIndexedSongsLocally.first()) {
+                triggerLocalSongSyncIfEnabled(forceStart = true)
+            }
         }
         return true
     }
@@ -2218,6 +2282,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             com.example.util.ArtworkManager.invalidateNotificationArtwork(updatedSong.id, updatedSong.path)
             if (!finalArt.isNullOrBlank()) {
                 val decodedThumb = withContext(Dispatchers.IO) {
+                    com.example.ui.components.ArtworkResolutionCache.decodeAndCacheFullResBitmap(
+                        context = getApplication(),
+                        songId = updatedSong.id,
+                        uriStr = finalArt,
+                        path = updatedSong.path,
+                        forceReplace = true
+                    )
                     com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
                         context = getApplication(),
                         songId = updatedSong.id,
@@ -2260,6 +2331,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playbackManager.updateSongInQueue(updatedSong)
             if (!finalArt.isNullOrBlank()) {
                 playbackManager.updateCurrentSongArtwork(updatedSong.id, finalArt, updatedSong.path)
+            } else if (!com.example.util.ManualTagStore.isArtworkManuallyEdited(getApplication(), updatedSong.id, updatedSong.path)) {
+                playbackManager.refreshCurrentSongArtworkIfNeeded(updatedSong)
             }
             playbackManager.notifyLiveMetadataChanged()
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), updatedSong.id, resolvedLyrics)
@@ -2289,8 +2362,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLyricsSyncOffset(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
-        com.example.widget.WidgetUpdateManager.invalidateLyricsCache(songId)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+        com.example.widget.WidgetUpdateManager.updateLyricsOffset(getApplication(), songId, offsetMs)
         cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
         cloudSyncRepository.onLyricsUpdatedAsync(songId)
     }
@@ -2300,15 +2372,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // =========================================================================
 
     fun setTranscribeTranslateEnabled(enabled: Boolean, onNeedsKey: (() -> Unit)? = null) = viewModelScope.launch {
-        if (enabled) {
-            if (!secureApiKeyStore.hasApiKey()) {
-                preferences.setTranscribeTranslateEnabled(false)
-                onNeedsKey?.invoke()
-            } else {
-                preferences.setTranscribeTranslateEnabled(true)
-            }
-        } else {
-            preferences.setTranscribeTranslateEnabled(false)
+        preferences.setTranscribeTranslateEnabled(enabled)
+        if (enabled && !secureApiKeyStore.hasApiKey()) {
+            onNeedsKey?.invoke()
         }
     }
 
@@ -2339,16 +2405,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ex?.message ?: "Invalid Gemini API key. Please check your key and try again."
             }
             _keyValidationErrorMessage.value = msg
-            if (ex !is java.io.IOException || !secureApiKeyStore.hasApiKey()) {
-                preferences.setTranscribeTranslateEnabled(false)
-            }
             onResult(false, msg)
         }
     }
 
     fun deleteUserApiKey() = viewModelScope.launch {
         secureApiKeyStore.deleteApiKey()
-        preferences.setTranscribeTranslateEnabled(false)
         _hasUserApiKey.value = false
         _maskedApiKey.value = null
         _keyValidationErrorMessage.value = null
@@ -2373,37 +2435,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun translateLyricsForSong(song: Song, targetLanguage: TranscribeLanguage) = viewModelScope.launch(Dispatchers.IO) {
         if (_isTranscribingLyrics.value) return@launch
 
-        val apiKey = secureApiKeyStore.getApiKey()
-        if (apiKey.isNullOrBlank()) {
-            withContext(Dispatchers.Main) {
-                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                preferences.setTranscribeTranslateEnabled(false)
-                _isTranscribingLyrics.value = false
-                _transcribeStatusMessage.value = null
-            }
-            return@launch
-        }
-
-        val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
-        if (connectionCheck.isFailure) {
-            val ex = connectionCheck.exceptionOrNull()
-            withContext(Dispatchers.Main) {
-                if (ex is java.io.IOException) {
-                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
-                } else {
-                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    preferences.setTranscribeTranslateEnabled(false)
-                }
-                _isTranscribingLyrics.value = false
-                _transcribeStatusMessage.value = null
-            }
-            return@launch
-        }
-
         val current = _currentLyrics.value
         if (current == null || (current.plainLyrics.isNullOrBlank() && current.syncedLyricsJson.isNullOrBlank())) {
             withContext(Dispatchers.Main) {
                 _transcribeErrorMessage.value = "Lyrics are required for translation. Please use Transcribe Audio or add lyrics for this track."
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        val sourceHash = LyricsTranslationCache.computeSourceLyricsHash(current.plainLyrics, current.syncedLyricsJson)
+        val cached = LyricsTranslationCache.get(
+            context = getApplication(),
+            songId = song.id,
+            mode = AudioTranscribeMode.TRANSLATE,
+            targetLang = targetLanguage,
+            sourceLyricsHash = sourceHash
+        )
+
+        if (cached != null && (!cached.plainLyrics.isBlank() || !cached.syncedLyricsJson.isNullOrBlank())) {
+            withContext(Dispatchers.Main) {
+                _transcribeLyricsPreview.value = com.example.service.transcription.TranscribeLyricsPreview(
+                    song = song,
+                    mode = AudioTranscribeMode.TRANSLATE,
+                    targetLanguage = targetLanguage,
+                    plainLyrics = cached.plainLyrics,
+                    syncedLyricsJson = cached.syncedLyricsJson,
+                    source = "Translated (${targetLanguage.englishName})"
+                )
+                _isTranscribingLyrics.value = false
+                _transcribeStatusMessage.value = null
+            }
+            return@launch
+        }
+
+        val apiKey = secureApiKeyStore.getApiKey()
+        if (apiKey.isNullOrBlank()) {
+            withContext(Dispatchers.Main) {
+                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
                 _isTranscribingLyrics.value = false
                 _transcribeStatusMessage.value = null
             }
@@ -2417,54 +2487,40 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val sourceHash = LyricsTranslationCache.computeSourceLyricsHash(current.plainLyrics, current.syncedLyricsJson)
-            val cached = LyricsTranslationCache.get(
+            val inputLrc = if (!current.syncedLyricsJson.isNullOrBlank()) {
+                com.example.util.LrcParser.formatSyncedJsonToLrc(current.syncedLyricsJson) ?: (current.plainLyrics ?: "")
+            } else {
+                current.plainLyrics ?: ""
+            }
+
+            val result = geminiLyricsService.translateLyrics(inputLrc, targetLanguage, apiKey)
+            if (result.isFailure) {
+                val ex = result.exceptionOrNull()
+                val err = if (ex is SecurityException) {
+                    ex.message ?: "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                } else if (ex is java.io.IOException) {
+                    "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    ex?.message ?: "Lyrics translation failed."
+                }
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = err
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            val (plainResult, syncedJsonResult) = result.getOrThrow()
+            LyricsTranslationCache.put(
                 context = getApplication(),
                 songId = song.id,
                 mode = AudioTranscribeMode.TRANSLATE,
                 targetLang = targetLanguage,
-                sourceLyricsHash = sourceHash
+                sourceLyricsHash = sourceHash,
+                plainLyrics = plainResult,
+                syncedLyricsJson = syncedJsonResult
             )
-
-            val (plainResult, syncedJsonResult) = if (cached != null) {
-                Pair(cached.plainLyrics, cached.syncedLyricsJson)
-            } else {
-                val inputLrc = if (!current.syncedLyricsJson.isNullOrBlank()) {
-                    com.example.util.LrcParser.formatSyncedJsonToLrc(current.syncedLyricsJson) ?: (current.plainLyrics ?: "")
-                } else {
-                    current.plainLyrics ?: ""
-                }
-
-                val result = geminiLyricsService.translateLyrics(inputLrc, targetLanguage, apiKey)
-                if (result.isFailure) {
-                    val ex = result.exceptionOrNull()
-                    val err = if (ex is SecurityException) {
-                        preferences.setTranscribeTranslateEnabled(false)
-                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    } else if (ex is java.io.IOException) {
-                        "Network error connecting to Gemini API. Please check your internet connection."
-                    } else {
-                        ex?.message ?: "Lyrics translation failed."
-                    }
-                    withContext(Dispatchers.Main) {
-                        _transcribeErrorMessage.value = err
-                        _isTranscribingLyrics.value = false
-                        _transcribeStatusMessage.value = null
-                    }
-                    return@launch
-                }
-                val res = result.getOrThrow()
-                LyricsTranslationCache.put(
-                    context = getApplication(),
-                    songId = song.id,
-                    mode = AudioTranscribeMode.TRANSLATE,
-                    targetLang = targetLanguage,
-                    sourceLyricsHash = sourceHash,
-                    plainLyrics = res.first,
-                    syncedLyricsJson = res.second
-                )
-                res
-            }
 
             if (plainResult.isBlank() && syncedJsonResult.isNullOrBlank()) {
                 withContext(Dispatchers.Main) {
@@ -2490,8 +2546,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 if (e is SecurityException) {
-                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    preferences.setTranscribeTranslateEnabled(false)
+                    _transcribeErrorMessage.value = e.message ?: "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
                 } else if (e is java.io.IOException) {
                     _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
                 } else {
@@ -2509,27 +2564,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     ) = viewModelScope.launch(Dispatchers.IO) {
         if (_isTranscribingLyrics.value) return@launch
 
-        val apiKey = secureApiKeyStore.getApiKey()
-        if (apiKey.isNullOrBlank()) {
+        val cached = LyricsTranslationCache.get(
+            context = getApplication(),
+            songId = song.id,
+            mode = AudioTranscribeMode.TRANSCRIBE,
+            targetLang = targetLanguage,
+            sourceLyricsHash = null
+        )
+
+        if (cached != null && (!cached.plainLyrics.isBlank() || !cached.syncedLyricsJson.isNullOrBlank())) {
             withContext(Dispatchers.Main) {
-                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                preferences.setTranscribeTranslateEnabled(false)
+                _transcribeLyricsPreview.value = com.example.service.transcription.TranscribeLyricsPreview(
+                    song = song,
+                    mode = AudioTranscribeMode.TRANSCRIBE,
+                    targetLanguage = targetLanguage,
+                    plainLyrics = cached.plainLyrics,
+                    syncedLyricsJson = cached.syncedLyricsJson,
+                    source = "Transcribed (${targetLanguage.englishName})"
+                )
                 _isTranscribingLyrics.value = false
                 _transcribeStatusMessage.value = null
             }
             return@launch
         }
 
-        val connectionCheck = geminiLyricsService.validateApiKey(apiKey)
-        if (connectionCheck.isFailure) {
-            val ex = connectionCheck.exceptionOrNull()
+        val apiKey = secureApiKeyStore.getApiKey()
+        if (apiKey.isNullOrBlank()) {
             withContext(Dispatchers.Main) {
-                if (ex is java.io.IOException) {
-                    _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
-                } else {
-                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    preferences.setTranscribeTranslateEnabled(false)
-                }
+                _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
                 _isTranscribingLyrics.value = false
                 _transcribeStatusMessage.value = null
             }
@@ -2543,57 +2605,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val cached = LyricsTranslationCache.get(
+            val targetFile = File(song.path)
+            if (!targetFile.exists() || targetFile.length() == 0L) {
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = "Audio file not accessible: ${song.displayTitle}"
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            val result = geminiLyricsService.transcribeAudio(targetFile, song, targetLanguage, apiKey)
+            if (result.isFailure) {
+                val ex = result.exceptionOrNull()
+                val err = if (ex is SecurityException) {
+                    ex.message ?: "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                } else if (ex is java.io.IOException) {
+                    "Network error connecting to Gemini API. Please check your internet connection."
+                } else {
+                    ex?.message ?: "Audio transcription failed."
+                }
+                withContext(Dispatchers.Main) {
+                    _transcribeErrorMessage.value = err
+                    _isTranscribingLyrics.value = false
+                    _transcribeStatusMessage.value = null
+                }
+                return@launch
+            }
+
+            val (plainResult, syncedJsonResult) = result.getOrThrow()
+            LyricsTranslationCache.put(
                 context = getApplication(),
                 songId = song.id,
                 mode = AudioTranscribeMode.TRANSCRIBE,
                 targetLang = targetLanguage,
-                sourceLyricsHash = null
+                sourceLyricsHash = null,
+                plainLyrics = plainResult,
+                syncedLyricsJson = syncedJsonResult
             )
-
-            val (plainResult, syncedJsonResult) = if (cached != null) {
-                Pair(cached.plainLyrics, cached.syncedLyricsJson)
-            } else {
-                val targetFile = File(song.path)
-                if (!targetFile.exists() || targetFile.length() == 0L) {
-                    withContext(Dispatchers.Main) {
-                        _transcribeErrorMessage.value = "Audio file not accessible: ${song.displayTitle}"
-                        _isTranscribingLyrics.value = false
-                        _transcribeStatusMessage.value = null
-                    }
-                    return@launch
-                }
-
-                val result = geminiLyricsService.transcribeAudio(targetFile, song, targetLanguage, apiKey)
-                if (result.isFailure) {
-                    val ex = result.exceptionOrNull()
-                    val err = if (ex is SecurityException) {
-                        preferences.setTranscribeTranslateEnabled(false)
-                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    } else if (ex is java.io.IOException) {
-                        "Network error connecting to Gemini API. Please check your internet connection."
-                    } else {
-                        ex?.message ?: "Audio transcription failed."
-                    }
-                    withContext(Dispatchers.Main) {
-                        _transcribeErrorMessage.value = err
-                        _isTranscribingLyrics.value = false
-                        _transcribeStatusMessage.value = null
-                    }
-                    return@launch
-                }
-                val res = result.getOrThrow()
-                LyricsTranslationCache.put(
-                    context = getApplication(),
-                    songId = song.id,
-                    mode = AudioTranscribeMode.TRANSCRIBE,
-                    targetLang = targetLanguage,
-                    sourceLyricsHash = null,
-                    plainLyrics = res.first,
-                    syncedLyricsJson = res.second
-                )
-                res
-            }
 
             if (plainResult.isBlank() && syncedJsonResult.isNullOrBlank()) {
                 withContext(Dispatchers.Main) {
@@ -2619,8 +2668,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 if (e is SecurityException) {
-                    _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                    preferences.setTranscribeTranslateEnabled(false)
+                    _transcribeErrorMessage.value = e.message ?: "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
                 } else if (e is java.io.IOException) {
                     _transcribeErrorMessage.value = "Network error connecting to Gemini API. Please check your internet connection."
                 } else {
@@ -2792,7 +2840,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (apiKey.isNullOrBlank()) {
             withContext(Dispatchers.Main) {
                 _transcribeErrorMessage.value = "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
-                preferences.setTranscribeTranslateEnabled(false)
                 _isTranscribingLyrics.value = false
                 _transcribeStatusMessage.value = null
             }
@@ -2846,8 +2893,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val ex = result.exceptionOrNull()
                 val err = when (ex) {
                     is SecurityException -> {
-                        preferences.setTranscribeTranslateEnabled(false)
-                        "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
+                        ex.message ?: "There was an error connecting with your Gemini API key. Please review and add the correct key in Settings → Audio & Sound."
                     }
                     is java.io.IOException -> "Network error connecting to Gemini API. Please check your internet connection."
                     else -> ex?.message ?: "Re-transcription failed."

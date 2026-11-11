@@ -16,6 +16,20 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.yield
+
+data class LocalSongSyncProgress(
+    val isSyncing: Boolean = false,
+    val processedCount: Int = 0,
+    val totalCount: Int = 0,
+    val updatedCount: Int = 0,
+    val isCompleted: Boolean = false
+)
+
 class MusicRepository(
     private val songDao: SongDao,
     private val folderDao: FolderDao,
@@ -26,6 +40,13 @@ class MusicRepository(
     private val smartPlaylistDao: SmartPlaylistDao,
     private val libraryScanner: LibraryScanner
 ) {
+
+    private val _localSongSyncProgress = MutableStateFlow(LocalSongSyncProgress())
+    val localSongSyncProgress: StateFlow<LocalSongSyncProgress> = _localSongSyncProgress.asStateFlow()
+
+    fun resetLocalSongSyncProgress() {
+        _localSongSyncProgress.value = LocalSongSyncProgress()
+    }
 
     val allSongs: Flow<List<Song>> = songDao.getAllSongs()
         .distinctUntilChanged()
@@ -110,7 +131,8 @@ class MusicRepository(
         forceFullScan: Boolean = false
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
-        val excluded = if (forceFullScan) emptyList() else folderDao.getExcludedFoldersList()
+        val excluded = folderDao.getExcludedFoldersList()
+        libraryScanner.refreshDirectoryObservers()
         libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
     }
 
@@ -121,7 +143,8 @@ class MusicRepository(
         skipIfAlreadyScanning: Boolean = false
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
-        val excluded = if (forceFullScan) emptyList() else folderDao.getExcludedFoldersList()
+        val excluded = folderDao.getExcludedFoldersList()
+        libraryScanner.refreshDirectoryObservers()
         libraryScanner.quickScanAndCleanLibrary(
             includedFolders = included,
             excludedFolders = excluded,
@@ -447,6 +470,11 @@ class MusicRepository(
             AlbumStat(name = it.name, artist = it.artist, artworkUri = it.artworkUri, playCount = it.playCount)
         }
         val history = historyDao.getPlaybackHistoryBetweenOnce(startTime, endTime)
+        val allHistoryForStreak = if (startTime == 0L && endTime >= System.currentTimeMillis()) {
+            history
+        } else {
+            historyDao.getPlaybackHistoryBetweenOnce(0L, 9223372036854775807L)
+        }
 
         var morning = 0L
         var afternoon = 0L
@@ -468,6 +496,68 @@ class MusicRepository(
                 in 17..21 -> evening += rec.listenedDurationMs
                 else -> night += rec.listenedDurationMs
             }
+        }
+
+        // Compute Current Streak & Highest Streak across active listening days
+        val activeMidnights = java.util.TreeSet<Long>()
+        val streakSource = if (allHistoryForStreak.isNotEmpty()) allHistoryForStreak else history
+        for (rec in streakSource) {
+            if (rec.listenedDurationMs <= 0L) continue
+            cal.timeInMillis = rec.startedAt
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            activeMidnights.add(cal.timeInMillis)
+        }
+
+        var longestStreak = 0
+        var runningStreak = 0
+        var prevDayMs: Long? = null
+        for (dayMs in activeMidnights) {
+            if (prevDayMs == null) {
+                runningStreak = 1
+            } else {
+                cal.timeInMillis = prevDayMs
+                cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                if (cal.timeInMillis == dayMs) {
+                    runningStreak += 1
+                } else {
+                    runningStreak = 1
+                }
+            }
+            if (runningStreak > longestStreak) {
+                longestStreak = runningStreak
+            }
+            prevDayMs = dayMs
+        }
+
+        val todayMidnight = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val yesterdayMidnight = java.util.Calendar.getInstance().apply {
+            timeInMillis = todayMidnight
+            add(java.util.Calendar.DAY_OF_YEAR, -1)
+        }.timeInMillis
+
+        var currentStreak = 0
+        val startCheckDay = when {
+            activeMidnights.contains(todayMidnight) -> todayMidnight
+            activeMidnights.contains(yesterdayMidnight) -> yesterdayMidnight
+            else -> null
+        }
+        if (startCheckDay != null) {
+            cal.timeInMillis = startCheckDay
+            while (activeMidnights.contains(cal.timeInMillis)) {
+                currentStreak += 1
+                cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+            }
+        }
+        if (currentStreak > longestStreak) {
+            longestStreak = currentStreak
         }
 
         val timeOfDay = TimeOfDayDistribution(
@@ -494,6 +584,8 @@ class MusicRepository(
             totalTracks = trackCount,
             uniqueTracks = uniqueCount,
             activeDaysCount = distinctDays.size,
+            currentStreakDays = currentStreak,
+            longestStreakDays = longestStreak,
             topSong = topSong,
             topSongPlayCount = topSongPlays,
             topSongDurationMs = topSongDuration,
@@ -718,6 +810,10 @@ class MusicRepository(
         val didModifyArtworkInCall = !newArtworkUri.isNullOrBlank() && newArtworkUri != song.artworkUri
         val didEditArtwork = didModifyArtworkInCall || existingManual?.artworkEdited == true
 
+        val didModifyTextTagsInCall = (trimmedTitle.isNotBlank() && trimmedTitle != song.title && trimmedTitle != song.displayTitle) ||
+            (trimmedArtist.isNotBlank() && trimmedArtist != song.artist && trimmedArtist != song.displayArtist) ||
+            (trimmedAlbum.isNotBlank() && trimmedAlbum != song.album && trimmedAlbum != song.displayAlbum)
+
         var finalArtworkUri = newArtworkUri
         if (didModifyArtworkInCall && !newArtworkUri.isNullOrBlank()) {
             val persistentUri = com.example.util.ArtworkManager.persistSongCover(context, song.id, newArtworkUri, song.path)
@@ -726,8 +822,13 @@ class MusicRepository(
             }
         } else if (didEditArtwork && !existingManual?.artworkUri.isNullOrBlank()) {
             finalArtworkUri = existingManual?.artworkUri
+        } else if (didModifyTextTagsInCall && !didEditArtwork) {
+            // When user edits song title/artist/album without setting manual artwork, clear any stale online-fetched
+            // artwork for the old title and re-check embedded artwork (or let online fetcher fetch for the new title)
+            com.example.util.ArtworkManager.invalidateSongArtwork(context, song.id, deleteFiles = true)
+            finalArtworkUri = com.example.util.ArtworkManager.getOrExtractArtworkUri(context, song.id, song.path, song.albumId, song.album)
         } else if (finalArtworkUri.isNullOrBlank()) {
-            // Preserve existing cached/embedded artwork across title/tag changes without marking it as manual artwork
+            // Preserve existing cached/embedded artwork across non-title tag changes without marking it as manual artwork
             finalArtworkUri = song.artworkUri
                 ?: com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
                 ?: com.example.util.ArtworkManager.getOrExtractArtworkUri(context, song.id, song.path, song.albumId, song.album)
@@ -768,22 +869,6 @@ class MusicRepository(
             lyricsEdited = !newLyrics.isNullOrBlank()
         )
 
-        if (!finalArtworkUri.isNullOrBlank()) {
-            val decoded = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
-                context = context,
-                songId = song.id,
-                uriStr = finalArtworkUri,
-                path = song.path,
-                forceReplace = didModifyArtworkInCall
-            )
-            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
-                songId = song.id,
-                newArtworkUri = finalArtworkUri,
-                path = song.path,
-                preserveThumbnailCache = decoded != null
-            )
-        }
-
         com.example.util.OnlineArtistImageFetcher.updateSongMetadataCacheKeys(
             context = context,
             songId = song.id,
@@ -791,6 +876,36 @@ class MusicRepository(
             newArtist = updatedSong.artist,
             newAlbum = updatedSong.album
         )
+
+        if (!finalArtworkUri.isNullOrBlank()) {
+            val decoded = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
+                context = context,
+                songId = song.id,
+                uriStr = finalArtworkUri,
+                path = song.path,
+                forceReplace = didModifyArtworkInCall || didModifyTextTagsInCall
+            )
+            com.example.ui.components.ArtworkResolutionCache.decodeAndCacheFullResBitmap(
+                context = context,
+                songId = song.id,
+                uriStr = finalArtworkUri,
+                path = song.path,
+                forceReplace = didModifyArtworkInCall || didModifyTextTagsInCall
+            )
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                songId = song.id,
+                newArtworkUri = finalArtworkUri,
+                path = song.path,
+                preserveThumbnailCache = decoded != null
+            )
+        } else {
+            com.example.ui.components.ArtworkResolutionCache.notifyArtworkChanged(
+                songId = song.id,
+                newArtworkUri = null,
+                path = song.path,
+                preserveThumbnailCache = false
+            )
+        }
 
         val entity = SongEntity.fromDomainModel(updatedSong)
         songDao.updateSong(entity)
@@ -853,5 +968,141 @@ class MusicRepository(
         }
 
         return updatedSong
+    }
+
+    /**
+     * Sequentially syncs indexed/cleaned song names (`displayTitle`) to local device storage
+     * (embedded tags, MediaStore, and physical filenames) in chronological `dateAdded ASC` order
+     * while preserving file modification and MediaStore timestamps so "Recently Added / Modified"
+     * order remains identical across both the device and the app.
+     */
+    suspend fun syncIndexedSongsToLocalStorage(
+        context: android.content.Context,
+        skipPlayingSongId: Long? = null
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val sequentialEntities = songDao.getValidSongsSequentialAsc()
+            val allOrderedSongs = sequentialEntities.map { it.toDomainModel() }
+            val totalCount = allOrderedSongs.size
+
+            if (totalCount == 0) {
+                _localSongSyncProgress.value = LocalSongSyncProgress(
+                    isSyncing = false,
+                    processedCount = 0,
+                    totalCount = 0,
+                    updatedCount = 0,
+                    isCompleted = true
+                )
+                return@withContext
+            }
+
+            _localSongSyncProgress.value = LocalSongSyncProgress(
+                isSyncing = true,
+                processedCount = 0,
+                totalCount = totalCount,
+                updatedCount = 0,
+                isCompleted = false
+            )
+
+            var updatedCount = 0
+            var lastEmitMs = android.os.SystemClock.elapsedRealtime()
+            val pendingScanPaths = mutableListOf<String>()
+
+            for ((index, song) in allOrderedSongs.withIndex()) {
+                kotlin.coroutines.coroutineContext.ensureActive()
+
+                if (index > 0 && index % 25 == 0) {
+                    yield()
+                }
+
+                if (skipPlayingSongId != null && song.id == skipPlayingSongId) {
+                    // If currently playing, only update title in DB if needed without renaming the active file descriptor
+                    val targetTitle = song.displayTitle.trim()
+                    if (targetTitle.isNotBlank() && !targetTitle.equals("Unknown Title", ignoreCase = true) && song.title != targetTitle) {
+                        try {
+                            songDao.updateSongTitleAndPath(song.id, targetTitle, song.path)
+                            updatedCount++
+                        } catch (_: Exception) {}
+                    }
+                } else if (com.example.util.AudioTagWriter.needsLocalSongNameSync(song)) {
+                    val syncResult = com.example.util.AudioTagWriter.syncIndexedSongNameLocally(
+                        context = context,
+                        song = song,
+                        triggerMediaScanner = false
+                    )
+                    if (syncResult.updated) {
+                        try {
+                            if (syncResult.newPath != song.path) {
+                                songDao.deleteMissingSongAtPath(syncResult.newPath, song.id)
+                            }
+                            songDao.updateSongTitleAndPath(song.id, syncResult.newTitle, syncResult.newPath)
+                            updatedCount++
+                            if (syncResult.newPath != song.path) {
+                                pendingScanPaths.add(song.path)
+                            }
+                            if (syncResult.newPath.isNotBlank()) {
+                                pendingScanPaths.add(syncResult.newPath)
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                if (pendingScanPaths.size >= 60) {
+                    try {
+                        android.media.MediaScannerConnection.scanFile(
+                            context,
+                            pendingScanPaths.distinct().toTypedArray(),
+                            null,
+                            null
+                        )
+                    } catch (_: Exception) {}
+                    pendingScanPaths.clear()
+                }
+
+                val processed = index + 1
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (processed == totalCount || processed % 15 == 0 || (now - lastEmitMs) >= 120L) {
+                    lastEmitMs = now
+                    _localSongSyncProgress.value = LocalSongSyncProgress(
+                        isSyncing = processed < totalCount,
+                        processedCount = processed,
+                        totalCount = totalCount,
+                        updatedCount = updatedCount,
+                        isCompleted = processed == totalCount
+                    )
+                }
+            }
+
+            if (pendingScanPaths.isNotEmpty()) {
+                try {
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        pendingScanPaths.distinct().toTypedArray(),
+                        null,
+                        null
+                    )
+                } catch (_: Exception) {}
+                pendingScanPaths.clear()
+            }
+
+            _localSongSyncProgress.value = LocalSongSyncProgress(
+                isSyncing = false,
+                processedCount = totalCount,
+                totalCount = totalCount,
+                updatedCount = updatedCount,
+                isCompleted = true
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            _localSongSyncProgress.value = _localSongSyncProgress.value.copy(
+                isSyncing = false,
+                isCompleted = false
+            )
+            throw e
+        } catch (_: Exception) {
+            _localSongSyncProgress.value = _localSongSyncProgress.value.copy(
+                isSyncing = false,
+                isCompleted = true
+            )
+        }
     }
 }

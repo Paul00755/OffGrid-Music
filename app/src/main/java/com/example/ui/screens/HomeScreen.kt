@@ -139,6 +139,90 @@ fun SidebarMenuItem(
     }
 }
 
+@Composable
+private fun SidebarQuickTile(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    badge: String? = null,
+    isHighlighted: Boolean = false,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = if (isHighlighted) BentoPrimary.copy(alpha = 0.16f) else BentoCardDarkPurple.copy(alpha = 0.62f),
+        border = BorderStroke(
+            1.dp,
+            if (isHighlighted) BentoPrimary.copy(alpha = 0.55f) else BentoBorder.copy(alpha = 0.45f)
+        ),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BentoPrimary.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = title,
+                        tint = BentoPrimary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                if (!badge.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = BentoPrimary.copy(alpha = if (isHighlighted) 0.28f else 0.14f)
+                    ) {
+                        Text(
+                            text = badge,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BentoPrimary,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    text = title,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 9.5.sp,
+                    color = BentoTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -352,12 +436,13 @@ fun HomeScreen(
         scrimColor = if (isDrawerActiveOrAnchored) DrawerDefaults.scrimColor else Color.Transparent,
         drawerContent = {
             ModalDrawerSheet(
+                drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
                 drawerContainerColor = BentoCardSurface,
                 drawerContentColor = BentoTextPrimary,
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 modifier = Modifier
-                    // Keep the drawer proportional on narrow phones and cap it on larger screens.
-                    .widthIn(max = 360.dp)
-                    .fillMaxWidth(0.9f)
+                    .widthIn(min = 256.dp, max = 312.dp)
+                    .fillMaxWidth(0.78f)
                     .fillMaxHeight()
                     .graphicsLayer {
                         val offset = drawerState.currentOffset
@@ -383,325 +468,437 @@ fun HomeScreen(
                             translationX = 0f
                         }
                     }
-                    .statusBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .navigationBarsPadding()
             ) {
-                // Sidebar Header with Account Section
+                val sleepBadgeText = if (sleepTimerState.isActive) {
+                    if (sleepTimerState.mode == "SONGS") {
+                        if (sleepTimerState.isFinalSleepTrack) "Final track"
+                        else if (sleepTimerState.elapsedSongs > 0) "${sleepTimerState.elapsedSongs}/${sleepTimerState.totalSongs}"
+                        else "${sleepTimerState.remainingSongs} songs"
+                    } else "${(sleepTimerState.remainingSeconds / 60).coerceAtLeast(1)}m"
+                } else "Off"
+
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .background(BentoPrimary.copy(alpha = 0.08f))
-                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                        .fillMaxSize()
+                        .background(BentoCardSurface)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = CircleShape,
-                                color = BentoPrimary.copy(alpha = 0.15f),
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = null,
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "OFFGRID MUSIC",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = BentoTextPrimary,
-                                letterSpacing = 0.6.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Account Card inside Drawer
-                    val isLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
-                    val avatarUrl = customAvatarUri ?: (if (isLoggedIn) userAccount?.photoUrl else null)
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.6f)),
+                    // 1. Top Brand & Account Header (Pinned at Top, Flush to Container)
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                closeSidebarAndRun {
-                                    if (isLoggedIn) onOpenAccount() else onOpenAuth()
-                                }
-                            }
+                            .background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    colors = listOf(
+                                        BentoPrimary.copy(alpha = 0.14f),
+                                        BentoPrimary.copy(alpha = 0.03f)
+                                    )
+                                )
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(
                                     shape = CircleShape,
                                     color = BentoPrimary.copy(alpha = 0.18f),
-                                    modifier = Modifier.size(42.dp)
+                                    modifier = Modifier.size(30.dp)
                                 ) {
-                                    if (!avatarUrl.isNullOrBlank()) {
-                                        coil.compose.AsyncImage(
-                                            model = avatarUrl,
-                                            contentDescription = "Profile Photo",
-                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.GraphicEq,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(16.dp)
                                         )
-                                    } else if (isLoggedIn && !userAccount?.displayName.isNullOrBlank()) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = userAccount!!.displayName!!.trim().first().uppercase(),
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 17.sp,
-                                                color = BentoPrimary
-                                            )
-                                        }
-                                    } else if (isLoggedIn && !userAccount?.email.isNullOrBlank()) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = userAccount!!.email!!.trim().first().uppercase(),
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 17.sp,
-                                                color = BentoPrimary
-                                            )
-                                        }
-                                    } else {
-                                        // When not logged in using Google account or email:
-                                        // Show normal portrait (AccountCircle, matching top nav bar) instead of displaying letter M
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.AccountCircle,
-                                                contentDescription = "Profile Photo",
-                                                tint = BentoPrimary,
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                        }
                                     }
                                 }
+                                Spacer(modifier = Modifier.width(9.dp))
+                                Text(
+                                    text = "OFFGRID MUSIC",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = BentoTextPrimary,
+                                    letterSpacing = 0.8.sp
+                                )
+                            }
 
-                                Spacer(modifier = Modifier.width(10.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (isLoggedIn) effectiveDisplayName else "Welcome to OffGrid",
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = BentoTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = if (isLoggedIn) (userAccount?.email ?: "Account connected") else "Offline mode active",
-                                        fontSize = 11.sp,
-                                        color = BentoTextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                            Surface(
+                                onClick = { coroutineScope.launch { drawerState.close() } },
+                                shape = CircleShape,
+                                color = BentoCardDarkPurple.copy(alpha = 0.65f),
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Close Menu",
+                                        tint = BentoTextSecondary,
+                                        modifier = Modifier.size(15.dp)
                                     )
                                 }
                             }
+                        }
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (isLoggedIn) {
+                        // Compact Account Card
+                        val isLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
+                        val avatarUrl = customAvatarUri ?: (if (isLoggedIn) userAccount?.photoUrl else null)
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = BentoCardDarkPurple.copy(alpha = 0.72f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    closeSidebarAndRun {
+                                        if (isLoggedIn) onOpenAccount() else onOpenAuth()
+                                    }
+                                }
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = BentoPrimary.copy(alpha = 0.14f),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable {
-                                                closeSidebarAndRun { onOpenAccount() }
-                                            }
+                                        shape = CircleShape,
+                                        color = BentoPrimary.copy(alpha = 0.18f),
+                                        modifier = Modifier.size(36.dp)
                                     ) {
-                                        Text(
-                                            text = "Manage Account",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = BentoPrimary,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 6.dp)
-                                        )
+                                        if (!avatarUrl.isNullOrBlank()) {
+                                            coil.compose.AsyncImage(
+                                                model = avatarUrl,
+                                                contentDescription = "Profile Photo",
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                            )
+                                        } else if (isLoggedIn && !userAccount?.displayName.isNullOrBlank()) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = userAccount!!.displayName!!.trim().first().uppercase(),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = BentoPrimary
+                                                )
+                                            }
+                                        } else if (isLoggedIn && !userAccount?.email.isNullOrBlank()) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = userAccount!!.email!!.trim().first().uppercase(),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp,
+                                                    color = BentoPrimary
+                                                )
+                                            }
+                                        } else {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AccountCircle,
+                                                    contentDescription = "Profile Photo",
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
+                                        }
                                     }
 
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFFF5252).copy(alpha = 0.12f),
-                                        modifier = Modifier
-                                            .clickable {
-                                                closeSidebarAndRun { onSignOut() }
-                                            }
-                                    ) {
+                                    Spacer(modifier = Modifier.width(10.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Sign Out",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFFFF5252),
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                } else {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = BentoPrimary,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                closeSidebarAndRun { onOpenAuth() }
-                                            }
-                                    ) {
-                                        Text(
-                                            text = "Sign In / Register",
-                                            fontSize = 12.sp,
+                                            text = if (isLoggedIn) effectiveDisplayName else "Welcome to OffGrid",
+                                            fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = BentoOnPrimary,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 7.dp)
+                                            color = BentoTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = if (isLoggedIn) (userAccount?.email ?: "Account connected") else "Offline mode active",
+                                            fontSize = 10.5.sp,
+                                            color = BentoTextSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (isLoggedIn) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = BentoPrimary.copy(alpha = 0.14f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable {
+                                                    closeSidebarAndRun { onOpenAccount() }
+                                                }
+                                        ) {
+                                            Text(
+                                                text = "Manage Account",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = BentoPrimary,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(vertical = 5.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFFFF5252).copy(alpha = 0.12f),
+                                            modifier = Modifier
+                                                .clickable {
+                                                    closeSidebarAndRun { onSignOut() }
+                                                }
+                                        ) {
+                                            Text(
+                                                text = "Sign Out",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFFF5252),
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    } else {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = BentoPrimary,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    closeSidebarAndRun { onOpenAuth() }
+                                                }
+                                        ) {
+                                            Text(
+                                                text = "Sign In / Sync Account",
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoOnPrimary,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(vertical = 6.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Library Summary + Quick Rescan Action Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${allSongs.size} Songs • ${allPlaylists.size} Playlists",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = BentoTextSecondary
+                            )
+
+                            Surface(
+                                onClick = { closeSidebarAndRun { onScanClick() } },
+                                shape = RoundedCornerShape(50),
+                                color = BentoPrimary.copy(alpha = 0.14f),
+                                border = BorderStroke(0.8.dp, BentoPrimary.copy(alpha = 0.35f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Rescan Library",
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = if (scanProgress.isScanning) "Scanning..." else "Rescan",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoPrimary
+                                    )
                                 }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "${allSongs.size} Songs • ${allPlaylists.size} Playlists",
-                        fontSize = 11.5.sp,
-                        color = BentoTextSubtle
-                    )
+                    HorizontalDivider(color = BentoBorder.copy(alpha = 0.4f))
+
+                    // 2. Scrollable Essential Quick-Access Content (Adapts to any display height)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "QUICK ACCESS",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BentoTextSubtle,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+
+                        // 2x2 Essential Quick Tiles
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SidebarQuickTile(
+                                icon = Icons.Default.BarChart,
+                                title = "Listening Stats",
+                                subtitle = "Insights & Streak",
+                                badge = "Stats",
+                                onClick = { closeSidebarAndRun { onOpenStatsDetail() } },
+                                modifier = Modifier.weight(1f)
+                            )
+                            SidebarQuickTile(
+                                icon = Icons.Default.Equalizer,
+                                title = "Equalizer",
+                                subtitle = "Audio & Bass FX",
+                                badge = "EQ",
+                                onClick = { closeSidebarAndRun { onOpenSettings("EQUALIZER") } },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SidebarQuickTile(
+                                icon = Icons.Default.Timer,
+                                title = "Sleep Timer",
+                                subtitle = if (sleepTimerState.isActive) "Active timer" else "Auto-stop playback",
+                                badge = sleepBadgeText,
+                                isHighlighted = sleepTimerState.isActive,
+                                onClick = { closeSidebarAndRun { onOpenSettings("SLEEP_TIMER") } },
+                                modifier = Modifier.weight(1f)
+                            )
+                            SidebarQuickTile(
+                                icon = Icons.Default.Favorite,
+                                title = "Favorites",
+                                subtitle = "Liked collection",
+                                badge = "${favoriteSongs.size}",
+                                onClick = { closeSidebarAndRun { onOpenFavorites() } },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Text(
+                            text = "SHORTCUTS & CUSTOMIZATION",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BentoTextSubtle,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = BentoCardDarkPurple.copy(alpha = 0.52f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                SidebarMenuItem(
+                                    icon = Icons.Default.History,
+                                    label = "Recently Played",
+                                    badge = if (recentlyPlayed.isNotEmpty()) "${recentlyPlayed.size}" else null,
+                                    onClick = {
+                                        closeSidebarAndRun { onOpenRecentlyPlayed() }
+                                    }
+                                )
+                                DottedDivider()
+
+                                SidebarMenuItem(
+                                    icon = Icons.Default.Palette,
+                                    label = "UI & Visual Appearance",
+                                    badge = null,
+                                    onClick = {
+                                        closeSidebarAndRun { onOpenSettings("UI") }
+                                    }
+                                )
+                                DottedDivider()
+
+                                SidebarMenuItem(
+                                    icon = Icons.Default.Storage,
+                                    label = "Offline Cache & Storage",
+                                    badge = null,
+                                    onClick = {
+                                        closeSidebarAndRun { onOpenSettings("CACHE") }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. Pinned Bottom Footer (Clears floating mini-player when active)
+                    val bottomClearance = if (playbackState.currentSong != null) 86.dp else 14.dp
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BentoCardSurface)
+                            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = bottomClearance)
+                    ) {
+                        Surface(
+                            onClick = { closeSidebarAndRun { onOpenSettings("ALL") } },
+                            shape = RoundedCornerShape(14.dp),
+                            color = BentoPrimary.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.38f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Settings,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "All Settings & Preferences",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Sidebar Menu Items with Dotted Line Dividers
-                SidebarMenuItem(
-                    icon = Icons.Default.BarChart,
-                    label = "Listening Stats & Insights",
-                    badge = "Stats",
-                    onClick = {
-                        closeSidebarAndRun { onOpenStatsDetail() }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Search,
-                    label = "Search Songs & Artists",
-                    badge = null,
-                    onClick = {
-                        closeSidebarAndRun { onOpenSearch() }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Equalizer,
-                    label = "Equalizer & Sound Effects",
-                    badge = "Graph EQ",
-                    onClick = {
-                        closeSidebarAndRun { onOpenSettings("EQUALIZER") }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Storage,
-                    label = "Offline Cache & Storage",
-                    badge = null,
-                    onClick = {
-                        closeSidebarAndRun { onOpenSettings("CACHE") }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Palette,
-                    label = "UI & Visual Appearance",
-                    badge = null,
-                    onClick = {
-                        closeSidebarAndRun { onOpenSettings("UI") }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Settings,
-                    label = "All Settings & Audio Preferences",
-                    badge = null,
-                    onClick = {
-                        closeSidebarAndRun { onOpenSettings("ALL") }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Timer,
-                    label = "Sleep Timer",
-                    badge = if (sleepTimerState.isActive) {
-                        if (sleepTimerState.mode == "SONGS") {
-                            if (sleepTimerState.isFinalSleepTrack) "Final track"
-                            else if (sleepTimerState.elapsedSongs > 0) "${sleepTimerState.elapsedSongs}/${sleepTimerState.totalSongs}"
-                            else "${sleepTimerState.remainingSongs} songs"
-                        } else "${sleepTimerState.remainingSeconds / 60}m"
-                    } else "Off",
-                    onClick = {
-                        closeSidebarAndRun { onOpenSettings("SLEEP_TIMER") }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.QueueMusic,
-                    label = "Playlists",
-                    badge = "${allPlaylists.size}",
-                    onClick = {
-                        closeSidebarAndRun { onOpenPlaylists() }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.LibraryMusic,
-                    label = "Music Library",
-                    badge = "${allSongs.size}",
-                    onClick = {
-                        closeSidebarAndRun { onOpenLibrary() }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Favorite,
-                    label = "Favorite Songs",
-                    badge = "${favoriteSongs.size}",
-                    onClick = {
-                        closeSidebarAndRun { onOpenFavorites() }
-                    }
-                )
-                DottedDivider()
-
-                SidebarMenuItem(
-                    icon = Icons.Default.Refresh,
-                    label = "Recently Played",
-                    badge = if (recentlyPlayed.isNotEmpty()) "${recentlyPlayed.size}" else null,
-                    onClick = {
-                        closeSidebarAndRun { onOpenRecentlyPlayed() }
-                    }
-                )
-                DottedDivider()
             }
         }
     ) {
@@ -1190,6 +1387,14 @@ fun HomeScreen(
             }
         }
     }
+    com.example.ui.components.FastScrollbar(
+        listState = bentoListState,
+        totalItems = bentoListState.layoutInfo.totalItemsCount.coerceAtLeast(homeSections.size + 2),
+        itemIndexToLabel = null,
+        minItemsToShow = 4,
+        bottomPadding = 120.dp,
+        modifier = Modifier.align(Alignment.CenterEnd)
+    )
 }
 }
 }

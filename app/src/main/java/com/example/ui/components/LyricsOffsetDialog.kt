@@ -36,13 +36,23 @@ fun LyricsOffsetDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var offsetMs by remember(currentOffsetMs) { mutableLongStateOf(currentOffsetMs) }
+    var offsetMs by remember(song.id) { mutableLongStateOf(currentOffsetMs) }
+    LaunchedEffect(currentOffsetMs) {
+        if (offsetMs != currentOffsetMs) {
+            offsetMs = currentOffsetMs
+        }
+    }
 
-    fun applyOffset(newOffset: Long) {
+    fun applyOffset(newOffset: Long, playHaptic: Boolean = true) {
         val clamped = newOffset.coerceIn(-15000L, 15000L)
-        offsetMs = clamped
-        HapticUtils.performClickHaptic(context)
-        onOffsetChanged(clamped)
+        if (clamped != offsetMs || playHaptic) {
+            val changed = clamped != offsetMs
+            offsetMs = clamped
+            if (playHaptic || changed) {
+                HapticUtils.performClickHaptic(context)
+            }
+            onOffsetChanged(clamped)
+        }
     }
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -161,24 +171,26 @@ fun LyricsOffsetDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Continuous Slider (-10s to +10s)
+                // Continuous Slider (-15s to +15s)
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("-10s (Delay)", fontSize = 11.sp, color = BentoTextSecondary)
+                        Text("-15s (Delay)", fontSize = 11.sp, color = BentoTextSecondary)
                         Text("0s", fontSize = 11.sp, color = BentoTextSecondary)
-                        Text("+10s (Advance)", fontSize = 11.sp, color = BentoTextSecondary)
+                        Text("+15s (Advance)", fontSize = 11.sp, color = BentoTextSecondary)
                     }
                     Slider(
-                        value = offsetMs.toFloat(),
+                        value = offsetMs.toFloat().coerceIn(-15000f, 15000f),
                         onValueChange = { newVal ->
                             // Snap to nearest 50ms
                             val rounded = (kotlin.math.round(newVal / 50f) * 50).toLong()
-                            applyOffset(rounded)
+                            if (rounded != offsetMs) {
+                                applyOffset(rounded, playHaptic = false)
+                            }
                         },
-                        valueRange = -10000f..10000f,
+                        valueRange = -15000f..15000f,
                         colors = SliderDefaults.colors(
                             thumbColor = BentoPrimary,
                             activeTrackColor = BentoPrimary,

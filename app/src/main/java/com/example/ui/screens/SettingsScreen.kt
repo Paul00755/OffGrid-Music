@@ -615,6 +615,9 @@ fun SettingsScreen(
     maxSongDuration: Int = 300,
     fullDeviceScan: Boolean = false,
     onSetFullDeviceScan: (Boolean) -> Unit = {},
+    storeIndexedSongsLocally: Boolean = false,
+    onSetStoreIndexedSongsLocally: (Boolean) -> Unit = {},
+    localSongSyncProgress: com.example.data.repository.LocalSongSyncProgress = com.example.data.repository.LocalSongSyncProgress(),
     onSetSongDurationRange: (minSec: Int, maxSec: Int) -> Unit = { _, _ -> },
     fadeInOutMs: Int = 1000,
     onSetFadeInOutMs: (Int) -> Unit = {},
@@ -1699,7 +1702,13 @@ fun SettingsScreen(
             "custom music directories", "music directory", "folders", "folder", "directories", "directory", "exclude", "add folder", "remove folder"
         )
     }
-    val anyLibraryItemMatches = matchLibFullScan || matchLibIgnoreShort || matchLibQuickScan || matchLibCustomFolders
+    val matchLibStoreLocal = remember(searchTokens) {
+        matchesSettingsTokens(
+            searchTokens,
+            "update & store indexed songs in local storage too", "update and store indexed songs", "indexed songs", "local storage", "store indexed", "batch", "rename"
+        )
+    }
+    val anyLibraryItemMatches = matchLibFullScan || matchLibIgnoreShort || matchLibQuickScan || matchLibCustomFolders || matchLibStoreLocal
 
     // Section 7: Other & Privacy granular matchers
     val matchOtherSearchHistory = remember(searchTokens) {
@@ -2467,14 +2476,12 @@ fun SettingsScreen(
                                     onCheckedChange = { enable ->
                                         HapticUtils.performClickHaptic(context)
                                         if (enable) {
-                                            if (hasUserApiKey) {
-                                                onSetTranscribeTranslateEnabled(true)
-                                            } else {
-                                                // Prompt user to enter their API key; keep toggle OFF until validly saved
+                                            onSetTranscribeTranslateEnabled(true)
+                                            if (!hasUserApiKey) {
                                                 isEditingApiKey = true
-                                                onSetTranscribeTranslateEnabled(false)
                                             }
                                         } else {
+                                            isEditingApiKey = false
                                             onSetTranscribeTranslateEnabled(false)
                                         }
                                     },
@@ -4442,6 +4449,136 @@ fun SettingsScreen(
                                     },
                                     dismissButton = {
                                         TextButton(onClick = { showFullDeviceScanConfirmDialog = false }) {
+                                            Text("Cancel", color = BentoTextSecondary)
+                                        }
+                                    },
+                                    containerColor = BentoCardSurface,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                            }
+
+                            if (!isSearching || broadLibraryMatch) SettingsDivider()
+                        }
+
+                        var showStoreIndexedLocallyConfirmDialog by remember { mutableStateOf(false) }
+
+                        // Update & store indexed songs in local storage too
+                        if (!isSearching || matchLibStoreLocal || broadLibraryMatch) {
+                            SettingsToggleRow(
+                                title = "Update & store indexed songs in local storage too",
+                                subtitle = if (storeIndexedSongsLocally) {
+                                    "Automatically updates and stores cleaned app song names to local storage in sequential batches"
+                                } else {
+                                    "Indexed song names are shown in the app only without modifying local device storage"
+                                },
+                                checked = storeIndexedSongsLocally,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        showStoreIndexedLocallyConfirmDialog = true
+                                    } else {
+                                        onSetStoreIndexedSongsLocally(false)
+                                    }
+                                },
+                                icon = Icons.Default.Save,
+                                accentColor = Color(0xFF2979FF)
+                            )
+
+                            if (localSongSyncProgress.isSyncing) {
+                                val fraction = if (localSongSyncProgress.totalCount > 0) {
+                                    (localSongSyncProgress.processedCount.toFloat() / localSongSyncProgress.totalCount.toFloat()).coerceIn(0f, 1f)
+                                } else 0f
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF2979FF).copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, Color(0xFF2979FF).copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color(0xFF2979FF))
+                                                Text(
+                                                    text = "Updating ${localSongSyncProgress.processedCount} / ${localSongSyncProgress.totalCount} songs",
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF2979FF)
+                                                )
+                                            }
+                                            Text(
+                                                text = "${localSongSyncProgress.updatedCount} updated",
+                                                fontSize = 11.5.sp,
+                                                color = BentoTextSecondary
+                                            )
+                                        }
+                                        LinearProgressIndicator(
+                                            progress = { fraction },
+                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
+                                            color = Color(0xFF2979FF)
+                                        )
+                                    }
+                                }
+                            } else if (storeIndexedSongsLocally && localSongSyncProgress.isCompleted && localSongSyncProgress.totalCount > 0) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF00E676).copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Synced ${localSongSyncProgress.totalCount} songs locally",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF00E676)
+                                        )
+                                        Text(
+                                            text = "${localSongSyncProgress.updatedCount} updated",
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (showStoreIndexedLocallyConfirmDialog) {
+                                AlertDialog(
+                                    onDismissRequest = { showStoreIndexedLocallyConfirmDialog = false },
+                                    title = {
+                                        Text(
+                                            text = "Update & Store Indexed Songs Locally",
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            text = "Turning this on will result in changes to all songs represented in the app by updating and storing their indexed song names in your local device storage in sequential batches.\n\nYour Recently Added and Modified song order will be preserved across both your device and the app. Do you want to proceed?",
+                                            fontSize = 13.5.sp,
+                                            color = BentoTextSecondary,
+                                            lineHeight = 19.sp
+                                        )
+                                    },
+                                    confirmButton = {
+                                        Button(
+                                            onClick = {
+                                                showStoreIndexedLocallyConfirmDialog = false
+                                                onSetStoreIndexedSongsLocally(true)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2979FF), contentColor = Color.White)
+                                        ) {
+                                            Text("Confirm & Turn-On", fontWeight = FontWeight.Bold)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { showStoreIndexedLocallyConfirmDialog = false }) {
                                             Text("Cancel", color = BentoTextSecondary)
                                         }
                                     },

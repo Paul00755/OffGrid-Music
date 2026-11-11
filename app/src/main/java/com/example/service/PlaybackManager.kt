@@ -3759,6 +3759,13 @@ class PlaybackManager(
         com.example.ui.components.ArtworkResolutionCache.cacheArtwork(songId, resolvedPath, artworkUri)
 
         scope.launch(Dispatchers.IO) {
+            com.example.ui.components.ArtworkResolutionCache.decodeAndCacheFullResBitmap(
+                context = context,
+                songId = songId,
+                uriStr = artworkUri,
+                path = resolvedPath,
+                forceReplace = true
+            )
             val decodedThumb = com.example.ui.components.ArtworkResolutionCache.decodeAndCacheThumbnail(
                 context = context,
                 songId = songId,
@@ -3831,6 +3838,10 @@ class PlaybackManager(
             }
         }
         return authUri
+    }
+
+    fun refreshCurrentSongArtworkIfNeeded(song: Song) {
+        launchSongArtworkRefresh(song)
     }
 
     private fun launchSongArtworkRefresh(song: Song) {

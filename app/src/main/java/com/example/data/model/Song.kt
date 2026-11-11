@@ -242,6 +242,8 @@ data class WrappedData(
     val totalTracks: Int = 0,
     val uniqueTracks: Int = 0,
     val activeDaysCount: Int = 0,
+    val currentStreakDays: Int = 0,
+    val longestStreakDays: Int = 0,
     val topSong: Song? = null,
     val topSongPlayCount: Int = 0,
     val topSongDurationMs: Long = 0L,

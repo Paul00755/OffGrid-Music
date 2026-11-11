@@ -903,11 +903,11 @@ fun PlaylistDetailScreen(
         if (displaySongs.size > 5) {
             FastScrollbar(
                 listState = listState,
-                totalItems = displaySongs.size + 3,
-                itemIndexToLabel = null,
+                totalItems = displaySongs.size + headerCount,
+                headerItemsCount = headerCount,
+                itemIndexToLabel = fastScrollAlphabetProvider,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 2.dp)
             )
         }
     }

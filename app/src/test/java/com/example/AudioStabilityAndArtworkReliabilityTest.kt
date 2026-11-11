@@ -883,6 +883,96 @@ class AudioStabilityAndArtworkReliabilityTest {
             detector.detectLanguageLabel(hinglishLrc, "Tum Hi Ho", "Arijit Singh", "Aashiqui 2")
         )
     }
+
+    @Test
+    fun testSyncIndexedSongsToLocalStorageBatchSequentialAndTimestampPreservation() = runBlocking {
+        val songFile1 = File(tempDir, "01 - Nee Kidaithai [Masstamilan.com] 320kbps.mp3")
+        val songFile2 = File(tempDir, "02 - OMG Ponnu - MassTamilan.io.mp3")
+        val songFile3 = File(tempDir, "Already Clean Song.mp3")
+
+        songFile1.writeBytes(ByteArray(256) { 0x11 })
+        songFile2.writeBytes(ByteArray(256) { 0x22 })
+        songFile3.writeBytes(ByteArray(256) { 0x33 })
+
+        val ts1 = 1_700_000_000_000L
+        val ts2 = 1_700_010_000_000L
+        val ts3 = 1_700_020_000_000L
+        songFile1.setLastModified(ts1)
+        songFile2.setLastModified(ts2)
+        songFile3.setLastModified(ts3)
+
+        db.songDao().insertSongs(
+            listOf(
+                SongEntity(
+                    id = 101L,
+                    title = "01 - Nee Kidaithai [Masstamilan.com] 320kbps",
+                    artist = "Haricharan",
+                    album = "Chennai 28 II",
+                    genre = "Tamil",
+                    durationMs = 240_000L,
+                    path = songFile1.absolutePath,
+                    contentUriString = "",
+                    dateAdded = ts1
+                ),
+                SongEntity(
+                    id = 102L,
+                    title = "02 - OMG Ponnu - MassTamilan.io",
+                    artist = "Sid Sriram",
+                    album = "Sarkar",
+                    genre = "Tamil",
+                    durationMs = 250_000L,
+                    path = songFile2.absolutePath,
+                    contentUriString = "",
+                    dateAdded = ts2
+                ),
+                SongEntity(
+                    id = 103L,
+                    title = "Already Clean Song",
+                    artist = "Anirudh",
+                    album = "Single",
+                    genre = "Tamil",
+                    durationMs = 200_000L,
+                    path = songFile3.absolutePath,
+                    contentUriString = "",
+                    dateAdded = ts3
+                )
+            )
+        )
+
+        // Execute sequential batch sync
+        repository.syncIndexedSongsToLocalStorage(context, skipPlayingSongId = null)
+
+        val progress = repository.localSongSyncProgress.value
+        assertFalse(progress.isSyncing)
+        assertTrue(progress.isCompleted)
+        assertEquals(3, progress.totalCount)
+        assertEquals(3, progress.processedCount)
+        assertEquals(2, progress.updatedCount) // Only the 2 polluted songs needed updates; song 3 was skipped in O(1)
+
+        val updated1 = db.songDao().getSongById(101L)!!
+        val updated2 = db.songDao().getSongById(102L)!!
+        val updated3 = db.songDao().getSongById(103L)!!
+
+        assertEquals("Nee Kidaithai", updated1.title)
+        assertEquals("OMG Ponnu", updated2.title)
+        assertEquals("Already Clean Song", updated3.title)
+
+        // Verify physical files were renamed on disk
+        val renamedFile1 = File(updated1.path)
+        val renamedFile2 = File(updated2.path)
+        assertTrue(renamedFile1.exists())
+        assertTrue(renamedFile2.exists())
+        assertEquals("Nee Kidaithai.mp3", renamedFile1.name)
+        assertEquals("OMG Ponnu.mp3", renamedFile2.name)
+
+        // Verify original timestamps and sequential Recently Added order are preserved
+        assertEquals(ts1, updated1.dateAdded)
+        assertEquals(ts2, updated2.dateAdded)
+        assertEquals(ts3, updated3.dateAdded)
+        assertEquals(ts1 / 1000L, renamedFile1.lastModified() / 1000L)
+        assertEquals(ts2 / 1000L, renamedFile2.lastModified() / 1000L)
+    }
 }
+
 
 

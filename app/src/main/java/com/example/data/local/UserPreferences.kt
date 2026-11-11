@@ -176,6 +176,7 @@ class UserPreferencesRepository(private val context: Context) {
         val IGNORE_AUDIO_DURATION = intPreferencesKey("ignore_audio_duration") // Minimum duration in seconds
         val MAX_SONG_DURATION = intPreferencesKey("max_song_duration_sec") // Maximum duration in seconds (default 300)
         val FULL_DEVICE_SCAN = booleanPreferencesKey("full_device_scan") // Whether to scan whole device or selected folders
+        val STORE_INDEXED_SONGS_LOCALLY = booleanPreferencesKey("store_indexed_songs_locally") // Sync cleaned/indexed song names to local storage & filenames
         val FADE_IN_OUT_MS = intPreferencesKey("fade_in_out_ms") // 0..5000 ms (legacy)
         val FADE_IN_MS = intPreferencesKey("fade_in_ms") // 0..5000 ms
         val FADE_OUT_MS = intPreferencesKey("fade_out_ms") // 0..5000 ms
@@ -588,7 +589,10 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] = cloud.cacheLyricsEnabled
                 prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] = cloud.cacheAlbumArtEnabled
                 prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] = cloud.cacheSongArtWorkEnabled
-                prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = cloud.transcribeTranslateEnabled
+                val currentTranscribeEnabled = prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED]
+                    ?: readBoolCached("transcribe_translate_enabled", false)
+                val resolvedTranscribeEnabled = currentTranscribeEnabled || cloud.transcribeTranslateEnabled
+                prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = resolvedTranscribeEnabled
                 prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] = cloud.audioTranscribeMode
                 prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = cloud.audioTranscribeTargetLang
                 prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = cloud.automaticBackupEnabled
@@ -670,7 +674,7 @@ class UserPreferencesRepository(private val context: Context) {
                         .putBoolean("pref_cache_lyrics_enabled", cloud.cacheLyricsEnabled)
                         .putBoolean("pref_cache_album_art_enabled", cloud.cacheAlbumArtEnabled)
                         .putBoolean("pref_cache_song_art_work_enabled", cloud.cacheSongArtWorkEnabled)
-                        .putBoolean("pref_transcribe_translate_enabled", cloud.transcribeTranslateEnabled)
+                        .putBoolean("pref_transcribe_translate_enabled", resolvedTranscribeEnabled)
                         .putString("pref_audio_transcribe_mode", cloud.audioTranscribeMode)
                         .putString("pref_audio_transcribe_target_lang", cloud.audioTranscribeTargetLang)
                         .putBoolean("pref_automatic_backup_enabled", cloud.automaticBackupEnabled)
@@ -2416,6 +2420,18 @@ class UserPreferencesRepository(private val context: Context) {
         val serialized = orderedIds.distinct().joinToString(",")
         writeStringCached("playlist_custom_order", serialized)
         context.dataStore.edit { it[PreferenceKeys.PLAYLIST_CUSTOM_ORDER] = serialized }
+    }
+
+    val storeIndexedSongsLocally: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.STORE_INDEXED_SONGS_LOCALLY]
+            ?: readBoolCached("store_indexed_songs_locally", false)
+    }
+
+    fun getStoreIndexedSongsLocallySync(): Boolean = readBoolCached("store_indexed_songs_locally", false)
+
+    suspend fun setStoreIndexedSongsLocally(enabled: Boolean) {
+        writeBoolCached("store_indexed_songs_locally", enabled)
+        context.dataStore.edit { it[PreferenceKeys.STORE_INDEXED_SONGS_LOCALLY] = enabled }
     }
 
     suspend fun clearAllForTesting() {

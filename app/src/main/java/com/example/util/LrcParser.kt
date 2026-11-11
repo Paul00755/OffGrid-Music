@@ -111,15 +111,26 @@ object LrcParser {
         return Pair(plainLyrics, syncedJson)
     }
 
+    private val OFFSET_TAG_PATTERN = Pattern.compile("^\\[offset:\\s*([+-]?\\d+)\\s*\\]$", Pattern.CASE_INSENSITIVE)
+
     fun parseLrcToLines(content: String): List<LrcLine> {
         if (content.isBlank()) return emptyList()
 
         val lines = content.lines()
         val parsedLines = mutableListOf<LrcLine>()
+        var embeddedOffsetMs = 0L
 
         for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
+
+            if (trimmed.startsWith("[offset:", ignoreCase = true)) {
+                val offsetMatcher = OFFSET_TAG_PATTERN.matcher(trimmed)
+                if (offsetMatcher.find()) {
+                    embeddedOffsetMs = offsetMatcher.group(1)?.toLongOrNull() ?: 0L
+                }
+                continue
+            }
 
             // Skip metadata tags
             if (trimmed.startsWith("[ti:", ignoreCase = true) ||
@@ -127,7 +138,6 @@ object LrcParser {
                 trimmed.startsWith("[al:", ignoreCase = true) ||
                 trimmed.startsWith("[by:", ignoreCase = true) ||
                 trimmed.startsWith("[length:", ignoreCase = true) ||
-                trimmed.startsWith("[offset:", ignoreCase = true) ||
                 trimmed.startsWith("[re:", ignoreCase = true) ||
                 trimmed.startsWith("[ve:", ignoreCase = true)
             ) {
@@ -160,7 +170,8 @@ object LrcParser {
                     .trim()
                 val finalText = if (cleanText.isEmpty() || cleanText.all { it == '♪' || it.isWhitespace() }) "♪" else cleanText
                 for (timeMs in lineTimes) {
-                    parsedLines.add(LrcLine(timeMs, finalText))
+                    val adjustedTimeMs = (timeMs - embeddedOffsetMs).coerceAtLeast(0L)
+                    parsedLines.add(LrcLine(adjustedTimeMs, finalText))
                 }
             }
         }

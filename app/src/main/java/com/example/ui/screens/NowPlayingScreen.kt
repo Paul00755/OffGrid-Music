@@ -2053,11 +2053,13 @@ private fun LyricsPanelContent(
             if (syncedLines.isNotEmpty()) {
                 val listState = rememberLazyListState()
                 var userHasManuallyScrolled by remember(song.id) { mutableStateOf(false) }
+                var lastAppliedOffsetMs by remember(song.id) { mutableLongStateOf(syncOffsetMs) }
                 val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
                 val activeIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
                     derivedStateOf {
-                        val rawPos = livePositionState?.value ?: positionMs
-                        val effectivePos = (rawPos + syncOffsetMs).coerceAtLeast(0L)
+                        val liveVal = livePositionState?.value
+                        val rawPos = if (liveVal != null && (liveVal > 0L || positionMs == 0L)) liveVal else positionMs
+                        val effectivePos = rawPos + syncOffsetMs
                         Lyrics.findActiveLineIndex(syncedLines, effectivePos)
                     }
                 }
@@ -2097,6 +2099,18 @@ private fun LyricsPanelContent(
                     }
                 }
 
+                // Immediately re-lock and scroll to the newly offset active line whenever the user adjusts syncOffsetMs
+                LaunchedEffect(syncOffsetMs) {
+                    if (syncOffsetMs != lastAppliedOffsetMs) {
+                        lastAppliedOffsetMs = syncOffsetMs
+                        userHasManuallyScrolled = false
+                        onUserIsScrollingChange(false)
+                        if (activeIndex in syncedLines.indices) {
+                            listState.animateScrollToItem(activeIndex)
+                        }
+                    }
+                }
+
                 // Auto-scroll to current line:
                 // Only scrolls when setting is enabled AND user has not manually scrolled away
                 // Also updates smoothly when syncOffsetMs changes
@@ -2108,10 +2122,10 @@ private fun LyricsPanelContent(
 
                 // Re-sync to currently playing line when seeking (>2.5s jump) occurs, without recomposing on every tick
                 LaunchedEffect(song.id, playbackPositionFlow, syncOffsetMs) {
-                    var lastPos = ((playbackPositionFlow?.value ?: positionMs) + syncOffsetMs).coerceAtLeast(0L)
+                    var lastPos = (playbackPositionFlow?.value ?: positionMs) + syncOffsetMs
                     if (playbackPositionFlow != null) {
                         playbackPositionFlow.collect { rawPos ->
-                            val effPos = (rawPos + syncOffsetMs).coerceAtLeast(0L)
+                            val effPos = rawPos + syncOffsetMs
                             if (kotlin.math.abs(effPos - lastPos) > 2500L) {
                                 userHasManuallyScrolled = false
                                 onUserIsScrollingChange(false)

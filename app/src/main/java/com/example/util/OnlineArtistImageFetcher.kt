@@ -225,11 +225,7 @@ object OnlineArtistImageFetcher {
                                     }
                                     val pic = item.optString("artworkUrl100")
                                     if (pic.isNotBlank() && pic.startsWith("http")) {
-                                        return if (preferUltraHd) {
-                                            pic.replace("100x100bb", "1000x1000bb")
-                                        } else {
-                                            pic.replace("100x100bb", "500x500bb")
-                                        }
+                                        return pic.replace("100x100bb", "1000x1000bb")
                                     }
                                 }
                             }
@@ -261,15 +257,9 @@ object OnlineArtistImageFetcher {
                                         continue
                                     }
                                     if (albumObj != null) {
-                                        val pic = if (preferUltraHd) {
-                                            albumObj.optString("cover_xl")
-                                                .ifBlank { albumObj.optString("cover_big") }
-                                                .ifBlank { albumObj.optString("cover_medium") }
-                                        } else {
-                                            albumObj.optString("cover_big")
-                                                .ifBlank { albumObj.optString("cover_medium") }
-                                                .ifBlank { albumObj.optString("cover_xl") }
-                                        }
+                                        val pic = albumObj.optString("cover_xl")
+                                            .ifBlank { albumObj.optString("cover_big") }
+                                            .ifBlank { albumObj.optString("cover_medium") }
                                         if (pic.isNotBlank() && pic.startsWith("http")) {
                                             return pic
                                         }
@@ -486,11 +476,7 @@ object OnlineArtistImageFetcher {
                     if (results != null && results.length() > 0) {
                         var pic = results.getJSONObject(0).optString("artworkUrl100")
                         if (pic.isNotBlank() && pic.startsWith("http")) {
-                            pic = if (preferUltraHd) {
-                                pic.replace("100x100bb", "600x600bb")
-                            } else {
-                                pic.replace("100x100bb", "500x500bb")
-                            }
+                            pic = pic.replace("100x100bb", "1000x1000bb")
                             if (cacheEnabled) {
                                 albumCache[cacheKey] = pic
                                 context.getSharedPreferences("album_images_cache", Context.MODE_PRIVATE)
@@ -552,7 +538,7 @@ object OnlineArtistImageFetcher {
             trimmedQuery
         }
 
-        // 1. Query iTunes Store Search API (Up to 15 candidates with 1920x1080 artwork)
+        // 1. Query iTunes Store Search API (Up to 15 candidates with 1000x1000 artwork)
         try {
             val itunesUrl = URL("https://itunes.apple.com/search?term=$encoded&entity=song&limit=15")
             val conn = itunesUrl.openConnection() as HttpURLConnection
@@ -567,7 +553,7 @@ object OnlineArtistImageFetcher {
                         val item = results.getJSONObject(i)
                         var pic = item.optString("artworkUrl100")
                         if (pic.isNotBlank() && pic.startsWith("http")) {
-                            pic = pic.replace("100x100bb", "600x600bb")
+                            pic = pic.replace("100x100bb", "1000x1000bb")
                             if (seenUrls.add(pic)) {
                                 candidates.add(
                                     ArtworkCandidate(

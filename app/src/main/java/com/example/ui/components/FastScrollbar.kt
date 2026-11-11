@@ -63,8 +63,10 @@ fun FastScrollbar(
     listState: LazyListState,
     totalItems: Int,
     modifier: Modifier = Modifier,
+    headerItemsCount: Int = 0,
     itemIndexToLabel: ((Int) -> String?)? = null,
     itemLabelProvider: ((Int) -> String?)? = null,
+    minItemsToShow: Int = 6,
     topPadding: Dp = 8.dp,
     bottomPadding: Dp = 100.dp,
     thumbColor: Color = BentoPrimary
@@ -74,7 +76,7 @@ fun FastScrollbar(
         derivedStateOf { listState.layoutInfo.totalItemsCount }
     }
     val effectiveTotalItems = if (layoutTotalItems > 0) layoutTotalItems else totalItems
-    if (effectiveTotalItems <= 6) return
+    if (effectiveTotalItems < minItemsToShow) return
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -88,16 +90,16 @@ fun FastScrollbar(
     var lastHapticLabel by remember { mutableStateOf<String?>(null) }
 
     // Exponentially smoothed item height prevents sudden jumps when headers/cards enter or leave the viewport
-    var smoothedItemSizePx by remember { mutableFloatStateOf(with(density) { 68.dp.toPx() }) }
+    var smoothedItemSizePx by remember { mutableFloatStateOf(with(density) { 64.dp.toPx() }) }
     var lastDispatchedIndex by remember { mutableIntStateOf(-1) }
     var lastDispatchedOffsetPx by remember { mutableIntStateOf(-1) }
 
     val topPaddingPx = remember(density, topPadding) { with(density) { topPadding.toPx() } }
     val bottomPaddingPx = remember(density, bottomPadding) { with(density) { bottomPadding.toPx() } }
-    val thumbHeightPx = remember(density) { with(density) { 48.dp.toPx() } }
+    val thumbHeightPx = remember(density) { with(density) { 52.dp.toPx() } }
 
     // Continuous sub-item scroll fraction so the thumb glides smoothly pixel-by-pixel
-    val stateScrollFraction by remember(listState, totalItems) {
+    val stateScrollFraction by remember(listState, totalItems, headerItemsCount) {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
             val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
@@ -119,20 +121,24 @@ fun FastScrollbar(
         }
     }
 
-    val currentItemIndex by remember(listState, totalItems, isDragging) {
+    val currentItemIndex by remember(listState, totalItems, headerItemsCount, isDragging) {
         derivedStateOf {
             if (!isDragging) {
                 0
             } else {
                 val layoutInfo = listState.layoutInfo
                 val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
-                (dragFraction * (totalCount - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+                val safeHeader = headerItemsCount.coerceIn(0, (totalCount - 1).coerceAtLeast(0))
+                val contentCount = (totalCount - safeHeader).coerceAtLeast(1)
+                (safeHeader + (dragFraction * (contentCount - 1).coerceAtLeast(0)).roundToInt())
+                    .coerceIn(safeHeader, (totalCount - 1).coerceAtLeast(0))
             }
         }
     }
 
     val latestItemIndexToLabel by rememberUpdatedState(resolvedLabelProvider)
     val latestTotalItems by rememberUpdatedState(totalItems)
+    val latestHeaderCount by rememberUpdatedState(headerItemsCount)
 
     // Helper that immediately scrolls the LazyListState to an exact fractional position (item + pixel offset)
     var activeScrollJob by remember { mutableStateOf<Job?>(null) }
@@ -145,29 +151,44 @@ fun FastScrollbar(
             val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else latestTotalItems
             val visibleItems = layoutInfo.visibleItemsInfo
             val visibleCount = visibleItems.size.coerceAtLeast(1)
-            val maxScrollableIndex = (totalCount - visibleCount).coerceAtLeast(0)
             val maxItemIndex = (totalCount - 1).coerceAtLeast(0)
+            val safeHeader = latestHeaderCount.coerceIn(0, maxItemIndex)
 
-            val exactScrollPos = clamped * maxScrollableIndex.toFloat()
-            val targetIndex = exactScrollPos.toInt().coerceIn(0, maxItemIndex)
-            val remainder = (exactScrollPos - targetIndex).coerceIn(0f, 0.999f)
-
-            if (visibleItems.isNotEmpty()) {
+            val contentVisible = visibleItems.filter { it.index >= safeHeader }
+            val sampleVisible = contentVisible.ifEmpty { visibleItems }
+            if (sampleVisible.isNotEmpty()) {
                 var sum = 0
-                for (i in visibleItems.indices) sum += visibleItems[i].size
-                val observedAvg = (sum.toFloat() / visibleItems.size.toFloat()).coerceAtLeast(24f)
-                // Smooth item height with 80/20 EMA to eliminate jumpiness across heterogeneous rows
-                smoothedItemSizePx = (smoothedItemSizePx * 0.78f) + (observedAvg * 0.22f)
+                for (i in sampleVisible.indices) sum += sampleVisible[i].size
+                val observedAvg = (sum.toFloat() / sampleVisible.size.toFloat()).coerceAtLeast(24f)
+                smoothedItemSizePx = (smoothedItemSizePx * 0.80f) + (observedAvg * 0.20f)
             }
 
-            val finalIndex = if (clamped >= 0.998f) maxItemIndex else targetIndex
-            val targetOffsetPx = if (clamped >= 0.998f) {
-                0
+            val finalIndex: Int
+            val targetOffsetPx: Int
+
+            if (clamped <= 0.004f) {
+                finalIndex = 0
+                targetOffsetPx = 0
+            } else if (safeHeader > 0 && totalCount > safeHeader) {
+                val contentCount = (totalCount - safeHeader).coerceAtLeast(1)
+                val maxContentScroll = (contentCount - (visibleCount - 1).coerceAtLeast(1)).coerceAtLeast(1)
+                val exactContentPos = clamped * maxContentScroll.toFloat()
+                val songIdx = exactContentPos.toInt().coerceIn(0, contentCount - 1)
+                val remainder = (exactContentPos - songIdx).coerceIn(0f, 0.999f)
+                finalIndex = if (clamped >= 0.998f) maxItemIndex else (safeHeader + songIdx).coerceIn(0, maxItemIndex)
+                targetOffsetPx = if (clamped >= 0.998f) 0 else (remainder * smoothedItemSizePx).roundToInt().coerceAtLeast(0)
             } else {
-                (remainder * smoothedItemSizePx).roundToInt().coerceAtLeast(0)
+                val maxScrollableIndex = (totalCount - visibleCount).coerceAtLeast(0)
+                val exactScrollPos = clamped * maxScrollableIndex.toFloat()
+                val targetIndex = exactScrollPos.toInt().coerceIn(0, maxItemIndex)
+                val remainder = (exactScrollPos - targetIndex).coerceIn(0f, 0.999f)
+                finalIndex = if (clamped >= 0.998f) maxItemIndex else targetIndex
+                targetOffsetPx = if (clamped >= 0.998f) 0 else (remainder * smoothedItemSizePx).roundToInt().coerceAtLeast(0)
             }
 
-            val labelIdx = (clamped * maxItemIndex.toFloat()).roundToInt().coerceIn(0, maxItemIndex)
+            val contentCountForLabel = (totalCount - safeHeader).coerceAtLeast(1)
+            val labelIdx = (safeHeader + (clamped * (contentCountForLabel - 1).coerceAtLeast(0)).roundToInt())
+                .coerceIn(safeHeader, maxItemIndex)
             val newLabel = latestItemIndexToLabel?.invoke(labelIdx)
             activeLabel = newLabel
             if (newLabel != null && newLabel != lastHapticLabel) {
@@ -197,7 +218,7 @@ fun FastScrollbar(
         if (isScrollInProgress || isDragging) {
             isVisible = true
         } else {
-            delay(1400L)
+            delay(1500L)
             if (!listState.isScrollInProgress && !isDragging) {
                 isVisible = false
                 activeLabel = null
@@ -221,8 +242,8 @@ fun FastScrollbar(
         label = "scrollbar_alpha"
     )
 
-    val thumbWidthDp by animateDpAsState(
-        targetValue = if (isDragging) 8.dp else 5.dp,
+    val handleWidthDp by animateDpAsState(
+        targetValue = if (isDragging) 30.dp else 26.dp,
         animationSpec = tween(durationMillis = 90),
         label = "scrollbar_thumb_width"
     )
@@ -233,7 +254,7 @@ fun FastScrollbar(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(26.dp)
+            .width(34.dp)
             .testTag("fast_scrollbar")
             .onSizeChanged { containerHeightPx = it.height.toFloat() }
             .graphicsLayer {
@@ -246,7 +267,6 @@ fun FastScrollbar(
                         val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
                         val currentThumbTop = topPaddingPx + (stateScrollFraction.coerceIn(0f, 1f) * usableHeight)
                         val currentThumbBottom = currentThumbTop + thumbHeightPx
-                        // Allow tapping directly on the thumb or along the active scrollbar track
                         if (offset.y in (topPaddingPx - 16f)..(containerHeightPx - bottomPaddingPx + 16f)) {
                             if (offset.y !in (currentThumbTop - 18f)..(currentThumbBottom + 18f)) {
                                 HapticUtils.performTickHaptic(context)
@@ -265,7 +285,7 @@ fun FastScrollbar(
                         val thumbTop = topPaddingPx + (currentFraction * usableHeight)
                         val thumbBottom = thumbTop + thumbHeightPx
 
-                        val hitPadding = 40f
+                        val hitPadding = 44f
                         val isDirectThumbHit = offset.y in (thumbTop - hitPadding)..(thumbBottom + hitPadding)
                         val isTrackHitWhenVisible = isVisible && offset.y in (topPaddingPx - 20f)..(containerHeightPx - bottomPaddingPx + 20f)
 
@@ -278,6 +298,11 @@ fun FastScrollbar(
                             if (isDirectThumbHit) {
                                 grabOffsetOnThumbPx = (offset.y - thumbTop).coerceIn(0f, thumbHeightPx)
                                 dragFraction = currentFraction
+                                val safeHeader = latestHeaderCount.coerceIn(0, (effectiveTotalItems - 1).coerceAtLeast(0))
+                                val contentCount = (effectiveTotalItems - safeHeader).coerceAtLeast(1)
+                                val labelIdx = (safeHeader + (currentFraction * (contentCount - 1).coerceAtLeast(0)).roundToInt())
+                                    .coerceIn(safeHeader, (effectiveTotalItems - 1).coerceAtLeast(0))
+                                activeLabel = latestItemIndexToLabel?.invoke(labelIdx)
                             } else {
                                 grabOffsetOnThumbPx = thumbHeightPx / 2f
                                 val initialFraction = ((offset.y - topPaddingPx - grabOffsetOnThumbPx) / usableHeight).coerceIn(0f, 1f)
@@ -299,7 +324,6 @@ fun FastScrollbar(
                         if (!isDragging) return@detectVerticalDragGestures
                         change.consume()
                         val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-                        // Direct 1:1 finger-to-thumb coordinate lock (zero cumulative delta drift)
                         val targetThumbTop = change.position.y - grabOffsetOnThumbPx - topPaddingPx
                         val fraction = (targetThumbTop / usableHeight).coerceIn(0f, 1f)
                         scrollToFractionImmediate(fraction)
@@ -312,7 +336,7 @@ fun FastScrollbar(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(end = 7.dp)
+                    .padding(end = 2.dp)
                     .width(2.dp)
                     .height(with(density) { (containerHeightPx - topPaddingPx - bottomPaddingPx).coerceAtLeast(0f).toDp() })
                     .graphicsLayer {
@@ -323,31 +347,73 @@ fun FastScrollbar(
             )
         }
 
-        // Thumb Pill — uses graphicsLayer translationY for zero-recomposition GPU positioning
+        // Right-Edge Semi-Circular Handle with Up/Down Chevron Triangles (matching submitted design)
+        val handleShape = RoundedCornerShape(
+            topStart = 26.dp,
+            bottomStart = 26.dp,
+            topEnd = 0.dp,
+            bottomEnd = 0.dp
+        )
+        val handleBgColor = androidx.compose.ui.graphics.lerp(
+            com.example.ui.theme.BentoCardSurface,
+            Color(0xFF241612),
+            0.55f
+        ).copy(alpha = if (isDragging) 0.98f else 0.92f)
+
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 4.dp)
-                .width(thumbWidthDp)
-                .height(48.dp)
+                .width(handleWidthDp)
+                .height(52.dp)
                 .graphicsLayer {
                     val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
                     val displayFraction = if (isDragging) dragFraction else stateScrollFraction
                     translationY = topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight)
                 }
-                .clip(CircleShape)
-                .background(if (isDragging) thumbColor else thumbColor.copy(alpha = 0.85f))
-        )
+                .clip(handleShape)
+                .background(handleBgColor),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .size(width = 12.dp, height = 20.dp)
+                    .offset(x = 2.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val triH = h * 0.30f
+                val gap = h * 0.22f
+                val centerY = h / 2f
 
-        // Use a Popup so the section label is measured independently of the 26dp drag rail.
-        // Otherwise Compose constrains longer labels (for example, "Stats") to the rail width.
+                // Upward triangle (▲)
+                val upPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w / 2f, centerY - gap / 2f - triH)
+                    lineTo(0f, centerY - gap / 2f)
+                    lineTo(w, centerY - gap / 2f)
+                    close()
+                }
+                drawPath(path = upPath, color = thumbColor)
+
+                // Downward triangle (▼)
+                val downPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(0f, centerY + gap / 2f)
+                    lineTo(w, centerY + gap / 2f)
+                    lineTo(w / 2f, centerY + gap / 2f + triH)
+                    close()
+                }
+                drawPath(path = downPath, color = thumbColor)
+            }
+        }
+
+        // Floating Alphabet/Section Bubble positioned cleanly to the left of the semi-circular handle
         if (isDragging && !activeLabel.isNullOrBlank()) {
             val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
-            val bubbleOffsetY = (topPaddingPx + (dragFraction.coerceIn(0f, 1f) * usableHeight) - 6f).roundToInt()
+            val bubbleOffsetY = (topPaddingPx + (dragFraction.coerceIn(0f, 1f) * usableHeight) + 2f).roundToInt()
+            val bubbleOffsetX = -with(density) { 40.dp.roundToPx() }
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Popup(
                     alignment = Alignment.TopEnd,
-                    offset = IntOffset(x = 0, y = bubbleOffsetY)
+                    offset = IntOffset(x = bubbleOffsetX, y = bubbleOffsetY)
                 ) {
                     AnimatedVisibility(
                         visible = true,
@@ -355,19 +421,21 @@ fun FastScrollbar(
                         exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.82f)
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(14.dp),
+                            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 24.dp, bottomEnd = 6.dp),
                             color = thumbColor,
-                            shadowElevation = 8.dp,
-                            modifier = Modifier.widthIn(min = 64.dp, max = 180.dp).heightIn(min = 40.dp)
+                            shadowElevation = 10.dp,
+                            modifier = Modifier
+                                .widthIn(min = 48.dp, max = 180.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                             ) {
                                 Text(
                                     text = activeLabel.orEmpty(),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
                                     color = Color.Black,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -376,6 +444,219 @@ fun FastScrollbar(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * High-responsiveness FastGridScrollbar for LazyVerticalGrid lists (such as Bento Collections grid mode).
+ * Renders the right-edge semi-circular double-chevron handle without alphabet popups.
+ */
+@Composable
+fun FastGridScrollbar(
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    totalItems: Int,
+    modifier: Modifier = Modifier,
+    minItemsToShow: Int = 6,
+    topPadding: Dp = 8.dp,
+    bottomPadding: Dp = 100.dp,
+    thumbColor: Color = BentoPrimary
+) {
+    val layoutTotalItems by remember {
+        derivedStateOf { gridState.layoutInfo.totalItemsCount }
+    }
+    val effectiveTotalItems = if (layoutTotalItems > 0) layoutTotalItems else totalItems
+    if (effectiveTotalItems < minItemsToShow) return
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    var isDragging by remember { mutableStateOf(false) }
+    var isVisible by remember { mutableStateOf(false) }
+    var containerHeightPx by remember { mutableFloatStateOf(0f) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+    var lastDispatchedIndex by remember { mutableIntStateOf(-1) }
+
+    val topPaddingPx = remember(density, topPadding) { with(density) { topPadding.toPx() } }
+    val bottomPaddingPx = remember(density, bottomPadding) { with(density) { bottomPadding.toPx() } }
+    val thumbHeightPx = remember(density) { with(density) { 52.dp.toPx() } }
+
+    val stateScrollFraction by remember(gridState, totalItems) {
+        derivedStateOf {
+            val layoutInfo = gridState.layoutInfo
+            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else totalItems
+            val visibleItems = layoutInfo.visibleItemsInfo
+            val visibleCount = visibleItems.size
+            if (totalCount <= 1 || visibleCount == 0) {
+                0f
+            } else {
+                val scrollableItems = (totalCount - visibleCount).coerceAtLeast(1)
+                val firstItemSize = visibleItems.firstOrNull()?.size?.height ?: 0
+                val subItemFraction = if (firstItemSize > 0) {
+                    (gridState.firstVisibleItemScrollOffset.toFloat() / firstItemSize.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                val exactIndex = gridState.firstVisibleItemIndex.toFloat() + subItemFraction
+                (exactIndex / scrollableItems.toFloat()).coerceIn(0f, 1f)
+            }
+        }
+    }
+
+    val latestTotalItems by rememberUpdatedState(totalItems)
+    var activeScrollJob by remember { mutableStateOf<Job?>(null) }
+    val scrollToFractionImmediate: (Float) -> Unit = remember(gridState, coroutineScope) {
+        { targetFraction: Float ->
+            val clamped = targetFraction.coerceIn(0f, 1f)
+            dragFraction = clamped
+            val layoutInfo = gridState.layoutInfo
+            val totalCount = if (layoutInfo.totalItemsCount > 0) layoutInfo.totalItemsCount else latestTotalItems
+            val maxItemIndex = (totalCount - 1).coerceAtLeast(0)
+            val finalIndex = (clamped * maxItemIndex.toFloat()).roundToInt().coerceIn(0, maxItemIndex)
+            if (finalIndex != lastDispatchedIndex) {
+                lastDispatchedIndex = finalIndex
+                if (activeScrollJob?.isActive != true) {
+                    activeScrollJob = coroutineScope.launch(Dispatchers.Main.immediate) {
+                        gridState.scrollToItem(lastDispatchedIndex)
+                    }
+                }
+            }
+        }
+    }
+
+    val isScrollInProgress by remember(gridState) {
+        derivedStateOf { gridState.isScrollInProgress }
+    }
+    LaunchedEffect(isScrollInProgress, isDragging) {
+        if (isScrollInProgress || isDragging) {
+            isVisible = true
+        } else {
+            delay(1500L)
+            if (!gridState.isScrollInProgress && !isDragging) {
+                isVisible = false
+            }
+        }
+    }
+
+    val alphaAnim by animateFloatAsState(
+        targetValue = if (isVisible || isDragging) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (isVisible || isDragging) 80 else 260,
+            easing = FastOutSlowInEasing
+        ),
+        label = "grid_scrollbar_alpha"
+    )
+
+    val handleWidthDp by animateDpAsState(
+        targetValue = if (isDragging) 30.dp else 26.dp,
+        animationSpec = tween(durationMillis = 90),
+        label = "grid_scrollbar_thumb_width"
+    )
+
+    var grabOffsetOnThumbPx by remember { mutableFloatStateOf(thumbHeightPx / 2f) }
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(34.dp)
+            .onSizeChanged { containerHeightPx = it.height.toFloat() }
+            .graphicsLayer { alpha = alphaAnim }
+            .pointerInput(topPaddingPx, bottomPaddingPx, thumbHeightPx) {
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                        val currentFraction = stateScrollFraction.coerceIn(0f, 1f)
+                        val thumbTop = topPaddingPx + (currentFraction * usableHeight)
+                        val thumbBottom = thumbTop + thumbHeightPx
+
+                        val hitPadding = 44f
+                        val isDirectThumbHit = offset.y in (thumbTop - hitPadding)..(thumbBottom + hitPadding)
+                        val isTrackHitWhenVisible = isVisible && offset.y in (topPaddingPx - 20f)..(containerHeightPx - bottomPaddingPx + 20f)
+
+                        if (isDirectThumbHit || isTrackHitWhenVisible) {
+                            isDragging = true
+                            isVisible = true
+                            lastDispatchedIndex = -1
+                            HapticUtils.performClickHaptic(context)
+                            if (isDirectThumbHit) {
+                                grabOffsetOnThumbPx = (offset.y - thumbTop).coerceIn(0f, thumbHeightPx)
+                                dragFraction = currentFraction
+                            } else {
+                                grabOffsetOnThumbPx = thumbHeightPx / 2f
+                                val initialFraction = ((offset.y - topPaddingPx - grabOffsetOnThumbPx) / usableHeight).coerceIn(0f, 1f)
+                                scrollToFractionImmediate(initialFraction)
+                            }
+                        } else {
+                            isDragging = false
+                        }
+                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onVerticalDrag = { change, _ ->
+                        if (!isDragging) return@detectVerticalDragGestures
+                        change.consume()
+                        val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                        val targetThumbTop = change.position.y - grabOffsetOnThumbPx - topPaddingPx
+                        val fraction = (targetThumbTop / usableHeight).coerceIn(0f, 1f)
+                        scrollToFractionImmediate(fraction)
+                    }
+                )
+            }
+    ) {
+        val handleShape = RoundedCornerShape(
+            topStart = 26.dp,
+            bottomStart = 26.dp,
+            topEnd = 0.dp,
+            bottomEnd = 0.dp
+        )
+        val handleBgColor = androidx.compose.ui.graphics.lerp(
+            com.example.ui.theme.BentoCardSurface,
+            Color(0xFF241612),
+            0.55f
+        ).copy(alpha = if (isDragging) 0.98f else 0.92f)
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .width(handleWidthDp)
+                .height(52.dp)
+                .graphicsLayer {
+                    val usableHeight = (containerHeightPx - topPaddingPx - bottomPaddingPx - thumbHeightPx).coerceAtLeast(1f)
+                    val displayFraction = if (isDragging) dragFraction else stateScrollFraction
+                    translationY = topPaddingPx + (displayFraction.coerceIn(0f, 1f) * usableHeight)
+                }
+                .clip(handleShape)
+                .background(handleBgColor),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .size(width = 12.dp, height = 20.dp)
+                    .offset(x = 2.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val triH = h * 0.30f
+                val gap = h * 0.22f
+                val centerY = h / 2f
+
+                val upPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w / 2f, centerY - gap / 2f - triH)
+                    lineTo(0f, centerY - gap / 2f)
+                    lineTo(w, centerY - gap / 2f)
+                    close()
+                }
+                drawPath(path = upPath, color = thumbColor)
+
+                val downPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(0f, centerY + gap / 2f)
+                    lineTo(w, centerY + gap / 2f)
+                    lineTo(w / 2f, centerY + gap / 2f + triH)
+                    close()
+                }
+                drawPath(path = downPath, color = thumbColor)
             }
         }
     }

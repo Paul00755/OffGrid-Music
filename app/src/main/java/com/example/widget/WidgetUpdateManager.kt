@@ -331,6 +331,19 @@ object WidgetUpdateManager {
         }
     }
 
+    fun updateLyricsOffset(context: Context, songId: Long, offsetMs: Long) {
+        if (songId <= 0L) return
+        val appContext = context.applicationContext
+        if (songId == cachedLyricsSongId) {
+            cachedLyricsOffsetMs = offsetMs
+            lastLyricsLineSignature = ""
+        } else {
+            lastLyricsDbCheckMs = 0L
+        }
+        val liveState = getAuthoritativeState(appContext, PlaybackManager.activeInstance?.playbackState?.value)
+        updateAllWidgets(appContext, liveState)
+    }
+
     fun syncLyricsFromApp(
         context: Context,
         songId: Long,

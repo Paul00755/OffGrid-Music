@@ -772,47 +772,59 @@ fun PlaylistsScreen(
                         gridState = gridState,
                         onReorderPlaylists = onReorderPlaylists
                     )
-                    LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Fixed(2),
-                        contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp)
+                    Box(
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        item(
-                            key = "bento_scrollable_header",
-                            span = { GridItemSpan(maxLineSpan) },
-                            contentType = "header"
+                        LazyVerticalGrid(
+                            state = gridState,
+                            columns = GridCells.Fixed(2),
+                            contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp)
                         ) {
-                            bentoHeaderContent()
+                            item(
+                                key = "bento_scrollable_header",
+                                span = { GridItemSpan(maxLineSpan) },
+                                contentType = "header"
+                            ) {
+                                bentoHeaderContent()
+                            }
+                            items(
+                                items = gridReorderState.orderedPlaylists,
+                                key = { it.id },
+                                contentType = { "playlist_grid_card" }
+                            ) { playlist ->
+                                PlaylistGridCard(
+                                    playlist = playlist,
+                                    onClick = { onPlaylistClick(playlist) },
+                                    onPlayNow = { onPlayNow(playlist) },
+                                    onPlayNext = { onPlayNext(playlist) },
+                                    onAddToQueue = { onAddToQueue(playlist) },
+                                    onRename = {
+                                        playlistToRename = playlist
+                                        renamePlaylistText = playlist.name
+                                    },
+                                    onChangeCover = {
+                                        selectedPlaylistForArtwork = playlist.id
+                                        artworkPickerLauncher.launch("image/*")
+                                    },
+                                    onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
+                                    onDelete = { playlistToDelete = playlist },
+                                    modifier = Modifier.playlistGridReorderItem(gridReorderState, playlist.id)
+                                )
+                            }
                         }
-                        items(
-                            items = gridReorderState.orderedPlaylists,
-                            key = { it.id },
-                            contentType = { "playlist_grid_card" }
-                        ) { playlist ->
-                            PlaylistGridCard(
-                                playlist = playlist,
-                                onClick = { onPlaylistClick(playlist) },
-                                onPlayNow = { onPlayNow(playlist) },
-                                onPlayNext = { onPlayNext(playlist) },
-                                onAddToQueue = { onAddToQueue(playlist) },
-                                onRename = {
-                                    playlistToRename = playlist
-                                    renamePlaylistText = playlist.name
-                                },
-                                onChangeCover = {
-                                    selectedPlaylistForArtwork = playlist.id
-                                    artworkPickerLauncher.launch("image/*")
-                                },
-                                onRemoveCover = { onUpdatePlaylistArtwork(playlist.id, null) },
-                                onDelete = { playlistToDelete = playlist },
-                                modifier = Modifier.playlistGridReorderItem(gridReorderState, playlist.id)
-                            )
-                        }
+
+                        com.example.ui.components.FastGridScrollbar(
+                            gridState = gridState,
+                            totalItems = gridReorderState.orderedPlaylists.size + 1,
+                            minItemsToShow = 4,
+                            bottomPadding = 120.dp,
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                        )
                     }
                 } else {
                     val listState = rememberLazyListState()
@@ -866,10 +878,9 @@ fun PlaylistsScreen(
                             listState = listState,
                             totalItems = listReorderState.orderedPlaylists.size + 1,
                             itemIndexToLabel = null,
+                            minItemsToShow = 4,
                             bottomPadding = 120.dp,
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(end = 2.dp)
+                            modifier = Modifier.align(Alignment.CenterEnd)
                         )
                     }
                 }

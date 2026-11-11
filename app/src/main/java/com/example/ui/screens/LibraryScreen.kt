@@ -1004,7 +1004,6 @@ fun LibraryScreen(
                         bottomPadding = 120.dp,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .padding(end = 1.dp)
                     )
                 }
             }

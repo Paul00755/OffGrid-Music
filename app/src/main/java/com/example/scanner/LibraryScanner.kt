@@ -309,6 +309,38 @@ class LibraryScanner(
         debounceJob?.cancel()
     }
 
+    private fun collectWatchableDirectories(
+        roots: List<File>,
+        normExcluded: List<String>,
+        maxDepth: Int = 2,
+        maxDirs: Int = 80
+    ): List<File> {
+        val result = LinkedHashSet<File>()
+        fun traverse(dir: File, depth: Int) {
+            if (result.size >= maxDirs) return
+            if (!dir.exists() || !dir.isDirectory || dir.name.startsWith(".")) return
+            val norm = normalizePath(dir.absolutePath)
+            if (norm.isNotBlank() && isNormPathExcluded(norm, normExcluded)) return
+            result.add(dir)
+            if (depth >= maxDepth) return
+            val children = try { dir.listFiles() } catch (_: Exception) { null } ?: return
+            for (child in children) {
+                if (result.size >= maxDirs) break
+                if (child.isDirectory && !child.name.startsWith(".") &&
+                    !child.name.equals("Android", ignoreCase = true) &&
+                    !child.name.equals("cache", ignoreCase = true) &&
+                    !child.name.equals("thumbnails", ignoreCase = true)
+                ) {
+                    traverse(child, depth + 1)
+                }
+            }
+        }
+        for (root in roots) {
+            traverse(root, 0)
+        }
+        return result.toList()
+    }
+
     fun refreshDirectoryObservers() {
         scope.launch {
             try {
@@ -319,30 +351,40 @@ class LibraryScanner(
                     activeFileObservers.clear()
                 }
 
-                val includedDirs = folderDao?.getIncludedFoldersList()?.map { it.path } ?: emptyList()
-                val targetDirs = mutableListOf<File>()
+                val prefs = UserPreferencesRepository.getInstance(context)
+                val isFullDeviceScan = prefs.fullDeviceScan.firstOrNull() ?: false
+                val includedDirs = if (isFullDeviceScan) emptyList() else (folderDao?.getIncludedFoldersList()?.map { it.path } ?: emptyList())
+                val excludedNorms = (folderDao?.getExcludedFoldersList()?.map { normalizePath(it.path) } ?: emptyList())
+                val rootDirs = mutableListOf<File>()
 
                 if (includedDirs.isNotEmpty()) {
                     includedDirs.forEach { path ->
                         val dir = File(path)
-                        if (dir.exists() && dir.isDirectory) targetDirs.add(dir)
+                        if (dir.exists() && dir.isDirectory) rootDirs.add(dir)
                     }
                 } else {
+                    val extRoot = Environment.getExternalStorageDirectory()
                     val publicDirs = listOf(
                         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
                         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                        File(Environment.getExternalStorageDirectory(), "Music"),
-                        File(Environment.getExternalStorageDirectory(), "Download"),
-                        File(Environment.getExternalStorageDirectory(), "Downloads"),
-                        File(Environment.getExternalStorageDirectory(), "Songs"),
-                        File(Environment.getExternalStorageDirectory(), "Audio")
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_RINGTONES),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_AUDIOBOOKS),
+                        File(extRoot, "Music"),
+                        File(extRoot, "Download"),
+                        File(extRoot, "Downloads"),
+                        File(extRoot, "Songs"),
+                        File(extRoot, "Audio"),
+                        File(extRoot, "Media")
                     )
                     publicDirs.forEach { dir ->
-                        if (dir != null && dir.exists() && dir.isDirectory && !targetDirs.contains(dir)) {
-                            targetDirs.add(dir)
+                        if (dir != null && dir.exists() && dir.isDirectory && !rootDirs.contains(dir)) {
+                            rootDirs.add(dir)
                         }
                     }
                 }
+
+                val targetDirs = collectWatchableDirectories(rootDirs, excludedNorms, maxDepth = 2, maxDirs = 80)
 
                 synchronized(activeFileObservers) {
                     targetDirs.forEach { dir ->
@@ -360,35 +402,56 @@ class LibraryScanner(
     }
 
     private fun createDirectoryObserver(dirPath: String): FileObserver {
-        val mask = FileObserver.CREATE or FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE
+        val mask = FileObserver.CREATE or FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE or FileObserver.DELETE or FileObserver.MOVED_FROM
+        val dirFile = File(dirPath)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            object : FileObserver(File(dirPath), mask) {
+            object : FileObserver(dirFile, mask) {
                 override fun onEvent(event: Int, path: String?) {
-                    handleFileObserverEvent(path)
+                    handleFileObserverEvent(event, dirFile, path)
                 }
             }
         } else {
             @Suppress("DEPRECATION")
             object : FileObserver(dirPath, mask) {
                 override fun onEvent(event: Int, path: String?) {
-                    handleFileObserverEvent(path)
+                    handleFileObserverEvent(event, dirFile, path)
                 }
             }
         }
     }
 
-    private fun handleFileObserverEvent(path: String?) {
-        if (path == null) return
+    private fun handleFileObserverEvent(event: Int, parentDir: File, path: String?) {
+        if (path == null || path.startsWith(".")) return
+        val targetFile = File(parentDir, path)
+        val action = event and FileObserver.ALL_EVENTS
+
+        if (targetFile.isDirectory && (action == FileObserver.CREATE || action == FileObserver.MOVED_TO)) {
+            refreshDirectoryObservers()
+            scheduleDebouncedAutoDetection(immediate = true)
+            return
+        }
+
         val ext = path.substringAfterLast('.', "").lowercase()
         if (ext in AUDIO_EXTENSIONS) {
-            scheduleDebouncedAutoDetection()
+            if (targetFile.exists() && targetFile.isFile) {
+                try {
+                    MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(targetFile.absolutePath),
+                        null
+                    ) { _, _ ->
+                        scheduleDebouncedAutoDetection(immediate = true)
+                    }
+                } catch (_: Exception) {}
+            }
+            scheduleDebouncedAutoDetection(immediate = true)
         }
     }
 
-    private fun scheduleDebouncedAutoDetection() {
+    private fun scheduleDebouncedAutoDetection(immediate: Boolean = false) {
         debounceJob?.cancel()
         debounceJob = scope.launch {
-            delay(1500L)
+            delay(if (immediate) 250L else 350L)
             val prefs = UserPreferencesRepository.getInstance(context)
             val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
             if (isOnboarded) {
@@ -410,16 +473,36 @@ class LibraryScanner(
         try {
             val isFullDeviceScan = prefs.fullDeviceScan.firstOrNull() ?: false
             val included = if (isFullDeviceScan) emptyList() else (folderDao?.getIncludedFoldersList() ?: emptyList())
-            val excluded = if (isFullDeviceScan) emptyList() else (folderDao?.getExcludedFoldersList() ?: emptyList())
+            val excluded = folderDao?.getExcludedFoldersList() ?: emptyList()
             val ignoreDurationSec = prefs.ignoreAudioDuration.firstOrNull() ?: 0
             val maxDurationSec = prefs.maxSongDuration.firstOrNull() ?: 300
             val ignoreDurationMs = ignoreDurationSec * 1000L
             val maxDurationMs = if (maxDurationSec >= 300) Long.MAX_VALUE else maxDurationSec * 1000L
 
-            val normExcluded = excluded.map { normalizePath(it.path) }
-            val normIncluded = included.map { normalizePath(it.path) }
+            val normExcluded = excluded.map { normalizePath(it.path) }.filter { it.isNotBlank() }
+            val normIncluded = included.map { normalizePath(it.path) }.filter { it.isNotBlank() }
 
-            val existingSongs = songDao.getAllSongsOnce()
+            val initialExistingSongs = songDao.getAllSongsOnce()
+            val idsToPrune = mutableListOf<Long>()
+            for (dbSong in initialExistingSongs) {
+                if (isJamManagedSong(dbSong) || dbSong.path.startsWith("sample_") || dbSong.contentUriString.startsWith("http")) continue
+                val fileObj = File(dbSong.path)
+                val parentFolder = fileObj.parent?.trimEnd('/') ?: ""
+                val normParent = normalizePath(parentFolder)
+                val isExcluded = normParent.isNotBlank() && isNormPathExcluded(normParent, normExcluded)
+                val isNotIncluded = normIncluded.isNotEmpty() && !isSongInIncludedFolders(normParent, normIncluded)
+                val isAccessible = try { fileObj.exists() && fileObj.isFile && fileObj.length() > 0L } catch (_: Exception) { true }
+                val isTooShort = ignoreDurationMs > 0L && dbSong.durationMs > 0L && dbSong.durationMs < ignoreDurationMs
+                val isTooLong = maxDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0L && dbSong.durationMs > maxDurationMs
+                if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
+                    idsToPrune.add(dbSong.id)
+                }
+            }
+            if (idsToPrune.isNotEmpty()) {
+                deleteSongsSafelyInBatches(idsToPrune)
+            }
+
+            val existingSongs = if (idsToPrune.isNotEmpty()) songDao.getAllSongsOnce() else initialExistingSongs
             val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
             val existingById = existingSongs.associateBy { it.id }
 
@@ -538,7 +621,24 @@ class LibraryScanner(
                             continue
                         }
 
-                        val dur = if (durationCol >= 0) cursor.getLong(durationCol) else 0L
+                        var dur = if (durationCol >= 0) cursor.getLong(durationCol) else 0L
+                        var fallbackTitle: String? = null
+                        var fallbackArtist: String? = null
+                        var fallbackAlbum: String? = null
+                        if (dur <= 0L && fileObj.exists() && fileObj.isFile) {
+                            val localRetriever = MediaMetadataRetriever()
+                            try {
+                                localRetriever.setDataSource(fileObj.absolutePath)
+                                dur = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                                fallbackTitle = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                fallbackArtist = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                fallbackAlbum = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                            } catch (_: Throwable) {
+                            } finally {
+                                try { localRetriever.release() } catch (_: Throwable) {}
+                            }
+                        }
+
                         if (dur <= 0L) {
                             if (ignoreDurationMs > 0L) {
                                 filteredRejected++
@@ -549,9 +649,9 @@ class LibraryScanner(
                             continue
                         }
 
-                        val rawTitle = if (titleCol >= 0) cursor.getString(titleCol) else ""
-                        val rawArtist = if (artistCol >= 0) cursor.getString(artistCol) else ""
-                        val rawAlbum = if (albumCol >= 0) cursor.getString(albumCol) else ""
+                        val rawTitle = (if (titleCol >= 0) cursor.getString(titleCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackTitle ?: ""
+                        val rawArtist = (if (artistCol >= 0) cursor.getString(artistCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackArtist ?: ""
+                        val rawAlbum = (if (albumCol >= 0) cursor.getString(albumCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackAlbum ?: ""
                         val albumId = if (albumIdCol >= 0) cursor.getLong(albumIdCol) else 0L
                         val artistId = if (artistIdCol >= 0) cursor.getLong(artistIdCol) else 0L
                         val year = if (yearCol >= 0) cursor.getInt(yearCol) else 0
@@ -590,12 +690,19 @@ class LibraryScanner(
                     if (dir.exists() && dir.isDirectory) dirsToCheck.add(dir)
                 }
             } else {
+                val extRoot = Environment.getExternalStorageDirectory()
                 listOf(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    File(Environment.getExternalStorageDirectory(), "Music"),
-                    File(Environment.getExternalStorageDirectory(), "Download"),
-                    File(Environment.getExternalStorageDirectory(), "Downloads")
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS),
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_RINGTONES),
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_AUDIOBOOKS),
+                    File(extRoot, "Music"),
+                    File(extRoot, "Download"),
+                    File(extRoot, "Downloads"),
+                    File(extRoot, "Songs"),
+                    File(extRoot, "Audio"),
+                    File(extRoot, "Media")
                 ).forEach { dir ->
                     if (dir != null && dir.exists() && dir.isDirectory && !dirsToCheck.contains(dir)) {
                         dirsToCheck.add(dir)
@@ -632,8 +739,10 @@ class LibraryScanner(
             }
 
             val newlyFoundSongs = newlyFoundMap.values.toList()
-            if (newlyFoundSongs.isNotEmpty()) {
-                insertSongsSafelyInBatches(newlyFoundSongs)
+            if (newlyFoundSongs.isNotEmpty() || idsToPrune.isNotEmpty()) {
+                if (newlyFoundSongs.isNotEmpty()) {
+                    insertSongsSafelyInBatches(newlyFoundSongs)
+                }
                 val totalCount = songDao.getSongCountOnce()
                 _scanProgress.value = ScanProgress(
                     status = ScanStatus.COMPLETED,
@@ -1248,7 +1357,24 @@ class LibraryScanner(
                             continue
                         }
 
-                        val dur = if (durationCol >= 0) c.getLong(durationCol) else 0L
+                        var dur = if (durationCol >= 0) c.getLong(durationCol) else 0L
+                        var fallbackTitle: String? = null
+                        var fallbackArtist: String? = null
+                        var fallbackAlbum: String? = null
+                        if (dur <= 0L && fileObj.exists() && fileObj.isFile) {
+                            val localRetriever = MediaMetadataRetriever()
+                            try {
+                                localRetriever.setDataSource(fileObj.absolutePath)
+                                dur = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                                fallbackTitle = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                                fallbackArtist = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                                fallbackAlbum = localRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                            } catch (_: Throwable) {
+                            } finally {
+                                try { localRetriever.release() } catch (_: Throwable) {}
+                            }
+                        }
+
                         if (dur <= 0L) {
                             if (ignoreAudioDurationMs > 0L) {
                                 filteredRejected++
@@ -1261,9 +1387,9 @@ class LibraryScanner(
                             continue
                         }
 
-                        val rawTitle = if (titleCol >= 0) c.getString(titleCol) else ""
-                        val rawArtist = if (artistCol >= 0) c.getString(artistCol) else ""
-                        val rawAlbum = if (albumCol >= 0) c.getString(albumCol) else ""
+                        val rawTitle = (if (titleCol >= 0) c.getString(titleCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackTitle ?: ""
+                        val rawArtist = (if (artistCol >= 0) c.getString(artistCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackArtist ?: ""
+                        val rawAlbum = (if (albumCol >= 0) c.getString(albumCol) else null)?.takeIf { it.isNotBlank() } ?: fallbackAlbum ?: ""
                         val albumId = if (albumIdCol >= 0) c.getLong(albumIdCol) else 0L
                         val artistId = if (artistIdCol >= 0) c.getLong(artistIdCol) else 0L
                         val year = if (yearCol >= 0) c.getInt(yearCol) else 0
