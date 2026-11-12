@@ -1625,6 +1625,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                                 _currentLyrics.value = effectiveLyrics
                                 com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, effectiveLyrics)
+                                if (!effectiveLyrics.syncedLyricsJson.isNullOrBlank() || !effectiveLyrics.plainLyrics.isNullOrBlank()) {
+                                    cloudSyncRepository.onLyricsUpdatedAsync(song.id)
+                                }
                                 refreshCacheSizes()
                             }
                             try {
@@ -2166,7 +2169,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelSleepTimer() = sleepTimerManager.cancelTimer()
 
     fun associateCustomLrc(song: Song, lrcContent: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val (plain, synced) = com.example.util.LrcParser.parseLrcContent(lrcContent)
             val entity = com.example.data.local.LyricsEntity(
                 songId = song.id,
@@ -2176,9 +2179,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = "Custom File"
             )
             db.lyricsDao().insertLyrics(entity)
+            com.example.util.LrcParser.writeCompanionLrcForSong(
+                context = getApplication(),
+                songPath = song.path,
+                songTitle = song.displayTitle,
+                plainLyrics = plain,
+                syncedLyricsJson = synced,
+                rawLrcContent = lrcContent
+            )
             val domainLyrics = entity.toDomainModel()
-            if (playbackState.value.currentSong?.id == song.id) {
-                _currentLyrics.value = domainLyrics
+            withContext(Dispatchers.Main) {
+                if (playbackState.value.currentSong?.id == song.id) {
+                    _currentLyrics.value = domainLyrics
+                }
             }
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, domainLyrics)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
@@ -2218,7 +2231,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 songId = song.id,
                 plainLyrics = candidate.plainLyrics,
                 syncedLyricsRaw = candidate.syncedLyricsRaw,
-                source = candidate.source
+                source = candidate.source,
+                songPath = song.path,
+                songTitle = song.displayTitle
             )
             _currentLyrics.value = updatedLyrics
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, updatedLyrics)
@@ -2237,6 +2252,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _currentLyrics.value = fetched
             }
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, fetched)
+            if (!fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()) {
+                cloudSyncRepository.onLyricsUpdatedAsync(song.id)
+            }
         } catch (e: Exception) {
             if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
                 _currentLyrics.value = com.example.data.model.Lyrics(songId = -1)
@@ -2699,71 +2717,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             preview.plainLyrics
         }
 
-        val rawTitle = preview.song.title.ifBlank { preview.song.displayTitle }
+        val audioBaseName = preview.song.path.takeIf { it.isNotBlank() }?.let { java.io.File(it).nameWithoutExtension }
+        val rawTitle = audioBaseName?.takeIf { it.isNotBlank() } ?: preview.song.title.ifBlank { preview.song.displayTitle }
         val safeFileName = rawTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "song_${preview.song.id}" }
         val lrcFileName = "$safeFileName.lrc"
 
         try {
             if (preview.song.path.isNotBlank()) {
-                val audioFile = java.io.File(preview.song.path)
-                val parentDir = audioFile.parentFile
-                if (parentDir != null && parentDir.exists()) {
-                    try {
-                        val companionNamed = java.io.File(parentDir, lrcFileName)
-                        companionNamed.writeText(lrcContent, Charsets.UTF_8)
-                        val companionAudio = java.io.File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
-                        if (companionAudio.name != companionNamed.name) {
-                            companionAudio.writeText(lrcContent, Charsets.UTF_8)
-                        }
-                        android.media.MediaScannerConnection.scanFile(
-                            getApplication(),
-                            arrayOf(companionNamed.absolutePath),
-                            arrayOf("text/plain", "application/x-lrc"),
-                            null
-                        )
-                    } catch (_: Exception) {}
-                }
-            }
-
-            try {
-                val publicMusicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
-                val publicLyricsFolder = java.io.File(publicMusicDir, "Lyrics")
-                if (!publicLyricsFolder.exists()) publicLyricsFolder.mkdirs()
-                val publicLrcFile = java.io.File(publicLyricsFolder, lrcFileName)
-                publicLrcFile.writeText(lrcContent, Charsets.UTF_8)
-                android.media.MediaScannerConnection.scanFile(
-                    getApplication(),
-                    arrayOf(publicLrcFile.absolutePath),
-                    arrayOf("text/plain", "application/x-lrc"),
-                    null
+                com.example.util.LrcParser.writeCompanionLrcForSong(
+                    context = getApplication(),
+                    songPath = preview.song.path,
+                    songTitle = preview.song.displayTitle,
+                    plainLyrics = preview.plainLyrics,
+                    syncedLyricsJson = preview.syncedLyricsJson,
+                    rawLrcContent = lrcContent
                 )
-            } catch (_: Exception) {}
-
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                try {
-                    val resolver = getApplication<android.app.Application>().contentResolver
-                    val contentValues = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, lrcFileName)
-                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_MUSIC}/Lyrics")
-                    }
-                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                        ?: resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
-                    if (uri != null) {
-                        resolver.openOutputStream(uri)?.use { os ->
-                            os.write(lrcContent.toByteArray(Charsets.UTF_8))
-                        }
-                    }
-                } catch (_: Exception) {}
             }
-
-            try {
-                val appLyricsDir = getApplication<android.app.Application>().getExternalFilesDir("Lyrics")
-                if (appLyricsDir != null) {
-                    if (!appLyricsDir.exists()) appLyricsDir.mkdirs()
-                    java.io.File(appLyricsDir, lrcFileName).writeText(lrcContent, Charsets.UTF_8)
-                }
-            } catch (_: Exception) {}
 
             try {
                 val cacheLyricsFile = getApplication<android.app.Application>().cacheDir.resolve("lyrics").resolve("${preview.song.id}.lrc")
@@ -2799,7 +2768,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _transcribeLyricsPreview.value = null
             android.widget.Toast.makeText(
                 getApplication(),
-                "Saved lyrics to local device as $lrcFileName",
+                "Saved lyrics to song folder as $lrcFileName",
                 android.widget.Toast.LENGTH_LONG
             ).show()
         }
@@ -2964,6 +2933,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 source = previous.source
             )
             db.lyricsDao().insertLyrics(entity)
+            val song = db.songDao().getSongById(songId)
+            if (song != null && !entity.syncedLyricsJson.isNullOrBlank()) {
+                com.example.util.LrcParser.writeCompanionLrcForSong(
+                    context = getApplication(),
+                    songPath = song.path,
+                    songTitle = song.title,
+                    plainLyrics = entity.plainLyrics,
+                    syncedLyricsJson = entity.syncedLyricsJson
+                )
+            }
             cloudSyncRepository.onLyricsUpdatedAsync(songId)
             val restoredLyrics = entity.toDomainModel()
             withContext(Dispatchers.Main) {

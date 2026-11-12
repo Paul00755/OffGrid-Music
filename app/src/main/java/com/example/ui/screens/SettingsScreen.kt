@@ -536,7 +536,7 @@ fun SettingsScreen(
     onSetHomeScreenLayout: (String) -> Unit = {},
     nowPlayingLayout: String = "MODERN_BENTO",
     onSetNowPlayingLayout: (String) -> Unit = {},
-    playlistsLayout: String = "GLOW_CARDS",
+    playlistsLayout: String = "BENTO_GRID",
     onSetPlaylistsLayout: (String) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},

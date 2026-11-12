@@ -1387,14 +1387,6 @@ fun HomeScreen(
             }
         }
     }
-    com.example.ui.components.FastScrollbar(
-        listState = bentoListState,
-        totalItems = bentoListState.layoutInfo.totalItemsCount.coerceAtLeast(homeSections.size + 2),
-        itemIndexToLabel = null,
-        minItemsToShow = 4,
-        bottomPadding = 120.dp,
-        modifier = Modifier.align(Alignment.CenterEnd)
-    )
 }
 }
 }

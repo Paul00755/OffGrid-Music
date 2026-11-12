@@ -17,6 +17,9 @@ object LrcParser {
         val parentDir = audioFile.parentFile ?: return null
         val baseName = audioFile.nameWithoutExtension
 
+        // Proactively convert any legacy .lrc.txt files in this folder to proper .lrc files
+        cleanupLegacyLrcTxtFiles(null, parentDir)
+
         // Candidate names
         val candidates = listOf(
             "$baseName.lrc",
@@ -34,7 +37,9 @@ object LrcParser {
         }
 
         // Fuzzy match in same directory
-        val lrcFiles = parentDir.listFiles { _, name -> name.endsWith(".lrc", ignoreCase = true) }
+        val lrcFiles = parentDir.listFiles { _, name ->
+            name.endsWith(".lrc", ignoreCase = true) && !name.endsWith(".lrc.txt", ignoreCase = true)
+        }
         if (!lrcFiles.isNullOrEmpty()) {
             val normalizedBase = baseName.lowercase().replace(Regex("[^a-z0-9]"), "")
             for (file in lrcFiles) {
@@ -46,6 +51,211 @@ object LrcParser {
         }
 
         return null
+    }
+
+    /**
+     * Converts any legacy `.lrc.txt` files in [directory] into true `.lrc` files and deletes
+     * the `.lrc.txt` duplicates so external music players and file managers see clean `.lrc` files.
+     */
+    fun cleanupLegacyLrcTxtFiles(context: android.content.Context?, directory: File?) {
+        if (directory == null || !directory.exists() || !directory.isDirectory) return
+        try {
+            val badFiles = directory.listFiles { _, name ->
+                name.lowercase().endsWith(".lrc.txt")
+            } ?: return
+
+            for (badFile in badFiles) {
+                try {
+                    val properName = badFile.name.substring(0, badFile.name.length - 4) // strip ".txt"
+                    val properFile = File(directory, properName)
+                    val badPath = badFile.absolutePath
+
+                    if (!properFile.exists() || badFile.lastModified() > properFile.lastModified()) {
+                        val content = badFile.readText(Charsets.UTF_8)
+                        if (content.isNotBlank()) {
+                            properFile.writeText(content, Charsets.UTF_8)
+                        }
+                    }
+                    badFile.delete()
+
+                    if (context != null) {
+                        removeMediaStoreEntryByPathOrName(context, badPath, badFile.name)
+                        if (properFile.exists()) {
+                            android.media.MediaScannerConnection.scanFile(
+                                context,
+                                arrayOf(properFile.absolutePath),
+                                null,
+                                null
+                            )
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun removeMediaStoreEntryByPathOrName(
+        context: android.content.Context,
+        absolutePath: String,
+        displayName: String
+    ) {
+        try {
+            val resolver = context.contentResolver
+            val filesUri = android.provider.MediaStore.Files.getContentUri("external")
+            resolver.delete(
+                filesUri,
+                "${android.provider.MediaStore.MediaColumns.DATA} = ? OR ${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf(absolutePath, displayName)
+            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                resolver.delete(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                    arrayOf(displayName)
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Writes synced lyrics as a standard `.lrc` file directly in the exact folder where the
+     * audio file is stored (`<audioFile.nameWithoutExtension>.lrc`), never `.lrc.txt`.
+     */
+    fun writeCompanionLrcForSong(
+        context: android.content.Context?,
+        songPath: String,
+        songTitle: String? = null,
+        plainLyrics: String? = null,
+        syncedLyricsJson: String? = null,
+        rawLrcContent: String? = null
+    ): File? {
+        if (songPath.isBlank()) return null
+        val audioFile = File(songPath)
+        val parentDir = audioFile.parentFile ?: return null
+        if (!parentDir.exists()) return null
+
+        val formattedLrc = when {
+            !syncedLyricsJson.isNullOrBlank() -> formatSyncedJsonToLrc(syncedLyricsJson)
+            !rawLrcContent.isNullOrBlank() && parseLrcToLines(rawLrcContent).isNotEmpty() -> {
+                val (_, json) = parseLrcContent(rawLrcContent)
+                formatSyncedJsonToLrc(json) ?: rawLrcContent.trim()
+            }
+            else -> null
+        }
+        if (formattedLrc.isNullOrBlank()) return null
+
+        // Clean up any legacy .lrc.txt files in the song's folder and in Music/Lyrics
+        cleanupLegacyLrcTxtFiles(context, parentDir)
+        try {
+            val publicMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+            cleanupLegacyLrcTxtFiles(context, publicMusic)
+            cleanupLegacyLrcTxtFiles(context, File(publicMusic, "Lyrics"))
+        } catch (_: Exception) {}
+
+        val baseName = audioFile.nameWithoutExtension
+        val lrcFileName = "$baseName.lrc"
+        val targetLrcFile = File(parentDir, lrcFileName)
+
+        // Also remove any lingering "<title>.lrc.txt" or "<baseName>.lrc.txt"
+        val badTxtFile = File(parentDir, "$lrcFileName.txt")
+        if (badTxtFile.exists()) {
+            val badPath = badTxtFile.absolutePath
+            badTxtFile.delete()
+            if (context != null) {
+                removeMediaStoreEntryByPathOrName(context, badPath, badTxtFile.name)
+            }
+        }
+        if (!songTitle.isNullOrBlank()) {
+            val safeTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+            if (safeTitle.isNotBlank()) {
+                val badTitleTxt = File(parentDir, "$safeTitle.lrc.txt")
+                if (badTitleTxt.exists()) {
+                    val badPath = badTitleTxt.absolutePath
+                    badTitleTxt.delete()
+                    if (context != null) {
+                        removeMediaStoreEntryByPathOrName(context, badPath, badTitleTxt.name)
+                    }
+                }
+            }
+        }
+
+        // 1. Direct write to the song's folder (preferred, preserves exact .lrc extension)
+        var written = false
+        try {
+            if (targetLrcFile.exists()) {
+                val existingContent = try { targetLrcFile.readText(Charsets.UTF_8).trim() } catch (_: Exception) { "" }
+                if (existingContent == formattedLrc.trim()) {
+                    return targetLrcFile
+                }
+            }
+            targetLrcFile.writeText(formattedLrc, Charsets.UTF_8)
+            written = targetLrcFile.exists() && targetLrcFile.length() > 0L
+        } catch (_: Exception) {
+            written = false
+        }
+
+        // 2. Scoped storage fallback into the song's exact relative directory using application/octet-stream
+        // (NEVER use "text/plain", because Android MediaProvider automatically appends ".txt" for text/plain!)
+        if (!written && context != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            try {
+                val resolver = context.contentResolver
+                val externalUri = android.provider.MediaStore.Files.getContentUri("external")
+                val rawParentPath = parentDir.absolutePath
+                val relPath = when {
+                    rawParentPath.startsWith("/storage/emulated/0/") ->
+                        rawParentPath.removePrefix("/storage/emulated/0/").trim('/')
+                    rawParentPath.contains("/Music") ->
+                        "Music" + rawParentPath.substringAfter("/Music")
+                    else -> android.os.Environment.DIRECTORY_MUSIC
+                }
+                val normalizedRelPath = if (relPath.endsWith("/")) relPath else "$relPath/"
+
+                resolver.delete(
+                    externalUri,
+                    "(${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?) AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                    arrayOf(lrcFileName, "$lrcFileName.txt", normalizedRelPath)
+                )
+
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, lrcFileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, normalizedRelPath)
+                }
+                val uri = resolver.insert(externalUri, values)
+                if (uri != null) {
+                    resolver.openOutputStream(uri, "wt")?.use { out ->
+                        out.write(formattedLrc.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                    }
+                    written = true
+                }
+            } catch (_: Exception) {}
+        }
+
+        // If MediaProvider still created a .lrc.txt file on disk, rename it back to .lrc immediately
+        if (badTxtFile.exists()) {
+            try {
+                if (!targetLrcFile.exists()) {
+                    badTxtFile.renameTo(targetLrcFile)
+                } else {
+                    badTxtFile.delete()
+                }
+            } catch (_: Exception) {}
+        }
+
+        if (written && context != null && targetLrcFile.exists()) {
+            try {
+                // Pass null for mimeTypes so MediaScanner never forces text/plain (.txt) onto .lrc files
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(targetLrcFile.absolutePath),
+                    null,
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+
+        return if (targetLrcFile.exists()) targetLrcFile else null
     }
 
     fun formatSyncedJsonToLrc(syncedJson: String?): String? {

@@ -428,7 +428,7 @@ class UserPreferencesRepository(private val context: Context) {
             uiTheme = prefs[PreferenceKeys.UI_THEME] ?: readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN"),
             homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "HERO_SPOTLIGHT"),
             nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS"),
-            playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "GLOW_CARDS"),
+            playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "BENTO_GRID"),
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0),
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true),
@@ -515,7 +515,9 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.UI_THEME] = cloud.uiTheme
                 prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = cloud.homeScreenLayout
                 prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = cloud.nowPlayingLayout
-                prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = cloud.playlistsLayout
+                if (bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false) || !cloud.playlistsLayout.equals("GLOW_CARDS", ignoreCase = true)) {
+                    prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = cloud.playlistsLayout
+                }
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
@@ -605,7 +607,11 @@ class UserPreferencesRepository(private val context: Context) {
                         .putString("pref_ui_theme", cloud.uiTheme)
                         .putString("pref_home_screen_layout", cloud.homeScreenLayout)
                         .putString("pref_now_playing_layout", cloud.nowPlayingLayout)
-                        .putString("pref_playlists_layout", cloud.playlistsLayout)
+                        .apply {
+                            if (bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false) || !cloud.playlistsLayout.equals("GLOW_CARDS", ignoreCase = true)) {
+                                putString("pref_playlists_layout", cloud.playlistsLayout)
+                            }
+                        }
                         .putString("pref_accent_color_preset", cloud.accentColorPreset)
                         .putInt("pref_custom_accent_color", cloud.customAccentColor)
                         .putBoolean("pref_dynamic_artwork_theme", cloud.dynamicArtworkTheme)
@@ -967,9 +973,17 @@ class UserPreferencesRepository(private val context: Context) {
     fun getNowPlayingLayoutSync(): String = readStringCached("now_playing_layout", "MINIMAL_GLASS")
 
     val playlistsLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "GLOW_CARDS")
+        val explicitLocal = bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false)
+        if (!explicitLocal) {
+            "BENTO_GRID"
+        } else {
+            prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "BENTO_GRID")
+        }
     }
-    fun getPlaylistsLayoutSync(): String = readStringCached("playlists_layout", "GLOW_CARDS")
+    fun getPlaylistsLayoutSync(): String {
+        val explicitLocal = bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false)
+        return if (!explicitLocal) "BENTO_GRID" else readStringCached("playlists_layout", "BENTO_GRID")
+    }
 
     val isDynamicArtworkTheme: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
@@ -2016,7 +2030,13 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setPlaylistsLayout(layoutId: String) {
         val now = System.currentTimeMillis()
-        writeStringCached("playlists_layout", layoutId, now)
+        try {
+            bootCachePrefs.edit()
+                .putString("pref_playlists_layout", layoutId)
+                .putBoolean("pref_playlists_layout_explicit_v1", true)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = layoutId
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
@@ -2321,6 +2341,22 @@ class UserPreferencesRepository(private val context: Context) {
                 if (needsAddToQueueBottomDefaultMigration && !bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)) {
                     context.dataStore.edit { prefs ->
                         prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = "BOTTOM"
+                    }
+                }
+                if (!bootCachePrefs.getBoolean("migrated_playlists_bento_default_v1", false)) {
+                    val explicitlySet = bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false)
+                    bootCachePrefs.edit()
+                        .apply {
+                            if (!explicitlySet) {
+                                putString("pref_playlists_layout", "BENTO_GRID")
+                            }
+                            putBoolean("migrated_playlists_bento_default_v1", true)
+                        }
+                        .apply()
+                    if (!explicitlySet) {
+                        context.dataStore.edit { prefs ->
+                            prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = "BENTO_GRID"
+                        }
                     }
                 }
                 migrateLegacyInterruptionSettingsIfNeeded()

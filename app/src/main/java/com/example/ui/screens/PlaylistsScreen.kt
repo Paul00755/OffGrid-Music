@@ -92,7 +92,7 @@ fun PlaylistsScreen(
     onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onReorderPlaylists: (List<Playlist>) -> Unit = {},
-    playlistsLayout: String = "GLOW_CARDS",
+    playlistsLayout: String = "BENTO_GRID",
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -817,14 +817,6 @@ fun PlaylistsScreen(
                                 )
                             }
                         }
-
-                        com.example.ui.components.FastGridScrollbar(
-                            gridState = gridState,
-                            totalItems = gridReorderState.orderedPlaylists.size + 1,
-                            minItemsToShow = 4,
-                            bottomPadding = 120.dp,
-                            modifier = Modifier.align(Alignment.CenterEnd)
-                        )
                     }
                 } else {
                     val listState = rememberLazyListState()
@@ -873,15 +865,6 @@ fun PlaylistsScreen(
                                 )
                             }
                         }
-
-                        FastScrollbar(
-                            listState = listState,
-                            totalItems = listReorderState.orderedPlaylists.size + 1,
-                            itemIndexToLabel = null,
-                            minItemsToShow = 4,
-                            bottomPadding = 120.dp,
-                            modifier = Modifier.align(Alignment.CenterEnd)
-                        )
                     }
                 }
             }

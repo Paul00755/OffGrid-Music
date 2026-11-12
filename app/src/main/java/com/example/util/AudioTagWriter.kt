@@ -168,6 +168,7 @@ object AudioTagWriter {
     private fun updateCompanionLrcFile(audioFile: File, lyricsText: String?): String? {
         try {
             val parentDir = audioFile.parentFile ?: return null
+            LrcParser.cleanupLegacyLrcTxtFiles(null, parentDir)
             val lrcFile = File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
 
             if (lyricsText.isNullOrBlank()) {

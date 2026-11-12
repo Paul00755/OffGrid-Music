@@ -492,15 +492,5 @@ fun PlaylistsScreenCompactList(
                 }
             }
         }
-
-        FastScrollbar(
-            listState = listState,
-            totalItems = filteredPlaylists.size + filteredSmartPlaylists.size + 3,
-            itemIndexToLabel = null,
-            minItemsToShow = 4,
-            bottomPadding = 120.dp,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-        )
     }
 }
