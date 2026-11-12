@@ -48,13 +48,17 @@ data class ScanProgress(
     val totalDiscovered: Int = validTracksFound,
     val processedCount: Int = validTracksFound,
     val isFinished: Boolean = (status == ScanStatus.COMPLETED),
-    val error: String? = errorMessage
+    val error: String? = errorMessage,
+    val isManualScan: Boolean = false
 ) {
     val displayTracksCount: Int
         get() = validTracksFound
 
     val isEffectivelyScanning: Boolean
         get() = status == ScanStatus.SCANNING || isScanning
+
+    val shouldShowProgressUi: Boolean
+        get() = isManualScan && (status == ScanStatus.SCANNING || isScanning)
 }
 
 class LibraryScanner(
@@ -214,14 +218,41 @@ class LibraryScanner(
 
     private val scanMutex = Mutex()
     private var pendingAutoDetect = false
+    @Volatile
+    var isLocalSongSyncActive: Boolean = false
+    @Volatile
+    private var isBackgroundScanRunning: Boolean = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    fun isScanActive(): Boolean = scanMutex.isLocked || _scanProgress.value.isEffectivelyScanning
+    fun isScanActive(): Boolean = scanMutex.isLocked || _scanProgress.value.isEffectivelyScanning || isBackgroundScanRunning || isLocalSongSyncActive
 
     private var contentObserver: ContentObserver? = null
     private val activeFileObservers = mutableListOf<FileObserver>()
     private var debounceJob: Job? = null
     var onScanCompletedListener: (() -> Unit)? = null
+
+    private fun buildRenameSignature(song: SongEntity): String {
+        val parent = normalizePath(File(song.path).parent ?: "")
+        val cleanT = TagCleaner.cleanTitle(song.title, File(song.path).name).lowercase().trim()
+        val cleanA = TagCleaner.cleanArtist(song.artist).lowercase().trim()
+        val durBucket = (song.durationMs / 3000L)
+        return "$parent|$cleanT|$cleanA|$durBucket"
+    }
+
+    private suspend fun migrateReferencesBeforeDelete(oldId: Long, newId: Long) {
+        if (oldId == newId || oldId <= 0L || newId <= 0L) return
+        try {
+            val db = com.example.data.local.AppDatabase.getInstance(context)
+            db.playlistDao().migrateSongIdInPlaylists(oldId, newId)
+            db.playlistDao().deleteOrphanSongIdFromPlaylists(oldId)
+            db.lyricsDao().migrateLyricsSongId(oldId, newId)
+            db.historyDao().migrateHistoryTrackId(oldId, newId)
+            com.example.data.sync.SongIdentityHelper.invalidate(oldId)
+            com.example.data.sync.SongIdentityHelper.invalidate(newId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed migrating references from $oldId to $newId: ${e.message}")
+        }
+    }
 
     private suspend fun insertSongsSafelyInBatches(songs: List<SongEntity>) {
         if (songs.isEmpty()) return
@@ -449,9 +480,17 @@ class LibraryScanner(
     }
 
     private fun scheduleDebouncedAutoDetection(immediate: Boolean = false) {
+        if (isLocalSongSyncActive) {
+            pendingAutoDetect = true
+            return
+        }
         debounceJob?.cancel()
         debounceJob = scope.launch {
             delay(if (immediate) 250L else 350L)
+            if (isLocalSongSyncActive) {
+                pendingAutoDetect = true
+                return@launch
+            }
             val prefs = UserPreferencesRepository.getInstance(context)
             val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
             if (isOnboarded) {
@@ -461,6 +500,10 @@ class LibraryScanner(
     }
 
     suspend fun detectAndImportNewSongs(): Int = withContext(Dispatchers.IO) {
+        if (isLocalSongSyncActive) {
+            pendingAutoDetect = true
+            return@withContext 0
+        }
         val prefs = UserPreferencesRepository.getInstance(context)
         val isOnboarded = prefs.isOnboardingCompleted.firstOrNull() ?: false
         if (!isOnboarded) return@withContext 0
@@ -483,6 +526,7 @@ class LibraryScanner(
             val normIncluded = included.map { normalizePath(it.path) }.filter { it.isNotBlank() }
 
             val initialExistingSongs = songDao.getAllSongsOnce()
+            val prunedSongsBySig = HashMap<String, SongEntity>()
             val idsToPrune = mutableListOf<Long>()
             for (dbSong in initialExistingSongs) {
                 if (isJamManagedSong(dbSong) || dbSong.path.startsWith("sample_") || dbSong.contentUriString.startsWith("http")) continue
@@ -496,13 +540,13 @@ class LibraryScanner(
                 val isTooLong = maxDurationMs in 1 until Long.MAX_VALUE && dbSong.durationMs > 0L && dbSong.durationMs > maxDurationMs
                 if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
                     idsToPrune.add(dbSong.id)
+                    if (!isAccessible) {
+                        prunedSongsBySig[buildRenameSignature(dbSong)] = dbSong
+                    }
                 }
             }
-            if (idsToPrune.isNotEmpty()) {
-                deleteSongsSafelyInBatches(idsToPrune)
-            }
 
-            val existingSongs = if (idsToPrune.isNotEmpty()) songDao.getAllSongsOnce() else initialExistingSongs
+            val existingSongs = initialExistingSongs.filterNot { it.id in idsToPrune }
             val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
             val existingById = existingSongs.associateBy { it.id }
 
@@ -738,7 +782,28 @@ class LibraryScanner(
                 }
             }
 
-            val newlyFoundSongs = newlyFoundMap.values.toList()
+            val newlyFoundSongs = newlyFoundMap.values.map { newSong ->
+                val matchedPruned = prunedSongsBySig[buildRenameSignature(newSong)]
+                if (matchedPruned != null) {
+                    if (matchedPruned.id != newSong.id) {
+                        migrateReferencesBeforeDelete(matchedPruned.id, newSong.id)
+                    } else {
+                        idsToPrune.remove(matchedPruned.id)
+                    }
+                    newSong.copy(
+                        isFavorite = matchedPruned.isFavorite || newSong.isFavorite,
+                        playCount = maxOf(matchedPruned.playCount, newSong.playCount),
+                        lastPlayed = maxOf(matchedPruned.lastPlayed, newSong.lastPlayed),
+                        dateAdded = matchedPruned.dateAdded,
+                        artworkUri = matchedPruned.artworkUri ?: newSong.artworkUri
+                    )
+                } else {
+                    newSong
+                }
+            }
+            if (idsToPrune.isNotEmpty()) {
+                deleteSongsSafelyInBatches(idsToPrune)
+            }
             if (newlyFoundSongs.isNotEmpty() || idsToPrune.isNotEmpty()) {
                 if (newlyFoundSongs.isNotEmpty()) {
                     insertSongsSafelyInBatches(newlyFoundSongs)
@@ -780,25 +845,30 @@ class LibraryScanner(
         includedFolders: List<FolderEntity> = emptyList(),
         excludedFolders: List<FolderEntity> = emptyList(),
         ignoreAudioDurationMs: Long = 0L,
-        maxAudioDurationMs: Long = Long.MAX_VALUE
+        maxAudioDurationMs: Long = Long.MAX_VALUE,
+        showProgress: Boolean = true
     ) = withContext(Dispatchers.IO) {
         scanMutex.withLock {
+            isBackgroundScanRunning = true
             var filesDiscovered = 0
             var filesProcessed = 0
             var duplicatesSkipped = 0
             var filteredRejected = 0
 
-            _scanProgress.value = ScanProgress(
-                status = ScanStatus.SCANNING,
-                filesDiscovered = 0,
-                filesProcessed = 0,
-                validTracksFound = 0,
-                duplicatesSkipped = 0,
-                filteredRejected = 0,
-                currentFolder = "Searching media index...",
-                isScanning = true,
-                isFinished = false
-            )
+            if (showProgress) {
+                _scanProgress.value = ScanProgress(
+                    status = ScanStatus.SCANNING,
+                    filesDiscovered = 0,
+                    filesProcessed = 0,
+                    validTracksFound = 0,
+                    duplicatesSkipped = 0,
+                    filteredRejected = 0,
+                    currentFolder = "Searching media index...",
+                    isScanning = true,
+                    isFinished = false,
+                    isManualScan = true
+                )
+            }
 
             val normExcludedPaths = excludedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
             val normIncludedPaths = includedFolders.map { normalizePath(it.path) }.filter { it.isNotBlank() }
@@ -974,7 +1044,7 @@ class LibraryScanner(
                         )
 
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
+                        if (showProgress && now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                             lastEmitTime = now
                             val folderName = if (parentFolder.isNotBlank()) parentFolder.substringAfterLast('/').ifBlank { "Media Store" } else "Media Store"
                             _scanProgress.value = ScanProgress(
@@ -986,7 +1056,8 @@ class LibraryScanner(
                                 filteredRejected = filteredRejected,
                                 currentFolder = folderName,
                                 isScanning = true,
-                                isFinished = false
+                                isFinished = false,
+                                isManualScan = true
                             )
                         }
                     }
@@ -1040,7 +1111,7 @@ class LibraryScanner(
                             },
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
-                                if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
+                                if (showProgress && now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                                     lastEmitTime = now
                                     _scanProgress.value = ScanProgress(
                                         status = ScanStatus.SCANNING,
@@ -1051,7 +1122,8 @@ class LibraryScanner(
                                         filteredRejected = filteredRejected,
                                         currentFolder = currentDir,
                                         isScanning = true,
-                                        isFinished = false
+                                        isFinished = false,
+                                        isManualScan = true
                                     )
                                 }
                             }
@@ -1065,11 +1137,17 @@ class LibraryScanner(
                 val existingSongs = songDao.getAllSongsOnce()
                 val existingById = existingSongs.associateBy { it.id }
                 val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
+                val existingByRenameSig = existingSongs.associateBy { buildRenameSignature(it) }
 
                 val rawSongsList = foundSongsByNormPath.values.toList()
                 val mergedSongsList = rawSongsList.map { song ->
                     val normP = normalizePath(song.path)
-                    val existing = existingByPath[normP] ?: existingById[song.id]
+                    val existing = existingByPath[normP]
+                        ?: existingById[song.id]
+                        ?: existingByRenameSig[buildRenameSignature(song)]
+                    if (existing != null && existing.id != song.id) {
+                        migrateReferencesBeforeDelete(existing.id, song.id)
+                    }
                     buildOrUpdateSongEntity(
                         existing = existing,
                         id = existing?.id ?: song.id,
@@ -1107,27 +1185,35 @@ class LibraryScanner(
                 }
 
                 val finalCount = mergedSongsList.size
-                _scanProgress.value = ScanProgress(
-                    status = ScanStatus.COMPLETED,
-                    filesDiscovered = filesDiscovered,
-                    filesProcessed = filesProcessed,
-                    validTracksFound = finalCount,
-                    duplicatesSkipped = duplicatesSkipped,
-                    filteredRejected = filteredRejected,
-                    currentFolder = "",
-                    isScanning = false,
-                    isFinished = true
-                )
+                if (showProgress || _scanProgress.value.status == ScanStatus.COMPLETED) {
+                    _scanProgress.value = ScanProgress(
+                        status = ScanStatus.COMPLETED,
+                        filesDiscovered = filesDiscovered,
+                        filesProcessed = filesProcessed,
+                        validTracksFound = finalCount,
+                        duplicatesSkipped = duplicatesSkipped,
+                        filteredRejected = filteredRejected,
+                        currentFolder = "",
+                        isScanning = false,
+                        isFinished = true,
+                        isManualScan = showProgress
+                    )
+                }
                 try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in scanLibrary", e)
-                _scanProgress.value = ScanProgress(
-                    status = ScanStatus.ERROR,
-                    errorMessage = e.localizedMessage ?: "Scan encountered an error",
-                    validTracksFound = songDao.getSongCountOnce(),
-                    isScanning = false,
-                    isFinished = false
-                )
+                if (showProgress) {
+                    _scanProgress.value = ScanProgress(
+                        status = ScanStatus.ERROR,
+                        errorMessage = e.localizedMessage ?: "Scan encountered an error",
+                        validTracksFound = songDao.getSongCountOnce(),
+                        isScanning = false,
+                        isFinished = false,
+                        isManualScan = true
+                    )
+                }
+            } finally {
+                isBackgroundScanRunning = false
             }
         }
     }
@@ -1141,13 +1227,15 @@ class LibraryScanner(
         excludedFolders: List<FolderEntity> = emptyList(),
         ignoreAudioDurationMs: Long = 0L,
         maxAudioDurationMs: Long = Long.MAX_VALUE,
-        skipIfAlreadyScanning: Boolean = false
+        skipIfAlreadyScanning: Boolean = false,
+        showProgress: Boolean = false
     ) = withContext(Dispatchers.IO) {
         if (skipIfAlreadyScanning) {
             if (!scanMutex.tryLock()) return@withContext
         } else {
             scanMutex.lock()
         }
+        isBackgroundScanRunning = true
         try {
             var filesDiscovered = 0
             var filesProcessed = 0
@@ -1163,6 +1251,7 @@ class LibraryScanner(
                 val seenNormPaths = HashSet<String>()
                 val songsToUpdate = mutableListOf<SongEntity>()
                 val idsToDelete = mutableListOf<Long>()
+                val prunedSongsBySig = HashMap<String, SongEntity>()
 
                 // Sort so MediaStore IDs (< 1_000_000_000_000L) win over synthetic hash IDs if duplicates exist
                 val sortedExisting = existingSongs.sortedBy { if (it.id in 1 until 1_000_000_000_000L) 0 else 1 }
@@ -1195,6 +1284,9 @@ class LibraryScanner(
 
                         if (isExcluded || isNotIncluded || !isAccessible || isTooShort || isTooLong) {
                             idsToDelete.add(dbSong.id)
+                            if (!isAccessible) {
+                                prunedSongsBySig[buildRenameSignature(dbSong)] = dbSong
+                            }
                             filteredRejected++
                             continue
                         }
@@ -1221,25 +1313,26 @@ class LibraryScanner(
                     }
                 }
 
-                deleteSongsSafelyInBatches(idsToDelete)
                 updateSongsSafelyInBatches(songsToUpdate)
-                songDao.deleteMissingSongs()
 
-                val refreshedExisting = songDao.getAllSongsOnce()
+                val refreshedExisting = existingSongs.filterNot { it.id in idsToDelete }
                 val existingByPath = refreshedExisting.associateBy { normalizePath(it.path) }
                 val existingById = refreshedExisting.associateBy { it.id }
 
-                _scanProgress.value = ScanProgress(
-                    status = ScanStatus.SCANNING,
-                    filesDiscovered = filesDiscovered,
-                    filesProcessed = filesProcessed,
-                    validTracksFound = refreshedExisting.size,
-                    duplicatesSkipped = duplicatesSkipped,
-                    filteredRejected = filteredRejected,
-                    currentFolder = "Quick indexing...",
-                    isScanning = true,
-                    isFinished = false
-                )
+                if (showProgress) {
+                    _scanProgress.value = ScanProgress(
+                        status = ScanStatus.SCANNING,
+                        filesDiscovered = filesDiscovered,
+                        filesProcessed = filesProcessed,
+                        validTracksFound = refreshedExisting.size,
+                        duplicatesSkipped = duplicatesSkipped,
+                        filteredRejected = filteredRejected,
+                        currentFolder = "Quick indexing...",
+                        isScanning = true,
+                        isFinished = false,
+                        isManualScan = true
+                    )
+                }
 
                 // 2. Scan MediaStore for newly added tracks
                 val newSongsByNormPath = LinkedHashMap<String, SongEntity>()
@@ -1416,7 +1509,7 @@ class LibraryScanner(
                         newSongsByNormPath[normP] = newSong
 
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
+                        if (showProgress && now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                             lastEmitTime = now
                             val folderName = if (parentFolder.isNotBlank()) parentFolder.substringAfterLast('/').ifBlank { "Quick Scan" } else "Quick Scan"
                             _scanProgress.value = ScanProgress(
@@ -1428,7 +1521,8 @@ class LibraryScanner(
                                 filteredRejected = filteredRejected,
                                 currentFolder = folderName,
                                 isScanning = true,
-                                isFinished = false
+                                isFinished = false,
+                                isManualScan = true
                             )
                         }
                     }
@@ -1484,7 +1578,7 @@ class LibraryScanner(
                             },
                             onProgress = { currentDir, _ ->
                                 val now = System.currentTimeMillis()
-                                if (now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
+                                if (showProgress && now - lastEmitTime > PROGRESS_EMIT_INTERVAL_MS) {
                                     lastEmitTime = now
                                     val currentValid = refreshedExisting.size + newSongsByNormPath.size + directNewList.size
                                     _scanProgress.value = ScanProgress(
@@ -1496,7 +1590,8 @@ class LibraryScanner(
                                         filteredRejected = filteredRejected,
                                         currentFolder = currentDir,
                                         isScanning = true,
-                                        isFinished = false
+                                        isFinished = false,
+                                        isManualScan = true
                                     )
                                 }
                             }
@@ -1510,35 +1605,64 @@ class LibraryScanner(
                     }
                 } catch (_: Exception) {}
 
-                val finalNewSongs = newSongsByNormPath.values.distinctBy { it.id }.toList()
+                val finalNewSongs = newSongsByNormPath.values.distinctBy { it.id }.map { newSong ->
+                    val matchedPruned = prunedSongsBySig[buildRenameSignature(newSong)]
+                    if (matchedPruned != null) {
+                        if (matchedPruned.id != newSong.id) {
+                            migrateReferencesBeforeDelete(matchedPruned.id, newSong.id)
+                        } else {
+                            idsToDelete.remove(matchedPruned.id)
+                        }
+                        newSong.copy(
+                            isFavorite = matchedPruned.isFavorite || newSong.isFavorite,
+                            playCount = maxOf(matchedPruned.playCount, newSong.playCount),
+                            lastPlayed = maxOf(matchedPruned.lastPlayed, newSong.lastPlayed),
+                            dateAdded = matchedPruned.dateAdded,
+                            artworkUri = matchedPruned.artworkUri ?: newSong.artworkUri
+                        )
+                    } else {
+                        newSong
+                    }
+                }
+                if (idsToDelete.isNotEmpty()) {
+                    deleteSongsSafelyInBatches(idsToDelete)
+                }
+                songDao.deleteMissingSongs()
                 if (finalNewSongs.isNotEmpty()) {
                     insertSongsSafelyInBatches(finalNewSongs)
                 }
 
                 val totalCount = songDao.getSongCountOnce()
-                _scanProgress.value = ScanProgress(
-                    status = ScanStatus.COMPLETED,
-                    filesDiscovered = filesDiscovered,
-                    filesProcessed = filesProcessed,
-                    validTracksFound = totalCount,
-                    duplicatesSkipped = duplicatesSkipped,
-                    filteredRejected = filteredRejected,
-                    currentFolder = "",
-                    isScanning = false,
-                    isFinished = true
-                )
+                if (showProgress || _scanProgress.value.status == ScanStatus.COMPLETED) {
+                    _scanProgress.value = ScanProgress(
+                        status = ScanStatus.COMPLETED,
+                        filesDiscovered = filesDiscovered,
+                        filesProcessed = filesProcessed,
+                        validTracksFound = totalCount,
+                        duplicatesSkipped = duplicatesSkipped,
+                        filteredRejected = filteredRejected,
+                        currentFolder = "",
+                        isScanning = false,
+                        isFinished = true,
+                        isManualScan = showProgress
+                    )
+                }
                 try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in quickScanAndCleanLibrary", e)
-                _scanProgress.value = ScanProgress(
-                    status = ScanStatus.ERROR,
-                    errorMessage = e.localizedMessage ?: "Scan encountered an error",
-                    validTracksFound = songDao.getSongCountOnce(),
-                    isScanning = false,
-                    isFinished = false
-                )
+                if (showProgress) {
+                    _scanProgress.value = ScanProgress(
+                        status = ScanStatus.ERROR,
+                        errorMessage = e.localizedMessage ?: "Scan encountered an error",
+                        validTracksFound = songDao.getSongCountOnce(),
+                        isScanning = false,
+                        isFinished = false,
+                        isManualScan = true
+                    )
+                }
             }
         } finally {
+            isBackgroundScanRunning = false
             scanMutex.unlock()
         }
     }

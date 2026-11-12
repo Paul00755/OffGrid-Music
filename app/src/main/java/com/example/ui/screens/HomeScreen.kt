@@ -725,7 +725,7 @@ fun HomeScreen(
                                         modifier = Modifier.size(12.dp)
                                     )
                                     Text(
-                                        text = if (scanProgress.isScanning) "Scanning..." else "Rescan",
+                                        text = if (scanProgress.shouldShowProgressUi) "Scanning..." else "Rescan",
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = BentoPrimary
@@ -1225,8 +1225,8 @@ fun HomeScreen(
                     }
                 }
 
-        // Scanning Banner if active
-        if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+        // Scanning Banner if active (only shown when user manually triggers scan)
+        if (scanProgress.shouldShowProgressUi) {
             item(key = "home_scanning_banner", contentType = "scanning_banner") {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -1324,7 +1324,7 @@ fun HomeScreen(
         )
 
         // Empty state call to action when no music history is present
-        if (allSongs.isEmpty() && !scanProgress.isScanning) {
+        if (allSongs.isEmpty() && !scanProgress.shouldShowProgressUi) {
             item(key = "home_empty_library_cta", contentType = "empty_state") {
                 BentoCard(
                     modifier = Modifier.fillMaxWidth(),

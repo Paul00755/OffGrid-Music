@@ -21,7 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -29,9 +29,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.service.transcription.AudioTranscribeMode
 import com.example.service.transcription.TranscribeLyricsPreview
 import com.example.ui.theme.*
+import com.example.util.HapticUtils
 import com.example.util.LrcParser
 
 @Composable
@@ -41,6 +43,7 @@ fun TranscribePreviewDialog(
     onDiscard: () -> Unit,
     onRetranscribe: ((TranscribeLyricsPreview) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val isTranslate = preview.mode == AudioTranscribeMode.TRANSLATE
 
     val initialFormatted = remember(preview) {
@@ -67,18 +70,23 @@ fun TranscribePreviewDialog(
 
     val isModified = editableLyrics.trim() != initialFormatted.trim()
 
-    Dialog(onDismissRequest = onDiscard) {
+    Dialog(
+        onDismissRequest = onDiscard,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(28.dp),
             color = BentoCardSurface,
-            border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f)),
+            tonalElevation = 8.dp,
+            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .widthIn(max = 480.dp)
         ) {
             Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 // Header
                 Row(
@@ -87,51 +95,52 @@ fun TranscribePreviewDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF00E5FF).copy(alpha = 0.18f)),
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(BentoPrimary.copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = if (isTranslate) Icons.Default.Translate else Icons.Default.AutoAwesome,
                                 contentDescription = null,
-                                tint = Color(0xFF00E5FF),
+                                tint = BentoPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
                                     text = if (isTranslate) "Lyrics Translated" else "Lyrics Transcribed",
-                                    fontSize = 15.sp,
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BentoTextPrimary
                                 )
                                 Surface(
                                     shape = CircleShape,
-                                    color = if (parsedSyncedLines.isNotEmpty()) Color(0xFF00E5FF).copy(alpha = 0.2f) else BentoCardPurple
+                                    color = if (parsedSyncedLines.isNotEmpty()) BentoPrimary.copy(alpha = 0.18f) else BentoCardDarkPurple,
+                                    border = BorderStroke(0.8.dp, if (parsedSyncedLines.isNotEmpty()) BentoPrimary.copy(alpha = 0.4f) else BentoBorder.copy(alpha = 0.4f))
                                 ) {
                                     Text(
                                         text = if (parsedSyncedLines.isNotEmpty()) "SYNCED" else "PLAIN TEXT",
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (parsedSyncedLines.isNotEmpty()) Color(0xFF00E5FF) else BentoTextSecondary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        color = if (parsedSyncedLines.isNotEmpty()) BentoPrimary else BentoTextSecondary,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                     )
                                 }
                             }
                             Text(
                                 text = "${preview.song.displayTitle} • ${preview.targetLanguage.englishName}",
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 color = BentoTextSecondary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -140,11 +149,14 @@ fun TranscribePreviewDialog(
                     }
 
                     IconButton(
-                        onClick = onDiscard,
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onDiscard()
+                        },
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(32.dp)
                             .clip(CircleShape)
-                            .background(BentoCardPurple)
+                            .background(BentoCardDarkPurple)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -167,21 +179,21 @@ fun TranscribePreviewDialog(
                     ) {
                         Text(
                             text = if (isEditMode) "Edit Lyrics Box (Tap to type)" else "Preview",
-                            fontSize = 12.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isEditMode) Color(0xFF00E5FF) else BentoTextSecondary
+                            color = if (isEditMode) BentoPrimary else BentoTextSecondary
                         )
                         if (isModified) {
                             Surface(
                                 shape = CircleShape,
-                                color = Color(0xFFFFB300).copy(alpha = 0.2f)
+                                color = BentoPrimary.copy(alpha = 0.18f)
                             ) {
                                 Text(
                                     text = "MODIFIED",
-                                    fontSize = 8.5.sp,
+                                    fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFFB300),
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    color = BentoPrimary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -193,42 +205,48 @@ fun TranscribePreviewDialog(
                     ) {
                         if (isModified) {
                             TextButton(
-                                onClick = { editableLyrics = initialFormatted },
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp)
+                                onClick = {
+                                    HapticUtils.performClickHaptic(context)
+                                    editableLyrics = initialFormatted
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp)
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = BentoTextSecondary, modifier = Modifier.size(12.dp))
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Reset", fontSize = 10.5.sp, color = BentoTextSecondary)
+                                Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = BentoTextSecondary, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Reset", fontSize = 11.sp, color = BentoTextSecondary)
                             }
                         }
 
                         // Toggle Edit / Preview button
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isEditMode) Color(0xFF00E5FF).copy(alpha = 0.15f) else BentoCardPurple,
-                            border = BorderStroke(1.dp, if (isEditMode) Color(0xFF00E5FF).copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.3f)),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isEditMode) BentoPrimary.copy(alpha = 0.18f) else BentoCardDarkPurple,
+                            border = BorderStroke(1.dp, if (isEditMode) BentoPrimary else BentoBorder.copy(alpha = 0.45f)),
                             modifier = Modifier
-                                .height(28.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { isEditMode = !isEditMode }
+                                .height(30.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    HapticUtils.performClickHaptic(context)
+                                    isEditMode = !isEditMode
+                                }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 Icon(
                                     imageVector = if (isEditMode) Icons.Default.Visibility else Icons.Default.Edit,
                                     contentDescription = null,
-                                    tint = if (isEditMode) Color(0xFF00E5FF) else BentoTextPrimary,
+                                    tint = if (isEditMode) BentoPrimary else BentoTextPrimary,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Text(
                                     text = if (isEditMode) "Preview" else "Edit Lyrics",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (isEditMode) Color(0xFF00E5FF) else BentoTextPrimary
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isEditMode) BentoPrimary else BentoTextPrimary
                                 )
                             }
                         }
@@ -243,7 +261,7 @@ fun TranscribePreviewDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 140.dp, max = 260.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         textStyle = TextStyle(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
@@ -254,22 +272,22 @@ fun TranscribePreviewDialog(
                             Text("Type or paste lyrics lines here...", color = BentoTextSecondary.copy(alpha = 0.5f), fontSize = 12.sp)
                         },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF00E5FF),
+                            focusedBorderColor = BentoPrimary,
                             unfocusedBorderColor = BentoBorder.copy(alpha = 0.6f),
                             focusedContainerColor = BentoCardDarkPurple,
                             unfocusedContainerColor = BentoCardDarkPurple,
-                            cursorColor = Color(0xFF00E5FF)
+                            cursorColor = BentoPrimary
                         )
                     )
                 } else {
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = BentoCardDarkPurple,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 120.dp, max = 260.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .clickable { isEditMode = true }
                     ) {
                         Column(
@@ -296,11 +314,11 @@ fun TranscribePreviewDialog(
                                             fontSize = 11.sp,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF00E5FF).copy(alpha = 0.8f)
+                                            color = BentoPrimary
                                         )
                                         Text(
                                             text = line.second,
-                                            fontSize = 12.sp,
+                                            fontSize = 12.5.sp,
                                             color = BentoTextPrimary
                                         )
                                     }
@@ -308,7 +326,7 @@ fun TranscribePreviewDialog(
                             } else {
                                 Text(
                                     text = editableLyrics.ifBlank { "No lyrics content. Tap 'Edit Lyrics' to write lines." },
-                                    fontSize = 12.sp,
+                                    fontSize = 12.5.sp,
                                     color = BentoTextPrimary,
                                     lineHeight = 18.sp
                                 )
@@ -320,15 +338,16 @@ fun TranscribePreviewDialog(
                 // Help caption
                 Text(
                     text = if (isEditMode) "You can edit, add, or delete lyric lines and timestamps above. Click Save to apply changes." else "Review or tap 'Edit Lyrics' to modify any lines before saving.",
-                    fontSize = 10.5.sp,
+                    fontSize = 11.sp,
                     color = BentoTextSecondary,
-                    lineHeight = 14.sp
+                    lineHeight = 15.sp
                 )
 
                 // Actions: Discard/Undo, Re-transcribe, and Save
                 if (onRetranscribe != null) {
                     OutlinedButton(
                         onClick = {
+                            HapticUtils.performClickHaptic(context)
                             val (parsedPlain, parsedSynced) = LrcParser.parseLrcContent(editableLyrics)
                             val currentPreview = preview.copy(
                                 plainLyrics = parsedPlain ?: editableLyrics.trim(),
@@ -336,17 +355,22 @@ fun TranscribePreviewDialog(
                             )
                             onRetranscribe(currentPreview)
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.55f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.55f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = BentoCardDarkPurple,
+                            contentColor = BentoPrimary
+                        )
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (isTranslate) "Re-translate with Corrections" else "Re-transcribe with Corrections",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -356,19 +380,28 @@ fun TranscribePreviewDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onDiscard,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252))
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onDiscard()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = 0.45f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = BentoAccentPinkText.copy(alpha = 0.12f),
+                            contentColor = BentoAccentPinkText
+                        )
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Discard / Undo", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Discard / Undo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Button(
                         onClick = {
+                            HapticUtils.performClickHaptic(context)
                             val (parsedPlain, parsedSynced) = LrcParser.parseLrcContent(editableLyrics)
                             val finalPlain = parsedPlain ?: editableLyrics.trim()
                             val finalSynced = parsedSynced ?: if (editableLyrics.contains("[")) preview.syncedLyricsJson else null
@@ -378,13 +411,23 @@ fun TranscribePreviewDialog(
                             )
                             onSave(finalPreview)
                         },
-                        modifier = Modifier.weight(1.2f),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BentoPrimary,
+                            contentColor = BentoOnPrimary
+                        )
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(if (isModified) "Save Edited" else "Save Lyrics", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                        Icon(Icons.Default.Check, contentDescription = null, tint = BentoOnPrimary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isModified) "Save Edited" else "Save Lyrics",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoOnPrimary
+                        )
                     }
                 }
             }

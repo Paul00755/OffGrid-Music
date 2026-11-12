@@ -60,6 +60,7 @@ fun UpNextQueueSheet(
     onRemoveDuplicates: (() -> Unit)? = null,
     onPlayNext: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
+    onEditTags: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -544,6 +545,24 @@ fun UpNextQueueSheet(
                                     color = BentoPrimary
                                 )
                             }
+
+                            if (onEditTags != null) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        onEditTags(activePlayingSong)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.EditNote,
+                                        contentDescription = "Edit Tags & Artwork",
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -804,6 +823,9 @@ fun UpNextQueueSheet(
                                                             onUpdateQueue?.invoke(updatedSongs)
                                                         }
                                                     },
+                                                    onEditTags = if (onEditTags != null) {
+                                                        { onEditTags(song) }
+                                                    } else null,
                                                     onDeleteSong = { /* Handled at app level */ }
                                                 )
                                             }

@@ -1647,7 +1647,8 @@ fun NowPlayingScreen(
                 onToggleShuffle = onToggleShuffle,
                 onRemoveDuplicates = onRemoveDuplicatesFromQueue,
                 onPlayNext = onPlayNext,
-                onAddToPlaylist = onAddToPlaylist
+                onAddToPlaylist = onAddToPlaylist,
+                onEditTags = onEditTags
             )
         }
 
@@ -1927,12 +1928,12 @@ private fun LyricsPanelContent(
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF00E5FF).copy(alpha = 0.16f))
+                                .background(BentoPrimary.copy(alpha = 0.16f))
                         ) {
                             Icon(
                                 imageVector = if (hasLyrics) Icons.Default.Translate else Icons.Default.GraphicEq,
                                 contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (♪)",
-                                tint = Color(0xFF00E5FF),
+                                tint = BentoPrimary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -1978,9 +1979,9 @@ private fun LyricsPanelContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp),
-                    color = Color(0xFF00E5FF).copy(alpha = 0.15f),
+                    color = BentoPrimary.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
+                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.4f))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -1988,7 +1989,7 @@ private fun LyricsPanelContent(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         CircularProgressIndicator(
-                            color = Color(0xFF00E5FF),
+                            color = BentoPrimary,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(16.dp)
                         )
@@ -2038,7 +2039,7 @@ private fun LyricsPanelContent(
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                         ) {
-                            Text("Retry", fontSize = 11.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
+                            Text("Retry", fontSize = 11.sp, color = BentoPrimary, fontWeight = FontWeight.Bold)
                         }
                         IconButton(
                             onClick = onClearTranscribeError,
@@ -2473,12 +2474,13 @@ private fun LyricsPanelContent(
                                         transcribeDialogInitialMode = AudioTranscribeMode.TRANSCRIBE
                                         showTranscribeDialog = true
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF).copy(alpha = 0.22f)),
-                                    border = BorderStroke(1.dp, Color(0xFF00E5FF))
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary.copy(alpha = 0.18f)),
+                                    border = BorderStroke(1.dp, BentoPrimary)
                                 ) {
-                                    Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.GraphicEq, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Transcribe Audio (♪)", fontSize = 12.sp, color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold)
+                                    Text("Transcribe Audio (♪)", fontSize = 12.sp, color = BentoPrimary, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }

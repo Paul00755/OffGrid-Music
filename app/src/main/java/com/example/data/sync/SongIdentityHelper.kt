@@ -7,7 +7,51 @@ import java.security.MessageDigest
 
 object SongIdentityHelper {
 
-    private val signatureCache = object : android.util.LruCache<Long, String>(3000) {}
+    private val signatureCache = object : android.util.LruCache<Long, String>(4000) {}
+
+    fun invalidate(songId: Long) {
+        if (songId > 0L) {
+            synchronized(signatureCache) {
+                signatureCache.remove(songId)
+            }
+        }
+    }
+
+    fun clearCache() {
+        synchronized(signatureCache) {
+            signatureCache.evictAll()
+        }
+    }
+
+    /**
+     * Computes a filename-independent core signature using cleaned title, primary artist, and 3-second duration bucket.
+     * Used as a resilient fallback when local files are renamed on disk.
+     */
+    fun computeCoreSignature(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        filenameFallback: String = ""
+    ): String {
+        val cleanTitle = TagCleaner.cleanTitle(title, filenameFallback).trim().lowercase()
+        val cleanArtist = TagCleaner.cleanArtist(artist).trim().lowercase()
+        val durationBucket = (durationMs / 3000L).coerceAtLeast(0L)
+        val rawKey = "$cleanTitle|$cleanArtist|$durationBucket"
+        return "coresig_${sha256(rawKey).take(28)}"
+    }
+
+    fun normalizeAlphanumeric(input: String): String {
+        return input.lowercase()
+            .replace(Regex("\\([^)]*\\)|\\[[^]]*]"), " ")
+            .replace(Regex("[^a-z0-9\\p{L}\\p{N}]+"), "")
+            .trim()
+    }
+
+    fun extractPrimaryArtist(artist: String): String {
+        val cleaned = TagCleaner.cleanArtist(artist).trim().lowercase()
+        return cleaned.split(Regex("[,&/|]|\\bfeat\\.?\\b|\\bft\\.?\\b"))
+            .firstOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: cleaned
+    }
 
     /**
      * Computes a stable, device-independent song signature.
@@ -31,11 +75,6 @@ object SongIdentityHelper {
     }
 
     fun computeSignature(song: Song): String {
-        if (song.id > 0L) {
-            synchronized(signatureCache) {
-                signatureCache.get(song.id)?.let { return it }
-            }
-        }
         val filename = song.path.substringAfterLast('/')
         val sig = computeSignature(song.title, song.artist, song.album, song.durationMs, filename)
         if (song.id > 0L) {
@@ -45,11 +84,6 @@ object SongIdentityHelper {
     }
 
     fun computeSignature(song: SongEntity): String {
-        if (song.id > 0L) {
-            synchronized(signatureCache) {
-                signatureCache.get(song.id)?.let { return it }
-            }
-        }
         val filename = song.path.substringAfterLast('/')
         val sig = computeSignature(song.title, song.artist, song.album, song.durationMs, filename)
         if (song.id > 0L) {

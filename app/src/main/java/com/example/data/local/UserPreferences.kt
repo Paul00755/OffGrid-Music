@@ -2470,6 +2470,196 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { it[PreferenceKeys.STORE_INDEXED_SONGS_LOCALLY] = enabled }
     }
 
+    /**
+     * Resets all user-configurable settings across Audio, UI, Home Feed, Playback, Cache,
+     * Library Indexing, and Other & Privacy to their factory defaults.
+     *
+     * Explicitly preserves:
+     * - Stored Gemini API key in SecureApiKeyStore (never deleted; instead turns Transcribe/Translate toggle OFF)
+     * - User account identity, custom display name/avatar, and cloud sync/backup timestamps
+     * - Active playback state (last song, position, queue) and playlist custom order / lyrics offsets
+     */
+    suspend fun resetToDefaultSettings() {
+        val now = System.currentTimeMillis()
+        cachedFetchOnlineArtworkHighRes = false
+        cachedCacheAlbumArtEnabled = true
+        cachedCacheSongArtWorkEnabled = true
+        cachedAutoPlayOnHeadphoneConnection = false
+        cachedAutoPlayOnAppStartup = false
+
+        try {
+            bootCachePrefs.edit()
+                .putString("pref_theme_mode", "DARK")
+                .putString("pref_ui_theme", "MIDNIGHT_OBSIDIAN")
+                .putString("pref_display_scale", "DEFAULT")
+                .putString("pref_home_screen_layout", "HERO_SPOTLIGHT")
+                .putString("pref_now_playing_layout", "MINIMAL_GLASS")
+                .putString("pref_playlists_layout", "BENTO_GRID")
+                .putBoolean("pref_playlists_layout_explicit_v1", false)
+                .putString("pref_accent_color_preset", "ORANGE")
+                .putInt("pref_custom_accent_color", 0)
+                .putBoolean("pref_dynamic_artwork_theme", true)
+                .putBoolean("pref_gradient_effect", true)
+                .putBoolean("pref_glass_effect", true)
+                .putBoolean("pref_gradient_glass_effect", true)
+                .putInt("pref_corner_radius_dp", 16)
+                .putString("pref_font_size_scale", "MEDIUM")
+                .putString("pref_artwork_size", "MEDIUM")
+                .putBoolean("pref_show_artist", true)
+                .putBoolean("pref_show_album", true)
+                .putBoolean("pref_show_audio_output", true)
+                .putString("pref_mini_player_style", "FLOATING")
+                .putBoolean("pref_mini_player_show_previous", true)
+                .putBoolean("pref_mini_player_show_next", true)
+                .putBoolean("pref_mini_player_show_favorite", true)
+                .putString("pref_waveform_style", "SNAKE")
+                .putString("pref_lyrics_fetch_mode", "WIFI_ONLY")
+                .putBoolean("pref_lyrics_auto_scroll", true)
+                .putString("pref_lyrics_font_size", "MEDIUM")
+                .putBoolean("pref_gapless_playback", true)
+                .putInt("pref_crossfade_duration_sec", 0)
+                .putBoolean("pref_normalize_audio", false)
+                .putBoolean("pref_auto_play_on_headphone_connection", false)
+                .putBoolean("pref_autoplay_on_app_startup", false)
+                .putBoolean("pref_resume_on_bluetooth", false)
+                .putBoolean("pref_pause_on_headset_unplug", true)
+                .putBoolean("pref_pause_on_zero_volume", true)
+                .putBoolean("pref_auto_resume_on_volume_increase", true)
+                .putInt("pref_fade_in_out_ms", 1000)
+                .putInt("pref_fade_in_ms", 1000)
+                .putInt("pref_fade_out_ms", 1000)
+                .putBoolean("pref_shake_to_skip", false)
+                .putBoolean("pref_keep_screen_awake", false)
+                .putFloat("pref_audio_balance", 0f)
+                .putString("pref_equalizer_preset", "NORMAL")
+                .putString("pref_custom_eq_bands", "0.0,0.0,0.0,0.0,0.0")
+                .putInt("pref_custom_bass_boost", 0)
+                .putInt("pref_custom_virtualizer", 0)
+                .putBoolean("pref_reduce_volume_on_notification", true)
+                .putBoolean("pref_play_during_camera", false)
+                .putBoolean("pref_auto_pause_camera", false)
+                .putBoolean("pref_auto_pause_system_audio", true)
+                .putString("pref_sleep_timer_mode", "TIME")
+                .putBoolean("pref_sleep_timer_finish_last_song", false)
+                .putString("pref_scrobble_threshold_type", "SECONDS")
+                .putInt("pref_scrobble_threshold_value", 30)
+                .putBoolean("pref_always_shuffle_mode", true)
+                .putBoolean("pref_gesture_playback_enabled", true)
+                .putBoolean("pref_high_refresh_rate", true)
+                .putString("pref_add_to_queue_position", "BOTTOM")
+                .putBoolean("pref_add_to_queue_position_explicit_v1", false)
+                .putString("pref_playlist_add_song_position", "BOTTOM")
+                .putBoolean("pref_playlist_add_song_position_explicit_v1", false)
+                .putString("pref_playlist_view_mode", "GRID")
+                .putString("pref_home_sections", defaultHomeSectionsRaw)
+                .putString("pref_database_storage_tier", "EXPANDED")
+                .putInt("pref_ignore_audio_duration", 0)
+                .putInt("pref_max_song_duration_sec", 300)
+                .putBoolean("pref_full_device_scan", false)
+                .putBoolean("pref_store_indexed_songs_locally", false)
+                .putString("pref_library_sort_option", "RECENTLY_ADDED")
+                .putBoolean("pref_library_sort_ascending", true)
+                .putBoolean("pref_notification_enabled", true)
+                .putBoolean("pref_fetch_online_artwork_high_res", false)
+                .putBoolean("pref_fetch_online_artwork_high_res_explicit_v2", false)
+                .putBoolean("pref_cache_lyrics_enabled", true)
+                .putBoolean("pref_cache_album_art_enabled", true)
+                .putBoolean("pref_cache_song_art_work_enabled", true)
+                .putBoolean("pref_transcribe_translate_enabled", false)
+                .putString("pref_audio_transcribe_mode", "OFF")
+                .putString("pref_audio_transcribe_target_lang", "ta")
+                .putBoolean("pref_automatic_backup_enabled", true)
+                .putString("pref_backup_frequency", "WEEKLY")
+                .putBoolean("pref_update_notifications_enabled", true)
+                .putLong("pref_settings_last_updated_at", now)
+                .apply()
+        } catch (_: Exception) {}
+
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.THEME_MODE] = "DARK"
+            prefs[PreferenceKeys.AMOLED_MODE] = false
+            prefs[PreferenceKeys.UI_THEME] = "MIDNIGHT_OBSIDIAN"
+            prefs[PreferenceKeys.DISPLAY_SCALE] = "DEFAULT"
+            prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = "HERO_SPOTLIGHT"
+            prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = "MINIMAL_GLASS"
+            prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = "BENTO_GRID"
+            prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = "ORANGE"
+            prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = 0
+            prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = true
+            prefs[PreferenceKeys.GRADIENT_EFFECT] = true
+            prefs[PreferenceKeys.GLASS_EFFECT] = true
+            prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] = true
+            prefs[PreferenceKeys.CORNER_RADIUS_DP] = 16
+            prefs[PreferenceKeys.FONT_SIZE_SCALE] = "MEDIUM"
+            prefs[PreferenceKeys.ARTWORK_SIZE] = "MEDIUM"
+            prefs[PreferenceKeys.SHOW_ARTIST] = true
+            prefs[PreferenceKeys.SHOW_ALBUM] = true
+            prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = true
+            prefs[PreferenceKeys.MINI_PLAYER_STYLE] = "FLOATING"
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = true
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = true
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = true
+            prefs[PreferenceKeys.WAVEFORM_STYLE] = "SNAKE"
+            prefs[PreferenceKeys.LYRICS_FETCH_MODE] = "WIFI_ONLY"
+            prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = true
+            prefs[PreferenceKeys.LYRICS_FONT_SIZE] = "MEDIUM"
+            prefs[PreferenceKeys.GAPLESS_PLAYBACK] = true
+            prefs[PreferenceKeys.CROSSFADE_DURATION_SEC] = 0
+            prefs[PreferenceKeys.NORMALIZE_AUDIO] = false
+            prefs[PreferenceKeys.AUTO_PLAY_ON_HEADPHONE_CONNECTION] = false
+            prefs[PreferenceKeys.AUTOPLAY_ON_APP_STARTUP] = false
+            prefs[PreferenceKeys.RESUME_ON_BLUETOOTH] = false
+            prefs[PreferenceKeys.PAUSE_ON_HEADSET_UNPLUG] = true
+            prefs[PreferenceKeys.PAUSE_ON_ZERO_VOLUME] = true
+            prefs[PreferenceKeys.AUTO_RESUME_ON_VOLUME_INCREASE] = true
+            prefs[PreferenceKeys.FADE_IN_OUT_MS] = 1000
+            prefs[PreferenceKeys.FADE_IN_MS] = 1000
+            prefs[PreferenceKeys.FADE_OUT_MS] = 1000
+            prefs[PreferenceKeys.SHAKE_TO_SKIP] = false
+            prefs[PreferenceKeys.KEEP_SCREEN_AWAKE] = false
+            prefs[PreferenceKeys.AUDIO_BALANCE] = 0f
+            prefs[PreferenceKeys.EQUALIZER_PRESET] = "NORMAL"
+            prefs[PreferenceKeys.CUSTOM_EQ_BANDS] = "0.0,0.0,0.0,0.0,0.0"
+            prefs[PreferenceKeys.CUSTOM_BASS_BOOST] = 0
+            prefs[PreferenceKeys.CUSTOM_VIRTUALIZER] = 0
+            prefs[PreferenceKeys.REDUCE_VOLUME_ON_NOTIFICATION] = true
+            prefs[PreferenceKeys.PLAY_DURING_CAMERA] = false
+            prefs[PreferenceKeys.AUTO_PAUSE_CAMERA] = false
+            prefs[PreferenceKeys.AUTO_PAUSE_SYSTEM_AUDIO] = true
+            prefs[PreferenceKeys.SLEEP_TIMER_MODE] = "TIME"
+            prefs[PreferenceKeys.SLEEP_TIMER_FINISH_LAST_SONG] = false
+            prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = "SECONDS"
+            prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = 30
+            prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = true
+            prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = true
+            prefs[PreferenceKeys.HIGH_REFRESH_RATE] = true
+            prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = "BOTTOM"
+            prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = "BOTTOM"
+            prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = "GRID"
+            prefs[PreferenceKeys.HOME_SECTIONS] = defaultHomeSectionsRaw
+            prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = "EXPANDED"
+            prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = 0
+            prefs[PreferenceKeys.MAX_SONG_DURATION] = 300
+            prefs[PreferenceKeys.FULL_DEVICE_SCAN] = false
+            prefs[PreferenceKeys.STORE_INDEXED_SONGS_LOCALLY] = false
+            prefs[PreferenceKeys.LIBRARY_SORT_OPTION] = "RECENTLY_ADDED"
+            prefs[PreferenceKeys.LIBRARY_SORT_ASCENDING] = true
+            prefs[PreferenceKeys.NOTIFICATION_ENABLED] = true
+            prefs[PreferenceKeys.FETCH_ONLINE_ARTWORK_HIGH_RES] = false
+            prefs[PreferenceKeys.CACHE_LYRICS_ENABLED] = true
+            prefs[PreferenceKeys.CACHE_ALBUM_ART_ENABLED] = true
+            prefs[PreferenceKeys.CACHE_SONG_ART_WORK_ENABLED] = true
+            // Turn off Transcribe/Translate toggle (default OFF) while keeping stored Gemini API key intact
+            prefs[PreferenceKeys.TRANSCRIBE_TRANSLATE_ENABLED] = false
+            prefs[PreferenceKeys.AUDIO_TRANSCRIBE_MODE] = "OFF"
+            prefs[PreferenceKeys.AUDIO_TRANSCRIBE_TARGET_LANG] = "ta"
+            prefs[PreferenceKeys.AUTOMATIC_BACKUP_ENABLED] = true
+            prefs[PreferenceKeys.BACKUP_FREQUENCY] = "WEEKLY"
+            prefs[PreferenceKeys.UPDATE_NOTIFICATIONS_ENABLED] = true
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
     suspend fun clearAllForTesting() {
         bootCachePrefs.edit().clear().commit()
         context.dataStore.edit { it.clear() }

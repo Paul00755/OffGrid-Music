@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val viewModel = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
                 if (viewModel.isOnboardingCompleted.value && !viewModel.showSplash.value) {
-                    viewModel.scanLibrary()
+                    viewModel.scanLibrary(showProgress = false)
                 }
             } catch (_: Exception) {}
         }
@@ -671,7 +671,7 @@ class MainActivity : ComponentActivity() {
                                                 onPlaySongQueue = { song, queue -> viewModel.playSong(song, queue) },
                                                 onTogglePlayPause = { viewModel.togglePlayPause() },
                                                 onQuickShuffle = { viewModel.shuffleAndPlay() },
-                                                onScanClick = { viewModel.quickScanAndCleanLibrary() },
+                                                onScanClick = { viewModel.quickScanAndCleanLibrary(showProgress = true) },
                                                 onFavoriteToggle = { viewModel.toggleFavorite(it) },
                                                 onOpenNowPlaying = { viewModel.showNowPlaying.value = true },
                                                 onOpenSettings = { section -> viewModel.openSettings(section) },
@@ -1348,7 +1348,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val viewModel = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
                 if (viewModel.isOnboardingCompleted.value && !viewModel.showSplash.value) {
-                    viewModel.quickScanAndCleanLibrary()
+                    viewModel.quickScanAndCleanLibrary(showProgress = false)
                 }
             } catch (_: Exception) {}
         }

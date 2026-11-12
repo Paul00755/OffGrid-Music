@@ -252,35 +252,17 @@ fun PlaylistsScreenGlowCards(
                             IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
                             }
-                            DropdownMenu(
-                                expanded = menuExpanded,
-                                onDismissRequest = { menuExpanded = false },
-                                modifier = Modifier.background(BentoCardSurface)
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Play Next", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.SkipNext, null, tint = BentoPrimary) },
-                                    onClick = { menuExpanded = false; onPlayNext(playlist) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Add to Queue", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = BentoPrimary) },
-                                    onClick = { menuExpanded = false; onAddToQueue(playlist) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Change Cover Art", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.Image, null, tint = BentoPrimary) },
-                                    onClick = { menuExpanded = false; onUpdatePlaylistArtwork(playlist) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Rename", color = BentoTextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.Edit, null, tint = BentoPrimary) },
-                                    onClick = { menuExpanded = false; onRenamePlaylist(playlist) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete", color = BentoError) },
-                                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = BentoError) },
-                                    onClick = { menuExpanded = false; onDeletePlaylist(playlist) }
+                            if (menuExpanded) {
+                                com.example.ui.screens.PlaylistActionSheet(
+                                    playlist = playlist,
+                                    onDismiss = { menuExpanded = false },
+                                    onOpenPlaylist = { onPlaylistClick(playlist) },
+                                    onPlayNow = { onPlayNow(playlist) },
+                                    onPlayNext = { onPlayNext(playlist) },
+                                    onAddToQueue = { onAddToQueue(playlist) },
+                                    onRename = { onRenamePlaylist(playlist) },
+                                    onChangeCover = { onUpdatePlaylistArtwork(playlist) },
+                                    onDelete = { onDeletePlaylist(playlist) }
                                 )
                             }
                         }

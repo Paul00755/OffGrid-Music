@@ -701,6 +701,7 @@ fun SettingsScreen(
     onSetUpdateNotificationsEnabled: (Boolean) -> Unit = {},
     onCheckForUpdates: () -> Unit = {},
     onOpenUpdateDialog: () -> Unit = {},
+    onResetToDefaultSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -767,6 +768,7 @@ fun SettingsScreen(
     var finishLastSongSettings by remember(sleepTimerState.finishLastSong) { mutableStateOf(sleepTimerState.finishLastSong) }
     var diagnosticsRefreshTrigger by remember { mutableIntStateOf(0) }
     var showHeadphonePermissionDialog by remember { mutableStateOf(false) }
+    var showResetSettingsConfirmDialog by remember { mutableStateOf(false) }
 
     val bluetoothConnectLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1729,7 +1731,13 @@ fun SettingsScreen(
             "update", "updates", "github", "version", "release", "releases", "apk", "changelog", "new version", "notification"
         )
     }
-    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates
+    val matchOtherResetDefaults = remember(searchTokens) {
+        matchesSettingsTokens(
+            searchTokens,
+            "reset", "reset to default", "reset to default settings", "default settings", "factory defaults", "restore defaults"
+        )
+    }
+    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates || matchOtherResetDefaults
 
     // Section 8: Cloud Sync granular matcher
     val matchCloudSyncItem = remember(searchTokens) {
@@ -4830,6 +4838,129 @@ fun SettingsScreen(
                                     }
                                 }
                             }
+                        }
+
+                        if (!isSearching || matchOtherResetDefaults || broadOtherMatch) {
+                            SettingsDivider()
+
+                            // Reset to Default Settings
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.RestartAlt,
+                                            contentDescription = null,
+                                            tint = Color(0xFFFF5252),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "Reset to Default Settings",
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = "Restore all audio, theme, layout, playback, and library preferences to their original defaults. Your playlists, favorites, listening history, and stored Gemini API key are safely preserved (AI Transcribe/Translate toggle will be turned off).",
+                                        fontSize = 11.5.sp,
+                                        color = BentoTextSecondary,
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        showResetSettingsConfirmDialog = true
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
+                                    border = BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.55f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.RestartAlt,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text("Reset", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        if (showResetSettingsConfirmDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showResetSettingsConfirmDialog = false },
+                                icon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFFF5252).copy(alpha = 0.15f))
+                                            .border(BorderStroke(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f)), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.RestartAlt,
+                                            contentDescription = null,
+                                            tint = Color(0xFFFF5252),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                },
+                                title = {
+                                    Text(
+                                        text = "Reset All Settings to Default?",
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextPrimary,
+                                        fontSize = 17.sp
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        text = "This will reset all Audio & DSP, UI & Themes, Home Feed, Playback, Cache, Library, and Privacy settings back to their default state.\n\n• Your stored Gemini API key will NOT be deleted (the Transcribe/Translate toggle will simply be turned OFF).\n• Your songs, playlists, favorites, lyrics, and cloud account will remain untouched.",
+                                        fontSize = 13.sp,
+                                        color = BentoTextSecondary,
+                                        lineHeight = 18.5.sp
+                                    )
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            showResetSettingsConfirmDialog = false
+                                            onResetToDefaultSettings()
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "All settings restored to defaults (API key & library preserved)",
+                                                android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFFFF5252),
+                                            contentColor = Color.White
+                                        ),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("Reset to Defaults", fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showResetSettingsConfirmDialog = false }) {
+                                        Text("Cancel", color = BentoTextSecondary)
+                                    }
+                                },
+                                containerColor = BentoCardSurface,
+                                shape = RoundedCornerShape(22.dp)
+                            )
                         }
                     }
                 }

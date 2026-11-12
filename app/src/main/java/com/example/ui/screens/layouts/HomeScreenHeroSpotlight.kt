@@ -223,7 +223,7 @@ fun HomeScreenHeroSpotlight(
                 }
             }
 
-            if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+            if (scanProgress.shouldShowProgressUi) {
                 item(key = "hero_scanning_banner", contentType = "scanning_banner") {
                     com.example.ui.components.BentoCard(
                         modifier = Modifier.fillMaxWidth(),

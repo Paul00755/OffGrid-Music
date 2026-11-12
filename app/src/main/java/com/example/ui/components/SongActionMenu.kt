@@ -222,7 +222,7 @@ fun SongActionMenu(
             if (onEditTags != null) {
                 MenuOptionRow(
                     icon = Icons.Default.EditNote,
-                    title = "Edit Audio Tags & Lyrics",
+                    title = "Edit Tags & Artwork",
                     iconTint = BentoPrimary,
                     onClick = {
                         onDismissRequest()

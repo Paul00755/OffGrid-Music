@@ -128,19 +128,21 @@ class MusicRepository(
     suspend fun scanLibrary(
         ignoreAudioDurationMs: Long = 0L,
         maxAudioDurationMs: Long = Long.MAX_VALUE,
-        forceFullScan: Boolean = false
+        forceFullScan: Boolean = false,
+        showProgress: Boolean = true
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
         val excluded = folderDao.getExcludedFoldersList()
         libraryScanner.refreshDirectoryObservers()
-        libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs)
+        libraryScanner.scanLibrary(included, excluded, ignoreAudioDurationMs, maxAudioDurationMs, showProgress = showProgress)
     }
 
     suspend fun quickScanAndCleanLibrary(
         ignoreAudioDurationMs: Long = 0L,
         maxAudioDurationMs: Long = Long.MAX_VALUE,
         forceFullScan: Boolean = false,
-        skipIfAlreadyScanning: Boolean = false
+        skipIfAlreadyScanning: Boolean = false,
+        showProgress: Boolean = false
     ) {
         val included = if (forceFullScan) emptyList() else folderDao.getIncludedFoldersList()
         val excluded = folderDao.getExcludedFoldersList()
@@ -150,7 +152,8 @@ class MusicRepository(
             excludedFolders = excluded,
             ignoreAudioDurationMs = ignoreAudioDurationMs,
             maxAudioDurationMs = maxAudioDurationMs,
-            skipIfAlreadyScanning = skipIfAlreadyScanning
+            skipIfAlreadyScanning = skipIfAlreadyScanning,
+            showProgress = showProgress
         )
     }
 
@@ -980,6 +983,7 @@ class MusicRepository(
         context: android.content.Context,
         skipPlayingSongId: Long? = null
     ) = withContext(Dispatchers.IO) {
+        libraryScanner.isLocalSongSyncActive = true
         try {
             val sequentialEntities = songDao.getValidSongsSequentialAsc()
             val allOrderedSongs = sequentialEntities.map { it.toDomainModel() }
@@ -1021,6 +1025,7 @@ class MusicRepository(
                     if (targetTitle.isNotBlank() && !targetTitle.equals("Unknown Title", ignoreCase = true) && song.title != targetTitle) {
                         try {
                             songDao.updateSongTitleAndPath(song.id, targetTitle, song.path)
+                            com.example.data.sync.SongIdentityHelper.invalidate(song.id)
                             updatedCount++
                         } catch (_: Exception) {}
                     }
@@ -1036,6 +1041,7 @@ class MusicRepository(
                                 songDao.deleteMissingSongAtPath(syncResult.newPath, song.id)
                             }
                             songDao.updateSongTitleAndPath(song.id, syncResult.newTitle, syncResult.newPath)
+                            com.example.data.sync.SongIdentityHelper.invalidate(song.id)
                             updatedCount++
                             if (syncResult.newPath != song.path) {
                                 pendingScanPaths.add(song.path)
@@ -1103,6 +1109,8 @@ class MusicRepository(
                 isSyncing = false,
                 isCompleted = true
             )
+        } finally {
+            libraryScanner.isLocalSongSyncActive = false
         }
     }
 }

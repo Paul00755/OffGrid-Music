@@ -714,8 +714,8 @@ fun LibraryScreen(
                 }
             }
 
-            // Scanning status remains available while the library controls auto-hide.
-            if (scanProgress.isScanning || scanProgress.status == com.example.scanner.ScanStatus.SCANNING) {
+            // Scanning status is only shown when the user manually triggers a scan.
+            if (scanProgress.shouldShowProgressUi) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = BentoCardSurface,

@@ -1697,7 +1697,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun scanLibrary(forceFullScan: Boolean? = null) {
+    fun scanLibrary(forceFullScan: Boolean? = null, showProgress: Boolean = true) {
         if (scanJob?.isActive == true) return
         scanJob = viewModelScope.launch(Dispatchers.IO) {
             val isFull = forceFullScan ?: preferences.fullDeviceScan.first()
@@ -1707,7 +1707,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             repository.scanLibrary(
                 ignoreAudioDurationMs = minSec * 1000L,
                 maxAudioDurationMs = maxMs,
-                forceFullScan = isFull
+                forceFullScan = isFull,
+                showProgress = showProgress
             )
             if (preferences.storeIndexedSongsLocally.first()) {
                 triggerLocalSongSyncIfEnabled(forceStart = true)
@@ -1718,7 +1719,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile
     private var lastAutoQuickScanTimeMs = 0L
 
-    fun quickScanAndCleanLibrary() {
+    fun quickScanAndCleanLibrary(showProgress: Boolean = true) {
         if (quickScanJob?.isActive == true || scanJob?.isActive == true) return
         lastAutoQuickScanTimeMs = android.os.SystemClock.elapsedRealtime()
         quickScanJob = viewModelScope.launch(Dispatchers.IO) {
@@ -1730,7 +1731,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ignoreAudioDurationMs = minSec * 1000L,
                 maxAudioDurationMs = maxMs,
                 forceFullScan = isFull,
-                skipIfAlreadyScanning = false
+                skipIfAlreadyScanning = false,
+                showProgress = showProgress
             )
             if (preferences.storeIndexedSongsLocally.first()) {
                 triggerLocalSongSyncIfEnabled(forceStart = true)
@@ -1741,8 +1743,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Triggered when the user enters the Home or Library screen.
      * Deduplicates rapid or simultaneous entries, reuses any active scan, respects storage permissions,
-     * and runs a lightweight incremental quick scan in the background using the user's configured
-     * Library & Folders settings (included/excluded folders, min/max duration, full-device scan mode).
+     * and runs a lightweight incremental quick scan silently in the background (without showing scan progress UI).
      */
     fun onScreenEnteredForAutoScan(screenName: String, force: Boolean = false): Boolean {
         val isOnboarded = isOnboardingCompleted.value || preferences.isOnboardingCompletedSync()
@@ -1770,7 +1771,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 ignoreAudioDurationMs = minSec * 1000L,
                 maxAudioDurationMs = maxMs,
                 forceFullScan = isFull,
-                skipIfAlreadyScanning = true
+                skipIfAlreadyScanning = true,
+                showProgress = false
             )
             if (preferences.storeIndexedSongsLocally.first()) {
                 triggerLocalSongSyncIfEnabled(forceStart = true)
@@ -2957,6 +2959,40 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getWrappedDataForPeriod(startTime: Long, endTime: Long = 9223372036854775807L): WrappedData {
         return repository.getWrappedDataForPeriod(startTime, endTime)
+    }
+
+    /**
+     * Resets all user-configurable settings across Audio, UI, Home Feed, Playback,
+     * Cache, Library, and Privacy to their factory defaults.
+     *
+     * CRITICAL: Does NOT delete any stored Gemini API key in SecureApiKeyStore;
+     * instead, because the default for Transcribe/Translate Lyrics is OFF (false),
+     * it simply turns the toggle off while preserving the stored API key.
+     * Also preserves account login, library songs, playlists, favorites, and history.
+     */
+    fun resetToDefaultSettings(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            preferences.resetToDefaultSettings()
+
+            // Immediately synchronize live PlaybackManager / Equalizer runtime state with defaults
+            equalizerManager.applyPreset("NORMAL")
+            playbackManager.setAudioBalance(0.0f)
+            playbackManager.isNormalizeAudioEnabled = false
+            playbackManager.fadeInMs = 1000
+            playbackManager.fadeOutMs = 1000
+            playbackManager.crossfadeDurationSec = 0
+            playbackManager.gaplessPlayback = true
+            playbackManager.addToQueuePosition = "BOTTOM"
+            cancelSleepTimer()
+
+            // Refresh launcher widget theme to default DARK
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
+
+            // Trigger cloud settings sync if signed in
+            cloudSyncRepository.onSettingsChangedAsync()
+
+            onComplete()
+        }
     }
 
     override fun onCleared() {

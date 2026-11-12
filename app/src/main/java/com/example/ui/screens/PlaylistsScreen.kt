@@ -25,11 +25,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.HideImage
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
@@ -37,6 +40,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.*
+import com.example.util.HapticUtils
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1251,101 +1255,18 @@ private fun PlaylistGridCard(
                 )
             }
 
-            DropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false },
-                modifier = Modifier.background(BentoCardSurface)
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Play Now", color = BentoTextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onPlayNow()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Play Next", color = BentoTextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onPlayNext()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Add to Queue", color = BentoTextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.QueueMusic,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onAddToQueue()
-                    }
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = BentoBorder.copy(alpha = 0.4f))
-                DropdownMenuItem(
-                    text = { Text("Open Playlist", color = BentoTextPrimary) },
-                    onClick = {
-                        showMenu = false
-                        onClick()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Rename Playlist", color = BentoTextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        onRename()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Change Cover", color = BentoTextPrimary) },
-                    onClick = {
-                        showMenu = false
-                        onChangeCover()
-                    }
-                )
-                if (playlist.artworkUri != null) {
-                    DropdownMenuItem(
-                        text = { Text("Remove Custom Cover", color = BentoTextSecondary) },
-                        onClick = {
-                            showMenu = false
-                            onRemoveCover()
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text("Delete Playlist", color = BentoAccentPinkText) },
-                    onClick = {
-                        showMenu = false
-                        onDelete()
-                    }
+            if (showMenu) {
+                PlaylistActionSheet(
+                    playlist = playlist,
+                    onDismiss = { showMenu = false },
+                    onOpenPlaylist = onClick,
+                    onPlayNow = onPlayNow,
+                    onPlayNext = onPlayNext,
+                    onAddToQueue = onAddToQueue,
+                    onRename = onRename,
+                    onChangeCover = onChangeCover,
+                    onRemoveCover = if (playlist.artworkUri != null) onRemoveCover else null,
+                    onDelete = onDelete
                 )
             }
         }
@@ -1466,103 +1387,341 @@ private fun PlaylistListCard(
                     )
                 }
 
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(BentoCardSurface)
+                if (showMenu) {
+                    PlaylistActionSheet(
+                        playlist = playlist,
+                        onDismiss = { showMenu = false },
+                        onOpenPlaylist = onClick,
+                        onPlayNow = onPlayNow,
+                        onPlayNext = onPlayNext,
+                        onAddToQueue = onAddToQueue,
+                        onRename = onRename,
+                        onChangeCover = onChangeCover,
+                        onRemoveCover = if (playlist.artworkUri != null) onRemoveCover else null,
+                        onDelete = onDelete
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistActionSheet(
+    playlist: Playlist,
+    onDismiss: () -> Unit,
+    onOpenPlaylist: (() -> Unit)? = null,
+    onPlayNow: (() -> Unit)? = null,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onRename: () -> Unit,
+    onChangeCover: () -> Unit,
+    onRemoveCover: (() -> Unit)? = null,
+    onDelete: () -> Unit
+) {
+    val context = LocalContext.current
+    val durationMins = playlist.totalDurationMs / (1000 * 60)
+    val timeSubtitle = if (durationMins >= 60) "${String.format("%.1f", durationMins / 60.0)} hrs" else "$durationMins mins"
+    val trackSubtitle = "${playlist.songCount} ${if (playlist.songCount == 1) "track" else "tracks"}"
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = BentoCardSurface,
+        scrimColor = Color.Black.copy(alpha = 0.62f),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            // Header with Playlist Cover, Name, Metadata, and Close button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PlaylistCover(
+                    playlist = playlist,
+                    playlistSongs = emptyList(),
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(14.dp)),
+                    cornerRadius = 14
+                )
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = playlist.name,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "$trackSubtitle • $timeSubtitle",
+                        fontSize = 12.5.sp,
+                        color = BentoTextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onDismiss()
+                    },
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(BentoCardDarkPurple)
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("Play Now", color = BentoTextPrimary) },
-                        leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = BentoTextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Quick Playback Action Pills Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (onPlayNow != null) {
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            onDismiss()
+                            onPlayNow()
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = BentoPrimary,
+                        modifier = Modifier.weight(1.1f).height(42.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = null,
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(20.dp)
+                                tint = BentoOnPrimary,
+                                modifier = Modifier.size(18.dp)
                             )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onPlayNow()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Play Next", color = BentoTextPrimary) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.SkipNext,
-                                contentDescription = null,
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(20.dp)
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Play Now",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoOnPrimary,
+                                maxLines = 1
                             )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onPlayNext()
                         }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add to Queue", color = BentoTextPrimary) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.QueueMusic,
-                                contentDescription = null,
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onAddToQueue()
-                        }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = BentoBorder.copy(alpha = 0.4f))
-                    DropdownMenuItem(
-                        text = { Text("Open Playlist", color = BentoTextPrimary) },
-                        onClick = {
-                            showMenu = false
-                            onClick()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Rename Playlist", color = BentoTextPrimary) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = null,
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onRename()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Change Cover", color = BentoTextPrimary) },
-                        onClick = {
-                            showMenu = false
-                            onChangeCover()
-                        }
-                    )
-                    if (playlist.artworkUri != null) {
-                        DropdownMenuItem(
-                            text = { Text("Remove Custom Cover", color = BentoTextSecondary) },
-                            onClick = {
-                                showMenu = false
-                                onRemoveCover()
-                            }
+                    }
+                }
+
+                Surface(
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onDismiss()
+                        onPlayNext()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = BentoCardDarkPurple,
+                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                    modifier = Modifier.weight(1f).height(42.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = null,
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Play Next",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BentoTextPrimary,
+                            maxLines = 1
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("Delete Playlist", color = BentoAccentPinkText) },
-                        onClick = {
-                            showMenu = false
-                            onDelete()
-                        }
-                    )
                 }
+
+                Surface(
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onDismiss()
+                        onAddToQueue()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = BentoCardDarkPurple,
+                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                    modifier = Modifier.weight(1f).height(42.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = null,
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Queue",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BentoTextPrimary,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+            Spacer(modifier = Modifier.height(6.dp))
+
+            if (onOpenPlaylist != null) {
+                PlaylistActionOptionRow(
+                    icon = Icons.Default.QueueMusic,
+                    title = "Open Playlist",
+                    subtitle = "View & reorder tracks inside this collection",
+                    iconTint = BentoPrimary,
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onDismiss()
+                        onOpenPlaylist()
+                    }
+                )
+            }
+
+            PlaylistActionOptionRow(
+                icon = Icons.Default.Edit,
+                title = "Rename Playlist",
+                subtitle = "Change the display title of this playlist",
+                iconTint = BentoPrimary,
+                onClick = {
+                    HapticUtils.performClickHaptic(context)
+                    onDismiss()
+                    onRename()
+                }
+            )
+
+            PlaylistActionOptionRow(
+                icon = Icons.Default.Image,
+                title = "Change Cover Artwork",
+                subtitle = "Choose a custom image from your gallery",
+                iconTint = BentoPrimary,
+                onClick = {
+                    HapticUtils.performClickHaptic(context)
+                    onDismiss()
+                    onChangeCover()
+                }
+            )
+
+            if (onRemoveCover != null && playlist.artworkUri != null) {
+                PlaylistActionOptionRow(
+                    icon = Icons.Default.HideImage,
+                    title = "Remove Custom Cover",
+                    subtitle = "Revert to automatic album artwork mosaic",
+                    iconTint = BentoTextSecondary,
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onDismiss()
+                        onRemoveCover()
+                    }
+                )
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            PlaylistActionOptionRow(
+                icon = Icons.Default.Delete,
+                title = "Delete Playlist",
+                subtitle = "Remove this playlist (audio files stay on device)",
+                iconTint = BentoAccentPinkText,
+                textColor = BentoAccentPinkText,
+                onClick = {
+                    HapticUtils.performClickHaptic(context)
+                    onDismiss()
+                    onDelete()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistActionOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String? = null,
+    iconTint: Color,
+    textColor: Color = BentoTextPrimary,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(iconTint.copy(alpha = 0.14f))
+                .border(0.5.dp, iconTint.copy(alpha = 0.32f), RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = iconTint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textColor
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    fontSize = 11.5.sp,
+                    color = BentoTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

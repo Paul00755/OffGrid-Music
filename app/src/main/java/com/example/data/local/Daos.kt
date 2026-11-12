@@ -175,11 +175,11 @@ interface PlaylistDao {
             p.createdAt as createdAt,
             p.isPinned as isPinned,
             p.artworkUri as artworkUri,
-            COUNT(ps.songId) as songCount,
+            COUNT(s.id) as songCount,
             COALESCE(SUM(s.durationMs), 0) as totalDurationMs
         FROM playlists p
         LEFT JOIN playlist_songs ps ON p.id = ps.playlistId
-        LEFT JOIN songs s ON ps.songId = s.id
+        LEFT JOIN songs s ON ps.songId = s.id AND s.isMissing = 0
         GROUP BY p.id
         ORDER BY p.isPinned DESC, p.name ASC
     """)
@@ -292,6 +292,9 @@ interface PlaylistDao {
     @Query("DELETE FROM playlist_play_events WHERE id NOT IN (SELECT id FROM playlist_play_events ORDER BY timestamp DESC LIMIT :maxRecords)")
     suspend fun prunePlaylistPlayEventsKeepMostRecent(maxRecords: Int = 25000): Int
 
+    @Query("DELETE FROM playlist_songs WHERE songId NOT IN (SELECT id FROM songs)")
+    suspend fun deleteOrphanSongIdsInPlaylists()
+
     @Query("SELECT COUNT(*) FROM playlists")
     suspend fun getPlaylistCountOnce(): Int
 
@@ -315,6 +318,12 @@ interface PlaylistDao {
 
     @Query("DELETE FROM playlist_play_events")
     suspend fun clearAllPlaylistPlayEvents()
+
+    @Query("UPDATE OR IGNORE playlist_songs SET songId = :newSongId WHERE songId = :oldSongId")
+    suspend fun migrateSongIdInPlaylists(oldSongId: Long, newSongId: Long)
+
+    @Query("DELETE FROM playlist_songs WHERE songId = :oldSongId")
+    suspend fun deleteOrphanSongIdFromPlaylists(oldSongId: Long)
 }
 
 data class RecentlyPlayedHistoryItem(
@@ -461,6 +470,9 @@ interface HistoryDao {
         GROUP BY trackId
     """)
     suspend fun getAggregateSongPlayStats(): List<SongPlayStatAggregation>
+
+    @Query("UPDATE playback_history SET trackId = :newSongId WHERE trackId = :oldSongId")
+    suspend fun migrateHistoryTrackId(oldSongId: Long, newSongId: Long)
 }
 
 data class SongPlayStatAggregation(
@@ -494,6 +506,9 @@ interface LyricsDao {
 
     @Query("SELECT COUNT(*) FROM lyrics")
     suspend fun getLyricsCountOnce(): Int
+
+    @Query("UPDATE OR IGNORE lyrics SET songId = :newSongId WHERE songId = :oldSongId")
+    suspend fun migrateLyricsSongId(oldSongId: Long, newSongId: Long)
 }
 
 @Dao
