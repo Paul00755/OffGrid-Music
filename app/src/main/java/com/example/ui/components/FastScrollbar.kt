@@ -254,7 +254,7 @@ fun FastScrollbar(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(34.dp)
+            .width(28.dp)
             .testTag("fast_scrollbar")
             .onSizeChanged { containerHeightPx = it.height.toFloat() }
             .graphicsLayer {

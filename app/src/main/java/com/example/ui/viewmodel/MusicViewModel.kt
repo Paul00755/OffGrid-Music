@@ -899,11 +899,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 isDynamic || isGradient || isGlass
             }.distinctUntilChanged()
 
+            val targetSongWithArtSignalFlow = targetSongFlow.flatMapLatest { song ->
+                if (song == null) {
+                    kotlinx.coroutines.flow.flowOf(Pair<Song?, Long>(null, 0L))
+                } else {
+                    kotlinx.coroutines.flow.combine(
+                        com.example.ui.components.ArtworkResolutionCache.getThumbnailUpdateFlow(song.id, song.path),
+                        com.example.ui.components.ArtworkResolutionCache.getArtworkUpdateFlow(song.id, song.path)
+                    ) { thumbVer, artVer ->
+                        Pair<Song?, Long>(song, maxOf(thumbVer, artVer))
+                    }
+                }
+            }.distinctUntilChanged()
+
             kotlinx.coroutines.flow.combine(
-                targetSongFlow,
-                shouldExtractFlow,
-                com.example.ui.components.ArtworkResolutionCache.thumbnailDecodedSignal
-            ) { targetSong, shouldExtract, _ ->
+                targetSongWithArtSignalFlow,
+                shouldExtractFlow
+            ) { (targetSong, _), shouldExtract ->
                 Pair(targetSong, shouldExtract)
             }.collect { (song, shouldExtract) ->
                 if (shouldExtract && song != null) {

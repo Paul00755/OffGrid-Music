@@ -1000,6 +1000,27 @@ class MusicRepository(
                 return@withContext
             }
 
+            // Fast pre-check: if no song in the library actually needs local syncing, complete immediately
+            // without emitting intermediate states or touching SQLite/MediaScanner.
+            val anyNeedsSync = allOrderedSongs.any { song ->
+                if (skipPlayingSongId != null && song.id == skipPlayingSongId) {
+                    val targetTitle = song.displayTitle.trim()
+                    targetTitle.isNotBlank() && !targetTitle.equals("Unknown Title", ignoreCase = true) && song.title != targetTitle
+                } else {
+                    com.example.util.AudioTagWriter.needsLocalSongNameSync(song, context)
+                }
+            }
+            if (!anyNeedsSync) {
+                _localSongSyncProgress.value = LocalSongSyncProgress(
+                    isSyncing = false,
+                    processedCount = totalCount,
+                    totalCount = totalCount,
+                    updatedCount = 0,
+                    isCompleted = true
+                )
+                return@withContext
+            }
+
             _localSongSyncProgress.value = LocalSongSyncProgress(
                 isSyncing = true,
                 processedCount = 0,
@@ -1011,6 +1032,16 @@ class MusicRepository(
             var updatedCount = 0
             var lastEmitMs = android.os.SystemClock.elapsedRealtime()
             val pendingScanPaths = mutableListOf<String>()
+            val pendingDbUpdates = mutableListOf<Triple<Long, String, String>>()
+
+            suspend fun flushPendingDbUpdates() {
+                if (pendingDbUpdates.isEmpty()) return
+                val snapshot = pendingDbUpdates.toList()
+                pendingDbUpdates.clear()
+                try {
+                    songDao.updateSongsTitleAndPathBatch(snapshot)
+                } catch (_: Exception) {}
+            }
 
             for ((index, song) in allOrderedSongs.withIndex()) {
                 kotlin.coroutines.coroutineContext.ensureActive()
@@ -1023,37 +1054,34 @@ class MusicRepository(
                     // If currently playing, only update title in DB if needed without renaming the active file descriptor
                     val targetTitle = song.displayTitle.trim()
                     if (targetTitle.isNotBlank() && !targetTitle.equals("Unknown Title", ignoreCase = true) && song.title != targetTitle) {
-                        try {
-                            songDao.updateSongTitleAndPath(song.id, targetTitle, song.path)
-                            com.example.data.sync.SongIdentityHelper.invalidate(song.id)
-                            updatedCount++
-                        } catch (_: Exception) {}
+                        pendingDbUpdates.add(Triple(song.id, targetTitle, song.path))
+                        com.example.data.sync.SongIdentityHelper.invalidate(song.id)
+                        updatedCount++
                     }
-                } else if (com.example.util.AudioTagWriter.needsLocalSongNameSync(song)) {
+                } else if (com.example.util.AudioTagWriter.needsLocalSongNameSync(song, context)) {
                     val syncResult = com.example.util.AudioTagWriter.syncIndexedSongNameLocally(
                         context = context,
                         song = song,
                         triggerMediaScanner = false
                     )
                     if (syncResult.updated) {
-                        try {
-                            if (syncResult.newPath != song.path) {
-                                songDao.deleteMissingSongAtPath(syncResult.newPath, song.id)
-                            }
-                            songDao.updateSongTitleAndPath(song.id, syncResult.newTitle, syncResult.newPath)
-                            com.example.data.sync.SongIdentityHelper.invalidate(song.id)
-                            updatedCount++
-                            if (syncResult.newPath != song.path) {
-                                pendingScanPaths.add(song.path)
-                            }
-                            if (syncResult.newPath.isNotBlank()) {
-                                pendingScanPaths.add(syncResult.newPath)
-                            }
-                        } catch (_: Exception) {}
+                        pendingDbUpdates.add(Triple(song.id, syncResult.newTitle, syncResult.newPath))
+                        com.example.data.sync.SongIdentityHelper.invalidate(song.id)
+                        updatedCount++
+                        if (syncResult.newPath != song.path) {
+                            pendingScanPaths.add(song.path)
+                        }
+                        if (syncResult.newPath.isNotBlank()) {
+                            pendingScanPaths.add(syncResult.newPath)
+                        }
                     }
                 }
 
-                if (pendingScanPaths.size >= 60) {
+                if (pendingDbUpdates.size >= 100) {
+                    flushPendingDbUpdates()
+                }
+
+                if (pendingScanPaths.size >= 80) {
                     try {
                         android.media.MediaScannerConnection.scanFile(
                             context,
@@ -1067,7 +1095,7 @@ class MusicRepository(
 
                 val processed = index + 1
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (processed == totalCount || processed % 15 == 0 || (now - lastEmitMs) >= 120L) {
+                if (processed == totalCount || (now - lastEmitMs) >= 180L) {
                     lastEmitMs = now
                     _localSongSyncProgress.value = LocalSongSyncProgress(
                         isSyncing = processed < totalCount,
@@ -1078,6 +1106,8 @@ class MusicRepository(
                     )
                 }
             }
+
+            flushPendingDbUpdates()
 
             if (pendingScanPaths.isNotEmpty()) {
                 try {

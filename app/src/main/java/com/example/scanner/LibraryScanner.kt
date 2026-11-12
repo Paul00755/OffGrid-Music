@@ -49,7 +49,7 @@ data class ScanProgress(
     val processedCount: Int = validTracksFound,
     val isFinished: Boolean = (status == ScanStatus.COMPLETED),
     val error: String? = errorMessage,
-    val isManualScan: Boolean = false
+    val isManualScan: Boolean = (isScanning && status == ScanStatus.IDLE)
 ) {
     val displayTracksCount: Int
         get() = validTracksFound
@@ -264,7 +264,13 @@ class LibraryScanner(
     private suspend fun updateSongsSafelyInBatches(songs: List<SongEntity>) {
         if (songs.isEmpty()) return
         for (chunk in songs.chunked(SQLITE_BATCH_SIZE)) {
-            songDao.updateSongs(chunk)
+            try {
+                songDao.updateSongs(chunk)
+            } catch (_: Exception) {
+                try {
+                    songDao.insertSongs(chunk)
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -308,6 +314,7 @@ class LibraryScanner(
             contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
                     super.onChange(selfChange, uri)
+                    if (isLocalSongSyncActive || isBackgroundScanRunning) return
                     scheduleDebouncedAutoDetection()
                 }
             }
@@ -452,6 +459,7 @@ class LibraryScanner(
     }
 
     private fun handleFileObserverEvent(event: Int, parentDir: File, path: String?) {
+        if (isLocalSongSyncActive || isBackgroundScanRunning) return
         if (path == null || path.startsWith(".")) return
         val targetFile = File(parentDir, path)
         val action = event and FileObserver.ALL_EVENTS
@@ -471,7 +479,9 @@ class LibraryScanner(
                         arrayOf(targetFile.absolutePath),
                         null
                     ) { _, _ ->
-                        scheduleDebouncedAutoDetection(immediate = true)
+                        if (!isLocalSongSyncActive && !isBackgroundScanRunning) {
+                            scheduleDebouncedAutoDetection(immediate = true)
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -1185,20 +1195,18 @@ class LibraryScanner(
                 }
 
                 val finalCount = mergedSongsList.size
-                if (showProgress || _scanProgress.value.status == ScanStatus.COMPLETED) {
-                    _scanProgress.value = ScanProgress(
-                        status = ScanStatus.COMPLETED,
-                        filesDiscovered = filesDiscovered,
-                        filesProcessed = filesProcessed,
-                        validTracksFound = finalCount,
-                        duplicatesSkipped = duplicatesSkipped,
-                        filteredRejected = filteredRejected,
-                        currentFolder = "",
-                        isScanning = false,
-                        isFinished = true,
-                        isManualScan = showProgress
-                    )
-                }
+                _scanProgress.value = ScanProgress(
+                    status = ScanStatus.COMPLETED,
+                    filesDiscovered = filesDiscovered,
+                    filesProcessed = filesProcessed,
+                    validTracksFound = finalCount,
+                    duplicatesSkipped = duplicatesSkipped,
+                    filteredRejected = filteredRejected,
+                    currentFolder = "",
+                    isScanning = false,
+                    isFinished = true,
+                    isManualScan = showProgress
+                )
                 try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in scanLibrary", e)
@@ -1633,20 +1641,18 @@ class LibraryScanner(
                 }
 
                 val totalCount = songDao.getSongCountOnce()
-                if (showProgress || _scanProgress.value.status == ScanStatus.COMPLETED) {
-                    _scanProgress.value = ScanProgress(
-                        status = ScanStatus.COMPLETED,
-                        filesDiscovered = filesDiscovered,
-                        filesProcessed = filesProcessed,
-                        validTracksFound = totalCount,
-                        duplicatesSkipped = duplicatesSkipped,
-                        filteredRejected = filteredRejected,
-                        currentFolder = "",
-                        isScanning = false,
-                        isFinished = true,
-                        isManualScan = showProgress
-                    )
-                }
+                _scanProgress.value = ScanProgress(
+                    status = ScanStatus.COMPLETED,
+                    filesDiscovered = filesDiscovered,
+                    filesProcessed = filesProcessed,
+                    validTracksFound = totalCount,
+                    duplicatesSkipped = duplicatesSkipped,
+                    filteredRejected = filteredRejected,
+                    currentFolder = "",
+                    isScanning = false,
+                    isFinished = true,
+                    isManualScan = showProgress
+                )
                 try { onScanCompletedListener?.invoke() } catch (_: Exception) {}
             } catch (e: Exception) {
                 Log.e(TAG, "Error in quickScanAndCleanLibrary", e)

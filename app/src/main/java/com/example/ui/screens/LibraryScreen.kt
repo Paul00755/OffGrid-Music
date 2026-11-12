@@ -789,7 +789,7 @@ fun LibraryScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("library_songs_list"),
-                    contentPadding = PaddingValues(start = 16.dp, end = 22.dp, top = 4.dp, bottom = 120.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 24.dp, top = 4.dp, bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     when (selectedCategory) {

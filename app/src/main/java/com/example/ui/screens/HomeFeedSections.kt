@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +44,41 @@ import com.example.util.HapticUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.Calendar
+
+data class HomeSectionDescriptor(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accentColor: Color
+)
+
+fun normalizeHomeSectionKey(key: String): String {
+    return when (key.trim().uppercase()) {
+        "HERO_SPOTLIGHT", "CONTINUE_LISTENING" -> "continue_listening"
+        "SPEED_DIAL", "QUICK_ACTIONS" -> "quick_actions"
+        "STATS", "LISTENING_STATS" -> "listening_stats"
+        "MOST_PLAYED" -> "most_played"
+        "PLAYLISTS", "MOST_PLAYED_PLAYLISTS" -> "most_played_playlists"
+        "RECENTLY_PLAYED" -> "recently_played"
+        "RECENTLY_ADDED" -> "recently_added"
+        "ARTISTS", "TOP_ARTISTS" -> "top_artists"
+        "ALBUMS", "TOP_ALBUMS" -> "top_albums"
+        else -> key.trim().lowercase()
+    }
+}
+
+val ALL_HOME_SECTIONS = listOf(
+    HomeSectionDescriptor("continue_listening", "Continue Listening", "Resume last active playback banner", Icons.Default.PlayCircle, Color(0xFFFF9100)),
+    HomeSectionDescriptor("quick_actions", "Quick Actions", "Shuffle all tracks and quick navigation", Icons.Default.Shuffle, Color(0xFFFF4081)),
+    HomeSectionDescriptor("listening_stats", "Listening Stats & Insights", "Minutes listened, day streak & top stats", Icons.Default.Insights, Color(0xFF00E676)),
+    HomeSectionDescriptor("most_played", "Most Played / Heavy Rotation", "Your most frequently played songs", Icons.Default.Whatshot, Color(0xFFFF5252)),
+    HomeSectionDescriptor("most_played_playlists", "Most Played Playlists", "Your custom and smart playlists", Icons.AutoMirrored.Filled.QueueMusic, Color(0xFF7C4DFF)),
+    HomeSectionDescriptor("recently_played", "Recently Played", "Quick access to your most recently played tracks", Icons.Default.History, Color(0xFF2979FF)),
+    HomeSectionDescriptor("recently_added", "Recently Added", "Freshly scanned & newly added songs", Icons.Default.NewReleases, Color(0xFFFFD700)),
+    HomeSectionDescriptor("top_artists", "Top Artists", "Favorite artists avatar bubbles", Icons.Default.Person, Color(0xFFBB86FC)),
+    HomeSectionDescriptor("top_albums", "Top Albums", "Cover art album grid & highlights", Icons.Default.Album, Color(0xFF1DE9B6))
+)
 
 enum class HomeFeedVisualStyle {
     BENTO_DEFAULT,
@@ -1140,7 +1176,7 @@ fun LazyListScope.renderHomeFeedSections(
                 }
 
                 if (mostPlayedFilteredSongs.isNotEmpty()) {
-                    itemsIndexed(mostPlayedFilteredSongs, key = { _, item -> "most_played_${item.id}" }, contentType = { _, _ -> "song_item" }) { index, song ->
+                    itemsIndexed(mostPlayedFilteredSongs, key = { index, item -> "most_played_${item.id}_$index" }, contentType = { _, _ -> "song_item" }) { index, song ->
                         var showMenu by remember { mutableStateOf(false) }
                         val onRowClick = remember(song, mostPlayedFilteredSongs, onPlaySongQueue) {
                             { onPlaySongQueue(song, mostPlayedFilteredSongs) }
@@ -1235,7 +1271,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(playlistsToShow, key = { _, item -> "pl_${item.id}" }, contentType = { _, _ -> "playlist_card" }) { index, playlist ->
+                            itemsIndexed(playlistsToShow, key = { index, item -> "pl_${item.id}_$index" }, contentType = { _, _ -> "playlist_card" }) { index, playlist ->
                                 when (feedStyle) {
                                     HomeFeedVisualStyle.HERO_SPOTLIGHT -> {
                                         Box(
@@ -1457,7 +1493,7 @@ fun LazyListScope.renderHomeFeedSections(
                         ) {
                             itemsIndexed(
                                 items = uniqueRecent,
-                                key = { _, item -> "recent_played_${item.id}" },
+                                key = { index, item -> "recent_played_${item.id}_$index" },
                                 contentType = { _, _ -> "recent_song" }
                             ) { _, song ->
                                 val cornerDp = when (feedStyle) {
@@ -1555,7 +1591,7 @@ fun LazyListScope.renderHomeFeedSections(
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            itemsIndexed(recentAddedSlice, key = { _, item -> "recent_added_${item.id}" }, contentType = { _, _ -> "recent_added" }) { _, song ->
+                            itemsIndexed(recentAddedSlice, key = { index, item -> "recent_added_${item.id}_$index" }, contentType = { _, _ -> "recent_added" }) { _, song ->
                                 val cornerDp = when (feedStyle) {
                                     HomeFeedVisualStyle.HERO_SPOTLIGHT -> 22
                                     HomeFeedVisualStyle.MINIMAL_STREAM -> 18

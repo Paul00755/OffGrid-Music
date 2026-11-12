@@ -100,10 +100,11 @@ object ArtworkResolutionCache {
     private var activeWarmAllJob: Job? = null
 
     val artworkUpdateSignal = mutableLongStateOf(0L)
+    val artworkUpdateFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
     val thumbnailDecodedSignal = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val songArtworkVersions = ConcurrentHashMap<String, Long>()
-    private val artworkUpdateSignals = ConcurrentHashMap<String, androidx.compose.runtime.MutableLongState>()
-    private val thumbnailUpdateSignals = ConcurrentHashMap<String, androidx.compose.runtime.MutableLongState>()
+    private val artworkUpdateFlows = ConcurrentHashMap<String, kotlinx.coroutines.flow.MutableStateFlow<Long>>()
+    private val thumbnailUpdateFlows = ConcurrentHashMap<String, kotlinx.coroutines.flow.MutableStateFlow<Long>>()
 
     private val HEX_CHARS = "0123456789abcdef".toCharArray()
     private val sha256ThreadLocal = object : ThreadLocal<java.security.MessageDigest>() {
@@ -152,17 +153,27 @@ object ArtworkResolutionCache {
         return maxOf(trackVer, idVer)
     }
 
+    fun getArtworkUpdateFlow(songId: Long, path: String?): kotlinx.coroutines.flow.StateFlow<Long> {
+        val key = if (songId <= 0L) "id:0" else trackIdentity(songId, path)
+        return artworkUpdateFlows.computeIfAbsent(key) { kotlinx.coroutines.flow.MutableStateFlow(0L) }
+    }
+
+    fun getThumbnailUpdateFlow(songId: Long, path: String?): kotlinx.coroutines.flow.StateFlow<Long> {
+        val key = if (songId <= 0L) "id:0" else trackIdentity(songId, path)
+        return thumbnailUpdateFlows.computeIfAbsent(key) { kotlinx.coroutines.flow.MutableStateFlow(0L) }
+    }
+
     fun getArtworkUpdateVersion(songId: Long, path: String?): Long {
         if (songId <= 0L) return 0L
-        val trackSig = artworkUpdateSignals.computeIfAbsent(trackIdentity(songId, path)) { mutableLongStateOf(0L) }.longValue
-        val idSig = artworkUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue
+        val trackSig = artworkUpdateFlows[trackIdentity(songId, path)]?.value ?: 0L
+        val idSig = artworkUpdateFlows["id:$songId"]?.value ?: 0L
         return maxOf(trackSig, idSig)
     }
 
     fun getThumbnailUpdateVersion(songId: Long, path: String?): Long {
         if (songId <= 0L) return 0L
-        val trackSig = thumbnailUpdateSignals.computeIfAbsent(trackIdentity(songId, path)) { mutableLongStateOf(0L) }.longValue
-        val idSig = thumbnailUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue
+        val trackSig = thumbnailUpdateFlows[trackIdentity(songId, path)]?.value ?: 0L
+        val idSig = thumbnailUpdateFlows["id:$songId"]?.value ?: 0L
         return maxOf(trackSig, idSig)
     }
 
@@ -195,13 +206,13 @@ object ArtworkResolutionCache {
                 }
             }
         }
-        val stamp = nextVersionStamp()
-        thumbnailDecodedSignal.value = stamp
         if (changed) {
-            thumbnailUpdateSignals.computeIfAbsent(identity) { mutableLongStateOf(0L) }.longValue = stamp
-            thumbnailUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue = stamp
+            val stamp = nextVersionStamp()
+            thumbnailDecodedSignal.value = stamp
+            thumbnailUpdateFlows.computeIfAbsent(identity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = stamp
+            thumbnailUpdateFlows.computeIfAbsent("id:$songId") { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = stamp
             if (knownIdentity != null && knownIdentity != identity) {
-                thumbnailUpdateSignals.computeIfAbsent(knownIdentity) { mutableLongStateOf(0L) }.longValue = stamp
+                thumbnailUpdateFlows.computeIfAbsent(knownIdentity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = stamp
             }
         }
     }
@@ -243,8 +254,8 @@ object ArtworkResolutionCache {
             }
         }
         val stamp = nextVersionStamp()
-        thumbnailUpdateSignals.computeIfAbsent(identity) { mutableLongStateOf(0L) }.longValue = stamp
-        thumbnailUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue = stamp
+        thumbnailUpdateFlows.computeIfAbsent(identity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = stamp
+        thumbnailUpdateFlows.computeIfAbsent("id:$songId") { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = stamp
     }
 
     fun decodeAndCacheFullResBitmap(
@@ -510,7 +521,6 @@ object ArtworkResolutionCache {
         if (isDiskIndexWarm) return
         synchronized(diskIndexLock) {
             if (isDiskIndexWarm) return
-            isDiskIndexWarm = true
             try {
                 val appCtx = context.applicationContext
                 val dirsToIndex = listOf(
@@ -568,7 +578,10 @@ object ArtworkResolutionCache {
                         cache[idPart] = urlStr
                     }
                 }
-            } catch (_: Throwable) {}
+            } catch (_: Throwable) {
+            } finally {
+                isDiskIndexWarm = true
+            }
         }
     }
 
@@ -785,18 +798,23 @@ object ArtworkResolutionCache {
         if (!path.isNullOrBlank()) failedLookupAt.remove(identity)
         if (knownIdentity != null) failedLookupAt.remove(knownIdentity)
         failedLookupAt.remove("id:$songId")
-        artworkUpdateSignals.computeIfAbsent(identity) { mutableLongStateOf(0L) }.longValue = now
-        artworkUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue = now
+        artworkUpdateFlows.computeIfAbsent(identity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
+        artworkUpdateFlows.computeIfAbsent("id:$songId") { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
         if (knownIdentity != null && knownIdentity != identity) {
-            artworkUpdateSignals.computeIfAbsent(knownIdentity) { mutableLongStateOf(0L) }.longValue = now
+            artworkUpdateFlows.computeIfAbsent(knownIdentity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
         }
-        thumbnailUpdateSignals.computeIfAbsent(identity) { mutableLongStateOf(0L) }.longValue = now
-        thumbnailUpdateSignals.computeIfAbsent("id:$songId") { mutableLongStateOf(0L) }.longValue = now
+        thumbnailUpdateFlows.computeIfAbsent(identity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
+        thumbnailUpdateFlows.computeIfAbsent("id:$songId") { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
         if (knownIdentity != null && knownIdentity != identity) {
-            thumbnailUpdateSignals.computeIfAbsent(knownIdentity) { mutableLongStateOf(0L) }.longValue = now
+            thumbnailUpdateFlows.computeIfAbsent(knownIdentity) { kotlinx.coroutines.flow.MutableStateFlow(0L) }.value = now
         }
         thumbnailDecodedSignal.value = now
-        artworkUpdateSignal.longValue = now
+        artworkUpdateFlow.value = now
+        try {
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                artworkUpdateSignal.longValue = now
+            }
+        } catch (_: Throwable) {}
     }
 
     fun cacheArtwork(songId: Long, path: String?, uri: String) {
@@ -1224,8 +1242,8 @@ object ArtworkResolutionCache {
         trackArtworkPathById.clear()
         failedLookupAt.clear()
         songArtworkVersions.clear()
-        artworkUpdateSignals.clear()
-        thumbnailUpdateSignals.clear()
+        artworkUpdateFlows.clear()
+        thumbnailUpdateFlows.clear()
         manualCoverCache.clear()
         manualPathCache.clear()
         preloadedKeys.clear()
@@ -1286,9 +1304,17 @@ fun AlbumArtView(
     val gradientIndex = (songId.toInt() % PRECOMPUTED_ARTWORK_BRUSHES.size).let { if (it < 0) -it else it }
     val backgroundBrush = PRECOMPUTED_ARTWORK_BRUSHES[gradientIndex]
 
-    val globalArtworkSignal = ArtworkResolutionCache.artworkUpdateSignal.longValue
-    val perSongArtworkSignal = ArtworkResolutionCache.getArtworkUpdateVersion(songId, songPath)
-    val perSongThumbSignal = ArtworkResolutionCache.getThumbnailUpdateVersion(songId, songPath)
+    val globalArtworkSignal by ArtworkResolutionCache.artworkUpdateFlow.collectAsState()
+    val trackArtFlow = remember(songId, songPath) { ArtworkResolutionCache.getArtworkUpdateFlow(songId, songPath) }
+    val idArtFlow = remember(songId) { ArtworkResolutionCache.getArtworkUpdateFlow(songId, null) }
+    val trackThumbFlow = remember(songId, songPath) { ArtworkResolutionCache.getThumbnailUpdateFlow(songId, songPath) }
+    val idThumbFlow = remember(songId) { ArtworkResolutionCache.getThumbnailUpdateFlow(songId, null) }
+    val trackArtVer by trackArtFlow.collectAsState()
+    val idArtVer by idArtFlow.collectAsState()
+    val trackThumbVer by trackThumbFlow.collectAsState()
+    val idThumbVer by idThumbFlow.collectAsState()
+    val perSongArtworkSignal = maxOf(trackArtVer, idArtVer)
+    val perSongThumbSignal = maxOf(trackThumbVer, idThumbVer)
     val artworkVersion = remember(trackKey, perSongArtworkSignal, globalArtworkSignal) {
         ArtworkResolutionCache.getSongArtworkVersion(songId, songPath)
     }

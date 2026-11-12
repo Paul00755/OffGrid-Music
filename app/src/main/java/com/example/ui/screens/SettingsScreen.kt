@@ -125,41 +125,6 @@ private fun matchesSettingsSearch(query: String, vararg keywords: String): Boole
     return matchesSettingsTokens(tokens, *keywords)
 }
 
-data class HomeSectionDescriptor(
-    val key: String,
-    val title: String,
-    val subtitle: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val accentColor: Color
-)
-
-fun normalizeHomeSectionKey(key: String): String {
-    return when (key.trim().uppercase()) {
-        "HERO_SPOTLIGHT", "CONTINUE_LISTENING" -> "continue_listening"
-        "SPEED_DIAL", "QUICK_ACTIONS" -> "quick_actions"
-        "STATS", "LISTENING_STATS" -> "listening_stats"
-        "MOST_PLAYED" -> "most_played"
-        "PLAYLISTS", "MOST_PLAYED_PLAYLISTS" -> "most_played_playlists"
-        "RECENTLY_PLAYED" -> "recently_played"
-        "RECENTLY_ADDED" -> "recently_added"
-        "ARTISTS", "TOP_ARTISTS" -> "top_artists"
-        "ALBUMS", "TOP_ALBUMS" -> "top_albums"
-        else -> key.trim().lowercase()
-    }
-}
-
-val ALL_HOME_SECTIONS = listOf(
-    HomeSectionDescriptor("continue_listening", "Continue Listening", "Resume last active playback banner", Icons.Default.PlayCircle, Color(0xFFFF9100)),
-    HomeSectionDescriptor("quick_actions", "Quick Actions", "Shuffle all tracks and quick navigation", Icons.Default.Shuffle, Color(0xFFFF4081)),
-    HomeSectionDescriptor("listening_stats", "Listening Stats & Insights", "Minutes listened, day streak & top stats", Icons.Default.Insights, Color(0xFF00E676)),
-    HomeSectionDescriptor("most_played", "Most Played / Heavy Rotation", "Your most frequently played songs", Icons.Default.Whatshot, Color(0xFFFF5252)),
-    HomeSectionDescriptor("most_played_playlists", "Most Played Playlists", "Your custom and smart playlists", Icons.AutoMirrored.Filled.QueueMusic, Color(0xFF7C4DFF)),
-    HomeSectionDescriptor("recently_played", "Recently Played", "Quick access to your most recently played tracks", Icons.Default.History, Color(0xFF2979FF)),
-    HomeSectionDescriptor("recently_added", "Recently Added", "Freshly scanned & newly added songs", Icons.Default.NewReleases, Color(0xFFFFD700)),
-    HomeSectionDescriptor("top_artists", "Top Artists", "Favorite artists avatar bubbles", Icons.Default.Person, Color(0xFFBB86FC)),
-    HomeSectionDescriptor("top_albums", "Top Albums", "Cover art album grid & highlights", Icons.Default.Album, Color(0xFF1DE9B6))
-)
-
 @Composable
 fun HomeScreenSectionsManagerCard(
     currentSections: List<String>,
@@ -1386,412 +1351,6 @@ fun SettingsScreen(
     }
 
     val searchTokens = remember(searchQuery) { tokenizeSettingsQuery(searchQuery) }
-    val isSearching = searchTokens.isNotEmpty()
-
-    // Account tile matcher (memoized by searchTokens)
-    val matchAccountTile = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "account", "profile", "sign in", "sign out", "login", "avatar", "guest profile", "user"
-        )
-    }
-
-    // Section 1: Audio & Sound granular matchers
-    val matchAudioCrossfade = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "crossfade", "crossfade audio duration", "blend tracks", "playback transitions", "overlap"
-        )
-    }
-    val matchAudioFadeIn = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "play fade-in", "fade-in", "fade in", "ramp up track volume", "smooth resume"
-        )
-    }
-    val matchAudioFadeOut = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "pause fade-out", "fade-out", "fade out", "abrupt audio cuts", "smooth pause"
-        )
-    }
-    val matchAudioPauseZero = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "pause on zero volume", "zero volume", "0%", "mute", "silent pause"
-        )
-    }
-    val matchAudioAutoResume = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "auto resume on volume increase", "auto resume", "volume increase", "raising volume", "unmute"
-        )
-    }
-    val matchAudioGapless = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "gapless", "gapless audio playback", "silent gaps", "concert", "seamless"
-        )
-    }
-    val matchAudioNormalize = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "normalize", "normalization", "normalize audio", "loudness", "balance volume levels", "replaygain", "gain"
-        )
-    }
-    val matchAudioDucking = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "duck", "ducking", "duck volume for notifications", "notification chimes", "lower volume"
-        )
-    }
-    val matchAudioCameraPause = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "camera", "auto-pause for camera", "camera interruption", "shutter", "video recording"
-        )
-    }
-    val matchAudioSystemAudioPause = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption", "calls"
-        )
-    }
-    val matchAudioTranscribe = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "transcribe", "translate", "gemini", "api key", "tamil", "tanglish", "hindi", "malayalam", "lyrics translation", "ai lyrics"
-        )
-    }
-    val matchAudioBalance = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "stereo", "channel balance", "stereo channel balance", "left", "right", "pan", "mono"
-        )
-    }
-    val matchAudioEqualizer = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "equalizer", "eq", "5-band", "bands", "bass", "bassboost", "virtualizer", "3d", "spatial",
-            "preset", "rock", "pop", "classical", "jazz", "dance", "electronic", "acoustic", "flat", "decibel", "hz"
-        )
-    }
-    val anyAudioItemMatches = matchAudioCrossfade || matchAudioFadeIn || matchAudioFadeOut ||
-        matchAudioPauseZero || matchAudioAutoResume || matchAudioGapless || matchAudioNormalize ||
-        matchAudioDucking || matchAudioCameraPause || matchAudioSystemAudioPause ||
-        matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
-
-    // Section 2: UI & Themes granular matchers
-    val matchUiThemes = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "curated ui themes", "ui theme", "themes", "palette", "obsidian", "neon", "cyberpunk",
-            "emerald", "amber", "indigo", "aurora", "synthwave", "retro", "glassmorphism"
-        )
-    }
-    val matchUiScreenLayouts = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "screen layout", "screen layout architecture", "layout architecture", "wireframe",
-            "now playing layout", "home screen layout", "playlists layout", "bento", "vinyl",
-            "turntable", "minimal glass", "hero spotlight", "magazine", "minimal stream", "studio deck", "neon studio", "compact list"
-        )
-    }
-    val matchUiDisplayMode = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "display mode", "dark", "light", "extra dark", "pitch black", "amoled", "oled", "pure black"
-        )
-    }
-    val matchUiDisplayScale = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "display scale", "ui size", "font size", "compact", "comfort", "standard", "zoom", "density"
-        )
-    }
-    val matchUiAccentColor = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "accent color", "custom accent", "color picker", "rgb", "custom color", "tint"
-        )
-    }
-    val matchUiDynamicArtwork = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric", "adaptive color"
-        )
-    }
-    val matchUiGradientEffect = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "gradient", "gradient effect", "ambient gradient", "aurora", "color wash", "background gradient"
-        )
-    }
-    val matchUiGlassEffect = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "glass", "glass effect", "frosted", "frosted glass", "glassmorphism", "blur", "translucent", "see through"
-        )
-    }
-    val matchUiGradientGlass = matchUiGradientEffect || matchUiGlassEffect
-    val matchUiHighResArtwork = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "online high-res", "high-res", "high res", "prefer hi-res", "online artwork", "1920px", "hd cover"
-        )
-    }
-    val matchUiLyricsAutoScroll = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "lyrics auto-scroll", "auto-scroll", "autoscroll", "synced lyrics", "lrc"
-        )
-    }
-    val matchUiWaveform = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "waveform", "waveform visualizer", "visualizer style", "sleek line", "snake", "symmetric", "dotted", "bars", "wave", "seekbar"
-        )
-    }
-    val matchUiRefreshRate = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "refresh rate", "high refresh", "high refresh rate", "90", "120hz", "60hz", "hz", "fluid", "smooth animations", "fps"
-        )
-    }
-    val matchUiMiniPlayer = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "mini player", "mini player customization", "floating pill", "docked", "previous track button", "next track button", "favorite button"
-        )
-    }
-    val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
-        matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiGradientGlass ||
-        matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
-
-    // Section 3: Home Feed granular matcher
-    val matchHomeFeedItem = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "home feed", "home screen feed", "section ordering", "reorder", "speed dial",
-            "continue listening", "most played", "recently added", "recently played", "top albums",
-            "top artists", "smart playlist", "recents first", "discovery"
-        )
-    }
-
-    // Section 4: Playback granular matchers
-    val matchPlaybackSleepTimer = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "sleep timer", "sleep", "timer", "countdown", "stop timer", "minute", "minutes",
-            "finish last song", "finish playing", "track-based", "track count"
-        )
-    }
-    val matchPlaybackCompletion = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "track completion", "completion criteria", "scrobble", "threshold", "percentage", "count track as played"
-        )
-    }
-    val matchPlaybackShake = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "shake", "shake to skip", "sensor", "physically shake", "accelerometer"
-        )
-    }
-    val matchPlaybackAlwaysShuffle = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "always shuffle", "shuffle mode", "shuffle order", "random"
-        )
-    }
-    val matchPlaybackStartupAutoplay = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "autoplay on app startup", "autoplay", "app startup", "launch play"
-        )
-    }
-    val matchPlaybackGestures = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "album art gestures", "gesture", "gestures", "swipe to skip", "tap to play", "album art gesture"
-        )
-    }
-    val matchPlaybackAddToQueuePos = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "add to queue position", "add to queue", "up-next queue", "queue position", "top", "bottom"
-        )
-    }
-    val matchPlaybackAddToPlaylistPos = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "add to playlist position", "add to playlist", "custom playlist arrangement"
-        )
-    }
-    val matchPlaybackHeadphones = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "headphone", "headphones", "headset", "earbud", "bluetooth", "wired", "wireless", "automatically play on headphone"
-        )
-    }
-    val matchPlaybackKeepAwake = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "keep screen awake", "screen awake", "awake", "prevent device display from sleeping", "wakelock"
-        )
-    }
-    val anyPlaybackItemMatches = matchPlaybackSleepTimer || matchPlaybackCompletion ||
-        matchPlaybackShake || matchPlaybackAlwaysShuffle || matchPlaybackStartupAutoplay ||
-        matchPlaybackGestures || matchPlaybackAddToQueuePos || matchPlaybackAddToPlaylistPos ||
-        matchPlaybackHeadphones || matchPlaybackKeepAwake
-
-    // Section 5: Cache & Database granular matchers
-    val matchCacheTotal = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "total cache", "clear all", "offline cache", "cache occupied", "cleanup", "clear cache"
-        )
-    }
-    val matchCacheLyrics = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "cache synced lyrics", "lyrics cache", "clear lyrics", "lrc cache"
-        )
-    }
-    val matchCacheAlbumArt = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "cache album artwork", "album artwork", "album art", "clear album art"
-        )
-    }
-    val matchCacheSongArt = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "cache song artwork", "song artwork", "song art", "clear song art"
-        )
-    }
-    val matchCacheDatabase = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "database", "sqlite", "room", "storage tier", "capacity tier", "wal", "optimize", "quota"
-        )
-    }
-    val anyCacheCardMatches = matchCacheTotal || matchCacheLyrics || matchCacheAlbumArt || matchCacheSongArt
-    val anyCacheItemMatches = anyCacheCardMatches || matchCacheDatabase
-
-    // Section 6: Library & Folders granular matchers
-    val matchLibFullScan = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "full-device scan", "full device scan", "entire device", "deep scan"
-        )
-    }
-    val matchLibIgnoreShort = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "ignore short", "short audio", "audio duration filter", "ringtone", "voice note", "seconds"
-        )
-    }
-    val matchLibQuickScan = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "quick scan", "quick scan & clean", "prune", "rescan", "media scan", "clean", "discover"
-        )
-    }
-    val matchLibCustomFolders = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "custom music directories", "music directory", "folders", "folder", "directories", "directory", "exclude", "add folder", "remove folder"
-        )
-    }
-    val matchLibStoreLocal = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "update & store indexed songs in local storage too", "update and store indexed songs", "indexed songs", "local storage", "store indexed", "batch", "rename"
-        )
-    }
-    val anyLibraryItemMatches = matchLibFullScan || matchLibIgnoreShort || matchLibQuickScan || matchLibCustomFolders || matchLibStoreLocal
-
-    // Section 7: Other & Privacy granular matchers
-    val matchOtherSearchHistory = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "recent search", "recent searches", "search history", "clear history", "search queries"
-        )
-    }
-    val matchOtherDiagnostics = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "diagnostics", "crash", "crash report", "error report", "logs", "log", "system health"
-        )
-    }
-    val matchOtherUpdates = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "update", "updates", "github", "version", "release", "releases", "apk", "changelog", "new version", "notification"
-        )
-    }
-    val matchOtherResetDefaults = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "reset", "reset to default", "reset to default settings", "default settings", "factory defaults", "restore defaults"
-        )
-    }
-    val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates || matchOtherResetDefaults
-
-    // Section 8: Cloud Sync granular matcher
-    val matchCloudSyncItem = remember(searchTokens) {
-        matchesSettingsTokens(
-            searchTokens,
-            "cloud", "sync", "synchronize", "backup", "restore", "cross-device", "cross device", "firebase", "google", "lyrics offset"
-        )
-    }
-
-    val anySpecificSettingMatched = anyAudioItemMatches || anyUiItemMatches || matchHomeFeedItem ||
-        anyPlaybackItemMatches || anyCacheItemMatches || anyLibraryItemMatches ||
-        anyOtherItemMatches || matchCloudSyncItem || matchAccountTile
-
-    // Broad category fallback only when no specific setting matched (e.g., searching "audio" or "ui")
-    val broadAudioMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "audio", "sound")
-    val broadUiMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "ui", "visual", "appearance", "display")
-    val broadHomeFeedMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "home", "feed")
-    val broadPlaybackMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "playback", "controls")
-    val broadCacheMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "cache", "storage", "disk")
-    val broadLibraryMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "library", "scan")
-    val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other", "update", "github")
-
-    val audioMatches = anyAudioItemMatches || broadAudioMatch
-    val uiMatches = anyUiItemMatches || broadUiMatch
-    val homeFeedMatches = matchHomeFeedItem || broadHomeFeedMatch
-    val playbackMatches = anyPlaybackItemMatches || broadPlaybackMatch
-    val cacheMatches = anyCacheItemMatches || broadCacheMatch
-    val libraryMatches = anyLibraryItemMatches || broadLibraryMatch
-    val otherMatches = anyOtherItemMatches || broadOtherMatch
-    val cloudSyncMatches = matchCloudSyncItem
-
-    val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches || (isSearching && matchAccountTile)
-
-    val matchedSectionsCount = remember(
-        audioMatches, uiMatches, homeFeedMatches, playbackMatches,
-        cacheMatches, libraryMatches, otherMatches, cloudSyncMatches, matchAccountTile, isSearching
-    ) {
-        if (!isSearching) 0
-        else listOf(
-            audioMatches, uiMatches, homeFeedMatches, playbackMatches,
-            cacheMatches, libraryMatches, otherMatches, cloudSyncMatches, matchAccountTile
-        ).count { it }
-    }
-
-    val isTopLevelHub = selectedSection == SettingsSection.ALL && !isSearching && !showAllInOneList
-
-    val showAudio = if (isSearching) audioMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.AUDIO))
-    val showUi = if (isSearching) uiMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.UI))
-    val showHomeFeed = if (isSearching) homeFeedMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.HOME_FEED))
-    val showPlayback = if (isSearching) playbackMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.PLAYBACK))
-    val showCache = if (isSearching) cacheMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CACHE))
-    val showLibrary = if (isSearching) libraryMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.LIBRARY))
-    val showOther = if (isSearching) otherMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.OTHER))
-    val showCloudSync = if (isSearching) cloudSyncMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC))
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -1805,6 +1364,301 @@ fun SettingsScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            val isSearching = searchTokens.isNotEmpty()
+
+            // Account tile matcher
+            val matchAccountTile = matchesSettingsTokens(
+                searchTokens,
+                "account", "profile", "sign in", "sign out", "login", "avatar", "guest profile", "user"
+            )
+
+            // Section 1: Audio & Sound granular matchers
+            val matchAudioCrossfade = matchesSettingsTokens(
+                searchTokens,
+                "crossfade", "crossfade audio duration", "blend tracks", "playback transitions", "overlap"
+            )
+            val matchAudioFadeIn = matchesSettingsTokens(
+                searchTokens,
+                "play fade-in", "fade-in", "fade in", "ramp up track volume", "smooth resume"
+            )
+            val matchAudioFadeOut = matchesSettingsTokens(
+                searchTokens,
+                "pause fade-out", "fade-out", "fade out", "abrupt audio cuts", "smooth pause"
+            )
+            val matchAudioPauseZero = matchesSettingsTokens(
+                searchTokens,
+                "pause on zero volume", "zero volume", "0%", "mute", "silent pause"
+            )
+            val matchAudioAutoResume = matchesSettingsTokens(
+                searchTokens,
+                "auto resume on volume increase", "auto resume", "volume increase", "raising volume", "unmute"
+            )
+            val matchAudioGapless = matchesSettingsTokens(
+                searchTokens,
+                "gapless", "gapless audio playback", "silent gaps", "concert", "seamless"
+            )
+            val matchAudioNormalize = matchesSettingsTokens(
+                searchTokens,
+                "normalize", "normalization", "normalize audio", "loudness", "balance volume levels", "replaygain", "gain"
+            )
+            val matchAudioDucking = matchesSettingsTokens(
+                searchTokens,
+                "duck", "ducking", "duck volume for notifications", "notification chimes", "lower volume"
+            )
+            val matchAudioCameraPause = matchesSettingsTokens(
+                searchTokens,
+                "camera", "auto-pause for camera", "camera interruption", "shutter", "video recording"
+            )
+            val matchAudioSystemAudioPause = matchesSettingsTokens(
+                searchTokens,
+                "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption", "calls"
+            )
+            val matchAudioTranscribe = matchesSettingsTokens(
+                searchTokens,
+                "transcribe", "translate", "gemini", "api key", "tamil", "tanglish", "hindi", "malayalam", "lyrics translation", "ai lyrics"
+            )
+            val matchAudioBalance = matchesSettingsTokens(
+                searchTokens,
+                "stereo", "channel balance", "stereo channel balance", "left", "right", "pan", "mono"
+            )
+            val matchAudioEqualizer = matchesSettingsTokens(
+                searchTokens,
+                "equalizer", "eq", "5-band", "bands", "bass", "bassboost", "virtualizer", "3d", "spatial",
+                "preset", "rock", "pop", "classical", "jazz", "dance", "electronic", "acoustic", "flat", "decibel", "hz"
+            )
+            val anyAudioItemMatches = matchAudioCrossfade || matchAudioFadeIn || matchAudioFadeOut ||
+                matchAudioPauseZero || matchAudioAutoResume || matchAudioGapless || matchAudioNormalize ||
+                matchAudioDucking || matchAudioCameraPause || matchAudioSystemAudioPause ||
+                matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
+
+            // Section 2: UI & Themes granular matchers
+            val matchUiThemes = matchesSettingsTokens(
+                searchTokens,
+                "curated ui themes", "ui theme", "themes", "palette", "obsidian", "neon", "cyberpunk",
+                "emerald", "amber", "indigo", "aurora", "synthwave", "retro", "glassmorphism"
+            )
+            val matchUiScreenLayouts = matchesSettingsTokens(
+                searchTokens,
+                "screen layout", "screen layout architecture", "layout architecture", "wireframe",
+                "now playing layout", "home screen layout", "playlists layout", "bento", "vinyl",
+                "turntable", "minimal glass", "hero spotlight", "magazine", "minimal stream", "studio deck", "neon studio", "compact list"
+            )
+            val matchUiDisplayMode = matchesSettingsTokens(
+                searchTokens,
+                "display mode", "dark", "light", "extra dark", "pitch black", "amoled", "oled", "pure black"
+            )
+            val matchUiDisplayScale = matchesSettingsTokens(
+                searchTokens,
+                "display scale", "ui size", "font size", "compact", "comfort", "standard", "zoom", "density"
+            )
+            val matchUiAccentColor = matchesSettingsTokens(
+                searchTokens,
+                "accent color", "custom accent", "color picker", "rgb", "custom color", "tint"
+            )
+            val matchUiDynamicArtwork = matchesSettingsTokens(
+                searchTokens,
+                "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric", "adaptive color"
+            )
+            val matchUiGradientEffect = matchesSettingsTokens(
+                searchTokens,
+                "gradient", "gradient effect", "ambient gradient", "aurora", "color wash", "background gradient"
+            )
+            val matchUiGlassEffect = matchesSettingsTokens(
+                searchTokens,
+                "glass", "glass effect", "frosted", "frosted glass", "glassmorphism", "blur", "translucent", "see through"
+            )
+            val matchUiGradientGlass = matchUiGradientEffect || matchUiGlassEffect
+            val matchUiHighResArtwork = matchesSettingsTokens(
+                searchTokens,
+                "online high-res", "high-res", "high res", "prefer hi-res", "online artwork", "1920px", "hd cover"
+            )
+            val matchUiLyricsAutoScroll = matchesSettingsTokens(
+                searchTokens,
+                "lyrics auto-scroll", "auto-scroll", "autoscroll", "synced lyrics", "lrc"
+            )
+            val matchUiWaveform = matchesSettingsTokens(
+                searchTokens,
+                "waveform", "waveform visualizer", "visualizer style", "sleek line", "snake", "symmetric", "dotted", "bars", "wave", "seekbar"
+            )
+            val matchUiRefreshRate = matchesSettingsTokens(
+                searchTokens,
+                "refresh rate", "high refresh", "high refresh rate", "90", "120hz", "60hz", "hz", "fluid", "smooth animations", "fps"
+            )
+            val matchUiMiniPlayer = matchesSettingsTokens(
+                searchTokens,
+                "mini player", "mini player customization", "floating pill", "docked", "previous track button", "next track button", "favorite button"
+            )
+            val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
+                matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiGradientGlass ||
+                matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
+
+            // Section 3: Home Feed granular matcher
+            val matchHomeFeedItem = matchesSettingsTokens(
+                searchTokens,
+                "home feed", "home screen feed", "section ordering", "reorder", "speed dial",
+                "continue listening", "most played", "recently added", "recently played", "top albums",
+                "top artists", "smart playlist", "recents first", "discovery"
+            )
+
+            // Section 4: Playback granular matchers
+            val matchPlaybackSleepTimer = matchesSettingsTokens(
+                searchTokens,
+                "sleep timer", "sleep", "timer", "countdown", "stop timer", "minute", "minutes",
+                "finish last song", "finish playing", "track-based", "track count"
+            )
+            val matchPlaybackCompletion = matchesSettingsTokens(
+                searchTokens,
+                "track completion", "completion criteria", "scrobble", "threshold", "percentage", "count track as played"
+            )
+            val matchPlaybackShake = matchesSettingsTokens(
+                searchTokens,
+                "shake", "shake to skip", "sensor", "physically shake", "accelerometer"
+            )
+            val matchPlaybackAlwaysShuffle = matchesSettingsTokens(
+                searchTokens,
+                "always shuffle", "shuffle mode", "shuffle order", "random"
+            )
+            val matchPlaybackStartupAutoplay = matchesSettingsTokens(
+                searchTokens,
+                "autoplay on app startup", "autoplay", "app startup", "launch play"
+            )
+            val matchPlaybackGestures = matchesSettingsTokens(
+                searchTokens,
+                "album art gestures", "gesture", "gestures", "swipe to skip", "tap to play", "album art gesture"
+            )
+            val matchPlaybackAddToQueuePos = matchesSettingsTokens(
+                searchTokens,
+                "add to queue position", "add to queue", "up-next queue", "queue position", "top", "bottom"
+            )
+            val matchPlaybackAddToPlaylistPos = matchesSettingsTokens(
+                searchTokens,
+                "add to playlist position", "add to playlist", "custom playlist arrangement"
+            )
+            val matchPlaybackHeadphones = matchesSettingsTokens(
+                searchTokens,
+                "headphone", "headphones", "headset", "earbud", "bluetooth", "wired", "wireless", "automatically play on headphone"
+            )
+            val matchPlaybackKeepAwake = matchesSettingsTokens(
+                searchTokens,
+                "keep screen awake", "screen awake", "awake", "prevent device display from sleeping", "wakelock"
+            )
+            val anyPlaybackItemMatches = matchPlaybackSleepTimer || matchPlaybackCompletion ||
+                matchPlaybackShake || matchPlaybackAlwaysShuffle || matchPlaybackStartupAutoplay ||
+                matchPlaybackGestures || matchPlaybackAddToQueuePos || matchPlaybackAddToPlaylistPos ||
+                matchPlaybackHeadphones || matchPlaybackKeepAwake
+
+            // Section 5: Cache & Database granular matchers
+            val matchCacheTotal = matchesSettingsTokens(
+                searchTokens,
+                "total cache", "clear all", "offline cache", "cache occupied", "cleanup", "clear cache"
+            )
+            val matchCacheLyrics = matchesSettingsTokens(
+                searchTokens,
+                "cache synced lyrics", "lyrics cache", "clear lyrics", "lrc cache"
+            )
+            val matchCacheAlbumArt = matchesSettingsTokens(
+                searchTokens,
+                "cache album artwork", "album artwork", "album art", "clear album art"
+            )
+            val matchCacheSongArt = matchesSettingsTokens(
+                searchTokens,
+                "cache song artwork", "song artwork", "song art", "clear song art"
+            )
+            val matchCacheDatabase = matchesSettingsTokens(
+                searchTokens,
+                "database", "sqlite", "room", "storage tier", "capacity tier", "wal", "optimize", "quota"
+            )
+            val anyCacheCardMatches = matchCacheTotal || matchCacheLyrics || matchCacheAlbumArt || matchCacheSongArt
+            val anyCacheItemMatches = anyCacheCardMatches || matchCacheDatabase
+
+            // Section 6: Library & Folders granular matchers
+            val matchLibFullScan = matchesSettingsTokens(
+                searchTokens,
+                "full-device scan", "full device scan", "entire device", "deep scan"
+            )
+            val matchLibIgnoreShort = matchesSettingsTokens(
+                searchTokens,
+                "ignore short", "short audio", "audio duration filter", "ringtone", "voice note", "seconds"
+            )
+            val matchLibQuickScan = matchesSettingsTokens(
+                searchTokens,
+                "quick scan", "quick scan & clean", "prune", "rescan", "media scan", "clean", "discover"
+            )
+            val matchLibCustomFolders = matchesSettingsTokens(
+                searchTokens,
+                "custom music directories", "music directory", "folders", "folder", "directories", "directory", "exclude", "add folder", "remove folder"
+            )
+            val matchLibStoreLocal = matchesSettingsTokens(
+                searchTokens,
+                "update & store indexed songs in local storage too", "update and store indexed songs", "indexed songs", "local storage", "store indexed", "batch", "rename"
+            )
+            val anyLibraryItemMatches = matchLibFullScan || matchLibIgnoreShort || matchLibQuickScan || matchLibCustomFolders || matchLibStoreLocal
+
+            // Section 7: Other & Privacy granular matchers
+            val matchOtherSearchHistory = matchesSettingsTokens(
+                searchTokens,
+                "recent search", "recent searches", "search history", "clear history", "search queries"
+            )
+            val matchOtherDiagnostics = matchesSettingsTokens(
+                searchTokens,
+                "diagnostics", "crash", "crash report", "error report", "logs", "log", "system health"
+            )
+            val matchOtherUpdates = matchesSettingsTokens(
+                searchTokens,
+                "update", "updates", "github", "version", "release", "releases", "apk", "changelog", "new version", "notification"
+            )
+            val matchOtherResetDefaults = matchesSettingsTokens(
+                searchTokens,
+                "reset", "reset to default", "reset to default settings", "default settings", "factory defaults", "restore defaults"
+            )
+            val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates || matchOtherResetDefaults
+
+            // Section 8: Cloud Sync granular matcher
+            val matchCloudSyncItem = matchesSettingsTokens(
+                searchTokens,
+                "cloud", "sync", "synchronize", "backup", "restore", "cross-device", "cross device", "firebase", "google", "lyrics offset"
+            )
+
+            val anySpecificSettingMatched = anyAudioItemMatches || anyUiItemMatches || matchHomeFeedItem ||
+                anyPlaybackItemMatches || anyCacheItemMatches || anyLibraryItemMatches ||
+                anyOtherItemMatches || matchCloudSyncItem || matchAccountTile
+
+            // Broad category fallback only when no specific setting matched (e.g., searching "audio" or "ui")
+            val broadAudioMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "audio", "sound")
+            val broadUiMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "ui", "visual", "appearance", "display")
+            val broadHomeFeedMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "home", "feed")
+            val broadPlaybackMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "playback", "controls")
+            val broadCacheMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "cache", "storage", "disk")
+            val broadLibraryMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "library", "scan")
+            val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other", "update", "github")
+
+            val audioMatches = anyAudioItemMatches || broadAudioMatch
+            val uiMatches = anyUiItemMatches || broadUiMatch
+            val homeFeedMatches = matchHomeFeedItem || broadHomeFeedMatch
+            val playbackMatches = anyPlaybackItemMatches || broadPlaybackMatch
+            val cacheMatches = anyCacheItemMatches || broadCacheMatch
+            val libraryMatches = anyLibraryItemMatches || broadLibraryMatch
+            val otherMatches = anyOtherItemMatches || broadOtherMatch
+            val cloudSyncMatches = matchCloudSyncItem
+
+            val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches || (isSearching && matchAccountTile)
+
+            val matchedSectionsCount = if (!isSearching) 0 else listOf(
+                audioMatches, uiMatches, homeFeedMatches, playbackMatches,
+                cacheMatches, libraryMatches, otherMatches, cloudSyncMatches, matchAccountTile
+            ).count { it }
+
+            val isTopLevelHub = selectedSection == SettingsSection.ALL && !isSearching && !showAllInOneList
+
+            val showAudio = if (isSearching) audioMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.AUDIO))
+            val showUi = if (isSearching) uiMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.UI))
+            val showHomeFeed = if (isSearching) homeFeedMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.HOME_FEED))
+            val showPlayback = if (isSearching) playbackMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.PLAYBACK))
+            val showCache = if (isSearching) cacheMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CACHE))
+            val showLibrary = if (isSearching) libraryMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.LIBRARY))
+            val showOther = if (isSearching) otherMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.OTHER))
+            val showCloudSync = if (isSearching) cloudSyncMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC))
+
             if (isTopLevelHub || showAllInOneList || isSearching) {
                 // User Account Tile / Card in Settings
                 if (!isSearching || matchAccountTile) {

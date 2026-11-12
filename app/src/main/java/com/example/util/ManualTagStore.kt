@@ -155,10 +155,23 @@ object ManualTagStore {
 
         parsedMetadataCache.remove("id:$songId")
         if (normPath.isNotBlank()) parsedMetadataCache.remove("path:$normPath")
+        negativeLookupCache.remove("id:$songId")
+        if (normPath.isNotBlank()) negativeLookupCache.remove("path:$normPath")
+        hasAnyEntriesCached = true
         editor.apply()
     }
 
     private val parsedMetadataCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, ManualSongMetadata>>()
+    private val negativeLookupCache = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    @Volatile
+    private var hasAnyEntriesCached: Boolean? = null
+
+    private fun hasAnyManualEntries(prefs: SharedPreferences): Boolean {
+        hasAnyEntriesCached?.let { return it }
+        val nonEmpty = try { prefs.all.isNotEmpty() } catch (_: Exception) { false }
+        hasAnyEntriesCached = nonEmpty
+        return nonEmpty
+    }
 
     @Synchronized
     fun markArtworkManuallyEdited(
@@ -185,17 +198,36 @@ object ManualTagStore {
 
     fun getManualMetadata(context: Context, songId: Long, path: String): ManualSongMetadata? {
         val prefs = getPrefs(context)
-        if (prefs.all.isEmpty()) return null
-        val jsonById = if (songId > 0) prefs.getString("$KEY_DATA_ID$songId", null) else null
-        var normPath: String? = null
-        val jsonStr = jsonById ?: run {
-            if (path.isBlank()) return null
-            val np = normalizePath(path)
-            normPath = np
-            prefs.getString("$KEY_DATA_PATH$np", null)
-        } ?: return null
+        if (!hasAnyManualEntries(prefs)) return null
 
-        val cacheKey = if (jsonById != null && songId > 0) "id:$songId" else "path:${normPath ?: normalizePath(path)}"
+        val normPath = if (path.isNotBlank()) normalizePath(path) else ""
+        if (songId > 0) {
+            parsedMetadataCache["id:$songId"]?.let { return it.second }
+        }
+        if (normPath.isNotBlank()) {
+            parsedMetadataCache["path:$normPath"]?.let { return it.second }
+        }
+        if ((songId <= 0 || negativeLookupCache.contains("id:$songId")) &&
+            (normPath.isBlank() || negativeLookupCache.contains("path:$normPath"))
+        ) {
+            return null
+        }
+
+        val jsonById = if (songId > 0) prefs.getString("$KEY_DATA_ID$songId", null) else null
+        val jsonStr = jsonById ?: run {
+            if (normPath.isBlank()) {
+                if (songId > 0) negativeLookupCache.add("id:$songId")
+                return null
+            }
+            prefs.getString("$KEY_DATA_PATH$normPath", null)
+        }
+        if (jsonStr == null) {
+            if (songId > 0) negativeLookupCache.add("id:$songId")
+            if (normPath.isNotBlank()) negativeLookupCache.add("path:$normPath")
+            return null
+        }
+
+        val cacheKey = if (jsonById != null && songId > 0) "id:$songId" else "path:$normPath"
         parsedMetadataCache[cacheKey]?.let { (cachedJson, parsed) ->
             if (cachedJson == jsonStr) return parsed
         }
@@ -231,6 +263,12 @@ object ManualTagStore {
                 artworkGeneration = obj.optLong("artworkGeneration", if (art != null) 1L else 0L)
             )
             parsedMetadataCache[cacheKey] = jsonStr to parsed
+            if (songId > 0 && cacheKey != "id:$songId") {
+                parsedMetadataCache["id:$songId"] = jsonStr to parsed
+            }
+            if (normPath.isNotBlank() && cacheKey != "path:$normPath") {
+                parsedMetadataCache["path:$normPath"] = jsonStr to parsed
+            }
             parsed
         } catch (_: Exception) {
             null
@@ -239,11 +277,16 @@ object ManualTagStore {
 
     fun isManuallyEdited(context: Context, songId: Long, path: String): Boolean {
         val prefs = getPrefs(context)
-        if (prefs.all.isEmpty()) return false
+        if (!hasAnyManualEntries(prefs)) return false
+        val normPath = if (path.isNotBlank()) normalizePath(path) else ""
+        if ((songId <= 0 || negativeLookupCache.contains("id:$songId")) &&
+            (normPath.isBlank() || negativeLookupCache.contains("path:$normPath"))
+        ) {
+            return false
+        }
         if (songId > 0 && prefs.getBoolean("$KEY_PREFIX_ID$songId", false)) return true
-        if (path.isBlank()) return false
-        val normPath = normalizePath(path)
-        return if (normPath.isNotBlank()) prefs.getBoolean("$KEY_PREFIX_PATH$normPath", false) else false
+        if (normPath.isBlank()) return false
+        return prefs.getBoolean("$KEY_PREFIX_PATH$normPath", false)
     }
 
     fun isTitleManuallyEdited(context: Context, songId: Long, path: String): Boolean {
@@ -279,6 +322,8 @@ object ManualTagStore {
         val normPath = normalizePath(path)
         parsedMetadataCache.remove("id:$songId")
         if (normPath.isNotBlank()) parsedMetadataCache.remove("path:$normPath")
+        if (songId > 0) negativeLookupCache.add("id:$songId")
+        if (normPath.isNotBlank()) negativeLookupCache.add("path:$normPath")
         prefs.edit()
             .remove("$KEY_PREFIX_ID$songId")
             .remove("$KEY_PREFIX_PATH$normPath")

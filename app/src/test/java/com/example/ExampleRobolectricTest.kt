@@ -23,30 +23,19 @@ class ExampleRobolectricTest {
 
   @Test
   fun `adaptive lyrics layout scales surrounding lines with vertical height and always shows current line`() {
-    // Shrunk ultra-compact height (< 112dp): only current active line is shown clearly
+    // 2-row standard/horizontally-shrunk height (< 180dp): 2 previous + current + 2 upcoming (5 lines centered)
     val shrunk = WidgetUpdateManager.computeAdaptiveLyricsLayout(
       widthDp = 280,
-      heightDp = 100,
+      heightDp = 130,
       availablePrevLines = 6,
       availableNextLines = 6,
       density = 2.75f
     )
-    assertEquals(0, shrunk.prevCount)
-    assertEquals(0, shrunk.nextCount)
-    assertTrue(shrunk.currTextSizeSp >= 14f)
+    assertEquals(2, shrunk.prevCount)
+    assertEquals(2, shrunk.nextCount)
+    assertTrue(shrunk.currTextSizeSp >= 13.4f)
 
-    // Compact height (140dp): 1 previous + current + 1 upcoming
-    val compact = WidgetUpdateManager.computeAdaptiveLyricsLayout(
-      widthDp = 300,
-      heightDp = 140,
-      availablePrevLines = 6,
-      availableNextLines = 6,
-      density = 2.75f
-    )
-    assertEquals(1, compact.prevCount)
-    assertEquals(1, compact.nextCount)
-
-    // Medium/Standard height (175dp): 2 previous + current + 2 upcoming
+    // Standard 2-row height (175dp): 2 previous + current + 2 upcoming
     val standard = WidgetUpdateManager.computeAdaptiveLyricsLayout(
       widthDp = 320,
       heightDp = 175,
@@ -57,18 +46,18 @@ class ExampleRobolectricTest {
     assertEquals(2, standard.prevCount)
     assertEquals(2, standard.nextCount)
 
-    // Expanded tall height (275dp): 4 previous + current + 4 upcoming
+    // Expanded 3-row height (190dp): 5 previous + current + 5 upcoming
     val tall = WidgetUpdateManager.computeAdaptiveLyricsLayout(
       widthDp = 340,
-      heightDp = 275,
+      heightDp = 190,
       availablePrevLines = 6,
       availableNextLines = 6,
       density = 2.75f
     )
-    assertEquals(4, tall.prevCount)
-    assertEquals(4, tall.nextCount)
+    assertEquals(5, tall.prevCount)
+    assertEquals(5, tall.nextCount)
 
-    // Extra-expanded vertical height (360dp): 6 previous + current + 6 upcoming
+    // Extra-expanded 4+ row vertical height (360dp): 6 previous + current + 6 upcoming
     val extraExpanded = WidgetUpdateManager.computeAdaptiveLyricsLayout(
       widthDp = 360,
       heightDp = 360,

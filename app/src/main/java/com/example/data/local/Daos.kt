@@ -89,8 +89,28 @@ interface SongDao {
     @Query("UPDATE songs SET title = :title, path = :path WHERE id = :songId")
     suspend fun updateSongTitleAndPath(songId: Long, title: String, path: String)
 
+    @Query("UPDATE songs SET title = :title WHERE id = :songId")
+    suspend fun updateSongTitleOnly(songId: Long, title: String)
+
     @Query("DELETE FROM songs WHERE path = :path AND id != :keepSongId AND isMissing = 1")
     suspend fun deleteMissingSongAtPath(path: String, keepSongId: Long)
+
+    @Query("DELETE FROM songs WHERE path = :path AND id != :keepSongId")
+    suspend fun deleteConflictingSongAtPath(path: String, keepSongId: Long)
+
+    @Transaction
+    suspend fun updateSongsTitleAndPathBatch(updates: List<Triple<Long, String, String>>) {
+        for ((songId, newTitle, newPath) in updates) {
+            try {
+                deleteConflictingSongAtPath(newPath, songId)
+                updateSongTitleAndPath(songId, newTitle, newPath)
+            } catch (_: Exception) {
+                try {
+                    updateSongTitleOnly(songId, newTitle)
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
     @Query("UPDATE songs SET isMissing = 1 WHERE path = :path")
     suspend fun markMissing(path: String)

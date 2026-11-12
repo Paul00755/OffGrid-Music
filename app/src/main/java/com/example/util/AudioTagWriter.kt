@@ -584,14 +584,43 @@ object AudioTagWriter {
         return if (cleaned.isNotEmpty()) cleaned else rawTitle.trim()
     }
 
+    private const val LOCAL_SYNC_PREFS = "offgrid_local_song_sync_cache_v1"
+    private const val KEY_UNRENAMABLE_SET = "unrenamable_keys"
     private val unrenamableFileKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var isUnrenamableCacheLoaded = false
+
+    private fun ensureUnrenamableCacheLoaded(context: Context?) {
+        if (isUnrenamableCacheLoaded || context == null) return
+        synchronized(unrenamableFileKeys) {
+            if (isUnrenamableCacheLoaded) return
+            try {
+                val prefs = context.applicationContext.getSharedPreferences(LOCAL_SYNC_PREFS, Context.MODE_PRIVATE)
+                val saved = prefs.getStringSet(KEY_UNRENAMABLE_SET, emptySet()).orEmpty()
+                unrenamableFileKeys.addAll(saved)
+            } catch (_: Exception) {
+            } finally {
+                isUnrenamableCacheLoaded = true
+            }
+        }
+    }
+
+    private fun markFileUnrenamable(context: Context?, key: String) {
+        if (!unrenamableFileKeys.add(key) || context == null) return
+        try {
+            val prefs = context.applicationContext.getSharedPreferences(LOCAL_SYNC_PREFS, Context.MODE_PRIVATE)
+            val snapshot = HashSet<String>(unrenamableFileKeys)
+            prefs.edit().putStringSet(KEY_UNRENAMABLE_SET, snapshot).apply()
+        } catch (_: Exception) {}
+    }
 
     /**
      * Fast check to determine whether a song needs its indexed displayTitle synced to local storage
      * (either because its stored title differs from displayTitle or its filename on disk differs).
      * Recognizes collision-safe filenames like "Song Title (2).mp3" when "Song Title.mp3" exists in the same folder.
      */
-    fun needsLocalSongNameSync(song: com.example.data.model.Song): Boolean {
+    fun needsLocalSongNameSync(song: com.example.data.model.Song, context: Context? = null): Boolean {
+        ensureUnrenamableCacheLoaded(context)
         if (song.path.isBlank() || song.path.startsWith("sample://") || song.path.startsWith("http")) {
             return false
         }
@@ -602,6 +631,12 @@ object AudioTagWriter {
         val titleMatches = song.title.trim() == targetTitle
         val desiredFileBase = sanitizeFileName(targetTitle)
         if (desiredFileBase.isBlank()) return !titleMatches
+
+        // If title already matches in DB and the OS previously refused physical file rename for this exact path + title, skip immediately without disk I/O
+        val unrenamableKey = "${song.path.lowercase()}|$desiredFileBase"
+        if (titleMatches && unrenamableFileKeys.contains(unrenamableKey)) {
+            return false
+        }
 
         val currentFile = File(song.path)
         if (!currentFile.exists()) return !titleMatches
@@ -624,12 +659,6 @@ object AudioTagWriter {
             }
         }
 
-        // If title already matches in DB and the OS previously refused physical file rename for this exact path + title, skip
-        val unrenamableKey = "${song.path.lowercase()}|$desiredFileBase"
-        if (titleMatches && unrenamableFileKeys.contains(unrenamableKey)) {
-            return false
-        }
-
         return true
     }
 
@@ -646,14 +675,15 @@ object AudioTagWriter {
         song: com.example.data.model.Song,
         triggerMediaScanner: Boolean = false
     ): LocalSongSyncResult {
+        ensureUnrenamableCacheLoaded(context)
         val targetTitle = song.displayTitle.trim()
-        if (!needsLocalSongNameSync(song)) {
+        if (!needsLocalSongNameSync(song, context)) {
             return LocalSongSyncResult(updated = false, newTitle = song.title, newPath = song.path)
         }
 
         var currentFile = File(song.path)
         var finalPath = song.path
-        var anyChangeApplied = false
+        val titleNeededUpdate = song.title.trim() != targetTitle
 
         val originalLastModified = try {
             if (currentFile.exists()) currentFile.lastModified() else 0L
@@ -675,10 +705,10 @@ object AudioTagWriter {
 
         try {
             if (currentFile.exists() && currentFile.canWrite()) {
-                // 1. Update embedded title tag if MP3
-                if (currentFile.extension.equals("mp3", ignoreCase = true)) {
+                // 1. Update embedded title tag if MP3 and title actually changed
+                if (titleNeededUpdate && currentFile.extension.equals("mp3", ignoreCase = true)) {
                     val patchedInPlace = tryUpdateMp3TitleInPlace(currentFile, targetTitle)
-                    if (!patchedInPlace && song.title.trim() != targetTitle) {
+                    if (!patchedInPlace && currentFile.length() in 1..(12L * 1024L * 1024L)) {
                         writeMp3Tags(
                             file = currentFile,
                             title = targetTitle,
@@ -693,7 +723,6 @@ object AudioTagWriter {
                             context = context
                         )
                     }
-                    anyChangeApplied = true
                 }
 
                 // 2. Rename physical audio file on disk to match sanitized displayTitle
@@ -716,7 +745,6 @@ object AudioTagWriter {
                     if (renamed && targetFile.exists()) {
                         currentFile = targetFile
                         finalPath = targetFile.absolutePath
-                        anyChangeApplied = true
 
                         // Rename companion .lrc file if present
                         if (oldLrcFile != null && oldLrcFile.exists() && oldLrcFile.canWrite()) {
@@ -741,52 +769,50 @@ object AudioTagWriter {
 
         // 4. Update MediaStore title and display name (which also renames on Scoped Storage if File.renameTo failed)
         try {
-            val targetFileForMediaStore = desiredTargetFile ?: currentFile.takeIf { it.exists() }
-            val updatedPathFromMediaStore = updateMediaStoreTitleAndFile(
-                context = context,
-                songId = song.id,
-                contentUriString = song.contentUriString,
-                newTitle = targetTitle,
-                newFile = targetFileForMediaStore,
-                originalLastModifiedMs = originalLastModified
-            )
-            if (!updatedPathFromMediaStore.isNullOrBlank() && File(updatedPathFromMediaStore).exists()) {
-                val msFile = File(updatedPathFromMediaStore)
-                if (msFile.absolutePath != finalPath) {
-                    currentFile = msFile
-                    finalPath = msFile.absolutePath
-                    anyChangeApplied = true
-                    if (parentDir != null && oldLrcFile != null && oldLrcFile.exists() && oldLrcFile.canWrite()) {
-                        val newLrcFile = File(parentDir, "${msFile.nameWithoutExtension}.lrc")
-                        if (!newLrcFile.exists() && oldLrcFile.renameTo(newLrcFile) && oldLrcLastModified > 0L) {
-                            try { newLrcFile.setLastModified(oldLrcLastModified) } catch (_: Exception) {}
+            val needsMediaStoreRename = desiredTargetFile != null && finalPath == song.path
+            if (titleNeededUpdate || needsMediaStoreRename) {
+                val targetFileForMediaStore = if (needsMediaStoreRename) desiredTargetFile else currentFile.takeIf { it.exists() }
+                val updatedPathFromMediaStore = updateMediaStoreTitleAndFile(
+                    context = context,
+                    songId = song.id,
+                    contentUriString = song.contentUriString,
+                    newTitle = targetTitle,
+                    newFile = targetFileForMediaStore,
+                    originalLastModifiedMs = originalLastModified
+                )
+                if (!updatedPathFromMediaStore.isNullOrBlank() && File(updatedPathFromMediaStore).exists()) {
+                    val msFile = File(updatedPathFromMediaStore)
+                    if (msFile.absolutePath != finalPath) {
+                        currentFile = msFile
+                        finalPath = msFile.absolutePath
+                        if (parentDir != null && oldLrcFile != null && oldLrcFile.exists() && oldLrcFile.canWrite()) {
+                            val newLrcFile = File(parentDir, "${msFile.nameWithoutExtension}.lrc")
+                            if (!newLrcFile.exists() && oldLrcFile.renameTo(newLrcFile) && oldLrcLastModified > 0L) {
+                                try { newLrcFile.setLastModified(oldLrcLastModified) } catch (_: Exception) {}
+                            }
                         }
                     }
+                } else if (desiredTargetFile != null && desiredTargetFile.exists() && desiredTargetFile.absolutePath != finalPath) {
+                    currentFile = desiredTargetFile
+                    finalPath = desiredTargetFile.absolutePath
                 }
-            } else if (desiredTargetFile != null && desiredTargetFile.exists() && desiredTargetFile.absolutePath != finalPath) {
-                currentFile = desiredTargetFile
-                finalPath = desiredTargetFile.absolutePath
-                anyChangeApplied = true
-            }
-            if (song.title != targetTitle) {
-                anyChangeApplied = true
             }
         } catch (e: Exception) {
             Log.w(TAG, "MediaStore title sync warning for ${song.id}: ${e.message}")
         }
 
         if (desiredTargetFile != null && finalPath == song.path && sanitizedBase.isNotEmpty()) {
-            unrenamableFileKeys.add("${song.path.lowercase()}|$sanitizedBase")
+            markFileUnrenamable(context, "${song.path.lowercase()}|$sanitizedBase")
         }
 
-        if (triggerMediaScanner && finalPath.isNotBlank()) {
+        if (triggerMediaScanner && finalPath.isNotBlank() && (titleNeededUpdate || finalPath != song.path)) {
             try {
                 val pathsToScan = if (finalPath != song.path) arrayOf(song.path, finalPath) else arrayOf(finalPath)
                 MediaScannerConnection.scanFile(context, pathsToScan, null, null)
             } catch (_: Exception) {}
         }
 
-        val actuallyUpdated = song.title.trim() != targetTitle || finalPath != song.path
+        val actuallyUpdated = titleNeededUpdate || finalPath != song.path
         return LocalSongSyncResult(
             updated = actuallyUpdated,
             newTitle = targetTitle,
@@ -966,20 +992,6 @@ object AudioTagWriter {
         newFile: File?,
         originalLastModifiedMs: Long
     ): String? {
-        val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.TITLE, newTitle)
-            if (newFile != null) {
-                put(MediaStore.Audio.Media.DISPLAY_NAME, newFile.name)
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                    @Suppress("DEPRECATION")
-                    put(MediaStore.Audio.Media.DATA, newFile.absolutePath)
-                }
-            }
-            if (originalLastModifiedMs > 0L) {
-                put(MediaStore.Audio.Media.DATE_MODIFIED, originalLastModifiedMs / 1000L)
-            }
-        }
-
         val targetUri: Uri? = when {
             !contentUriString.isNullOrBlank() && contentUriString.startsWith("content://") -> Uri.parse(contentUriString)
             songId in 1 until 1_000_000_000_000L -> ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, songId)
@@ -987,8 +999,32 @@ object AudioTagWriter {
         }
 
         if (targetUri != null) {
+            val values = ContentValues().apply {
+                put(MediaStore.Audio.Media.TITLE, newTitle)
+                if (newFile != null) {
+                    put(MediaStore.Audio.Media.DISPLAY_NAME, newFile.name)
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                        @Suppress("DEPRECATION")
+                        put(MediaStore.Audio.Media.DATA, newFile.absolutePath)
+                    }
+                }
+                if (originalLastModifiedMs > 0L && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    put(MediaStore.Audio.Media.DATE_MODIFIED, originalLastModifiedMs / 1000L)
+                }
+            }
             try {
-                val rows = context.contentResolver.update(targetUri, values, null, null)
+                var rows = try {
+                    context.contentResolver.update(targetUri, values, null, null)
+                } catch (_: Exception) {
+                    val titleOnly = ContentValues().apply {
+                        put(MediaStore.Audio.Media.TITLE, newTitle)
+                    }
+                    try {
+                        context.contentResolver.update(targetUri, titleOnly, null, null)
+                    } catch (_: Exception) {
+                        0
+                    }
+                }
                 if (rows > 0) {
                     context.contentResolver.query(
                         targetUri,

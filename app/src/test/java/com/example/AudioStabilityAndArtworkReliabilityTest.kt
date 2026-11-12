@@ -972,6 +972,42 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertEquals(ts1 / 1000L, renamedFile1.lastModified() / 1000L)
         assertEquals(ts2 / 1000L, renamedFile2.lastModified() / 1000L)
     }
+
+    @Test
+    fun testConcurrentBackgroundArtworkWarmupNeverThrowsSnapshotException() = runBlocking {
+        val songs = (1..24).map { idx ->
+            val songFile = File(tempDir, "ConcurrentTrack_$idx.mp3").apply { writeBytes(ByteArray(128)) }
+            val artFile = createValidJpegFile(File(tempDir, "concurrent_art_$idx.jpg"), Color.GREEN, 64)
+            com.example.data.model.Song(
+                id = 9000L + idx,
+                title = "Concurrent Track $idx",
+                artist = "Artist $idx",
+                album = "Album $idx",
+                albumId = 900L + idx,
+                durationMs = 180_000L,
+                contentUriString = Uri.fromFile(songFile).toString(),
+                path = songFile.absolutePath,
+                artworkUri = Uri.fromFile(artFile).toString()
+            )
+        }
+
+        // Simulate active Compose snapshot on the calling thread while background threads warm artwork
+        val snapshot = androidx.compose.runtime.snapshots.Snapshot.takeMutableSnapshot()
+        try {
+            snapshot.enter {
+                ArtworkResolutionCache.warmAllSongsArtworkInBackground(context, songs)
+                for (song in songs) {
+                    val artFlow = ArtworkResolutionCache.getArtworkUpdateFlow(song.id, song.path)
+                    val thumbFlow = ArtworkResolutionCache.getThumbnailUpdateFlow(song.id, song.path)
+                    assertNotNull(artFlow.value)
+                    assertNotNull(thumbFlow.value)
+                }
+            }
+            snapshot.apply().check()
+        } finally {
+            snapshot.dispose()
+        }
+    }
 }
 
 

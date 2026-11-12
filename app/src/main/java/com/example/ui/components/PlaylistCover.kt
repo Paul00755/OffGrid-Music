@@ -305,7 +305,7 @@ fun PlaylistCover(
     cornerRadius: Int = 12
 ) {
     val context = LocalContext.current
-    val globalArtworkVersion = ArtworkResolutionCache.artworkUpdateSignal.longValue
+    val globalArtworkVersion by ArtworkResolutionCache.artworkUpdateFlow.collectAsState()
 
     val initialCustomMem = remember(playlist.id, playlist.artworkUri, globalArtworkVersion) {
         PlaylistCoverCache.getCachedCustomCoverMemory(playlist.id, playlist.artworkUri, globalArtworkVersion)

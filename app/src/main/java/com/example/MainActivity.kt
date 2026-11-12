@@ -425,7 +425,9 @@ class MainActivity : ComponentActivity() {
                             }
 
                             LaunchedEffect(Unit) {
-                                com.example.ui.components.ArtworkResolutionCache.ensureDiskIndexWarm(this@MainActivity)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.example.ui.components.ArtworkResolutionCache.ensureDiskIndexWarm(this@MainActivity)
+                                }
                                 checkPermissions()
                                 kotlinx.coroutines.delay(1500)
                                 if (viewModel.allSongs.value.isEmpty()) {

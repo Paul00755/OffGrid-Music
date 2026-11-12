@@ -197,6 +197,40 @@ abstract class AppDatabase : RoomDatabase() {
 
                 val priorVersion = try { rawDb.version } catch (_: Exception) { 0 }
 
+                if (priorVersion == 12) {
+                    var currentHash: String? = null
+                    try {
+                        rawDb.rawQuery("SELECT `identity_hash` FROM `room_master_table` WHERE `id` = 42", null).use { c ->
+                            if (c.moveToFirst()) currentHash = c.getString(0)
+                        }
+                    } catch (_: Exception) {}
+                    if (currentHash == ROOM_MASTER_IDENTITY_HASH) {
+                        val bootPrefs = context.getSharedPreferences("offgrid_boot_cache", Context.MODE_PRIVATE)
+                        val alreadyCheckedInstall = bootPrefs.getBoolean("initial_install_checked", false)
+                        val editor = bootPrefs.edit()
+                            .putBoolean("db_checked_once", true)
+                            .putBoolean("db_healed_v10", true)
+                            .putBoolean("db_healed_v12", true)
+                        if (!alreadyCheckedInstall) {
+                            var existingSongs = 0
+                            var existingPlaylists = 0
+                            try {
+                                rawDb.rawQuery("SELECT COUNT(*) FROM `songs`", null).use { c ->
+                                    if (c.moveToFirst()) existingSongs = c.getInt(0)
+                                }
+                                rawDb.rawQuery("SELECT COUNT(*) FROM `playlists`", null).use { c ->
+                                    if (c.moveToFirst()) existingPlaylists = c.getInt(0)
+                                }
+                            } catch (_: Exception) {}
+                            if (existingSongs > 0 || existingPlaylists > 0) {
+                                editor.putBoolean("onboarding_completed", true)
+                            }
+                        }
+                        editor.apply()
+                        return
+                    }
+                }
+
                 fun getColumns(tableName: String): Set<String> {
                     val cols = mutableSetOf<String>()
                     try {
