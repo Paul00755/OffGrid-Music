@@ -966,6 +966,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onToggleShuffle = { viewModel.toggleShuffle() },
                                     onToggleRepeat = { viewModel.toggleRepeat() },
+                                    onSetSongRepeatCount = { song, count -> viewModel.setSongRepeatCount(song, count) },
                                     onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
                                     onStartSongCountTimer = { songs -> viewModel.startSleepTimerSongs(songs) },
                                     onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },

@@ -523,4 +523,103 @@ class PlaybackAndQueueFeaturesTest {
         assertEquals(0, playbackManager.playbackState.value.songRepeatRemainingCount)
         assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.playbackState.value.repeatMode)
     }
+
+    @Test
+    fun `test repeat this song does not cut short during crossfade and works with gapless on and off`() {
+        playbackManager.crossfadeDurationSec = 5
+        playbackManager.fadeInMs = 1000
+        playbackManager.fadeOutMs = 1000
+        playbackManager.gaplessPlayback = true
+
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        val song = sampleSongs[0]
+        val mediaItem = androidx.media3.common.MediaItem.Builder().setMediaId(song.id.toString()).build()
+
+        // Without repeat, 3 seconds before end (177s of 180s) triggers crossfade window
+        assertTrue(playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L))
+
+        // Enable Repeat This Song (2x)
+        playbackManager.setSongRepeatCount(song, 2)
+        assertFalse(
+            "Crossfade must be suppressed while Repeat This Song has remaining repeats",
+            playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L)
+        )
+
+        // Repeat pass #1 starts (2 -> 1 remaining): unity volume kept (no fade-in dip) and crossfade still suppressed
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(1.0f, playbackManager.player.volume, 0.01f)
+        assertEquals(1, playbackManager.playbackState.value.songRepeatRemainingCount)
+        assertFalse(playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L))
+
+        // Toggle gapless off on pass #2 to confirm both gapless on/off work seamlessly
+        playbackManager.gaplessPlayback = false
+
+        // Repeat pass #2 (final repeat) starts (1 -> 0 remaining): unity volume kept and crossfade re-enabled for transition to Track 2
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(1.0f, playbackManager.player.volume, 0.01f)
+        assertEquals(0, playbackManager.playbackState.value.songRepeatRemainingCount)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.playbackState.value.repeatMode)
+        assertTrue(
+            "Crossfade must re-enable for the final repeat pass so playback smoothly advances to the next track",
+            playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L)
+        )
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test repeat this song restores prior repeat all after final repeat with crossfade and gapless`() {
+        playbackManager.crossfadeDurationSec = 5
+        playbackManager.gaplessPlayback = true
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        playbackManager.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_ALL)
+
+        val song = sampleSongs[0]
+        val mediaItem = androidx.media3.common.MediaItem.Builder().setMediaId(song.id.toString()).build()
+
+        playbackManager.setSongRepeatCount(song, 1)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, playbackManager.playbackState.value.repeatMode)
+        assertFalse(playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L))
+
+        // Final repeat starts -> restores REPEAT_MODE_ALL and allows crossfade at track end
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ALL, playbackManager.playbackState.value.repeatMode)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ALL, playbackManager.player.repeatMode)
+        assertEquals(0, playbackManager.playbackState.value.songRepeatRemainingCount)
+        assertTrue(playbackManager.shouldTriggerCrossfadeAt(currentPos = 177000L, totalDur = 180000L))
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test repeat this song and repeat one clear on app close and never persist across reopen`() = runTest {
+        val userPrefs = com.example.data.local.UserPreferencesRepository.getInstance(context)
+        userPrefs.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_OFF)
+
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        playbackManager.setSongRepeatCount(sampleSongs[0], 4)
+        playbackManager.setSongRepeatCount(sampleSongs[2], 3)
+
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, playbackManager.playbackState.value.repeatMode)
+        assertEquals(4, playbackManager.playbackState.value.songRepeatRemainingCount)
+        assertEquals(3, playbackManager.getSongRepeatCountFor(sampleSongs[2].id))
+
+        // Must never persist REPEAT_MODE_ONE into saved user preferences
+        kotlinx.coroutines.delay(50L)
+        assertNotEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, userPrefs.getRepeatModeSync())
+
+        // Also test explicit REPEAT_MODE_ONE toggle
+        playbackManager.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_ONE)
+        kotlinx.coroutines.delay(50L)
+        assertNotEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, userPrefs.getRepeatModeSync())
+
+        // Closing the app clears active + queued session repeat back to normal playback
+        playbackManager.clearSessionRepeatOnAppClose()
+        val stateAfterClose = playbackManager.playbackState.value
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, stateAfterClose.repeatMode)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.player.repeatMode)
+        assertNull(stateAfterClose.songRepeatTargetSongId)
+        assertEquals(0, stateAfterClose.songRepeatRemainingCount)
+        assertTrue(stateAfterClose.queuedSongRepeatCounts.isEmpty())
+        playbackManager.pause()
+    }
 }
+

@@ -1362,7 +1362,10 @@ class PlaybackManager(
             positionMs = safePos,
             durationMs = reliableDur,
             isPlaying = false,
-            playbackError = null
+            playbackError = null,
+            songRepeatTargetSongId = null,
+            songRepeatRemainingCount = 0,
+            queuedSongRepeatCounts = emptyMap()
         )
 
         player.playWhenReady = false
@@ -1390,6 +1393,11 @@ class PlaybackManager(
         preSongRepeatMode = null
         when (safeMode) {
             Player.REPEAT_MODE_ONE -> {
+                if (!isCrossfadeTransitioning && crossfadeJob?.isActive == true) {
+                    cancelCrossfade(resetVolume = true)
+                } else {
+                    hasTriggeredCrossfadeTransition = false
+                }
                 val currentSong = _playbackState.value.currentSong
                 repeatOneTargetSongId = currentSong?.id
                 repeatOneRemainingPlays = 1
@@ -1412,9 +1420,11 @@ class PlaybackManager(
             songRepeatTargetSongId = if (safeMode == Player.REPEAT_MODE_ONE) repeatOneTargetSongId else null,
             songRepeatRemainingCount = if (safeMode == Player.REPEAT_MODE_ONE) repeatOneRemainingPlays else 0
         )
+        // Session-only single-song repeat (REPEAT_MODE_ONE) must not persist across app close/reopen.
+        val persistedRepeatMode = if (safeMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_OFF else safeMode
         scope.launch {
             try {
-                userPreferences.setRepeatMode(safeMode)
+                userPreferences.setRepeatMode(persistedRepeatMode)
             } catch (_: Exception) {}
         }
         updateNotificationLayout()
@@ -1430,7 +1440,9 @@ class PlaybackManager(
         if (currentSong != null && song.id == currentSong.id) {
             val updatedQueued = currentState.queuedSongRepeatCounts - song.id
             if (clampedCount <= 0) {
-                val restoreMode = preSongRepeatMode ?: Player.REPEAT_MODE_OFF
+                val restoreMode = (preSongRepeatMode ?: Player.REPEAT_MODE_OFF).let {
+                    if (it == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_OFF else it
+                }
                 preSongRepeatMode = null
                 repeatOneTargetSongId = null
                 repeatOneRemainingPlays = 0
@@ -1441,10 +1453,12 @@ class PlaybackManager(
                     songRepeatRemainingCount = 0,
                     queuedSongRepeatCounts = updatedQueued
                 )
-                scope.launch {
-                    try { userPreferences.setRepeatMode(restoreMode) } catch (_: Exception) {}
-                }
             } else {
+                if (!isCrossfadeTransitioning && crossfadeJob?.isActive == true) {
+                    cancelCrossfade(resetVolume = true)
+                } else {
+                    hasTriggeredCrossfadeTransition = false
+                }
                 if (currentState.repeatMode != Player.REPEAT_MODE_ONE) {
                     preSongRepeatMode = currentState.repeatMode
                 }
@@ -1457,9 +1471,6 @@ class PlaybackManager(
                     songRepeatRemainingCount = clampedCount,
                     queuedSongRepeatCounts = updatedQueued
                 )
-                scope.launch {
-                    try { userPreferences.setRepeatMode(Player.REPEAT_MODE_ONE) } catch (_: Exception) {}
-                }
             }
             updateNotificationLayout()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
@@ -1485,22 +1496,56 @@ class PlaybackManager(
         val restoreMode = preSongRepeatMode ?: Player.REPEAT_MODE_OFF
         val finalMode = if (restoreMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_OFF else restoreMode
         preSongRepeatMode = null
-        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0 || repeatOneTargetSongId != null) {
+        hasTriggeredCrossfadeTransition = false
+        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE ||
+            player.repeatMode == Player.REPEAT_MODE_ONE ||
+            repeatOneRemainingPlays > 0 ||
+            repeatOneTargetSongId != null
+        ) {
             repeatOneTargetSongId = null
             repeatOneRemainingPlays = 0
-            player.repeatMode = Player.REPEAT_MODE_OFF
+            player.repeatMode = finalMode
             _playbackState.value = _playbackState.value.copy(
-                repeatMode = Player.REPEAT_MODE_OFF,
+                repeatMode = finalMode,
                 songRepeatTargetSongId = null,
                 songRepeatRemainingCount = 0
             )
-            scope.launch {
-                try {
-                    userPreferences.setRepeatMode(Player.REPEAT_MODE_OFF)
-                } catch (_: Exception) {}
-            }
             updateNotificationLayout()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        }
+    }
+
+    fun clearSessionRepeatOnAppClose() {
+        preSongRepeatMode = null
+        repeatOneTargetSongId = null
+        repeatOneRemainingPlays = 0
+        hasTriggeredCrossfadeTransition = false
+        val state = _playbackState.value
+        val needsReset = state.repeatMode == Player.REPEAT_MODE_ONE ||
+            player.repeatMode == Player.REPEAT_MODE_ONE ||
+            state.songRepeatTargetSongId != null ||
+            state.songRepeatRemainingCount > 0 ||
+            state.queuedSongRepeatCounts.isNotEmpty()
+        if (needsReset) {
+            val nextMode = if (state.repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_OFF else state.repeatMode
+            if (player.repeatMode == Player.REPEAT_MODE_ONE) {
+                try { player.repeatMode = nextMode } catch (_: Exception) {}
+            }
+            _playbackState.value = state.copy(
+                repeatMode = nextMode,
+                songRepeatTargetSongId = null,
+                songRepeatRemainingCount = 0,
+                queuedSongRepeatCounts = emptyMap()
+            )
+            updateNotificationLayout()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        }
+        scope.launch {
+            try {
+                if (userPreferences.getRepeatModeSync() == Player.REPEAT_MODE_ONE) {
+                    userPreferences.setRepeatMode(Player.REPEAT_MODE_OFF)
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -1529,7 +1574,7 @@ class PlaybackManager(
         }
 
     fun jumpToQueueIndex(index: Int) {
-        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
+        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
             turnRepeatOneOff()
         }
         val queue = _playbackState.value.queue
@@ -1632,7 +1677,7 @@ class PlaybackManager(
             player.setMediaItems(mediaItems, actualIndex, safeInitialPos)
             if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ALL) {
                 player.repeatMode = Player.REPEAT_MODE_ALL
-            } else if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
+            } else if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
                 turnRepeatOneOff()
             } else {
                 player.repeatMode = Player.REPEAT_MODE_OFF
@@ -2551,8 +2596,11 @@ class PlaybackManager(
                 if (!wasCrossfading && crossfadeJob?.isActive != true) {
                     val willBePlaying = isNaturalTransition || player.isPlaying || player.playWhenReady
                     val targetVolume = transitionTargetVolume()
-                    if (isNaturalTransition && effectiveGaplessPlayback && effectiveCrossfadeDurationSec <= 0 && effectiveFadeInMs <= 0 && effectiveFadeOutMs <= 0) {
-                        // True gapless transition: maintain unity volume across track boundary with zero dip
+                    val isSameTrackRepeatBoundary = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                    if ((isSameTrackRepeatBoundary && isNaturalTransition) ||
+                        (isNaturalTransition && effectiveGaplessPlayback && effectiveCrossfadeDurationSec <= 0 && effectiveFadeInMs <= 0 && effectiveFadeOutMs <= 0)
+                    ) {
+                        // True gapless or same-track repeat boundary: maintain unity volume with zero dip
                         fadeJob?.cancel()
                         fadeJob = null
                         player.volume = targetVolume
@@ -2601,9 +2649,6 @@ class PlaybackManager(
                                 resolvedRepeatMode = restoreMode
                                 resolvedTargetSongId = null
                                 resolvedRemainingPlays = 0
-                                scope.launch {
-                                    try { userPreferences.setRepeatMode(restoreMode) } catch (_: Exception) {}
-                                }
                             }
                         } else {
                             turnRepeatOneOff()
@@ -2632,9 +2677,6 @@ class PlaybackManager(
                     resolvedRepeatMode = Player.REPEAT_MODE_ONE
                     resolvedTargetSongId = newSongId
                     resolvedRemainingPlays = queuedCount
-                    scope.launch {
-                        try { userPreferences.setRepeatMode(Player.REPEAT_MODE_ONE) } catch (_: Exception) {}
-                    }
                 }
 
                 if (index in queue.indices) {
@@ -3401,7 +3443,7 @@ class PlaybackManager(
 
     fun skipToNext() {
         if (dispatchJamCommand(JamPlaybackAction.SKIP_NEXT)) return
-        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
+        if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
             turnRepeatOneOff()
         }
         val targetIdx = if (player.hasNextMediaItem()) {
@@ -3483,7 +3525,7 @@ class PlaybackManager(
             updateNotificationLayout()
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         } else {
-            if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE) {
+            if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
                 turnRepeatOneOff()
             }
             val targetIdx = if (player.hasPreviousMediaItem()) {
@@ -3642,6 +3684,25 @@ class PlaybackManager(
         }
     }
 
+    internal fun shouldTriggerCrossfadeAt(currentPos: Long, totalDur: Long): Boolean {
+        val configuredCrossfadeMs = (effectiveCrossfadeDurationSec * 1000L).coerceIn(0L, 12000L)
+        val crossfadeMs = if (configuredCrossfadeMs > 0L) {
+            maxOf(configuredCrossfadeMs, effectiveFadeInMs.coerceIn(0, 10000).toLong(), effectiveFadeOutMs.coerceIn(0, 10000).toLong())
+                .coerceAtMost(12000L)
+        } else 0L
+        val sleepState = sleepTimerManager.state.value
+        val isFinalSleepTrack = sleepState.isActive && (
+            (sleepState.mode == "SONGS" && (sleepState.isFinalTrack || sleepState.isFinalSleepTrack)) ||
+            (sleepState.mode == "TIME" && (sleepState.isWaitingForCurrentTrackToEnd || sleepState.remainingSeconds <= 0L))
+        )
+        val isRepeatOne = _playbackState.value.repeatMode == Player.REPEAT_MODE_ONE ||
+            player.repeatMode == Player.REPEAT_MODE_ONE ||
+            repeatOneRemainingPlays > 0
+        val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
+        val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
+        return canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
+    }
+
     private fun startProgressTracker() {
         stopProgressTracker()
         progressUpdateJob = scope.launch(Dispatchers.Main) {
@@ -3676,10 +3737,11 @@ class PlaybackManager(
                             (sleepState.mode == "SONGS" && (sleepState.isFinalTrack || sleepState.isFinalSleepTrack)) ||
                             (sleepState.mode == "TIME" && (sleepState.isWaitingForCurrentTrackToEnd || sleepState.remainingSeconds <= 0L))
                         )
-                        val isRepeatOne = _playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0
+                        val isRepeatOne = _playbackState.value.repeatMode == Player.REPEAT_MODE_ONE ||
+                            player.repeatMode == Player.REPEAT_MODE_ONE ||
+                            repeatOneRemainingPlays > 0
                         val reliableDur = if (totalDur > 2000L) totalDur else (_playbackState.value.currentSong?.durationMs ?: 0L)
-                        val canCrossfade = !isFinalSleepTrack && !isRepeatOne && crossfadeMs > 0L && reliableDur > (crossfadeMs + 2000L) && currentPos >= 1500L
-                        inCrossfadeZone = canCrossfade && (reliableDur - currentPos) in 150L..crossfadeMs
+                        inCrossfadeZone = shouldTriggerCrossfadeAt(currentPos, totalDur)
                         val trackEndFadeOutMs = effectiveFadeOutMs.coerceIn(0, 10000).toLong()
                         val effectiveEndFadeWindowMs = trackEndFadeOutMs
                         inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&

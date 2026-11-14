@@ -377,6 +377,13 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
+            val player = activeMediaSession?.player ?: PlaybackManager.activeInstance?.player
+            val isPlaying = player?.isPlaying == true
+            if (!isPlaying) {
+                try {
+                    PlaybackManager.activeInstance?.clearSessionRepeatOnAppClose()
+                } catch (_: Throwable) {}
+            }
             try {
                 PlaybackManager.activeInstance?.persistPlaybackStateNow()
             } catch (_: Throwable) {}
@@ -385,8 +392,6 @@ class MusicPlaybackService : MediaSessionService() {
                 com.example.jam.JamFeatureController.activeInstance?.onAppClosed()
             } catch (_: Throwable) {}
 
-            val player = activeMediaSession?.player ?: PlaybackManager.activeInstance?.player
-            val isPlaying = player?.isPlaying == true
             val hasActiveSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null || (player != null && player.mediaItemCount > 0)
 
             // Keep notification persistent in mobile status bar even if swiped from recents so user can resume anytime.

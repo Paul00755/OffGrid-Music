@@ -1524,7 +1524,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // Restore playback state once songs are loaded (prepare queue on IO to avoid blocking Main Thread)
         viewModelScope.launch(Dispatchers.IO) {
             val loadedSongs = allSongs.filter { it.isNotEmpty() }.first()
-            val savedRepeat = preferences.repeatMode.first()
+            val rawSavedRepeat = preferences.repeatMode.first()
+            val savedRepeat = if (rawSavedRepeat == androidx.media3.common.Player.REPEAT_MODE_ONE) {
+                try { preferences.setRepeatMode(androidx.media3.common.Player.REPEAT_MODE_OFF) } catch (_: Exception) {}
+                androidx.media3.common.Player.REPEAT_MODE_OFF
+            } else {
+                rawSavedRepeat
+            }
 
             if (loadedSongs.isNotEmpty()) {
                 val lastQueueIds = preferences.lastQueueIds.first()
@@ -1558,8 +1564,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else finalQueue
 
                 withContext(Dispatchers.Main) {
-                    if (savedRepeat != 0) {
+                    if (savedRepeat == androidx.media3.common.Player.REPEAT_MODE_ALL) {
                         playbackManager.setRepeatMode(savedRepeat)
+                    } else {
+                        playbackManager.clearSessionRepeatOnAppClose()
                     }
                     if (playbackManager.playbackState.value.queue.isEmpty() && !playbackManager.player.isPlaying && !playbackManager.player.playWhenReady) {
                         playbackManager.restorePlaybackState(queueWithCorrectDuration, finalIndex, lastPos.coerceAtLeast(0L), reliableDuration)
@@ -1572,9 +1580,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         playbackManager.play()
                     }
                 }
-            } else if (savedRepeat != 0) {
+            } else {
                 withContext(Dispatchers.Main) {
-                    playbackManager.setRepeatMode(savedRepeat)
+                    if (savedRepeat == androidx.media3.common.Player.REPEAT_MODE_ALL) {
+                        playbackManager.setRepeatMode(savedRepeat)
+                    } else {
+                        playbackManager.clearSessionRepeatOnAppClose()
+                    }
                 }
             }
         }
