@@ -1,181 +1,185 @@
-# 🎵 OffGrid Music
+<div align="center">
 
-![OffGrid Music Logo](app/src/main/res/drawable/app_logo.png)
+<img src="logo.png" alt="OffGrid Music Logo" width="132" />
 
-**An offline-first, audiophile-grade Android music player built with Kotlin, Jetpack Compose, and AndroidX Media3 — featuring gapless playback, equal-power (`sin`/`cos`) crossfade, custom PCM DSP audio processors, Gemini AI-powered synchronized lyrics & translation, 1:1 finger-tracked queue reordering, 10 curated themes, 12 screen layouts, interactive Wrapped stories, and optional cross-device cloud sync.**
+# OffGrid Music
+
+### **Your Music. Your Way.**
+**Listening to music offline just got a fresh upgrade.**
+
+An offline-first, ad-free Android music player designed for listeners who want studio-grade sound, deep visual customization, synchronized lyrics, personal listening insights, and seamless control over their local music library—without subscriptions, clutter, or compromises.
+
+<br />
 
 [![Download Latest APK](https://img.shields.io/badge/Download-Latest_APK-00E676?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk)
-[![All Versions & Release History](https://img.shields.io/badge/All_Versions-Release_History-9C27B0?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Paul00755/OffGrid-Music/releases)
-[![CI/CD Build Pipeline](https://img.shields.io/badge/CI%2FCD-Build_Pipeline-2196F3?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Paul00755/OffGrid-Music/actions/workflows/build-apk.yml)
-[![Android 7.0+ (API 24+)](https://img.shields.io/badge/Android-7.0%2B_(API_24%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Paul00755/OffGrid-Music)
-[![Kotlin & Jetpack Compose](https://img.shields.io/badge/Kotlin-Jetpack_Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://github.com/Paul00755/OffGrid-Music)
+[![All Releases & Older Versions](https://img.shields.io/badge/Releases-All_Versions-7C4DFF?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Paul00755/OffGrid-Music/releases)
+[![Android 7.0+](https://img.shields.io/badge/Android-7.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Paul00755/OffGrid-Music/releases)
+
+</div>
 
 ---
 
-## ✨ Highlighted Features at a Glance
+## Download & Install
 
-- 🎧 **Dual-Player Media3 Audio Engine & Custom PCM DSP**: True gapless playback, **0–12s equal-power (`sin`/`cos`) crossfade**, configurable **Play Fade-In / Pause Fade-Out ramps (`0–5,000 ms`)**, real-time **Perceptual Loudness Normalization (`AudioNormalizerProcessor`)**, **Stereo Channel Balance (`-1.0` L to `+1.0` R)**, and a **5-Band Graphic Equalizer** with **11 presets**, **Bass Boost**, and **3D Virtualizer**.
-- 🎤 **Synchronized LRC Lyrics & Gemini AI Lyric Studio**: Real-time scrolling `.lrc` lyrics with tap-to-seek, per-song timing offset (`±ms`), multi-candidate online search, and opt-in **Gemini AI Audio Transcription & Timestamp-Preserving Lyrics Translation** across **English, Tamil (including Tanglish), Hindi, and Malayalam** with one-tap **Undo**.
-- 📂 **Precision Deduplicating Scanner & Native System Folder Picker**: Combines `MediaStore` indexing with recursive directory scanning, canonical path deduplication, native Android system file manager (`OpenDocumentTree`) **Include (`+`) / Exclude (`⊘`) folder filters**, **Full-Device Scan confirmation safeguards**, and a **Short Audio Clip Filter (`0–180s`)**.
-- 🏷️ **On-Device ID3v2 Tag, Artwork & Lyrics Editor**: Edit Title, Artist, Album, Genre, Year, Track Number, embedded cover art, and `.lrc` companion files directly on device storage, paired with an automatic **Tag Cleaner** and **Duplicate Song Finder**.
-- 🔀 **1:1 Finger-Tracked Drag-and-Drop Queue & Playlists**: Occurrence-aware **Up-Next Queue** (allowing the same song multiple times with an active `GraphicEq` **"Now Playing"** status indicator), smooth proportional edge auto-scrolling, **Rule-Based Smart Playlists**, and **M3U Import/Export**.
-- 🎨 **Visual & Display Studio (10 Themes × 12 Screen Layouts)**: **4 Display Modes** (*Dark, Light, Pure AMOLED, System*), **10 Curated Themes**, **Dynamic Artwork Color Extraction**, **Custom RGB Color Picker**, **4 Home Layouts**, **4 Now Playing Layouts** (including *Vinyl Turntable* & *Neon Studio*), **4 Playlist Layouts**, **4 Waveform Visualizers**, **9 Reorderable Home Feed Sections**, and **3 Home Screen Widgets**.
-- 📊 **Listening Analytics, 6-Slide Wrapped Story & Shareable Cards**: Track listening time, daily bar charts, time-of-day listener archetypes (*Night Owl Explorer, Dawn Melodist, Midday Flow Master, Sonic Harmonizer*), **6-slide interactive Wrapped stories**, and high-resolution shareable stats cards.
-- ⏱️ **Dual-Mode Sleep Timer, Room SQLite Tiers & Optional Cloud Sync**: Stop playback by **Duration (minutes)** or **Track Count (songs)**; manage local storage across **Standard (10K) / Expanded (50K) / Maximum (100K)** SQLite tiers; and optionally sync favorites, playlists, stats, and preferences via **Firebase Auth & Cloud Firestore**.
-- 🎶 **OffGrid Jam**: Host or join a synchronized listening session using Firebase Spark Authentication and Firestore. Approved local songs transfer directly between devices over encrypted WebRTC data channels; audio is not uploaded to Firebase Storage. Peers try local-network and direct internet routes, with an optional TURN relay for restrictive networks. Jam surfaces follow the selected app theme and dynamic gradient/glass preferences. See the [Firebase and invite-link setup guide](docs/offgrid-jam-setup.md).
+Get OffGrid Music directly on your Android phone (Android 7.0 and higher):
 
----
-
-## 📥 Download & Installation (Latest & Older Versions)
-
-| Channel | Direct Link | Description |
+| Download Option | Link | What You Get |
 | :--- | :--- | :--- |
-| **🚀 Latest Stable APK (Direct)** | **[⬇️ Download OffGrid-Music.apk](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk)** | Immediately downloads the newest automated build directly to your phone. |
-| **🔄 Rolling Latest Tag (Mirror)** | **[⬇️ Download from latest Tag](https://github.com/Paul00755/OffGrid-Music/releases/download/latest/OffGrid-Music.apk)** | Direct mirror link to the rolling `latest` channel asset. |
-| **🕰️ Older Versions & Release Archive** | **[🗂️ Browse All Releases (v1.0.4-build.X)](https://github.com/Paul00755/OffGrid-Music/releases)** | View the complete version history on the GitHub Releases page and download any previous build (`OffGrid-Music-v1.0.4-build.X.apk`). |
-| **⚙️ CI/CD Build Artifacts** | **[📦 GitHub Actions Artifacts](https://github.com/Paul00755/OffGrid-Music/actions/workflows/build-apk.yml)** | Download the `OffGrid-Music-APK` `.zip` artifact from any workflow run. |
+| **Latest Release (Recommended)** | **[Download OffGrid-Music.apk](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk)** | Direct download of the newest version with all latest features and improvements. |
+| **Direct Mirror Link** | **[Download from Latest Tag](https://github.com/Paul00755/OffGrid-Music/releases/download/latest/OffGrid-Music.apk)** | Alternative direct link to the newest release APK. |
+| **All Versions & Release History** | **[Browse GitHub Releases](https://github.com/Paul00755/OffGrid-Music/releases)** | View release notes and download any current or previous version anytime. |
 
-### 🔄 Seamless In-Place Upgrades & Downgrades (Zero Data Loss)
-- **Updates Existing App Without Conflicts**: Every build is signed with a permanent, deterministic signing certificate (`debug.keystore.base64`) and uses the fixed application ID `com.aistudio.offgridmusic.player`. Installing a new APK updates your existing installation in-place without `"package conflicts with an existing package"` errors or duplicate app icons.
-- **Fast, Stall-Free Installation**: Configured with `android:extractNativeLibs="false"` and 16 KB page alignment so Android mounts native libraries directly from the APK without stalling mid-installation.
-- **Downgrade to Older Versions Anytime**: All automated builds maintain a unified `versionCode = 5` while incrementing the build number in `versionName` (`1.0.4-build.X`). You can install **any older version** from the **[Releases Page](https://github.com/Paul00755/OffGrid-Music/releases)** directly over a newer version while keeping 100% of your playlists, favorites, cached lyrics, listening statistics, and settings intact.
-
-> **💡 First-Time GitHub Releases Setup (If Clicking Download Shows 404):**
-> 1. In your GitHub repository, open **Settings → Actions → General**.
-> 2. Scroll to **Workflow permissions**, select **Read and write permissions**, and click **Save**.
-> 3. Commit the updated `.github/workflows/build-apk.yml` (or go to **Actions → Build and Release Android APK → Run workflow**).
-> 4. Once that first run completes, both the permanent versioned release (`v1.0.4-build.X`) and the rolling `latest` release are published, making the direct download link and release archive work automatically on every push.
+### Easy Updates & Hassle-Free Switching
+- **Update Over Your Existing App:** Install any new APK right over your current OffGrid Music app—your playlists, favorites, synced lyrics, cover art, listening stats, and settings stay right where you left them.
+- **Switch Versions Anytime:** Prefer an earlier release? Every version on the **[Releases Page](https://github.com/Paul00755/OffGrid-Music/releases)** can be installed over a newer build without uninstalling or losing your data.
 
 ---
 
-## 🔍 Comprehensive Codebase Feature Breakdown
+## Why OffGrid Music?
 
-### 1. 🎧 Audio Engine, Transitions & Custom DSP Suite
-- **Dual-ExoPlayer Architecture (`PlaybackManager` & `MusicPlaybackService`)**:
-  - Primary and secondary `ExoPlayer` instances running inside a foreground `MediaSessionService` for uninterrupted background playback, lock-screen controls, notification actions (Previous, Play/Pause, Next, Shuffle, Favorite), and hardware headset button support.
-  - Persistent queue, active song, repeat mode, and playback position (`ms`) restoration across app restarts.
-- **Equal-Power Crossfade & Smooth Volume Ramps**:
-  - **Equal-Power Crossfade (`0–12 seconds`)**: Uses sinusoidal gain curves (`cos(p * π / 2)` fade-out on the outgoing player and `sin(p * π / 2)` fade-in on the incoming player) so perceived loudness never dips mid-transition.
-  - **True Gapless Playback**: Pre-buffers upcoming tracks in the `ExoPlayer` media timeline for zero-gap album transitions.
-  - **Configurable Play/Pause Fade Ramps**: Independent **Fade-In (`0–5,000 ms`)** and **Fade-Out (`0–5,000 ms`)** cubic curves when resuming or pausing.
-- **Custom PCM AudioProcessors & Hardware DSP (`EqualizerManager`)**:
-  - **Perceptual Loudness Normalization (`AudioNormalizerProcessor`)**: Real-time ReplayGain-style RMS loudness target (`0.20` RMS, max `+6 dB` boost, soft knee limiter above `0.85` amplitude) with fast attack and smooth release to prevent clipping without modifying source files.
-  - **Stereo Channel Balance (`StereoBalanceAudioProcessor`)**: Precision left/right channel gain panning (`-1.0` full Left to `+1.0` full Right) supporting 16-bit PCM, 24-bit PCM, 32-bit PCM, and 32-bit Float streams.
-  - **5-Band Graphic Equalizer + 11 Presets**: Custom 5-band sliders (`60 Hz`, `230 Hz`, `910 Hz`, `3.6 kHz`, `14 kHz`) plus **11 built-in presets** (*Normal, Custom, Bass Boost, Treble Boost, Vocal, Rock, Pop, Electronic, Acoustic, Hip-Hop, Classical*), paired with dedicated **Bass Boost (`0–1000`)** and **3D Virtualizer (`0–1000`)** controls.
-- **Smart Hardware & Volume Triggers (`AudioRouteManager` & `ShakeDetector`)**:
-  - Live **Audio Output Switcher** for seamless routing between **Phone Speaker**, **Wired Headphones / Aux**, **Bluetooth A2DP / BLE Audio**, and **USB DACs**.
-  - **Shake to Skip** accelerometer detection, **Pause on Zero Volume**, **Auto-Resume on Volume Increase**, **Auto-Play on Headphone Connection**, **Auto-Play on App Startup**, **Audio Ducking on Notifications**, and **Play During Camera Recording**.
+Streaming apps decide what stays in your library, interrupt albums with ads, and hide your listening habits behind a once-a-year summary. Basic offline music players, on the other hand, often feel stuck in the past—missing smooth transitions, customizable design, synced lyrics, or modern queue control.
+
+**OffGrid Music brings the best of both worlds together—on your device, on your terms:**
+- **100% Yours, 100% Ad-Free:** Your songs live on your phone and play offline anytime—on flights, commutes, or anywhere off the grid.
+- **Zero Forced Accounts:** Open the app, pick your music folders, and listen. Cloud backup, online lyrics search, AI lyric tools, and group listening sessions are completely optional.
+- **Built for Both Comfort & Control:** Simple enough for everyday tap-and-play listening, yet packed with audio tuning, custom layouts, tag editing, and listening analytics when you want more.
 
 ---
 
-### 2. 🎤 Synchronized LRC Lyrics & Gemini AI Lyric Studio
-- **Synchronized `.lrc` Lyrics Engine (`LyricsFetcher` & `LrcParser`)**:
-  - Multi-stage lyric resolution: checks local Room cache (`LyricsEntity`), companion `.lrc` files on storage, embedded ID3 `USLT`/`SYLT` tags, and online `lrclib.net` search.
-  - Interactive synced lyrics view with real-time line highlighting, smooth auto-scroll, tap-line-to-seek, adjustable lyrics font scale (*Small, Medium, Large*), per-song **Timing Offset (`+ms` / `-ms`)**, interactive **Multi-Candidate Online Search**, and custom `.lrc` file import.
-- **Gemini AI Lyrics Translation & Audio Transcription (`GeminiLyricsService`)**:
-  - Powered by a user-supplied **Gemini API Key** (`gemini-2.5-flash`) stored exclusively on-device using **Android KeyStore AES-256-GCM hardware-backed encryption** (`SecureApiKeyStore` — never included in cloud backups).
-  - **Mode 1 — Translate Existing Lyrics**: Translates synced or plain lyrics while strictly preserving every `[mm:ss.xx]` LRC timestamp line-by-line without re-processing audio, backed by a persistent LRU translation cache (`LyricsTranslationCache`).
-  - **Mode 2 — Transcribe Audio Directly**: Reads the local audio file (or captures up to 60s via `AudioRecord` fallback) and generates fresh, timestamped `[mm:ss.xx]` `.lrc` lyrics when no lyrics exist.
-  - **Supported Target Languages**: 🇬🇧 **English (`en`)**, 🇮🇳 **Tamil (`ta`, including mixed Tanglish audio)**, 🇮🇳 **Hindi (`hi`)**, and 🇮🇳 **Malayalam (`ml`)**.
-  - **Preview, Export & One-Tap Undo**: Preview generated lyrics before applying, automatically export companion `.lrc` files to `Music/Lyrics`, and revert to previous lyrics at any time with **one-tap Undo**.
+## How OffGrid Differs from Other Offline Music Players
+
+| Feature Area | Typical Offline Music Players | OffGrid Music |
+| :--- | :--- | :--- |
+| **Track Transitions** | Hard cuts or uneven volume drops between songs | **Gapless playback**, **0–12s equal-power Crossfade**, plus customizable **Fade-In & Fade-Out** |
+| **Audio Consistency** | Quiet and loud tracks force constant volume adjustments | Built-in **Normalize Audio**, **Stereo Balance**, **5-Band EQ**, **Bass Boost**, and **3D Virtualizer** |
+| **Lyrics Experience** | Plain static text or no lyrics support | **Live synced `.lrc` lyrics**, tap-to-seek, timing offset sync, online search, and optional **AI Translate / Transcribe** |
+| **Per-Song Control** | Only Repeat Off / All / Infinite Repeat One | **"Repeat this song" (1–10×)** on the active track or queued songs, compatible with Crossfade, Gapless, and Sleep Timer |
+| **Visual Personalization** | One fixed dark/light layout | **10 themes**, **4 display modes**, **Dynamic Artwork colors**, **Gradient & Frosted Glass**, **12 screen layouts**, and **5 widgets** |
+| **Listening Insights** | Basic play counter at best | **Detailed Listening Stats**, **6-slide Wrapped Story**, **Calendar date/range picker**, and shareable stats cards |
+| **Shared Listening** | Strictly solo listening | **OffGrid Jam** lets 2–10 friends listen in sync and share approved local songs directly device-to-device |
+| **Library Hygiene** | Messy YouTube/site tags and ringtone clutter | **Folder include/exclude filters**, **short-clip filter**, **Duplicate Song Finder**, **ID3 Tag Editor**, and **One-Tap Tag Cleaner** |
 
 ---
 
-### 3. 📂 Precision Local Library Scanner & Folder Filtering
-- **Startup Animation → 3-Step Onboarding Flow (`SplashScreen` & `OnboardingScreen`)**:
-  - Plays the neon startup animation (`SplashScreen`) first on app launch before transitioning cleanly to the 3-step onboarding wizard (or Home screen for returning users).
-  - Uses Android's native system file manager (`ActivityResultContracts.OpenDocumentTree`) to pick **Included (`+`)** and **Excluded (`⊘`)** directories.
-  - Replicates the exact Settings **Filter Short Audio Clips** UI (`All Audio`, `15s`, `30s`, `45s`, `1m`, `2m` quick chips + continuous `0–180s` slider) and **Full-Device Scan** confirmation dialog.
-  - Scans **only** when the user explicitly taps **Start Library Scan**, and syncs all chosen folders and duration filters directly with **Settings → Library & Storage**.
-- **Deduplicating Hybrid Scanner (`LibraryScanner`)**:
-  - Combines `MediaStore.Audio.Media` queries with recursive directory traversal across **12 audio formats** (`mp3`, `flac`, `m4a`, `aac`, `ogg`, `opus`, `wav`, `wma`, `amr`, `3gp`, `m4r`, `aiff`).
-  - Normalizes canonical file paths (`/storage/emulated/0/...` vs `/sdcard/...`) so every physical audio file is counted and inserted **once** in safe SQLite batches (`250` rows/chunk), preventing inflated track counts or Binder/SQLite transaction overflows.
-  - Strictly enforces **Included** and **Excluded** folder rules during both full and quick scans, with a confirmation prompt whenever **Full-Device Scan** is toggled or started while custom folders exist.
-  - Background `ContentObserver` and directory `FileObserver` automatically detect newly downloaded songs after onboarding is completed.
+## Features at a Glance
+
+- **Studio-Grade Playback & Sound:** Gapless playback, 0–12s equal-power crossfade, play/pause fade ramps, loudness normalization, stereo L/R balance, 5-band Equalizer with 11 presets, Bass Boost, 3D Virtualizer, and a live Audio Output Switcher.
+- **Smart Repeat, Gestures & Sonic Studio:** Repeat any song **1–10 times** (now playing or queued), swipe album art to skip, shake to skip, create **A–B Loops**, pin **Timestamp Bookmarks**, and launch **Sonic DNA Radio** mixes.
+- **Synced Lyrics & Optional AI Studio:** Real-time scrolling `.lrc` lyrics with tap-to-seek, timing offset (`±ms`) saved locally, online lyric search, and optional Gemini AI translation/transcription (English, Tamil/Tanglish, Hindi, Malayalam) with one-tap Undo.
+- **Precision Scanner & Library Tools:** Scans **12 audio formats** (`MP3`, `FLAC`, `M4A`, `AAC`, `OGG`, `OPUS`, `WAV`, `WMA`, `AMR`, `3GP`, `M4R`, `AIFF`) with native folder include/exclude rules, short-clip duration filter (`0–180s`), ID3 tag & cover art editor, Tag Cleaner, and Duplicate Finder.
+- **Effortless Queue & Playlists:** 1:1 finger-tracked drag-and-drop queue & playlist sorting, duplicate-friendly queue with one-tap deduplication, custom playlist covers, M3U/M3U8 import & export, and rule-based Smart Playlists.
+- **Unmatched Visual Customization:** 4 Display Modes, 10 curated themes, Dynamic Artwork colors, 10 accent presets + custom RGB picker, Gradient & Frosted Glass effects, 4 Home layouts, 4 Now Playing layouts (including Vinyl Turntable), 4 Playlist layouts, 4 waveform seekers, 90/120Hz smoothness, and **5 Home Screen Widgets** (including a live Lyrics Widget).
+- **Listening Stats & Calendar Wrapped:** Track daily plays and listening habits across presets or any custom **Calendar date or date range**, explore **6-slide Wrapped Stories**, and share high-resolution stats cards.
+- **OffGrid Jam, Storage & Optional Cloud Sync:** Listen together in synced 2–10 person rooms, manage local database capacity tiers or JSON backups, or optionally sync playlists, favorites, stats, lyrics offsets, and settings across devices via Google or Email sign-in.
 
 ---
 
-### 4. 🔀 Queue Management, Playlists & On-Device ID3 Tag Editor
-- **Pinned Now Playing Header & 1:1 Drag-and-Drop Queue (`UpNextQueueSheet` & `ReorderableLazyListState`)**:
-  - Pins the active **Now Playing** track card above the scrollable **Up Next** list with an animated `GraphicEq` **"Now Playing"** status badge instead of static track numbers.
-  - Supports **multiple occurrences of the same song** in the queue via unique composite item keys (`${index}_${song.id}`) while providing a dedicated **Remove Duplicate Songs from Queue** action.
-  - **1:1 Finger-Tracked Reordering**: Tracks finger delta directly across list item swaps and performs smooth, proportional edge auto-scrolling when dragging near the top or bottom of the queue or playlist.
-- **Regular Playlists, Rule-Based Smart Playlists & M3U Import/Export**:
-  - Create custom playlists with **instant custom cover art** (`PlaylistCoverCache` + persistent `filesDir/playlist_covers`), **Remove Duplicates**, **Play Next**, **Add to Queue**, and **M3U / M3U8 playlist import & export** (`M3uParser`).
-  - **Smart Playlists (`SmartPlaylistDetailScreen`)**: Dynamic rule-based playlists filtered by **Artist, Genre, Release Year Range, Minimum Play Count, Favorites Only, and Recently Added (Days)**, sorted by *Most Played, Recently Added, Title (A–Z), or Duration* with configurable track limits (`25`, `50`, `100`, `200`, `500`).
-- **On-Device ID3v2 Tag, Artwork & Lyrics Editor (`TagEditorDialog` & `AudioTagWriter`)**:
-  - Writes **Title, Artist, Album, Genre, Year, Track Number, Embedded Cover Artwork (`APIC`), and Lyrics** directly into physical audio files (constructs standards-compliant ID3v2.3 tags with synchsafe integers for `.mp3` files and updates `MediaStore` + local `.lrc` files).
-  - Includes a one-tap **Automatic Tag Cleaner** (strips `[Official Video]`, `(Lyrics)`, website watermarks, and leading track numbers) and a **Duplicate Song Finder** in Settings.
+## Every Feature in Detail
+
+### 1. Audio Engine, Transitions & Sound Tuning
+- **Gapless Playback:** Plays continuous albums, concerts, and mixes cleanly with zero silent gaps between tracks.
+- **Equal-Power Crossfade (0–12 seconds):** Smoothly blends the end of one song into the start of the next without sudden volume dips in the middle.
+- **Custom Play Fade-In & Pause Fade-Out (0–5,000 ms):** Gently ramps volume up when pressing play/resuming and smoothly fades out when pausing.
+- **Normalize Audio:** Balances volume differences across tracks automatically so quiet songs and loud songs stay comfortable to listen to.
+- **Stereo Channel Balance:** Fine-tune left and right speaker or headphone balance (`-1.0` Left to `+1.0` Right).
+- **5-Band Graphic Equalizer + Effects:** Adjust `60 Hz`, `230 Hz`, `910 Hz`, `3.6 kHz`, and `14 kHz` frequencies, choose from **11 built-in presets** (*Flat/Normal, Bass Booster, Treble Booster, Vocal Booster, Rock, Pop, Jazz, Electronic, Classical, Hip-Hop, Acoustic*), and dial in **Bass Boost** and **3D Virtualizer** strength.
+- **Live Audio Output Switcher:** Switch seamlessly between **Phone Speaker**, **Wired Headphones / Aux**, **Bluetooth Devices**, and **USB DACs** without leaving the player.
+- **Smart Interruption & Volume Automation:**
+  - **Duck Volume for Notifications:** Promptly lowers music volume when notifications arrive while avoiding double-ducking on phones with built-in system ducking.
+  - **Auto-Pause for Camera & System Audio:** Automatically pauses music when the camera opens or another app plays audio, and resumes cleanly afterward.
+  - **Pause on Zero Volume & Auto-Resume on Volume Increase:** Pauses automatically when media volume hits 0% and resumes when you turn the volume back up.
+  - **Headphone & Startup Triggers:** Optional auto-play when wired or Bluetooth headphones connect, or when opening the app.
+
+### 2. Now Playing Controls, "Repeat This Song" & Sonic Studio
+- **Repeat This Song (1–10×):** Tap **Repeat this song** from either the **Now Playing menu** or any song inside the **Up Next Queue** to repeat that exact track up to **10 times**.
+  - Works seamlessly alongside **Crossfade** and **Gapless Playback**—never cutting off early before repeats complete, then transitioning cleanly after the final repeat.
+  - Resets automatically when you close and reopen the app so normal playback is always ready next time.
+  - Automatically works with the track-based Sleep Timer (every repeat counts as 1 track).
+- **Album Art Gestures & Shake to Skip:** Swipe horizontally on album art to go to the next or previous song, tap to play/pause, or physically shake your device to skip tracks.
+- **Playback Queue Precision:** Insert songs at **Top Next** or **Bottom** of the queue, reorder with 1:1 finger-tracked drag-and-drop and smooth edge auto-scrolling, keep multiple occurrences of the same song, or remove duplicates with one tap.
+- **Sonic Studio (A–B Loop, Bookmarks & DNA Radio):**
+  - **A–B Loop:** Set custom start (`A`) and end (`B`) points to repeat a chorus, solo, or practice section automatically.
+  - **Timestamp Bookmarks (Pins):** Save and jump directly to favorite timestamps with quick labels (*Intro, Beat Drop, Chorus, Guitar Solo, Bridge, Outro*, or custom names)—marked right on the seek waveform.
+  - **Sonic DNA Radio:** Instantly builds a continuous 25-track radio queue matched to the vibe and sound profile of the currently playing song.
+
+### 3. Synchronized Lyrics & Optional AI Lyric Studio
+- **Live Synced `.lrc` Lyrics:** Smoothly highlights and auto-scrolls the current line with **tap-any-line-to-seek** and adjustable lyrics text size.
+- **Per-Song Sync Offset (`±ms`):** Adjust lyric timing early or late down to milliseconds and save both the offset and updated `.lrc` file locally.
+- **Multi-Source Lyrics Management:** Automatically checks local cache, companion `.lrc` files, and embedded audio tags—or lets you pick a local `.lrc` file, search online for multiple lyric candidates, and update/replace mismatched cached lyrics cleanly.
+- **Optional Gemini AI Lyrics Studio (Off by Default):**
+  - Connect your own Gemini API key (stored encrypted on your device and never included in cloud backups).
+  - **Translate Existing Lyrics:** Translates lyrics line-by-line into **English, Tamil (including Tanglish), Hindi, or Malayalam** while preserving every `[mm:ss.xx]` timestamp.
+  - **Transcribe Audio to Synced Lyrics:** Generates fresh timestamped `.lrc` lyrics directly from your song audio when no lyrics are found—complete with live preview, local `.lrc` export, and **one-tap Undo**.
+
+### 4. Precision Library Scanning, Folder Control & Tag Tools
+- **12 Supported Audio Formats:** `MP3`, `FLAC`, `M4A`, `AAC`, `OGG`, `OPUS`, `WAV`, `WMA`, `AMR`, `3GP`, `M4R`, and `AIFF`.
+- **Smart Folder Filtering:** Use Android's native folder picker to explicitly **Include** or **Exclude** folders, browse music through the **Hierarchical Folder Browser**, or run a **Full-Device Scan** (with confirmation prompts so excluded folders aren't included by accident).
+- **Short Audio Clip Filter (0–180s):** Filter out ringtones, voice notes, and notification tones with quick chips (*All Audio, 15s, 30s, 45s, 1m, 2m*) or a smooth slider up to 3 minutes.
+- **Duplicate-Free Indexing & Live Auto-Refresh:** Recognizes storage aliases automatically so songs are never double-counted, and detects newly added songs in the background.
+- **Flexible Browsing & Sorting:** Browse by **Songs, Albums, Artists, and Folders**, jump through large collections with a **Fast Scrollbar**, search instantly (with one-tap search history clearing), and sort by **Title, Artist, Album, Recently Added, Recently Played, or Duration**.
+- **On-Device ID3 Tag & Cover Art Editor:** Edit **Title, Artist, Album, Genre, Year, Track Number, Embedded Cover Artwork, and Lyrics** directly inside your audio files.
+- **Automatic Tag Cleaner & Duplicate Song Finder:** Clean messy `[Official Video]`, `(Lyrics)`, website watermarks, and track-number prefixes in one tap, and inspect/clean duplicate tracks across your library.
+
+### 5. Playlists & Smart Collections
+- **Custom Playlists:** Create playlists with custom cover photos (preserved safely during cloud sync), set whether newly added songs go to the **Top** or **Bottom**, drag-and-drop reorder tracks, remove duplicates, and import/export standard **`.m3u` / `.m3u8`** playlist files.
+- **Rule-Based Smart Playlists:** Build auto-updating playlists using filters for **Artist, Genre, Release Year Range, Minimum Play Count, Favorites Only, and Recently Added (Days)** with custom sorting and track limits (`25`, `50`, `100`, `200`, or `500`).
+- **Favorites & Recently Played:** Dedicated quick-access views and shortcuts in both the Home feed and navigation side drawer.
+
+### 6. Themes, Screen Layouts, Waveforms & Home Screen Widgets
+- **4 Display Modes:** *Dark, Light, Pure AMOLED Black, and Follow System*.
+- **10 Curated Themes:**
+  - *Dark & AMOLED:* **Midnight Obsidian, Pure AMOLED, Cyberpunk Synth, Nordic Frost, Emerald Forest, Sunset Amber, Crimson Velvet, Royal Amethyst**.
+  - *Light:* **Porcelain Slate, Warm Parchment**.
+- **Colors & Atmospheric Visuals:**
+  - **Dynamic Artwork Theming:** Automatically adapts backgrounds and accents to the current album cover.
+  - **10 Accent Presets + Custom RGB Color Picker** for exact custom shades.
+  - **App-Wide Gradient & Frosted Glass Effects:** Independent toggles for ambient color washes and translucent frosted cards/sheets across every screen.
+  - **Display Scale & Smoothness:** Choose **Compact, Standard, or Comfort** UI sizing, toggle **90/120Hz High Refresh Rate**, and choose **Prefer High-Res Online Artwork** or fast local covers.
+- **12 Switchable Screen Layouts:**
+  - **4 Home Layouts:** *Hero Spotlight, Bento Mosaic, Minimal Stream, Studio Deck* — plus **9 Toggleable & Reorderable Home Feed Sections** (*Continue Listening, Speed Dial, Listening Stats, Most Played, Most Played Playlists, Recently Played, Recently Added, Top Artists, Top Albums*).
+  - **4 Now Playing Layouts:** *Modern Bento, Vinyl Turntable (animated spinning record & tonearm), Minimalist Glass, Neon Studio*.
+  - **4 Playlists Layouts:** *Bento Grid, Magazine Hero, Compact List, Neon Deck*.
+- **Seek Waveform & Mini Player Customization:** Choose from **4 Waveform Styles** (*Sleek Line, Snake Sine, Symmetric, Dotted*) and **2 Mini Player Styles** (*Floating Pill* or *Bottom Bar*) with toggles for Previous, Next, and Favorite buttons.
+- **5 Native Android Home Screen Widgets:** **Full Artwork Widget, Small Widget, Medium Widget, Secondary Widget, and Live Lyrics Widget** (displaying synced lyrics and seek/playback controls right on your launcher).
+
+### 7. Listening Statistics, Calendar Wrapped Story & Sleep Timer
+- **Customizable Track Completion Rules:** Decide when a listen counts as a play—by **Seconds** (`5–180s`) or **Percentage** (`10–100%`).
+- **Real-Time Listening Analytics:** View total listening time, 7-day daily charts, Top Tracks, Top Artists, Top Albums, and Time-of-Day listener profiles across **Today, Yesterday, Last 7 Days, This Month, and All Time**.
+- **6-Slide Interactive Wrapped Story + Calendar Picker:**
+  - Launch an animated 6-slide Wrapped Story at any time of the year.
+  - Pick presets (*Today, Yesterday, This Week, Last 7 Days, This Month, Last Month, This Year, All Time*) or **choose any single date or custom date range from the Calendar**.
+  - Export and share high-resolution stats cards as images in one tap.
+- **Dual-Mode Sleep Timer:**
+  - **Time-Based:** Quick presets (`15m`, `30m`, `45m`, `60m`) or custom (`1–720m`), live `+5m / +15m / +30m` extend buttons, and *"Finish playing current track completely before stopping"*.
+  - **Track-Based:** Quick presets (`1, 2, 5, 10 tracks`) or custom (`1–100 tracks`)—counting every repeated play cleanly and stopping right at `0:00` of the next track.
+
+### 8. OffGrid Jam (Listen Together), Storage & Optional Cloud Sync
+- **OffGrid Jam (2–10 Listeners):**
+  - Host or join live group listening rooms via **Invite Code, Invite Link, or QR Code Scanner** so everyone stays synced in real time.
+  - Share approved local songs (up to 25 MB) directly from device to device with participants in the room without uploading your music files to cloud storage.
+- **Local Storage & Cache Control:**
+  - Monitor and clear lyrics, album art, and song art caches independently or all at once.
+  - Pick from **3 Local Database Capacity Tiers** (*Standard 10K, Expanded 50K, Maximum 100K* history records) with one-tap **Optimize DB**.
+- **Optional Cloud Backup & Cross-Device Sync:**
+  - Sign in with **Google** or **Email/Password** (or stay 100% local without an account).
+  - Back up and restore **Favorites, Playlists, Smart Playlists, Listening Stats, Synced Lyrics, Offset Values, Folder Rules, and App Preferences**—with **Backup Now** (uploads current local state cleanly), **Sync Now** (restores latest cloud snapshot while protecting your custom local playlist cover images), and scheduled **Automatic Backups** (*Daily, Weekly, or Monthly*).
+- **Updates, Diagnostics & Safe Reset:** Built-in GitHub release checker & optional update alerts, `.TXT` / `.JSON` diagnostics log export, Keep Screen Awake option, and **Reset to Default Settings** that keeps your songs, playlists, favorites, history, and API keys untouched.
 
 ---
 
-### 5. 🎨 Visual Customization Studio & Home Screen Widgets
-- **4 Display Modes & 10 Curated Themes (`Theme.kt`)**:
-  - **Display Modes**: *Dark Mode, Light Mode, Pure AMOLED Black (`#000000`), and Follow System*.
-  - **6 Dark Themes**: *Midnight Obsidian, Pure AMOLED, Cyberpunk Neon, Sunset Ember, Emerald Forest, Ocean Abyss*.
-  - **4 Light Themes**: *Daylight Breeze, Soft Pastel, Warm Ivory, Sakura Blossom*.
-  - **Accent Colors**: **Dynamic Artwork Color Extraction** (`ArtworkColorExtractor`), **5 Presets** (*Orange, Purple, Pink, Cyan, Green*), plus an interactive **Custom RGB Color Picker** (`0xFF000000..0xFFFFFFFF`).
-- **12 Switchable Screen Layouts & 4 Waveform Visualizers**:
-  - **4 Home Screen Layouts**: *Bento Dynamic, Hero Spotlight, Minimal Feed, Studio Dashboard* + **9 Reorderable/Toggleable Home Sections** (*Continue Listening, Speed Dial, Listening Stats, Most Played, Most Played Playlists, Recently Played, Recently Added, Top Artists, Top Albums*).
-  - **4 Now Playing Layouts**: *Minimal Glass, Modern Bento, Vinyl Turntable (animated spinning record & tonearm), Neon Studio*.
-  - **4 Playlists Screen Layouts**: *Glow Cards, Bento Grid, Magazine Hero, Compact List*.
-  - **4 Interactive Seek Waveforms**: *Snake Sine, Bars, Dots, Sleek Line* + **3 Mini-Player Styles** (*Floating Pill, Docked Bar, Minimal*) + **Display Scale** (*Compact 0.92×, Default 1.0×, Comfort 1.08×*) + **120Hz High Refresh Rate** support.
-- **3 Native Android Home Screen Widgets (`MusicAppWidgetProvider` & `WidgetUpdateManager`)**:
-  - **3×3 Card Widget** (`OffGrid 3×3 Card`), **4×2 Wide Player Widget** (`OffGrid 4×2 Wide`), and **3×1 Pill Widget** (`OffGrid 3×1 Pill`) with live album art, progress bar, favorite toggle, shuffle toggle, and playback controls.
+<details>
+<summary><strong>Keywords & Related Topics (for Search)</strong></summary>
+
+`OffGrid Music` · `Offline Music Player` · `Android Offline Music Player` · `Local Music Player Android` · `MP3 FLAC Audio Player` · `Gapless Crossfade Music Player` · `Synced LRC Lyrics Player` · `5 Band Equalizer Bass Boost` · `MP3 ID3 Tag Editor Android` · `Ad-Free Music Player APK` · `Listening Stats & Wrapped Story` · `Music Player with Home Screen Widgets` · `Listen Together OffGrid Jam` · `Your Music Your Way`
+
+</details>
 
 ---
 
-### 6. 📊 Listening Statistics, 6-Slide Wrapped Story & Cloud Sync
-- **Listening Analytics & Shareable Wrapped Stories (`ListeningStatsDetailScreen` & `WrappedStorySheet`)**:
-  - Qualified scrobble tracking (`PlaybackHistoryEntity`) configurable by **Seconds (`5–120s`)** or **Percentage (`10–95%`)** of track duration.
-  - Filter stats across **Today, Yesterday, Last 7 Days, This Month, and All Time** with 7-day daily bar charts, Top Tracks, Top Artists, Top Albums, and Time-of-Day listener archetypes (*Dawn Melodist, Midday Flow Master, Evening Groove Curator, Night Owl Explorer, Sonic Harmonizer*).
-  - **Interactive 6-Slide Wrapped Story** with auto-advancing story progress bars and high-resolution PNG card export (`StatsShareCardGenerator`) for one-tap sharing.
-- **Dual-Mode Sleep Timer (`SleepTimerManager`)**:
-  - Stop playback after a set **Duration in Minutes** (`15m`, `30m`, `45m`, `60m`, `90m`, or custom `1–720m` with `+5m` quick-extend and *"Finish last song"* option) or after a set **Number of Songs (`1–100 tracks`)**.
-- **Room SQLite Storage Tiers & Optional Firebase Cloud Sync (`DatabaseStorageManager` & `CloudSyncRepository`)**:
-  - **3 Local SQLite Capacity Tiers**: *Standard (10K history), Expanded (50K history), Maximum (100K history)* with one-tap `WAL` checkpointing, incremental vacuuming, and **Full JSON Database Backup Export / Import**.
-  - **Optional Cloud Sync & Scheduled Backups**: Sign in with **Google (`CredentialManager`)** or **Email/Password** (or use the app 100% offline without an account) to synchronize settings, favorites, playlists, smart playlists, folders, and listening history via **Cloud Firestore**, plus scheduled **Daily / Weekly / Monthly** background backups via `WorkManager` (`AutoBackupWorker`).
+<div align="center">
 
----
+**OffGrid Music — Your Music. Your Way.**
 
-## 🛠️ Technology Stack & Architecture
+[Download Latest APK](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk) · [All Releases](https://github.com/Paul00755/OffGrid-Music/releases)
 
-| Layer | Technology |
-| :--- | :--- |
-| **Language & UI** | Kotlin 2.0, Jetpack Compose, Material 3, Custom Bento Design System |
-| **Architecture** | Offline-First MVVM (`MusicViewModel`) + Repository (`MusicRepository`) + Coroutines & `StateFlow` |
-| **Audio & Media** | AndroidX Media3 (`ExoPlayer`, `MediaSessionService`, `ForwardingPlayer`, Custom PCM `AudioProcessor`s) |
-| **Local Persistence** | Room SQLite Database (`v10` with migrations & WAL mode), Jetpack DataStore Preferences, SharedPreferences Boot Cache, Android KeyStore (`AES-256-GCM`), Coil Image Cache |
-| **Cloud & Background** | Firebase Authentication, Cloud Firestore, AndroidX WorkManager (`AutoBackupWorker`) |
-| **AI Integration** | Google Gemini API (`gemini-2.5-flash` for Audio Transcription & Timestamp-Preserving LRC Translation) |
-| **CI/CD Pipeline** | GitHub Actions (`ubuntu-24.04`, JDK 17 Temurin, KSP2 Daemon, Deterministic Keystore Signing, Automated Dual Releases) |
-
-```text
-                    ┌────────────────────────────────────┐
-                    │         Jetpack Compose UI         │
-                    │  (10 Themes × 12 Screen Layouts)   │
-                    └─────────────────┬──────────────────┘
-                                      │
-                    ┌─────────────────▼──────────────────┐
-                    │   MusicViewModel & MusicRepository │
-                    │     (Kotlin Coroutines / Flow)     │
-                    └─────────────────┬──────────────────┘
-                                      │
-         ┌────────────────────────────┼────────────────────────────┐
-         │                            │                            │
-┌────────▼─────────┐        ┌─────────▼──────────┐       ┌─────────▼─────────┐
-│  Room SQLite DB  │        │   Media3 Dual      │       │  Optional Cloud   │
-│  & DataStore     │        │   ExoPlayer + DSP  │       │  Sync & Gemini AI │
-│ (Songs, Lyrics,  │        │ (Crossfade, EQ,    │       │ (Firestore Sync,  │
-│  Playlists,      │        │  Normalizer,       │       │  WorkManager,     │
-│  Scrobble Stats) │        │  Stereo Balance)   │       │  LRC Translate)   │
-└──────────────────┘        └────────────────────┘       └───────────────────┘
-```
-
-
----
-
-**🎵 OffGrid Music — Your Music. Your Device. Your Queue. Your Way.**
-<!-- Sample push: README update -->
-> Sample README update: this line demonstrates a small documentation change pushed from the local workspace.
-
+</div>
