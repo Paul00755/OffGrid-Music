@@ -1844,6 +1844,18 @@ class UserPreferencesRepository(private val context: Context) {
             .getLong("offset_updated_$songId", 0L)
     } catch (_: Exception) { 0L }
 
+    fun getAllLyricsSyncOffsetUpdatedAt(): Map<Long, Long> = try {
+        val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
+        val result = HashMap<Long, Long>()
+        for ((k, v) in sp.all) {
+            if (k.startsWith("offset_updated_") && v is Number) {
+                val id = k.removePrefix("offset_updated_").toLongOrNull()
+                if (id != null && id > 0L) result[id] = v.toLong()
+            }
+        }
+        result
+    } catch (_: Exception) { emptyMap() }
+
     suspend fun setNotificationEnabled(enabled: Boolean) {
         val now = System.currentTimeMillis()
         writeBoolCached("notification_enabled", enabled, now)

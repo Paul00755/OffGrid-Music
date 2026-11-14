@@ -43,6 +43,7 @@ class MusicRepository(
 
     private val _localSongSyncProgress = MutableStateFlow(LocalSongSyncProgress())
     val localSongSyncProgress: StateFlow<LocalSongSyncProgress> = _localSongSyncProgress.asStateFlow()
+    private val sessionRecordMutex = kotlinx.coroutines.sync.Mutex()
 
     fun resetLocalSongSyncProgress() {
         _localSongSyncProgress.value = LocalSongSyncProgress()
@@ -223,42 +224,46 @@ class MusicRepository(
         scrobbleThresholdType: String = "SECONDS",
         scrobbleThresholdValue: Int = 30
     ) {
-        if (listenedDurationMs < 1000L) return
+        if (listenedDurationMs < 1000L || trackId <= 0L) return
         val completionPercentage = if (totalTrackDurationMs > 0) {
             (listenedDurationMs.toFloat() / totalTrackDurationMs.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
-        val existing = historyDao.getHistoryBySessionId(sessionId)
-        val wasAlreadyQualified = existing?.isQualified == true
+        sessionRecordMutex.lock()
+        try {
+            val existing = historyDao.getHistoryBySessionId(sessionId)
+            val wasAlreadyQualified = existing?.isQualified == true
 
-        val qualifies = if (scrobbleThresholdType == "PERCENTAGE") {
-            val ratio = (scrobbleThresholdValue.coerceIn(1, 100) / 100f)
-            completionPercentage >= ratio || (totalTrackDurationMs <= 0L && listenedDurationMs >= 15000L)
-        } else {
-            val thresholdMs = (scrobbleThresholdValue.coerceAtLeast(1) * 1000L)
-            listenedDurationMs >= thresholdMs
+            val qualifies = if (scrobbleThresholdType == "PERCENTAGE") {
+                val ratio = (scrobbleThresholdValue.coerceIn(1, 100) / 100f)
+                completionPercentage >= ratio || (totalTrackDurationMs <= 0L && listenedDurationMs >= 15000L)
+            } else {
+                val thresholdMs = (scrobbleThresholdValue.coerceAtLeast(1) * 1000L)
+                listenedDurationMs >= thresholdMs
+            }
+
+            val isNowQualified = wasAlreadyQualified || qualifies
+
+            val entity = PlaybackHistoryEntity(
+                id = existing?.id ?: 0L,
+                trackId = trackId,
+                startedAt = startedAt,
+                endedAt = endedAt,
+                listenedDurationMs = listenedDurationMs,
+                sourceContext = sourceContext,
+                completionPercentage = completionPercentage,
+                sessionId = sessionId,
+                isQualified = isNowQualified,
+                createdAt = existing?.createdAt ?: startedAt
+            )
+            historyDao.insertPlaybackHistory(entity)
+
+            if (isNowQualified && !wasAlreadyQualified) {
+                songDao.recordPlay(trackId, startedAt)
+            }
+        } finally {
+            sessionRecordMutex.unlock()
         }
-
-        val isNowQualified = wasAlreadyQualified || qualifies
-
-        val entity = PlaybackHistoryEntity(
-            id = existing?.id ?: 0L,
-            trackId = trackId,
-            startedAt = startedAt,
-            endedAt = endedAt,
-            listenedDurationMs = listenedDurationMs,
-            sourceContext = sourceContext,
-            completionPercentage = completionPercentage,
-            sessionId = sessionId,
-            isQualified = isNowQualified,
-            createdAt = existing?.createdAt ?: startedAt
-        )
-        historyDao.insertPlaybackHistory(entity)
-
-        if (isNowQualified && !wasAlreadyQualified) {
-            songDao.recordPlay(trackId, startedAt)
-        }
-
     }
 
     suspend fun clearRecentlyPlayedHistory() {
@@ -919,6 +924,13 @@ class MusicRepository(
         val existingLyrics = lyricsDao.getLyricsForSong(song.id)
 
         if (newLyrics != null) {
+            val embeddedOffset = com.example.util.LrcParser.extractOffsetFromLrc(newLyrics)
+            val prefs = com.example.data.local.UserPreferencesRepository.getInstance(context)
+            if (embeddedOffset != null) {
+                prefs.setLyricsSyncOffsetMs(song.id, embeddedOffset)
+            }
+            val currentOffsetMs = prefs.getLyricsSyncOffsetMs(song.id)
+
             val (parsedPlain, parsedSynced) = com.example.util.LrcParser.parseLrcContent(newLyrics)
 
             val finalSynced = if (!parsedSynced.isNullOrBlank()) {
@@ -937,17 +949,48 @@ class MusicRepository(
                 null
             }
 
-            val finalPlain = if (!parsedPlain.isNullOrBlank()) parsedPlain else existingLyrics?.plainLyrics
+            val finalPlain = if (!parsedPlain.isNullOrBlank()) {
+                parsedPlain
+            } else if (newLyrics.isBlank()) {
+                null
+            } else {
+                existingLyrics?.plainLyrics
+            }
 
-            if (finalPlain != null || finalSynced != null) {
+            if (newLyrics.isBlank()) {
+                lyricsDao.deleteLyrics(song.id)
+                com.example.util.LrcParser.deleteAllMatchingLocalLrcFiles(
+                    context = context,
+                    songId = song.id,
+                    songPath = song.path,
+                    songTitle = updatedSong.displayTitle
+                )
+            } else if (finalPlain != null || finalSynced != null) {
                 val lyricsEntity = LyricsEntity(
                     songId = song.id,
                     plainLyrics = finalPlain,
                     syncedLyricsJson = finalSynced,
-                    isCached = true,
-                    source = if (finalSynced == existingLyrics?.syncedLyricsJson) (existingLyrics?.source ?: "Tag Editor") else "Tag Editor"
+                    isCached = false,
+                    source = if (finalSynced == existingLyrics?.syncedLyricsJson) (existingLyrics?.source ?: "Tag Editor") else "Tag Editor",
+                    updatedAt = System.currentTimeMillis()
                 )
                 lyricsDao.insertLyrics(lyricsEntity)
+                com.example.util.LrcParser.writeCachedLrcFile(
+                    context = context,
+                    songId = song.id,
+                    plainLyrics = finalPlain,
+                    syncedLyricsJson = finalSynced,
+                    offsetMs = currentOffsetMs
+                )
+                com.example.util.LrcParser.writeCompanionLrcForSong(
+                    context = context,
+                    songPath = song.path,
+                    songTitle = updatedSong.displayTitle,
+                    plainLyrics = finalPlain,
+                    syncedLyricsJson = finalSynced,
+                    rawLrcContent = newLyrics,
+                    offsetMs = currentOffsetMs
+                )
             }
         }
 
@@ -1069,6 +1112,18 @@ class MusicRepository(
                         com.example.data.sync.SongIdentityHelper.invalidate(song.id)
                         updatedCount++
                         if (syncResult.newPath != song.path) {
+                            try {
+                                val oldLrc = com.example.util.LrcParser.findLocalLrcFile(song.path)
+                                if (oldLrc != null && oldLrc.exists()) {
+                                    val newAudioFile = java.io.File(syncResult.newPath)
+                                    val newLrcFile = java.io.File(newAudioFile.parentFile, "${newAudioFile.nameWithoutExtension}.lrc")
+                                    if (oldLrc.absolutePath != newLrcFile.absolutePath) {
+                                        val content = oldLrc.readText(Charsets.UTF_8)
+                                        newLrcFile.writeText(content, Charsets.UTF_8)
+                                        oldLrc.delete()
+                                    }
+                                }
+                            } catch (_: Exception) {}
                             pendingScanPaths.add(song.path)
                         }
                         if (syncResult.newPath.isNotBlank()) {

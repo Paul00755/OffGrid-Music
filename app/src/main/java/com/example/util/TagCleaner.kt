@@ -9,7 +9,7 @@ object TagCleaner {
         "isaimini", "starmusiq", "5starmusiq", "sensongsmp3", "sensongs", "kuttyweb", "tamildada",
         "songspk", "mr-jatt", "mrjatt", "pendujatt", "djpunjab", "djmaza", "wapking", "ytmp3",
         "tubidy", "yt1s", "y2mate", "320kbps", "128kbps", "64kbps", "vbr", "hq", "hd", "kbps",
-        "tamiltunes", "saavn", "gaana", "wynk", "spotify", "naasongs", "mp3juices", "mp3quack",
+        "tamiltunes", "saavn", "gaana.com", "wynk", "spotify", "naasongs", "mp3juices", "mp3quack",
         "mp3mad", "djsong", "ringtone", "audios", "soundtrack", "hungama", "jiosaavn", "mobcup",
         "zedge", "songslover", "freshmaza", "topic", "vevo", "records", "channel"
     )
@@ -75,6 +75,7 @@ object TagCleaner {
             "naasongs[a-z0-9._-]*|sensongs(?:mp3)?[a-z0-9._-]*|mp3chetta(?:_com)?[a-z0-9._-]*|" +
             "mp3juices?[a-z0-9._-]*|mp3quack[a-z0-9._-]*|mp3mad[a-z0-9._-]*|mp3pawan[a-z0-9._-]*|" +
             "ytmp3[a-z0-9._-]*|tubidy[a-z0-9._-]*|yt1s[a-z0-9._-]*|y2mate[a-z0-9._-]*|" +
+            "gaana\\.com[a-z0-9._-]*|" +
             "mobcup[a-z0-9._-]*|zedge[a-z0-9._-]*|songslover[a-z0-9._-]*|freshmaza[a-z0-9._-]*|" +
             "(?:320|128|256|64)\\s*kbps|kbps|hq|hd|cdrip|dvdrip|webrip" +
         ")\\s*$"
@@ -239,7 +240,7 @@ object TagCleaner {
 
         // Fallback if cleaning erased everything
         if (text.isBlank()) {
-            val fallbackName = rawFilename.substringBeforeLast('.')
+            val fallbackName = rawFilename.substringBeforeLast('.').ifBlank { rawTitle.orEmpty() }
             text = normalizeTitleSeparators(
                 fallbackName.replace(FALLBACK_CLEAN_REGEX, " ")
             ).replace(MULTI_SPACE_REGEX, " ")
@@ -247,7 +248,7 @@ object TagCleaner {
             if (text.isBlank()) text = fallbackName
         }
 
-        val result = text.ifBlank { rawFilename.substringBeforeLast('.') }
+        val result = text.ifBlank { rawFilename.substringBeforeLast('.').ifBlank { rawTitle.orEmpty() } }
         synchronized(cleanTitleCache) {
             cleanTitleCache.put(cacheKey, result)
         }

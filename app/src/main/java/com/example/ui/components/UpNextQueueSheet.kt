@@ -61,9 +61,12 @@ fun UpNextQueueSheet(
     onPlayNext: (Song) -> Unit = {},
     onAddToPlaylist: (Song) -> Unit = {},
     onEditTags: ((Song) -> Unit)? = null,
+    onSetSongRepeatCount: ((Song, Int) -> Unit)? = null,
+    isTrackSleepTimerActive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var repeatDialogSong by remember { mutableStateOf<Song?>(null) }
     val queue = playbackState.queue
     val currentSong = playbackState.currentSong
     val currentIndex = playbackState.queueIndex
@@ -751,6 +754,10 @@ fun UpNextQueueSheet(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                                val itemRepeatCount = when {
+                                                    isCurrent && playbackState.songRepeatTargetSongId == song.id -> playbackState.songRepeatRemainingCount
+                                                    else -> playbackState.queuedSongRepeatCounts[song.id] ?: 0
+                                                }
                                                 if (isCurrent) {
                                                     Text(
                                                         text = "Now Playing • ",
@@ -764,6 +771,14 @@ fun UpNextQueueSheet(
                                                         fontSize = 11.sp,
                                                         color = BentoTextSubtle,
                                                         fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                                if (itemRepeatCount > 0) {
+                                                    Text(
+                                                        text = "Repeat ${itemRepeatCount}× • ",
+                                                        fontSize = 11.sp,
+                                                        color = BentoPrimary,
+                                                        fontWeight = FontWeight.Bold
                                                     )
                                                 }
                                                 Text(
@@ -792,6 +807,11 @@ fun UpNextQueueSheet(
                                             }
 
                                             if (showItemMenu) {
+                                                val activeItemRepeatCount = when {
+                                                    playbackState.currentSong?.id == song.id && playbackState.songRepeatTargetSongId == song.id ->
+                                                        playbackState.songRepeatRemainingCount
+                                                    else -> playbackState.queuedSongRepeatCounts[song.id] ?: 0
+                                                }
                                                 SongActionMenu(
                                                     expanded = true,
                                                     song = song,
@@ -826,6 +846,10 @@ fun UpNextQueueSheet(
                                                     onEditTags = if (onEditTags != null) {
                                                         { onEditTags(song) }
                                                     } else null,
+                                                    activeRepeatCount = activeItemRepeatCount,
+                                                    onRepeatSong = if (onSetSongRepeatCount != null) {
+                                                        { repeatDialogSong = song }
+                                                    } else null,
                                                     onDeleteSong = { /* Handled at app level */ }
                                                 )
                                             }
@@ -847,5 +871,27 @@ fun UpNextQueueSheet(
                 }
             }
         }
+    }
+
+    val targetRepeatSong = repeatDialogSong
+    if (targetRepeatSong != null && onSetSongRepeatCount != null) {
+        val currentRepeatCount = when {
+            playbackState.currentSong?.id == targetRepeatSong.id &&
+                playbackState.songRepeatTargetSongId == targetRepeatSong.id ->
+                playbackState.songRepeatRemainingCount
+            else -> playbackState.queuedSongRepeatCounts[targetRepeatSong.id] ?: 0
+        }
+        RepeatSongDialog(
+            song = targetRepeatSong,
+            currentRepeatCount = currentRepeatCount,
+            isTrackSleepTimerActive = isTrackSleepTimerActive,
+            onSetRepeatCount = { count ->
+                onSetSongRepeatCount(targetRepeatSong, count)
+            },
+            onClearRepeat = {
+                onSetSongRepeatCount(targetRepeatSong, 0)
+            },
+            onDismiss = { repeatDialogSong = null }
+        )
     }
 }

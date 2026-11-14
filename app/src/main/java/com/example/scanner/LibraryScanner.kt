@@ -1147,7 +1147,9 @@ class LibraryScanner(
                 val existingSongs = songDao.getAllSongsOnce()
                 val existingById = existingSongs.associateBy { it.id }
                 val existingByPath = existingSongs.associateBy { normalizePath(it.path) }
-                val existingByRenameSig = existingSongs.associateBy { buildRenameSignature(it) }
+                val existingByRenameSig = existingSongs
+                    .filter { !foundSongsByNormPath.containsKey(normalizePath(it.path)) }
+                    .associateBy { buildRenameSignature(it) }
 
                 val rawSongsList = foundSongsByNormPath.values.toList()
                 val mergedSongsList = rawSongsList.map { song ->
@@ -1155,9 +1157,6 @@ class LibraryScanner(
                     val existing = existingByPath[normP]
                         ?: existingById[song.id]
                         ?: existingByRenameSig[buildRenameSignature(song)]
-                    if (existing != null && existing.id != song.id) {
-                        migrateReferencesBeforeDelete(existing.id, song.id)
-                    }
                     buildOrUpdateSongEntity(
                         existing = existing,
                         id = existing?.id ?: song.id,

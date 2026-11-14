@@ -120,4 +120,11 @@ class TagCleanerAndIndexingUnitTest {
         assertEquals("Song Name (Acoustic)", TagCleaner.cleanTitle("Song_Name (Acoustic)", "Song_Name (Acoustic).mp3"))
         assertEquals("Song Name (Instrumental)", TagCleaner.cleanTitle("Song_Name (Instrumental)", "Song_Name (Instrumental).mp3"))
     }
+
+    @Test
+    fun testGaanaTitlePreservedWhileGaanaDomainStripped() {
+        assertEquals("Gaana Gaana", TagCleaner.cleanTitle("Gaana-Gaana", ""))
+        assertEquals("Gaana Gaana", TagCleaner.cleanTitle("", "Gaana-Gaana.mp3"))
+        assertEquals("Song Name", TagCleaner.cleanTitle("Song Name - Gaana.com", "Song Name - Gaana.com.mp3"))
+    }
 }

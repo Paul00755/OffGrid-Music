@@ -619,4 +619,422 @@ class CloudSyncTest {
         assertEquals(-450L, userPreferences.getLyricsSyncOffsetMs(song.id))
         assertEquals(1_770_000_005_000L, userPreferences.getLyricsSyncOffsetUpdatedAt(song.id))
     }
+
+    @Test
+    fun lrcCompanionWriterPersistsOffsetAndReplacesOldLrcFiles() {
+        val tempDir = java.io.File(context.cacheDir, "test_lrc_folder_${System.currentTimeMillis()}").apply { mkdirs() }
+        try {
+            val audioFile = java.io.File(tempDir, "Test Track.mp3").apply { writeText("audio") }
+            val staleFuzzyLrc = java.io.File(tempDir, "Test Track - lyrics.lrc").apply {
+                writeText("[00:01.00]Wrong cached lyrics")
+            }
+
+            val syncedJson = """[{"timeMs":2500,"text":"Correct manual lyrics"}]"""
+            val writtenFile = com.example.util.LrcParser.writeCompanionLrcForSong(
+                context = context,
+                songPath = audioFile.absolutePath,
+                songTitle = "Test Track",
+                plainLyrics = "Correct manual lyrics",
+                syncedLyricsJson = syncedJson,
+                offsetMs = -350L
+            )
+
+            assertNotNull("Companion LRC write must succeed", writtenFile)
+            assertFalse("Stale conflicting LRC file must be deleted", staleFuzzyLrc.exists())
+
+            val foundLrc = com.example.util.LrcParser.findLocalLrcFile(
+                audioPath = audioFile.absolutePath
+            )
+            assertNotNull("Updated companion LRC file must be found", foundLrc)
+            val lrcText = foundLrc!!.readText()
+            assertTrue("LRC file must persist [offset:-350] tag", lrcText.contains("[offset:-350]"))
+            assertTrue("LRC file must contain updated lyrics", lrcText.contains("Correct manual lyrics"))
+            assertEquals(-350L, com.example.util.LrcParser.extractOffsetFromLrc(lrcText))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun mostPlayedQueryAppliesLimitAfterExcludingMissingAndUnresolvedTracks() = runTest {
+        // Insert 12 valid songs
+        val songs = (1L..12L).map { id ->
+            SongEntity(
+                id = id,
+                title = "Song $id",
+                artist = "Artist $id",
+                album = "Album $id",
+                genre = "Pop",
+                durationMs = 200_000L,
+                path = "/storage/emulated/0/Music/Song_$id.mp3",
+                contentUriString = "content://media/external/audio/media/$id",
+                playCount = if (id == 1L) 331 else id.toInt() // Song 1 has inflated playCount!
+            )
+        }
+        songDao.insertSongs(songs)
+
+        // Insert a high-play unresolved history row (-999L) and a missing song (99L)
+        songDao.insertSongs(
+            listOf(
+                SongEntity(
+                    id = 99L,
+                    title = "Deleted Song",
+                    artist = "Artist",
+                    album = "Album",
+                    genre = "Pop",
+                    durationMs = 200_000L,
+                    path = "/storage/emulated/0/Music/Deleted.mp3",
+                    contentUriString = "content://media/external/audio/media/99",
+                    isMissing = true
+                )
+            )
+        )
+        repeat(50) { idx ->
+            historyDao.insertPlaybackHistory(
+                PlaybackHistoryEntity(
+                    trackId = -999L,
+                    startedAt = 1_000_000L + idx,
+                    endedAt = 1_060_000L + idx,
+                    listenedDurationMs = 60_000L,
+                    sessionId = "unresolved_$idx",
+                    isQualified = true
+                )
+            )
+            historyDao.insertPlaybackHistory(
+                PlaybackHistoryEntity(
+                    trackId = 99L,
+                    startedAt = 2_000_000L + idx,
+                    endedAt = 2_060_000L + idx,
+                    listenedDurationMs = 60_000L,
+                    sessionId = "missing_$idx",
+                    isQualified = true
+                )
+            )
+        }
+
+        // Insert 2 real qualified plays for each of the 12 valid songs
+        for (id in 1L..12L) {
+            repeat(2) { idx ->
+                historyDao.insertPlaybackHistory(
+                    PlaybackHistoryEntity(
+                        trackId = id,
+                        startedAt = 3_000_000L + id * 1000L + idx,
+                        endedAt = 3_060_000L + id * 1000L + idx,
+                        listenedDurationMs = 60_000L,
+                        sessionId = "valid_${id}_$idx",
+                        isQualified = true
+                    )
+                )
+            }
+        }
+
+        // Verify Top 10 returns a full 10 songs (not 8 or 9 due to -999L and 99L)
+        val top10 = historyDao.getMostPlayedSongsBetween(0L, Long.MAX_VALUE, 10).first()
+        assertEquals("Top 10 must return all 10 valid songs", 10, top10.size)
+    }
+
+    @Test
+    fun relinkHistoryPurgesHijackedRowsClampsRunawayDurationsAndRecomputesPlayCounts() = runTest {
+        val gaanaSong = SongEntity(
+            id = 1L,
+            title = "Gaana-Gaana",
+            artist = "Shreya Ghoshal",
+            album = "Album",
+            genre = "Film",
+            durationMs = 240_000L,
+            path = "/storage/emulated/0/Music/Gaana-Gaana.mp3",
+            contentUriString = "content://media/external/audio/media/1",
+            playCount = 331,
+            lastPlayed = 9_999_999L
+        )
+        val otherSong = SongEntity(
+            id = 2L,
+            title = "Other Song",
+            artist = "Artist Two",
+            album = "Album Two",
+            genre = "Pop",
+            durationMs = 180_000L,
+            path = "/storage/emulated/0/Music/Other.mp3",
+            contentUriString = "content://media/external/audio/media/2",
+            playCount = 1,
+            lastPlayed = 5_000_000L
+        )
+        songDao.insertSongs(listOf(gaanaSong, otherSong))
+
+        // Legitimate 1 play for Gaana-Gaana
+        historyDao.insertPlaybackHistory(
+            PlaybackHistoryEntity(
+                trackId = 1L,
+                startedAt = 1_000_000L,
+                endedAt = 1_240_000L,
+                listenedDurationMs = 240_000L,
+                completionPercentage = 1.0f,
+                sessionId = "legit_gaana",
+                isQualified = true
+            )
+        )
+        // Hijacked row from another track wrongly linked to Gaana-Gaana (duration/completion mismatch)
+        historyDao.insertPlaybackHistory(
+            PlaybackHistoryEntity(
+                trackId = 1L,
+                startedAt = 2_000_000L,
+                endedAt = 2_090_000L,
+                listenedDurationMs = 90_000L,
+                completionPercentage = 0.90f,
+                sessionId = "hijacked_gaana",
+                isQualified = true
+            )
+        )
+        // Runaway overnight paused session (40 hours!)
+        historyDao.insertPlaybackHistory(
+            PlaybackHistoryEntity(
+                trackId = 2L,
+                startedAt = 3_000_000L,
+                endedAt = 3_000_000L + 40L * 3_600_000L,
+                listenedDurationMs = 40L * 3_600_000L,
+                completionPercentage = 1.0f,
+                sessionId = "runaway_night",
+                isQualified = true
+            )
+        )
+
+        val syncRepo = CloudSyncRepository(
+            context = context,
+            songDao = songDao,
+            playlistDao = playlistDao,
+            historyDao = historyDao,
+            smartPlaylistDao = smartPlaylistDao,
+            userPreferences = userPreferences
+        )
+        syncRepo.relinkHistoryAndRecomputePlayStats()
+
+        val updatedGaana = songDao.getSongById(1L)!!
+        assertEquals("Gaana-Gaana playCount must drop from inflated 331 to actual 1", 1, updatedGaana.playCount)
+        assertEquals("Gaana-Gaana lastPlayed must reset to real session timestamp", 1_000_000L, updatedGaana.lastPlayed)
+
+        val allHistory = historyDao.getAllHistoryOnce()
+        assertFalse("Hijacked row must be deleted", allHistory.any { it.sessionId == "hijacked_gaana" })
+        val clampedNight = allHistory.firstOrNull { it.sessionId == "runaway_night" }
+        assertNotNull(clampedNight)
+        assertTrue(
+            "Runaway 40h session must be clamped to sane bounds",
+            clampedNight!!.listenedDurationMs <= 1_800_000L
+        )
+    }
+
+    @Test
+    fun restoreFromBackupSnapshotRemovesDeletedPlaylistsAndPreservesLocalCovers() = runTest {
+        val song = SongEntity(
+            id = 50L,
+            title = "Keep Track",
+            artist = "Artist",
+            album = "Album",
+            genre = "Pop",
+            durationMs = 200_000L,
+            path = "/storage/emulated/0/Music/KeepTrack.mp3",
+            contentUriString = "content://media/external/audio/media/50"
+        )
+        songDao.insertSongs(listOf(song))
+
+        val keepId = playlistDao.insertPlaylist(
+            PlaylistEntity(
+                name = "KeepMe",
+                createdAt = 1000L,
+                isPinned = false,
+                artworkUri = "file:///local/custom_cover.jpg",
+                cloudId = "pl_keep"
+            )
+        )
+        playlistDao.insertPlaylist(
+            PlaylistEntity(
+                name = "New",
+                createdAt = 2000L,
+                isPinned = false,
+                cloudId = "pl_deleted_in_cloud"
+            )
+        )
+
+        val snapshotPayload = UserBackupPayload(
+            version = 3,
+            ownerUid = "test-uid-sync",
+            snapshotComplete = true,
+            historyStoredSeparately = true,
+            playlistPlayEventsStoredSeparately = true,
+            lyricsStoredSeparately = true,
+            lyricsSnapshotId = "lyr_1",
+            historyCount = 0,
+            playlistPlayEventCount = 0,
+            lyricsCount = 0,
+            dataHash = "hash",
+            profile = BackupProfileData(uid = "test-uid-sync"),
+            playlists = listOf(
+                CloudPlaylist(
+                    cloudId = "pl_keep",
+                    name = "KeepMe",
+                    createdAt = 1000L,
+                    isPinned = true,
+                    artworkUri = "file:///cloud/other_cover.jpg",
+                    songs = listOf(
+                        CloudPlaylistSongItem(
+                            position = 0,
+                            songSignature = SongIdentityHelper.computeSignature(song),
+                            title = song.title,
+                            artist = song.artist,
+                            album = song.album,
+                            durationMs = song.durationMs,
+                            filename = "KeepTrack.mp3"
+                        )
+                    )
+                )
+            )
+        )
+
+        val syncRepo = CloudSyncRepository(
+            context = context,
+            songDao = songDao,
+            playlistDao = playlistDao,
+            historyDao = historyDao,
+            smartPlaylistDao = smartPlaylistDao,
+            userPreferences = userPreferences
+        ).apply {
+            testCurrentUidOverride = "test-uid-sync"
+        }
+
+        syncRepo.restoreFromBackupSnapshot(
+            uid = "test-uid-sync",
+            data = snapshotPayload.toMap(),
+            cloudHistory = emptyList(),
+            cloudPlaylistHistory = emptyList(),
+            cloudLyrics = emptyList()
+        )
+
+        val remainingPlaylists = playlistDao.getAllPlaylistsOnce()
+        assertEquals("Deleted playlist 'New' must be removed on sync", 1, remainingPlaylists.size)
+        val restoredKeep = remainingPlaylists.first()
+        assertEquals(keepId, restoredKeep.id)
+        assertEquals("KeepMe", restoredKeep.name)
+        assertTrue("Pinned flag should update from cloud", restoredKeep.isPinned)
+        assertEquals(
+            "Existing local custom playlist cover image must be preserved",
+            "file:///local/custom_cover.jpg",
+            restoredKeep.artworkUri
+        )
+        assertEquals(1, playlistDao.getPlaylistSongs(keepId).first().size)
+    }
+
+    @Test
+    fun manualLyricsSelectionOverwritesLocalLrcWithOffsetAndSurvivesNavigation() = runTest {
+        val tempDir = java.io.File(context.cacheDir, "manual_lyrics_test_${System.currentTimeMillis()}").apply { mkdirs() }
+        try {
+            val audioFile = java.io.File(tempDir, "WrongCached.mp3").apply { writeText("audio") }
+            val oldWrongLrc = java.io.File(tempDir, "WrongCached.lrc").apply {
+                writeText("[00:01.00]Old wrong auto-fetched lyrics")
+            }
+            val songEntity = SongEntity(
+                id = 888L,
+                title = "WrongCached",
+                artist = "Artist",
+                album = "Album",
+                genre = "Pop",
+                durationMs = 180_000L,
+                path = audioFile.absolutePath,
+                contentUriString = "file://${audioFile.absolutePath}"
+            )
+            songDao.insertSongs(listOf(songEntity))
+            db.lyricsDao().insertLyrics(
+                LyricsEntity(
+                    songId = 888L,
+                    plainLyrics = "Old wrong auto-fetched lyrics",
+                    syncedLyricsJson = """[{"timeMs":1000,"text":"Old wrong auto-fetched lyrics"}]""",
+                    isCached = true,
+                    source = "LRCLIB"
+                )
+            )
+
+            userPreferences.setLyricsSyncOffsetMs(888L, -350L)
+            val fetcher = com.example.service.LyricsFetcher(db.lyricsDao(), context)
+            fetcher.saveSelectedLyrics(
+                songId = 888L,
+                plainLyrics = "Correct user chosen line",
+                syncedLyricsRaw = "[00:05.00]Correct user chosen line",
+                source = "Manual Search",
+                songPath = audioFile.absolutePath,
+                songTitle = "WrongCached"
+            )
+
+            val savedEntity = db.lyricsDao().getLyricsForSong(888L)
+            assertNotNull(savedEntity)
+            assertFalse("Manually selected lyrics must mark isCached=false", savedEntity!!.isCached)
+            assertTrue(savedEntity.plainLyrics?.contains("Correct user chosen line") == true)
+
+            val lrcText = oldWrongLrc.readText()
+            assertTrue("Companion .lrc must be overwritten with new lyrics", lrcText.contains("Correct user chosen line"))
+            assertFalse("Old wrong lyrics must no longer remain in companion .lrc", lrcText.contains("Old wrong auto-fetched lyrics"))
+            assertTrue("Companion .lrc must contain user offset tag", lrcText.contains("[offset:-350]"))
+
+            // Simulate navigating away and coming back to this song
+            val reloaded = fetcher.getOrFetchLyrics(songEntity.toDomainModel(), forceRefresh = false)
+            assertTrue(reloaded.plainLyrics?.contains("Correct user chosen line") == true)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun batchCompanionLrcWriteSkipsUnchangedFilesAndUpdatesChangedFiles() {
+        val tempDir = java.io.File(context.cacheDir, "batch_lrc_fast_test_${System.currentTimeMillis()}").apply { mkdirs() }
+        try {
+            val audioFile = java.io.File(tempDir, "FastSyncTrack.mp3").apply { writeText("audio") }
+            val syncedJson = """[{"timeMs":2000,"text":"First synchronized line"}]"""
+            val plainText = "First synchronized line"
+
+            val writtenFile = com.example.util.LrcParser.writeCompanionLrcForSong(
+                context = context,
+                songPath = audioFile.absolutePath,
+                songTitle = "FastSyncTrack",
+                plainLyrics = plainText,
+                syncedLyricsJson = syncedJson,
+                offsetMs = 250L,
+                skipDirectoryCleanup = true
+            )
+            assertNotNull(writtenFile)
+            assertTrue(writtenFile!!.exists())
+
+            val fixedPastMs = 1_700_000_000_000L
+            writtenFile.setLastModified(fixedPastMs)
+
+            // Calling again with identical lyrics & offset using fast path must short-circuit without rewriting file
+            com.example.util.LrcParser.writeCompanionLrcForSong(
+                context = context,
+                songPath = audioFile.absolutePath,
+                songTitle = "FastSyncTrack",
+                plainLyrics = plainText,
+                syncedLyricsJson = syncedJson,
+                offsetMs = 250L,
+                skipDirectoryCleanup = true
+            )
+            assertEquals(
+                "Unchanged companion .lrc must not be rewritten during batch sync",
+                fixedPastMs / 1000L,
+                writtenFile.lastModified() / 1000L
+            )
+
+            // Updating lyrics or offset must immediately overwrite the companion .lrc
+            com.example.util.LrcParser.writeCompanionLrcForSong(
+                context = context,
+                songPath = audioFile.absolutePath,
+                songTitle = "FastSyncTrack",
+                plainLyrics = "Updated cloud lyric line",
+                syncedLyricsJson = """[{"timeMs":4000,"text":"Updated cloud lyric line"}]""",
+                offsetMs = -150L,
+                skipDirectoryCleanup = true
+            )
+            val updatedText = writtenFile.readText()
+            assertTrue(updatedText.contains("Updated cloud lyric line"))
+            assertTrue(updatedText.contains("[offset:-150]"))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
 }
+

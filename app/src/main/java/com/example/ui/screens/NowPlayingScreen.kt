@@ -87,6 +87,7 @@ fun NowPlayingScreen(
     onFavoriteToggle: () -> Unit,
     onToggleShuffle: () -> Unit,
     onToggleRepeat: () -> Unit,
+    onSetSongRepeatCount: (Song, Int) -> Unit = { _, _ -> },
     onStartSleepTimer: (Int, Boolean) -> Unit = { _, _ -> },
     onStartSongCountTimer: (Int) -> Unit = {},
     onAddSleepTimerMinutes: (Int) -> Unit = {},
@@ -191,6 +192,7 @@ fun NowPlayingScreen(
     }
     var showLyricsView by remember { mutableStateOf(false) }
     var showTimerDialog by remember { mutableStateOf(false) }
+    var showRepeatSongDialog by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showRemoveFromPlaylistDialog by remember { mutableStateOf(false) }
@@ -1087,29 +1089,64 @@ fun NowPlayingScreen(
                                 }
                             }
 
-                            if (sleepTimerState.isActive) {
-                                Surface(
-                                    onClick = { showTimerDialog = true },
-                                    shape = RoundedCornerShape(50),
-                                    color = Color.Black.copy(alpha = 0.35f)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            val activeSongRepeatCount = if (playbackState.songRepeatTargetSongId == song.id) {
+                                playbackState.songRepeatRemainingCount
+                            } else 0
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (activeSongRepeatCount > 0) {
+                                    Surface(
+                                        onClick = { showRepeatSongDialog = true },
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.Black.copy(alpha = 0.35f)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Timer,
-                                            contentDescription = null,
-                                            tint = BentoPrimary,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Text(
-                                            text = "Timer Active",
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color.White
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.RepeatOne,
+                                                contentDescription = null,
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "Repeat ${activeSongRepeatCount}×",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                                if (sleepTimerState.isActive) {
+                                    Surface(
+                                        onClick = { showTimerDialog = true },
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.Black.copy(alpha = 0.35f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Timer,
+                                                contentDescription = null,
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "Timer Active",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color.White
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1474,6 +1511,9 @@ fun NowPlayingScreen(
         }
 
         if (showOptionsMenu && song != null) {
+            val activeSongRepeatCount = if (playbackState.songRepeatTargetSongId == song.id) {
+                playbackState.songRepeatRemainingCount
+            } else 0
             com.example.ui.components.NowPlayingActionMenu(
                 expanded = true,
                 song = song,
@@ -1515,6 +1555,11 @@ fun NowPlayingScreen(
                 onOpenSonicStudio = {
                     showOptionsMenu = false
                     showSonicStudioSheet = true
+                },
+                activeRepeatCount = activeSongRepeatCount,
+                onRepeatSong = {
+                    showOptionsMenu = false
+                    showRepeatSongDialog = true
                 },
                 onDeleteSong = {
                     showOptionsMenu = false
@@ -1648,7 +1693,28 @@ fun NowPlayingScreen(
                 onRemoveDuplicates = onRemoveDuplicatesFromQueue,
                 onPlayNext = onPlayNext,
                 onAddToPlaylist = onAddToPlaylist,
-                onEditTags = onEditTags
+                onEditTags = onEditTags,
+                onSetSongRepeatCount = onSetSongRepeatCount,
+                isTrackSleepTimerActive = sleepTimerState.isActive && sleepTimerState.mode == "SONGS"
+            )
+        }
+
+        // Repeat This Song Count Dialog
+        if (showRepeatSongDialog && song != null) {
+            val activeSongRepeatCount = if (playbackState.songRepeatTargetSongId == song.id) {
+                playbackState.songRepeatRemainingCount
+            } else 0
+            com.example.ui.components.RepeatSongDialog(
+                song = song,
+                currentRepeatCount = activeSongRepeatCount,
+                isTrackSleepTimerActive = sleepTimerState.isActive && sleepTimerState.mode == "SONGS",
+                onSetRepeatCount = { count ->
+                    onSetSongRepeatCount(song, count)
+                },
+                onClearRepeat = {
+                    onSetSongRepeatCount(song, 0)
+                },
+                onDismiss = { showRepeatSongDialog = false }
             )
         }
 

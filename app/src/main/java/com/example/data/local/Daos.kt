@@ -80,6 +80,9 @@ interface SongDao {
     @Query("UPDATE songs SET playCount = :playCount, lastPlayed = :lastPlayed WHERE id = :songId")
     suspend fun updatePlayStats(songId: Long, playCount: Int, lastPlayed: Long)
 
+    @Query("UPDATE songs SET playCount = 0 WHERE id NOT IN (SELECT DISTINCT trackId FROM playback_history WHERE isQualified = 1 AND trackId > 0)")
+    suspend fun resetPlayCountsWithoutQualifiedHistory()
+
     @Query("SELECT * FROM songs WHERE isMissing = 0")
     suspend fun getValidSongsOnce(): List<SongEntity>
 
@@ -386,18 +389,13 @@ interface HistoryDao {
     fun getUniqueTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int>
 
     @Query("""
-        SELECT s.id, s.title, s.artist, s.album, s.genre, s.durationMs, s.path, s.contentUriString, s.artworkUri, s.albumId, s.artistId, s.trackNumber, s.year, s.dateAdded, s.lastPlayed, h.pCount as playCount, s.isFavorite, s.bitrate, s.format, s.isMissing, s.isCorrupted, s.isManuallyEdited
-        FROM songs s 
-        INNER JOIN (
-            SELECT trackId, COUNT(*) as pCount, SUM(listenedDurationMs) as pDuration 
-            FROM playback_history 
-            WHERE startedAt >= :startTime AND startedAt < :endTime AND isQualified = 1
-            GROUP BY trackId 
-            ORDER BY pCount DESC, pDuration DESC 
-            LIMIT :limit
-        ) h ON s.id = h.trackId
-        WHERE s.isMissing = 0
-        ORDER BY h.pCount DESC, h.pDuration DESC
+        SELECT s.id, s.title, s.artist, s.album, s.genre, s.durationMs, s.path, s.contentUriString, s.artworkUri, s.albumId, s.artistId, s.trackNumber, s.year, s.dateAdded, s.lastPlayed, COUNT(h.id) as playCount, s.isFavorite, s.bitrate, s.format, s.isMissing, s.isCorrupted, s.isManuallyEdited
+        FROM playback_history h
+        INNER JOIN songs s ON h.trackId = s.id
+        WHERE s.isMissing = 0 AND h.startedAt >= :startTime AND h.startedAt < :endTime AND h.isQualified = 1
+        GROUP BY s.id
+        ORDER BY playCount DESC, SUM(h.listenedDurationMs) DESC, s.lastPlayed DESC
+        LIMIT :limit
     """)
     fun getMostPlayedSongsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 20): Flow<List<SongEntity>>
 
@@ -480,6 +478,9 @@ interface HistoryDao {
     @Query("SELECT * FROM playback_history WHERE trackId = 0")
     suspend fun getUnmatchedHistory(): List<PlaybackHistoryEntity>
 
+    @Query("DELETE FROM playback_history WHERE trackId <= 0")
+    suspend fun deleteUnresolvedHistory(): Int
+
     @Query("SELECT * FROM playback_history ORDER BY startedAt DESC")
     suspend fun getAllHistoryOnce(): List<PlaybackHistoryEntity>
 
@@ -493,6 +494,12 @@ interface HistoryDao {
 
     @Query("UPDATE playback_history SET trackId = :newSongId WHERE trackId = :oldSongId")
     suspend fun migrateHistoryTrackId(oldSongId: Long, newSongId: Long)
+
+    @Query("DELETE FROM playback_history WHERE id IN (:ids)")
+    suspend fun deleteHistoryByIds(ids: List<Long>): Int
+
+    @Query("UPDATE playback_history SET listenedDurationMs = :listenedDurationMs, endedAt = :endedAt, completionPercentage = :completionPercentage WHERE id = :id")
+    suspend fun updateHistorySessionMetrics(id: Long, listenedDurationMs: Long, endedAt: Long, completionPercentage: Float)
 }
 
 data class SongPlayStatAggregation(

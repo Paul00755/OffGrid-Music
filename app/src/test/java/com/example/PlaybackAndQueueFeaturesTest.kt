@@ -411,4 +411,116 @@ class PlaybackAndQueueFeaturesTest {
         assertTrue(state.isPlaying)
         playbackManager.pause()
     }
+
+    @Test
+    fun `test setSongRepeatCount clamps to max 10 and turns off cleanly`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        val song = sampleSongs[0]
+
+        playbackManager.setSongRepeatCount(song, 15)
+        var state = playbackManager.playbackState.value
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, state.repeatMode)
+        assertEquals(song.id, state.songRepeatTargetSongId)
+        assertEquals(10, state.songRepeatRemainingCount)
+        assertEquals(10, playbackManager.getSongRepeatCountFor(song.id))
+
+        playbackManager.setSongRepeatCount(song, 0)
+        state = playbackManager.playbackState.value
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, state.repeatMode)
+        assertNull(state.songRepeatTargetSongId)
+        assertEquals(0, state.songRepeatRemainingCount)
+        assertEquals(0, playbackManager.getSongRepeatCountFor(song.id))
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test setSongRepeatCount keeps repeat mode one active across repeats until final pass`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        val song = sampleSongs[0]
+        val mediaItem = androidx.media3.common.MediaItem.Builder().setMediaId(song.id.toString()).build()
+
+        playbackManager.setSongRepeatCount(song, 3)
+        assertEquals(3, playbackManager.playbackState.value.songRepeatRemainingCount)
+
+        // Repeat pass #1 begins (remaining 3 -> 2): REPEAT_MODE_ONE stays ON
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, playbackManager.playbackState.value.repeatMode)
+        assertEquals(2, playbackManager.playbackState.value.songRepeatRemainingCount)
+
+        // Repeat pass #2 begins (remaining 2 -> 1): REPEAT_MODE_ONE stays ON
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, playbackManager.playbackState.value.repeatMode)
+        assertEquals(1, playbackManager.playbackState.value.songRepeatRemainingCount)
+
+        // Repeat pass #3 (final repeat) begins (remaining 1 -> 0): restores REPEAT_MODE_OFF so next ends naturally
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.playbackState.value.repeatMode)
+        assertNull(playbackManager.playbackState.value.songRepeatTargetSongId)
+        assertEquals(0, playbackManager.playbackState.value.songRepeatRemainingCount)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test setSongRepeatCount for queued song activates repeat count on transition`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        val queuedSong = sampleSongs[2]
+
+        playbackManager.setSongRepeatCount(queuedSong, 2)
+        assertEquals(2, playbackManager.getSongRepeatCountFor(queuedSong.id))
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.playbackState.value.repeatMode)
+
+        // Advance to queued song -> scheduled repeat count activates automatically (2 repeats left)
+        playbackManager.jumpToQueueIndex(2)
+
+        var state = playbackManager.playbackState.value
+        assertEquals(queuedSong.id, state.currentSong?.id)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, state.repeatMode)
+        assertEquals(queuedSong.id, state.songRepeatTargetSongId)
+        assertEquals(2, state.songRepeatRemainingCount)
+
+        // First repeat pass begins -> remaining repeats decrement cleanly from 2 to 1
+        val queuedMediaItem = androidx.media3.common.MediaItem.Builder().setMediaId(queuedSong.id.toString()).build()
+        playbackManager.dispatchMediaItemTransitionForTest(queuedMediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        state = playbackManager.playbackState.value
+        assertEquals(1, state.songRepeatRemainingCount)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_ONE, state.repeatMode)
+        playbackManager.pause()
+    }
+
+    @Test
+    fun `test repeat this song counts every repeat as 1 track in sleep timer and stops at 0_00`() {
+        playbackManager.playQueue(sampleSongs, startIndex = 0)
+        val song = sampleSongs[0]
+        val mediaItem = androidx.media3.common.MediaItem.Builder().setMediaId(song.id.toString()).build()
+
+        // Activate track-based sleep timer for 3 tracks AND "Repeat this song" for 5 repeats
+        sleepTimerManager.startSongCount(3, currentSongId = song.id)
+        playbackManager.setSongRepeatCount(song, 5)
+
+        // Baseline pass finishes -> Repeat #1 starts (Sleep Timer Track 1/3)
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertTrue(sleepTimerManager.state.value.isActive)
+        assertEquals(1, sleepTimerManager.state.value.countedTrackCount)
+        assertFalse(sleepTimerManager.state.value.isFinalTrack)
+
+        // Repeat #1 finishes -> Repeat #2 starts (Sleep Timer Track 2/3)
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertTrue(sleepTimerManager.state.value.isActive)
+        assertEquals(2, sleepTimerManager.state.value.countedTrackCount)
+        assertFalse(sleepTimerManager.state.value.isFinalTrack)
+
+        // Repeat #2 finishes -> Repeat #3 starts (Sleep Timer Track 3/3 = FINAL_TRACK)
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertTrue(sleepTimerManager.state.value.isActive)
+        assertEquals(3, sleepTimerManager.state.value.countedTrackCount)
+        assertTrue(sleepTimerManager.state.value.isFinalTrack)
+
+        // Repeat #3 (3rd counted track) finishes -> Sleep timer triggers final stop at 0:00 & clears repeat
+        playbackManager.dispatchMediaItemTransitionForTest(mediaItem, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        assertFalse("Sleep timer must deactivate after stopping on final repeated track", sleepTimerManager.state.value.isActive)
+        assertFalse("Playback must stop when final repeated track completes sleep timer", playbackManager.playbackState.value.isPlaying)
+        assertEquals(0L, playbackManager.playbackState.value.positionMs)
+        assertEquals(0, playbackManager.playbackState.value.songRepeatRemainingCount)
+        assertEquals(androidx.media3.common.Player.REPEAT_MODE_OFF, playbackManager.playbackState.value.repeatMode)
+    }
 }

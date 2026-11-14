@@ -2252,7 +2252,7 @@ fun SettingsScreen(
                         if (!isSearching || matchAudioDucking || broadAudioMatch) {
                             SettingsToggleRow(
                                 title = "Duck Volume for Notifications",
-                                subtitle = "Briefly lower music volume when notification chimes or alerts play",
+                                subtitle = "Instantly lower music volume for notifications without stacking on top of built-in system ducking",
                                 checked = reduceVolumeOnNotification,
                                 onCheckedChange = onSetReduceVolumeOnNotification,
                                 icon = Icons.Default.NotificationsActive,

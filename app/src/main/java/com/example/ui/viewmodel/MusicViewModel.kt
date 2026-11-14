@@ -774,6 +774,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var ignoreDurationJob: kotlinx.coroutines.Job? = null
     private var scanJob: kotlinx.coroutines.Job? = null
     private var quickScanJob: kotlinx.coroutines.Job? = null
+    private var lyricsFetchJob: kotlinx.coroutines.Job? = null
 
     val equalizerManager get() = playbackManager.equalizerManager
 
@@ -787,6 +788,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
+            try {
+                cloudSyncRepository.relinkHistoryAndRecomputePlayStats()
+            } catch (_: Exception) {}
             val updateEnabled = preferences.getUpdateNotificationsEnabledSync()
             appUpdateRepository.syncTopicSubscription(updateEnabled)
         }
@@ -1157,9 +1161,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun getLyricsOffsetMs(songId: Long): Long = preferences.getLyricsSyncOffsetMs(songId)
     fun setLyricsOffsetMs(songId: Long, offsetMs: Long) {
-        preferences.setLyricsSyncOffsetMs(songId, offsetMs)
-        cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
-        cloudSyncRepository.onLyricsUpdatedAsync(songId)
+        setLyricsSyncOffset(songId, offsetMs)
     }
     fun setLyricsFontSize(size: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setLyricsFontSize(size) }
@@ -1598,7 +1600,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         var lastFetchedSongId: Long? = null
-        var lyricsFetchJob: kotlinx.coroutines.Job? = null
         var lastSavedSongId: Long = -1L
         var lastSavedPos: Long = -1L
         var lastSaveTime: Long = 0L
@@ -1864,6 +1865,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun toggleRepeat() = playbackManager.toggleRepeat()
+    fun setSongRepeatCount(song: Song, count: Int) = playbackManager.setSongRepeatCount(song, count)
 
     fun reorderQueue(fromIndex: Int, toIndex: Int) = playbackManager.reorderQueue(fromIndex, toIndex)
     fun updateQueueOrder(newQueue: List<Song>) = playbackManager.updateQueueOrder(newQueue)
@@ -1901,7 +1903,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun getTimeOfDayDistribution(startTime: Long): Flow<com.example.data.model.TimeOfDayDistribution> = repository.getTimeOfDayDistribution(startTime)
     fun getTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int> = repository.getTrackCountBetween(startTime, endTime)
     fun getUniqueTrackCountBetween(startTime: Long, endTime: Long = 9223372036854775807L): Flow<Int> = repository.getUniqueTrackCountBetween(startTime, endTime)
-    fun getMostPlayedSongsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 20): Flow<List<Song>> = repository.getMostPlayedSongsBetween(startTime, endTime, limit)
+    fun getMostPlayedSongsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 20): Flow<List<Song>> =
+        combine(
+            repository.getMostPlayedSongsBetween(startTime, endTime, maxOf(limit * 5, 100)),
+            allSongs
+        ) { historyTop, librarySongs ->
+            val visibleById = librarySongs.associateBy { it.id }
+            val filtered = if (visibleById.isNotEmpty()) {
+                historyTop.filter { it.id in visibleById }
+            } else {
+                historyTop
+            }
+            if (filtered.size < limit && librarySongs.isNotEmpty()) {
+                val includedIds = filtered.map { it.id }.toHashSet()
+                val backfill = librarySongs
+                    .asSequence()
+                    .filter {
+                        it.playCount > 0 &&
+                            it.id !in includedIds &&
+                            (startTime <= 0L || it.lastPlayed in startTime until endTime)
+                    }
+                    .sortedWith(compareByDescending<Song> { it.playCount }.thenByDescending { it.lastPlayed })
+                    .take(limit - filtered.size)
+                    .toList()
+                (filtered + backfill).take(limit)
+            } else {
+                filtered.take(limit)
+            }
+        }
     fun getTopArtistsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 10): Flow<List<com.example.data.model.ArtistStat>> = repository.getTopArtistsBetween(startTime, endTime, limit)
     fun getTopAlbumsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 10): Flow<List<com.example.data.model.AlbumStat>> = repository.getTopAlbumsBetween(startTime, endTime, limit)
     fun getMostPlayedPlaylistsBetween(startTime: Long, endTime: Long = 9223372036854775807L, limit: Int = 10): Flow<List<Playlist>> = repository.getMostPlayedPlaylistsBetween(startTime, endTime, limit)
@@ -2183,23 +2212,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelSleepTimer() = sleepTimerManager.cancelTimer()
 
     fun associateCustomLrc(song: Song, lrcContent: String) {
+        if (playbackState.value.currentSong?.id == song.id) {
+            lyricsFetchJob?.cancel()
+        }
         viewModelScope.launch(Dispatchers.IO) {
+            val embeddedOffset = com.example.util.LrcParser.extractOffsetFromLrc(lrcContent)
+            if (embeddedOffset != null) {
+                preferences.setLyricsSyncOffsetMs(song.id, embeddedOffset)
+                com.example.widget.WidgetUpdateManager.updateLyricsOffset(getApplication(), song.id, embeddedOffset)
+                cloudSyncRepository.onLyricsOffsetChangedAsync(song.id, embeddedOffset)
+            }
+            val currentOffsetMs = preferences.getLyricsSyncOffsetMs(song.id)
             val (plain, synced) = com.example.util.LrcParser.parseLrcContent(lrcContent)
             val entity = com.example.data.local.LyricsEntity(
                 songId = song.id,
                 plainLyrics = plain,
                 syncedLyricsJson = synced,
-                isCached = true,
-                source = "Custom File"
+                isCached = false,
+                source = "Custom File",
+                updatedAt = System.currentTimeMillis()
             )
             db.lyricsDao().insertLyrics(entity)
+            com.example.util.LrcParser.writeCachedLrcFile(
+                context = getApplication(),
+                songId = song.id,
+                plainLyrics = plain,
+                syncedLyricsJson = synced,
+                offsetMs = currentOffsetMs
+            )
             com.example.util.LrcParser.writeCompanionLrcForSong(
                 context = getApplication(),
                 songPath = song.path,
                 songTitle = song.displayTitle,
                 plainLyrics = plain,
                 syncedLyricsJson = synced,
-                rawLrcContent = lrcContent
+                rawLrcContent = lrcContent,
+                offsetMs = currentOffsetMs
             )
             val domainLyrics = entity.toDomainModel()
             withContext(Dispatchers.Main) {
@@ -2209,6 +2257,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, domainLyrics)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
+            refreshCacheSizes()
         }
     }
 
@@ -2238,6 +2287,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun applySelectedLyrics(candidate: com.example.service.LyricsCandidate) {
         val song = playbackState.value.currentSong ?: return
+        lyricsFetchJob?.cancel()
         viewModelScope.launch {
             previousLyricsHistory[song.id] = _currentLyrics.value
             _canUndoLyricsForCurrentSong.value = true
@@ -2252,27 +2302,36 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentLyrics.value = updatedLyrics
             com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, updatedLyrics)
             cloudSyncRepository.onLyricsUpdatedAsync(song.id)
+            refreshCacheSizes()
         }
     }
 
-    fun forceFetchLyrics(song: Song) = viewModelScope.launch {
+    fun forceFetchLyrics(song: Song) {
+        if (playbackState.value.currentSong?.id == song.id) {
+            lyricsFetchJob?.cancel()
+        }
         val isCurrentPlaying = playbackState.value.currentSong?.id == song.id
         if (isCurrentPlaying) {
             _currentLyrics.value = com.example.data.model.Lyrics(songId = song.id, plainLyrics = null, syncedLyricsJson = null, isCached = false, source = "loading")
         }
-        try {
-            val fetched = lyricsFetcher.getOrFetchLyrics(song, forceRefresh = true)
-            if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
-                _currentLyrics.value = fetched
+        val job = viewModelScope.launch {
+            try {
+                val fetched = lyricsFetcher.getOrFetchLyrics(song, forceRefresh = true)
+                if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
+                    _currentLyrics.value = fetched
+                }
+                com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, fetched)
+                if (!fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()) {
+                    cloudSyncRepository.onLyricsUpdatedAsync(song.id)
+                }
+            } catch (e: Exception) {
+                if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
+                    _currentLyrics.value = com.example.data.model.Lyrics(songId = -1)
+                }
             }
-            com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), song.id, fetched)
-            if (!fetched.syncedLyricsJson.isNullOrBlank() || !fetched.plainLyrics.isNullOrBlank()) {
-                cloudSyncRepository.onLyricsUpdatedAsync(song.id)
-            }
-        } catch (e: Exception) {
-            if (isCurrentPlaying && playbackState.value.currentSong?.id == song.id) {
-                _currentLyrics.value = com.example.data.model.Lyrics(songId = -1)
-            }
+        }
+        if (isCurrentPlaying) {
+            lyricsFetchJob = job
         }
     }
 
@@ -2297,6 +2356,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         newLyrics: String,
         onSuccess: () -> Unit = {}
     ) {
+        if (playbackState.value.currentSong?.id == song.id) {
+            lyricsFetchJob?.cancel()
+        }
         viewModelScope.launch {
             val updatedSong = repository.updateSongTags(
                 song = song,
@@ -2395,6 +2457,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricsSyncOffset(songId: Long, offsetMs: Long) {
         preferences.setLyricsSyncOffsetMs(songId, offsetMs)
         com.example.widget.WidgetUpdateManager.updateLyricsOffset(getApplication(), songId, offsetMs)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val lyrics = db.lyricsDao().getLyricsForSong(songId)
+                val song = db.songDao().getSongById(songId)
+                if (lyrics != null && (!lyrics.plainLyrics.isNullOrBlank() || !lyrics.syncedLyricsJson.isNullOrBlank())) {
+                    com.example.util.LrcParser.writeCachedLrcFile(
+                        context = getApplication(),
+                        songId = songId,
+                        plainLyrics = lyrics.plainLyrics,
+                        syncedLyricsJson = lyrics.syncedLyricsJson,
+                        offsetMs = offsetMs
+                    )
+                    if (song != null && song.path.isNotBlank()) {
+                        com.example.util.LrcParser.writeCompanionLrcForSong(
+                            context = getApplication(),
+                            songPath = song.path,
+                            songTitle = song.toDomainModel().displayTitle,
+                            plainLyrics = lyrics.plainLyrics,
+                            syncedLyricsJson = lyrics.syncedLyricsJson,
+                            offsetMs = offsetMs
+                        )
+                    }
+                }
+            } catch (_: Exception) {}
+        }
         cloudSyncRepository.onLyricsOffsetChangedAsync(songId, offsetMs)
         cloudSyncRepository.onLyricsUpdatedAsync(songId)
     }
@@ -2712,24 +2799,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveTranscribedLyrics(preview: com.example.service.transcription.TranscribeLyricsPreview) = viewModelScope.launch(Dispatchers.IO) {
+    fun saveTranscribedLyrics(preview: com.example.service.transcription.TranscribeLyricsPreview) {
+        if (playbackState.value.currentSong?.id == preview.song.id) {
+            lyricsFetchJob?.cancel()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
         previousLyricsHistory[preview.song.id] = _currentLyrics.value
 
         val entity = com.example.data.local.LyricsEntity(
             songId = preview.song.id,
             plainLyrics = preview.plainLyrics,
             syncedLyricsJson = preview.syncedLyricsJson,
-            isCached = true,
-            source = preview.source
+            isCached = false,
+            source = preview.source,
+            updatedAt = System.currentTimeMillis()
         )
         db.lyricsDao().insertLyrics(entity)
         cloudSyncRepository.onLyricsUpdatedAsync(preview.song.id)
 
-        val lrcContent = if (!preview.syncedLyricsJson.isNullOrBlank()) {
-            com.example.util.LrcParser.formatSyncedJsonToLrc(preview.syncedLyricsJson) ?: preview.plainLyrics
-        } else {
-            preview.plainLyrics
-        }
+        val currentOffsetMs = preferences.getLyricsSyncOffsetMs(preview.song.id)
+        val lrcContent = com.example.util.LrcParser.formatLyricsToLrcContent(
+            plainLyrics = preview.plainLyrics,
+            syncedLyricsJson = preview.syncedLyricsJson,
+            offsetMs = currentOffsetMs
+        ) ?: preview.plainLyrics
 
         val audioBaseName = preview.song.path.takeIf { it.isNotBlank() }?.let { java.io.File(it).nameWithoutExtension }
         val rawTitle = audioBaseName?.takeIf { it.isNotBlank() } ?: preview.song.title.ifBlank { preview.song.displayTitle }
@@ -2744,15 +2837,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     songTitle = preview.song.displayTitle,
                     plainLyrics = preview.plainLyrics,
                     syncedLyricsJson = preview.syncedLyricsJson,
-                    rawLrcContent = lrcContent
+                    rawLrcContent = lrcContent,
+                    offsetMs = currentOffsetMs
                 )
             }
 
-            try {
-                val cacheLyricsFile = getApplication<android.app.Application>().cacheDir.resolve("lyrics").resolve("${preview.song.id}.lrc")
-                cacheLyricsFile.parentFile?.mkdirs()
-                cacheLyricsFile.writeText(lrcContent, Charsets.UTF_8)
-            } catch (_: Exception) {}
+            com.example.util.LrcParser.writeCachedLrcFile(
+                context = getApplication(),
+                songId = preview.song.id,
+                plainLyrics = preview.plainLyrics,
+                syncedLyricsJson = preview.syncedLyricsJson,
+                offsetMs = currentOffsetMs
+            )
 
             try {
                 com.example.util.AudioTagWriter.writeAudioTags(
@@ -2785,6 +2881,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 "Saved lyrics to song folder as $lrcFileName",
                 android.widget.Toast.LENGTH_LONG
             ).show()
+        }
         }
     }
 
@@ -2926,11 +3023,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun undoLyricsChanges(songId: Long) = viewModelScope.launch(Dispatchers.IO) {
+        if (playbackState.value.currentSong?.id == songId) {
+            lyricsFetchJob?.cancel()
+        }
         if (!previousLyricsHistory.containsKey(songId)) return@launch
         val previous = previousLyricsHistory.remove(songId)
 
         if (previous == null || (previous.plainLyrics.isNullOrBlank() && previous.syncedLyricsJson.isNullOrBlank())) {
             db.lyricsDao().deleteLyrics(songId)
+            val song = db.songDao().getSongById(songId)
+            com.example.util.LrcParser.deleteAllMatchingLocalLrcFiles(
+                context = getApplication(),
+                songId = songId,
+                songPath = song?.path ?: "",
+                songTitle = song?.title
+            )
             withContext(Dispatchers.Main) {
                 if (playbackState.value.currentSong?.id == songId) {
                     _currentLyrics.value = null
@@ -2939,22 +3046,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.widget.WidgetUpdateManager.syncLyricsFromApp(getApplication(), songId, null)
             }
         } else {
+            val currentOffsetMs = preferences.getLyricsSyncOffsetMs(songId)
             val entity = com.example.data.local.LyricsEntity(
                 songId = songId,
                 plainLyrics = previous.plainLyrics,
                 syncedLyricsJson = previous.syncedLyricsJson,
                 isCached = previous.isCached,
-                source = previous.source
+                source = previous.source,
+                updatedAt = System.currentTimeMillis()
             )
             db.lyricsDao().insertLyrics(entity)
+            com.example.util.LrcParser.writeCachedLrcFile(
+                context = getApplication(),
+                songId = songId,
+                plainLyrics = entity.plainLyrics,
+                syncedLyricsJson = entity.syncedLyricsJson,
+                offsetMs = currentOffsetMs
+            )
             val song = db.songDao().getSongById(songId)
-            if (song != null && !entity.syncedLyricsJson.isNullOrBlank()) {
+            if (song != null && song.path.isNotBlank()) {
                 com.example.util.LrcParser.writeCompanionLrcForSong(
                     context = getApplication(),
                     songPath = song.path,
                     songTitle = song.title,
                     plainLyrics = entity.plainLyrics,
-                    syncedLyricsJson = entity.syncedLyricsJson
+                    syncedLyricsJson = entity.syncedLyricsJson,
+                    offsetMs = currentOffsetMs
                 )
             }
             cloudSyncRepository.onLyricsUpdatedAsync(songId)

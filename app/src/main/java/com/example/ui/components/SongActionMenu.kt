@@ -4,8 +4,10 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,6 +45,8 @@ fun SongActionMenu(
     onRemoveFromQueue: (() -> Unit)? = null,
     onMoveToTop: (() -> Unit)? = null,
     onEditTags: (() -> Unit)? = null,
+    activeRepeatCount: Int = 0,
+    onRepeatSong: (() -> Unit)? = null,
     onDeleteSong: () -> Unit
 ) {
     if (!expanded) return
@@ -58,6 +63,7 @@ fun SongActionMenu(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
         ) {
@@ -195,6 +201,23 @@ fun SongActionMenu(
                 )
             }
 
+            if (isInQueue && onRepeatSong != null) {
+                MenuOptionRow(
+                    icon = Icons.Default.RepeatOne,
+                    title = if (activeRepeatCount > 0) {
+                        "Repeat this song ($activeRepeatCount× left)"
+                    } else {
+                        "Repeat this song"
+                    },
+                    iconTint = BentoPrimary,
+                    modifier = Modifier.testTag("queue_repeat_song_action"),
+                    onClick = {
+                        onDismissRequest()
+                        onRepeatSong()
+                    }
+                )
+            }
+
             if (isInQueue && onMoveToTop != null) {
                 MenuOptionRow(
                     icon = Icons.Default.VerticalAlignTop,
@@ -285,10 +308,11 @@ private fun MenuOptionRow(
     title: String,
     iconTint: Color,
     textColor: Color = BentoTextPrimary,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)

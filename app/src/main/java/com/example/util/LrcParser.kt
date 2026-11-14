@@ -36,21 +36,140 @@ object LrcParser {
             }
         }
 
-        // Fuzzy match in same directory
+        // Strict normalized match in same directory (avoid matching unrelated songs in shared folders)
         val lrcFiles = parentDir.listFiles { _, name ->
             name.endsWith(".lrc", ignoreCase = true) && !name.endsWith(".lrc.txt", ignoreCase = true)
         }
         if (!lrcFiles.isNullOrEmpty()) {
-            val normalizedBase = baseName.lowercase().replace(Regex("[^a-z0-9]"), "")
-            for (file in lrcFiles) {
-                val normFile = file.nameWithoutExtension.lowercase().replace(Regex("[^a-z0-9]"), "")
-                if (normFile.contains(normalizedBase) || normalizedBase.contains(normFile)) {
-                    return file
+            val normalizedBase = baseName.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+            if (normalizedBase.length >= 4) {
+                for (file in lrcFiles) {
+                    val normFile = file.nameWithoutExtension.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+                    if (normFile.length >= 4 && (normFile == normalizedBase || normFile == "${normalizedBase}lyrics")) {
+                        return file
+                    }
                 }
             }
         }
 
         return null
+    }
+
+    /**
+     * Deletes all local `.lrc` / `.lrc.txt` files associated with [songPath] (and optional [songTitle])
+     * as well as the cached `<songId>.lrc` file when [songId] is provided, except [keepFile] if specified.
+     */
+    fun deleteAllMatchingLocalLrcFiles(
+        context: android.content.Context?,
+        songId: Long = 0L,
+        songPath: String,
+        songTitle: String? = null,
+        keepFile: File? = null
+    ) {
+        if (context != null && songId > 0L) {
+            try {
+                val cacheFile = File(File(context.cacheDir, "lyrics"), "$songId.lrc")
+                if (cacheFile.exists() && (keepFile == null || cacheFile.absolutePath != keepFile.absolutePath)) {
+                    cacheFile.delete()
+                }
+            } catch (_: Exception) {}
+        }
+        if (songPath.isBlank()) return
+        val audioFile = File(songPath)
+        val parentDir = audioFile.parentFile ?: return
+        if (!parentDir.exists() || !parentDir.isDirectory) return
+
+        val baseName = audioFile.nameWithoutExtension
+        val candidateNames = mutableSetOf(
+            "$baseName.lrc",
+            "$baseName.LRC",
+            "$baseName - lyrics.lrc",
+            "$baseName [Lyrics].lrc",
+            "${baseName.lowercase()}.lrc",
+            "$baseName.lrc.txt",
+            "$baseName.LRC.txt"
+        )
+        if (!songTitle.isNullOrBlank()) {
+            val safeTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+            if (safeTitle.isNotBlank()) {
+                candidateNames.add("$safeTitle.lrc")
+                candidateNames.add("$safeTitle.LRC")
+                candidateNames.add("$safeTitle.lrc.txt")
+            }
+        }
+
+        val normalizedBase = baseName.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+        val matchingFiles = mutableListOf<File>()
+        for (name in candidateNames) {
+            val f = File(parentDir, name)
+            if (f.exists() && f.isFile) matchingFiles.add(f)
+        }
+        try {
+            val numberedDupRegex = Regex("^" + Regex.escape(normalizedBase) + "(?:\\d+)?(?:lyrics)?$")
+            parentDir.listFiles { _, name ->
+                name.endsWith(".lrc", ignoreCase = true) || name.endsWith(".lrc.txt", ignoreCase = true)
+            }?.forEach { file ->
+                val rawStem = file.nameWithoutExtension.lowercase().removeSuffix(".lrc")
+                val normFile = rawStem.replace(Regex("[^\\p{L}\\p{N}]"), "")
+                val isBaseMatch = normalizedBase.length >= 4 && (normFile == normalizedBase || normFile == "${normalizedBase}lyrics")
+                val isNumberedCopy = rawStem.startsWith("${baseName.lowercase()} (") && numberedDupRegex.matches(normFile)
+                val isExactBase = rawStem == baseName.lowercase() || rawStem.startsWith("${baseName.lowercase()} (")
+                if (isBaseMatch || isNumberedCopy || isExactBase) {
+                    matchingFiles.add(file)
+                }
+            }
+        } catch (_: Exception) {}
+
+        val keepPath = keepFile?.absolutePath
+        for (file in matchingFiles.distinctBy { it.absolutePath }) {
+            if (keepPath != null && file.absolutePath == keepPath) continue
+            val absPath = file.absolutePath
+            val fileName = file.name
+            try { file.delete() } catch (_: Exception) {}
+            if (context != null) {
+                removeMediaStoreEntryByPathOrName(context, absPath, fileName)
+            }
+        }
+    }
+
+    /**
+     * Writes the cached `<songId>.lrc` file in `context.cacheDir/lyrics/` with the current [offsetMs].
+     */
+    fun writeCachedLrcFile(
+        context: android.content.Context,
+        songId: Long,
+        plainLyrics: String?,
+        syncedLyricsJson: String?,
+        offsetMs: Long = 0L
+    ): File? {
+        if (songId <= 0L) return null
+        return try {
+            val cacheDir = File(context.cacheDir, "lyrics")
+            if (!cacheDir.exists()) cacheDir.mkdirs()
+            val cacheFile = File(cacheDir, "$songId.lrc")
+            val content = formatLyricsToLrcContent(
+                plainLyrics = plainLyrics,
+                syncedLyricsJson = syncedLyricsJson,
+                rawLrcContent = null,
+                offsetMs = offsetMs
+            )
+            if (content.isNullOrBlank()) {
+                if (cacheFile.exists()) cacheFile.delete()
+                null
+            } else {
+                val trimmedContent = content.trim()
+                if (cacheFile.exists()) {
+                    val existing = try { cacheFile.readText(Charsets.UTF_8).trim() } catch (_: Exception) { "" }
+                    if (existing == trimmedContent) {
+                        return cacheFile
+                    }
+                }
+                cacheFile.writeText(content, Charsets.UTF_8)
+                cacheFile
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**
@@ -117,9 +236,42 @@ object LrcParser {
         } catch (_: Exception) {}
     }
 
+    fun formatLyricsToLrcContent(
+        plainLyrics: String? = null,
+        syncedLyricsJson: String? = null,
+        rawLrcContent: String? = null,
+        offsetMs: Long = 0L
+    ): String? {
+        val body = when {
+            !syncedLyricsJson.isNullOrBlank() -> formatSyncedJsonToLrc(syncedLyricsJson, offsetMs = 0L)
+            !rawLrcContent.isNullOrBlank() && parseLrcToLines(rawLrcContent).isNotEmpty() -> {
+                val (_, json) = parseLrcContent(rawLrcContent)
+                formatSyncedJsonToLrc(json, offsetMs = 0L) ?: stripOffsetLines(rawLrcContent)
+            }
+            !plainLyrics.isNullOrBlank() -> stripOffsetLines(plainLyrics)
+            !rawLrcContent.isNullOrBlank() -> stripOffsetLines(rawLrcContent)
+            else -> null
+        }?.trim()
+
+        if (body.isNullOrBlank()) return null
+        return if (offsetMs != 0L) {
+            "[offset:$offsetMs]\n$body"
+        } else {
+            body
+        }
+    }
+
+    private fun stripOffsetLines(content: String): String {
+        return content.lines()
+            .filterNot { it.trim().startsWith("[offset:", ignoreCase = true) }
+            .joinToString("\n")
+            .trim()
+    }
+
     /**
-     * Writes synced lyrics as a standard `.lrc` file directly in the exact folder where the
-     * audio file is stored (`<audioFile.nameWithoutExtension>.lrc`), never `.lrc.txt`.
+     * Writes synced or plain lyrics as a standard `.lrc` file directly in the exact folder where the
+     * audio file is stored (`<audioFile.nameWithoutExtension>.lrc`), including `[offset:...]` if set,
+     * and deletes any old/conflicting `.lrc` files for this song.
      */
     fun writeCompanionLrcForSong(
         context: android.content.Context?,
@@ -127,69 +279,87 @@ object LrcParser {
         songTitle: String? = null,
         plainLyrics: String? = null,
         syncedLyricsJson: String? = null,
-        rawLrcContent: String? = null
+        rawLrcContent: String? = null,
+        offsetMs: Long = 0L,
+        skipDirectoryCleanup: Boolean = false
     ): File? {
         if (songPath.isBlank()) return null
         val audioFile = File(songPath)
         val parentDir = audioFile.parentFile ?: return null
         if (!parentDir.exists()) return null
 
-        val formattedLrc = when {
-            !syncedLyricsJson.isNullOrBlank() -> formatSyncedJsonToLrc(syncedLyricsJson)
-            !rawLrcContent.isNullOrBlank() && parseLrcToLines(rawLrcContent).isNotEmpty() -> {
-                val (_, json) = parseLrcContent(rawLrcContent)
-                formatSyncedJsonToLrc(json) ?: rawLrcContent.trim()
-            }
-            else -> null
+        val formattedLrc = formatLyricsToLrcContent(
+            plainLyrics = plainLyrics,
+            syncedLyricsJson = syncedLyricsJson,
+            rawLrcContent = rawLrcContent,
+            offsetMs = offsetMs
+        )
+        if (formattedLrc.isNullOrBlank()) {
+            deleteAllMatchingLocalLrcFiles(context, songId = 0L, songPath = songPath, songTitle = songTitle)
+            return null
         }
-        if (formattedLrc.isNullOrBlank()) return null
-
-        // Clean up any legacy .lrc.txt files in the song's folder and in Music/Lyrics
-        cleanupLegacyLrcTxtFiles(context, parentDir)
-        try {
-            val publicMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
-            cleanupLegacyLrcTxtFiles(context, publicMusic)
-            cleanupLegacyLrcTxtFiles(context, File(publicMusic, "Lyrics"))
-        } catch (_: Exception) {}
 
         val baseName = audioFile.nameWithoutExtension
         val lrcFileName = "$baseName.lrc"
         val targetLrcFile = File(parentDir, lrcFileName)
+        val trimmedFormatted = formattedLrc.trim()
 
-        // Also remove any lingering "<title>.lrc.txt" or "<baseName>.lrc.txt"
+        // Fast-path during batch sync: if directory cleanup already ran for this folder and
+        // the exact .lrc content is already written on disk, skip redundant scanning & I/O.
+        if (skipDirectoryCleanup && targetLrcFile.exists()) {
+            val existingContent = try { targetLrcFile.readText(Charsets.UTF_8).trim() } catch (_: Exception) { "" }
+            if (existingContent == trimmedFormatted) {
+                return targetLrcFile
+            }
+        }
+
+        if (!skipDirectoryCleanup) {
+            // Clean up any legacy .lrc.txt files in the song's folder and in Music/Lyrics
+            cleanupLegacyLrcTxtFiles(context, parentDir)
+            try {
+                val publicMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                cleanupLegacyLrcTxtFiles(context, publicMusic)
+                cleanupLegacyLrcTxtFiles(context, File(publicMusic, "Lyrics"))
+            } catch (_: Exception) {}
+
+            // Delete any other conflicting/fuzzy .lrc or .lrc.txt files for this song in the folder
+            deleteAllMatchingLocalLrcFiles(
+                context = context,
+                songId = 0L,
+                songPath = songPath,
+                songTitle = songTitle,
+                keepFile = targetLrcFile
+            )
+        }
+
         val badTxtFile = File(parentDir, "$lrcFileName.txt")
-        if (badTxtFile.exists()) {
-            val badPath = badTxtFile.absolutePath
-            badTxtFile.delete()
-            if (context != null) {
-                removeMediaStoreEntryByPathOrName(context, badPath, badTxtFile.name)
-            }
-        }
-        if (!songTitle.isNullOrBlank()) {
-            val safeTitle = songTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
-            if (safeTitle.isNotBlank()) {
-                val badTitleTxt = File(parentDir, "$safeTitle.lrc.txt")
-                if (badTitleTxt.exists()) {
-                    val badPath = badTitleTxt.absolutePath
-                    badTitleTxt.delete()
-                    if (context != null) {
-                        removeMediaStoreEntryByPathOrName(context, badPath, badTitleTxt.name)
-                    }
-                }
-            }
-        }
 
         // 1. Direct write to the song's folder (preferred, preserves exact .lrc extension)
         var written = false
         try {
             if (targetLrcFile.exists()) {
                 val existingContent = try { targetLrcFile.readText(Charsets.UTF_8).trim() } catch (_: Exception) { "" }
-                if (existingContent == formattedLrc.trim()) {
+                if (existingContent == trimmedFormatted) {
                     return targetLrcFile
                 }
+                // Try truncating/overwriting in-place first before delete+recreate
+                try {
+                    java.io.FileOutputStream(targetLrcFile, false).use { fos ->
+                        fos.write(formattedLrc.toByteArray(Charsets.UTF_8))
+                        fos.flush()
+                    }
+                    written = targetLrcFile.exists() && targetLrcFile.readText(Charsets.UTF_8).trim() == formattedLrc.trim()
+                } catch (_: Exception) {
+                    written = false
+                }
+                if (!written) {
+                    try { targetLrcFile.delete() } catch (_: Exception) {}
+                }
             }
-            targetLrcFile.writeText(formattedLrc, Charsets.UTF_8)
-            written = targetLrcFile.exists() && targetLrcFile.length() > 0L
+            if (!written) {
+                targetLrcFile.writeText(formattedLrc, Charsets.UTF_8)
+                written = targetLrcFile.exists() && targetLrcFile.length() > 0L
+            }
         } catch (_: Exception) {
             written = false
         }
@@ -210,24 +380,57 @@ object LrcParser {
                 }
                 val normalizedRelPath = if (relPath.endsWith("/")) relPath else "$relPath/"
 
-                resolver.delete(
-                    externalUri,
-                    "(${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?) AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?",
-                    arrayOf(lrcFileName, "$lrcFileName.txt", normalizedRelPath)
-                )
-
-                val values = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, lrcFileName)
-                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, normalizedRelPath)
-                }
-                val uri = resolver.insert(externalUri, values)
-                if (uri != null) {
-                    resolver.openOutputStream(uri, "wt")?.use { out ->
-                        out.write(formattedLrc.toByteArray(Charsets.UTF_8))
-                        out.flush()
+                // First query existing MediaStore URI for this exact .lrc file and overwrite in-place so MediaProvider never creates "(1).lrc"
+                var existingContentUri: android.net.Uri? = null
+                try {
+                    resolver.query(
+                        externalUri,
+                        arrayOf(android.provider.BaseColumns._ID),
+                        "(${android.provider.MediaStore.MediaColumns.DATA} = ?) OR (${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?)",
+                        arrayOf(targetLrcFile.absolutePath, lrcFileName, normalizedRelPath),
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idCol = cursor.getColumnIndex(android.provider.BaseColumns._ID)
+                            if (idCol >= 0) {
+                                existingContentUri = android.content.ContentUris.withAppendedId(externalUri, cursor.getLong(idCol))
+                            }
+                        }
                     }
-                    written = true
+                } catch (_: Exception) {}
+
+                if (existingContentUri != null) {
+                    try {
+                        resolver.openOutputStream(existingContentUri!!, "wt")?.use { out ->
+                            out.write(formattedLrc.toByteArray(Charsets.UTF_8))
+                            out.flush()
+                        }
+                        written = true
+                    } catch (_: Exception) {
+                        written = false
+                    }
+                }
+
+                if (!written) {
+                    resolver.delete(
+                        externalUri,
+                        "(${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${android.provider.MediaStore.MediaColumns.DATA} = ?) AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                        arrayOf(lrcFileName, "$lrcFileName.txt", targetLrcFile.absolutePath, normalizedRelPath)
+                    )
+
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, lrcFileName)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, normalizedRelPath)
+                    }
+                    val uri = resolver.insert(externalUri, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri, "wt")?.use { out ->
+                            out.write(formattedLrc.toByteArray(Charsets.UTF_8))
+                            out.flush()
+                        }
+                        written = true
+                    }
                 }
             } catch (_: Exception) {}
         }
@@ -258,11 +461,14 @@ object LrcParser {
         return if (targetLrcFile.exists()) targetLrcFile else null
     }
 
-    fun formatSyncedJsonToLrc(syncedJson: String?): String? {
+    fun formatSyncedJsonToLrc(syncedJson: String?, offsetMs: Long = 0L): String? {
         if (syncedJson.isNullOrBlank()) return null
         return try {
             val array = org.json.JSONArray(syncedJson)
             val sb = StringBuilder()
+            if (offsetMs != 0L) {
+                sb.append("[offset:$offsetMs]\n")
+            }
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
                 val timeMs = obj.optLong("timeMs", 0L)
@@ -278,6 +484,20 @@ object LrcParser {
         }
     }
 
+    fun extractOffsetFromLrc(content: String?): Long? {
+        if (content.isNullOrBlank()) return null
+        for (line in content.lines()) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("[offset:", ignoreCase = true)) {
+                val matcher = OFFSET_TAG_PATTERN.matcher(trimmed)
+                if (matcher.find()) {
+                    return matcher.group(1)?.toLongOrNull()
+                }
+            }
+        }
+        return null
+    }
+
     fun parseLrcContent(content: String): Pair<String?, String?> {
         if (content.isBlank()) return Pair(null, null)
 
@@ -285,7 +505,7 @@ object LrcParser {
             formatSyncedJsonToLrc(content) ?: content
         } else content
 
-        val parsedLines = parseLrcToLines(cleanContent)
+        val parsedLines = parseLrcToLines(cleanContent, applyEmbeddedOffset = false)
 
         val plainLyrics: String? = if (parsedLines.isNotEmpty()) {
             val plainTextLines = parsedLines
@@ -323,7 +543,7 @@ object LrcParser {
 
     private val OFFSET_TAG_PATTERN = Pattern.compile("^\\[offset:\\s*([+-]?\\d+)\\s*\\]$", Pattern.CASE_INSENSITIVE)
 
-    fun parseLrcToLines(content: String): List<LrcLine> {
+    fun parseLrcToLines(content: String, applyEmbeddedOffset: Boolean = false): List<LrcLine> {
         if (content.isBlank()) return emptyList()
 
         val lines = content.lines()
@@ -380,7 +600,7 @@ object LrcParser {
                     .trim()
                 val finalText = if (cleanText.isEmpty() || cleanText.all { it == '♪' || it.isWhitespace() }) "♪" else cleanText
                 for (timeMs in lineTimes) {
-                    val adjustedTimeMs = (timeMs - embeddedOffsetMs).coerceAtLeast(0L)
+                    val adjustedTimeMs = if (applyEmbeddedOffset) (timeMs - embeddedOffsetMs).coerceAtLeast(0L) else timeMs
                     parsedLines.add(LrcLine(adjustedTimeMs, finalText))
                 }
             }

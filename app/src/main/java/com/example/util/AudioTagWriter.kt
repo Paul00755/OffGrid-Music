@@ -61,8 +61,8 @@ object AudioTagWriter {
                     )
                 }
 
-                // Write/update companion .lrc file if lyrics provided
-                val lrcPath = updateCompanionLrcFile(audioFile, newLyrics)
+                // Write/update companion .lrc file if lyrics provided (preserving user offset & cleaning old files)
+                val lrcPath = updateCompanionLrcFile(context, songId, newTitle, audioFile, newLyrics)
                 if (lrcPath != null) scanPaths.add(lrcPath)
 
                 // Save companion artwork image into dedicated .thumbnail directory with unique per-track filename
@@ -165,24 +165,37 @@ object AudioTagWriter {
         return null
     }
 
-    private fun updateCompanionLrcFile(audioFile: File, lyricsText: String?): String? {
+    private fun updateCompanionLrcFile(
+        context: Context,
+        songId: Long,
+        songTitle: String?,
+        audioFile: File,
+        lyricsText: String?
+    ): String? {
         try {
-            val parentDir = audioFile.parentFile ?: return null
-            LrcParser.cleanupLegacyLrcTxtFiles(null, parentDir)
-            val lrcFile = File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
-
             if (lyricsText.isNullOrBlank()) {
-                if (lrcFile.exists() && lrcFile.canWrite()) {
-                    lrcFile.delete()
-                }
+                LrcParser.deleteAllMatchingLocalLrcFiles(
+                    context = context,
+                    songId = songId,
+                    songPath = audioFile.absolutePath,
+                    songTitle = songTitle
+                )
                 return null
-            } else {
-                FileOutputStream(lrcFile).use { fos ->
-                    fos.write(lyricsText.toByteArray(StandardCharsets.UTF_8))
-                    fos.flush()
-                }
-                return lrcFile.absolutePath
             }
+            val embeddedOffset = LrcParser.extractOffsetFromLrc(lyricsText)
+            val offsetMs = embeddedOffset ?: com.example.data.local.UserPreferencesRepository
+                .getInstance(context)
+                .getLyricsSyncOffsetMs(songId)
+            val (parsedPlain, parsedSynced) = LrcParser.parseLrcContent(lyricsText)
+            return LrcParser.writeCompanionLrcForSong(
+                context = context,
+                songPath = audioFile.absolutePath,
+                songTitle = songTitle,
+                plainLyrics = parsedPlain ?: lyricsText,
+                syncedLyricsJson = parsedSynced,
+                rawLrcContent = lyricsText,
+                offsetMs = offsetMs
+            )?.absolutePath
         } catch (e: Exception) {
             Log.w(TAG, "Could not write companion .lrc file: ${e.message}")
         }

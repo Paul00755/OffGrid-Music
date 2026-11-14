@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -280,16 +281,23 @@ fun HomeScreen(
 
     // Calculate start timestamp for selected filter using strict midnight boundaries
     val filterStartTimeMs = remember(selectedMostPlayedFilter) {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+        when (selectedMostPlayedFilter) {
+            MostPlayedFilter.ALL_TIME -> 0L
+            MostPlayedFilter.THIS_MONTH -> Calendar.getInstance().apply {
+                set(Calendar.DAY_OF_MONTH, 1)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            else -> Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                add(Calendar.DAY_OF_YEAR, -(selectedMostPlayedFilter.days - 1))
+            }.timeInMillis
         }
-        if (selectedMostPlayedFilter.days > 0) {
-            cal.add(Calendar.DAY_OF_YEAR, -(selectedMostPlayedFilter.days - 1))
-        }
-        cal.timeInMillis
     }
 
     val mostPlayedFlow = remember(filterStartTimeMs) { getMostPlayedSongsSince(filterStartTimeMs, 10) }
@@ -301,12 +309,17 @@ fun HomeScreen(
     val rawTopAlbums by topAlbumsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val mostPlayedFilteredSongs = remember(rawMostPlayedFilteredSongs, allSongs, selectedMostPlayedFilter) {
-        if (rawMostPlayedFilteredSongs.isNotEmpty()) {
-            rawMostPlayedFilteredSongs
+        if (rawMostPlayedFilteredSongs.size >= 10) {
+            rawMostPlayedFilteredSongs.take(10)
         } else if (selectedMostPlayedFilter == MostPlayedFilter.ALL_TIME) {
-            allSongs.filter { it.playCount > 0 }.sortedByDescending { it.playCount }.take(10)
+            val existingIds = rawMostPlayedFilteredSongs.map { it.id }.toHashSet()
+            val backfill = allSongs
+                .filter { it.playCount > 0 && it.id !in existingIds }
+                .sortedByDescending { it.playCount }
+                .take(10 - rawMostPlayedFilteredSongs.size)
+            (rawMostPlayedFilteredSongs + backfill).take(10)
         } else {
-            emptyList()
+            rawMostPlayedFilteredSongs.take(10)
         }
     }
 
@@ -482,68 +495,74 @@ fun HomeScreen(
                         .fillMaxSize()
                         .background(BentoCardSurface)
                 ) {
-                    // 1. Top Brand & Account Header (Pinned at Top, Flush to Container)
-                    Column(
+                    // 1. Compact Pinned Brand Bar
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
                                 androidx.compose.ui.graphics.Brush.verticalGradient(
                                     colors = listOf(
                                         BentoPrimary.copy(alpha = 0.14f),
-                                        BentoPrimary.copy(alpha = 0.03f)
+                                        BentoPrimary.copy(alpha = 0.04f)
                                     )
                                 )
                             )
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = BentoPrimary.copy(alpha = 0.18f),
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.GraphicEq,
-                                            contentDescription = null,
-                                            tint = BentoPrimary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(9.dp))
-                                Text(
-                                    text = "OFFGRID MUSIC",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = BentoTextPrimary,
-                                    letterSpacing = 0.8.sp
-                                )
-                            }
-
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
-                                onClick = { coroutineScope.launch { drawerState.close() } },
                                 shape = CircleShape,
-                                color = BentoCardDarkPurple.copy(alpha = 0.65f),
-                                modifier = Modifier.size(28.dp)
+                                color = BentoPrimary.copy(alpha = 0.18f),
+                                modifier = Modifier.size(30.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Close Menu",
-                                        tint = BentoTextSecondary,
-                                        modifier = Modifier.size(15.dp)
+                                        imageVector = Icons.Default.GraphicEq,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
+                            Spacer(modifier = Modifier.width(9.dp))
+                            Text(
+                                text = "OFFGRID MUSIC",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = BentoTextPrimary,
+                                letterSpacing = 0.8.sp
+                            )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            onClick = { coroutineScope.launch { drawerState.close() } },
+                            shape = CircleShape,
+                            color = BentoCardDarkPurple.copy(alpha = 0.65f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Menu",
+                                    tint = BentoTextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = BentoBorder.copy(alpha = 0.4f))
+
+                    // 2. Scrollable Drawer Body (Account + Quick Access + Shortcuts adapt smoothly to any height)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
 
                         // Compact Account Card
                         val isLoggedIn = userAccount != null && (!userAccount.email.isNullOrBlank() || !userAccount.displayName.isNullOrBlank()) && !userAccount.isAnonymous
@@ -733,18 +752,7 @@ fun HomeScreen(
                                 }
                             }
                         }
-                    }
 
-                    HorizontalDivider(color = BentoBorder.copy(alpha = 0.4f))
-
-                    // 2. Scrollable Essential Quick-Access Content (Adapts to any display height)
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
                         Text(
                             text = "QUICK ACCESS",
                             fontSize = 10.sp,
@@ -850,51 +858,59 @@ fun HomeScreen(
                         }
                     }
 
-                    // 3. Pinned Bottom Footer (Clears floating mini-player when active)
-                    val bottomClearance = if (playbackState.currentSong != null) 86.dp else 14.dp
+                    // 3. Pinned Bottom Footer ("All Settings & Preferences" flush at bottom edge of sidebar)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(BentoCardSurface)
-                            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = bottomClearance)
                     ) {
-                        Surface(
-                            onClick = { closeSidebarAndRun { onOpenSettings("ALL") } },
-                            shape = RoundedCornerShape(14.dp),
-                            color = BentoPrimary.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.38f)),
-                            modifier = Modifier.fillMaxWidth()
+                        HorizontalDivider(
+                            color = BentoBorder.copy(alpha = 0.55f),
+                            thickness = 1.dp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 11.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            Surface(
+                                onClick = { closeSidebarAndRun { onOpenSettings("ALL") } },
+                                shape = RoundedCornerShape(14.dp),
+                                color = BentoPrimary.copy(alpha = 0.14f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.38f)),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Settings,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "All Settings & Preferences",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary
+                                        )
+                                    }
                                     Icon(
-                                        imageVector = Icons.Default.Settings,
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                         contentDescription = null,
                                         tint = BentoPrimary,
                                         modifier = Modifier.size(18.dp)
                                     )
-                                    Text(
-                                        text = "All Settings & Preferences",
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BentoTextPrimary
-                                    )
                                 }
-                                Icon(
-                                    imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = null,
-                                    tint = BentoPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
                             }
                         }
                     }

@@ -80,6 +80,7 @@ fun ListeningStatsDetailScreen(
     var selectedPeriod by remember { mutableStateOf(DetailedStatsPeriod.SEVEN_DAYS) }
     var currentStoryRange by remember { mutableStateOf(StoryTimeRange.LAST_7_DAYS) }
     var showWrappedDialog by remember { mutableStateOf(false) }
+    var showStoryPeriodDialog by remember { mutableStateOf(false) }
     var showSharePeriodDialog by remember { mutableStateOf(false) }
     var showShareStatsCardDialog by remember { mutableStateOf(false) }
     var screenEntered by remember { mutableStateOf(true) }
@@ -272,6 +273,20 @@ fun ListeningStatsDetailScreen(
         )
     }
 
+    if (showStoryPeriodDialog) {
+        SharePeriodSelectionDialog(
+            selectedRange = currentStoryRange,
+            title = "Launch Story Recap",
+            subtitle = "Choose a date, range, or timeframe for your Story",
+            onDismiss = { showStoryPeriodDialog = false },
+            onRangeSelected = { range ->
+                currentStoryRange = range
+                showStoryPeriodDialog = false
+                showWrappedDialog = true
+            }
+        )
+    }
+
     if (showSharePeriodDialog) {
         SharePeriodSelectionDialog(
             selectedRange = currentStoryRange,
@@ -334,7 +349,7 @@ fun ListeningStatsDetailScreen(
                             tint = BentoPrimary
                         )
                     }
-                    IconButton(onClick = { showWrappedDialog = true }) {
+                    IconButton(onClick = { showStoryPeriodDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = "OffGrid Wrapped",
@@ -381,7 +396,7 @@ fun ListeningStatsDetailScreen(
                         isPlaying = playbackState.isPlaying,
                         currentSongId = playbackState.currentSong?.id,
                         onPlaySong = onSongClick,
-                        onLaunchWrapped = { showWrappedDialog = true },
+                        onLaunchWrapped = { showStoryPeriodDialog = true },
                         onShareStats = { showSharePeriodDialog = true }
                     )
                 }

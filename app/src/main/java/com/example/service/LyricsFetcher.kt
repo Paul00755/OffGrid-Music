@@ -376,20 +376,30 @@ class LyricsFetcher(
         .readTimeout(6, TimeUnit.SECONDS)
         .build()
 
-    private fun writeLyricsFileCache(songId: Long, plain: String?, syncedJson: String?) {
+    private fun getOffsetForSong(songId: Long): Long {
+        val ctx = context ?: return 0L
+        return try {
+            com.example.data.local.UserPreferencesRepository.getInstance(ctx).getLyricsSyncOffsetMs(songId)
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun writeLyricsFileCache(
+        songId: Long,
+        plain: String?,
+        syncedJson: String?,
+        offsetMs: Long = getOffsetForSong(songId)
+    ) {
         try {
             val ctx = context ?: return
-            val dir = ctx.cacheDir.resolve("lyrics")
-            if (!dir.exists()) dir.mkdirs()
-            val file = java.io.File(dir, "$songId.lrc")
-            val content = if (!syncedJson.isNullOrBlank()) {
-                com.example.util.LrcParser.formatSyncedJsonToLrc(syncedJson) ?: plain ?: ""
-            } else {
-                plain ?: ""
-            }
-            if (content.isNotBlank()) {
-                file.writeText(content, Charsets.UTF_8)
-            }
+            com.example.util.LrcParser.writeCachedLrcFile(
+                context = ctx,
+                songId = songId,
+                plainLyrics = plain,
+                syncedLyricsJson = syncedJson,
+                offsetMs = offsetMs
+            )
         } catch (_: Exception) {}
     }
 
@@ -401,27 +411,34 @@ class LyricsFetcher(
         songPath: String? = null,
         songTitle: String? = null
     ): Lyrics = withContext(Dispatchers.IO) {
-        val parsedSynced = if (!syncedLyricsRaw.isNullOrBlank()) {
-            val (_, json) = com.example.util.LrcParser.parseLrcContent(syncedLyricsRaw)
-            json ?: syncedLyricsRaw
-        } else null
+        val (parsedPlainFromLrc, parsedSynced) = if (!syncedLyricsRaw.isNullOrBlank()) {
+            val (p, json) = com.example.util.LrcParser.parseLrcContent(syncedLyricsRaw)
+            Pair(p, json ?: if (syncedLyricsRaw.trim().startsWith("[{")) syncedLyricsRaw else null)
+        } else {
+            Pair(null, null)
+        }
 
+        val effectivePlain = plainLyrics?.takeIf { it.isNotBlank() } ?: parsedPlainFromLrc
         val entity = LyricsEntity(
             songId = songId,
-            plainLyrics = plainLyrics,
+            plainLyrics = effectivePlain,
             syncedLyricsJson = parsedSynced,
-            isCached = true,
-            source = source
+            isCached = false,
+            source = source,
+            updatedAt = System.currentTimeMillis()
         )
         lyricsDao.insertLyrics(entity)
-        writeLyricsFileCache(songId, entity.plainLyrics, entity.syncedLyricsJson)
-        if (!songPath.isNullOrBlank() && !entity.syncedLyricsJson.isNullOrBlank()) {
+        val currentOffsetMs = getOffsetForSong(songId)
+        writeLyricsFileCache(songId, entity.plainLyrics, entity.syncedLyricsJson, currentOffsetMs)
+        if (!songPath.isNullOrBlank()) {
             com.example.util.LrcParser.writeCompanionLrcForSong(
                 context = context,
                 songPath = songPath,
                 songTitle = songTitle,
                 plainLyrics = entity.plainLyrics,
-                syncedLyricsJson = entity.syncedLyricsJson
+                syncedLyricsJson = entity.syncedLyricsJson,
+                rawLrcContent = syncedLyricsRaw ?: effectivePlain,
+                offsetMs = currentOffsetMs
             )
         }
         entity.toDomainModel()
@@ -664,30 +681,38 @@ class LyricsFetcher(
         songPath: String? = null,
         songTitle: String? = null
     ): Lyrics {
-        if (!forceRefresh) {
-            val latest = lyricsDao.getLyricsForSong(entity.songId)
-            if (latest != null && (!latest.syncedLyricsJson.isNullOrBlank() || !latest.plainLyrics.isNullOrBlank())) {
-                if (!songPath.isNullOrBlank() && !latest.syncedLyricsJson.isNullOrBlank()) {
+        val currentOffsetMs = getOffsetForSong(entity.songId)
+        val latest = lyricsDao.getLyricsForSong(entity.songId)
+        val latestHasContent = latest != null && (!latest.syncedLyricsJson.isNullOrBlank() || !latest.plainLyrics.isNullOrBlank())
+        if (latestHasContent && latest != null) {
+            val shouldKeepExisting = !forceRefresh ||
+                (!latest.isCached && entity.isCached) ||
+                latest.updatedAt > entity.updatedAt
+            if (shouldKeepExisting) {
+                writeLyricsFileCache(latest.songId, latest.plainLyrics, latest.syncedLyricsJson, currentOffsetMs)
+                if (!songPath.isNullOrBlank()) {
                     com.example.util.LrcParser.writeCompanionLrcForSong(
                         context = context,
                         songPath = songPath,
                         songTitle = songTitle,
                         plainLyrics = latest.plainLyrics,
-                        syncedLyricsJson = latest.syncedLyricsJson
+                        syncedLyricsJson = latest.syncedLyricsJson,
+                        offsetMs = currentOffsetMs
                     )
                 }
                 return latest.toDomainModel()
             }
         }
         lyricsDao.insertLyrics(entity)
-        writeLyricsFileCache(entity.songId, entity.plainLyrics, entity.syncedLyricsJson)
-        if (!songPath.isNullOrBlank() && !entity.syncedLyricsJson.isNullOrBlank()) {
+        writeLyricsFileCache(entity.songId, entity.plainLyrics, entity.syncedLyricsJson, currentOffsetMs)
+        if (!songPath.isNullOrBlank()) {
             com.example.util.LrcParser.writeCompanionLrcForSong(
                 context = context,
                 songPath = songPath,
                 songTitle = songTitle,
                 plainLyrics = entity.plainLyrics,
-                syncedLyricsJson = entity.syncedLyricsJson
+                syncedLyricsJson = entity.syncedLyricsJson,
+                offsetMs = currentOffsetMs
             )
         }
         return entity.toDomainModel()
@@ -697,47 +722,59 @@ class LyricsFetcher(
         // 1. Check database cache - if we already have configured or cached lyrics (synced or plain), return them immediately
         val cached = lyricsDao.getLyricsForSong(song.id)
         if (!forceRefresh && cached != null && (!cached.syncedLyricsJson.isNullOrBlank() || !cached.plainLyrics.isNullOrBlank())) {
-            if (!cached.syncedLyricsJson.isNullOrBlank() && song.path.isNotBlank()) {
+            val currentOffsetMs = getOffsetForSong(song.id)
+            writeLyricsFileCache(song.id, cached.plainLyrics, cached.syncedLyricsJson, currentOffsetMs)
+            if (song.path.isNotBlank()) {
                 com.example.util.LrcParser.writeCompanionLrcForSong(
                     context = context,
                     songPath = song.path,
                     songTitle = song.displayTitle,
                     plainLyrics = cached.plainLyrics,
-                    syncedLyricsJson = cached.syncedLyricsJson
+                    syncedLyricsJson = cached.syncedLyricsJson,
+                    offsetMs = currentOffsetMs
                 )
             }
             return@withContext cached.toDomainModel()
         }
 
-        var fallbackPlain: String? = cached?.plainLyrics
-        var fallbackSource: String = cached?.source ?: "none"
+        var fallbackPlain: String? = if (!forceRefresh) cached?.plainLyrics else null
+        var fallbackSource: String = if (!forceRefresh) (cached?.source ?: "none") else "none"
 
-        // 2. Search for local .lrc file in the same folder as the audio file
-        try {
-            val localLrcFile = com.example.util.LrcParser.findLocalLrcFile(song.path)
-            if (localLrcFile != null && localLrcFile.exists()) {
-                val rawBytes = localLrcFile.readBytes()
-                var rawContent = String(rawBytes, java.nio.charset.StandardCharsets.UTF_8)
-                if (rawContent.contains('\u0000')) {
-                    rawContent = String(rawBytes, java.nio.charset.Charset.forName("GBK"))
+        // 2. Search for local .lrc file in the same folder as the audio file (only when not forcing an online refresh)
+        if (!forceRefresh) {
+            try {
+                val localLrcFile = com.example.util.LrcParser.findLocalLrcFile(song.path)
+                if (localLrcFile != null && localLrcFile.exists()) {
+                    val rawBytes = localLrcFile.readBytes()
+                    var rawContent = String(rawBytes, java.nio.charset.StandardCharsets.UTF_8)
+                    if (rawContent.contains('\u0000')) {
+                        rawContent = String(rawBytes, java.nio.charset.Charset.forName("GBK"))
+                    }
+                    val content = rawContent.removePrefix("\uFEFF").replace("\r\n", "\n").replace("\r", "\n")
+                    val embeddedOffset = com.example.util.LrcParser.extractOffsetFromLrc(content)
+                    if (embeddedOffset != null && context != null) {
+                        val prefs = com.example.data.local.UserPreferencesRepository.getInstance(context)
+                        if (prefs.getLyricsSyncOffsetUpdatedAt(song.id) == 0L) {
+                            prefs.setLyricsSyncOffsetMs(song.id, embeddedOffset)
+                        }
+                    }
+                    val (plain, synced) = com.example.util.LrcParser.parseLrcContent(content)
+                    if (!synced.isNullOrBlank()) {
+                        val entity = LyricsEntity(
+                            songId = song.id,
+                            plainLyrics = plain ?: fallbackPlain,
+                            syncedLyricsJson = synced,
+                            isCached = true,
+                            source = "Local LRC (${localLrcFile.name})"
+                        )
+                        return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh, song.path, song.displayTitle)
+                    } else if (!plain.isNullOrBlank()) {
+                        fallbackPlain = plain
+                        fallbackSource = "Local LRC (${localLrcFile.name})"
+                    }
                 }
-                val content = rawContent.removePrefix("\uFEFF").replace("\r\n", "\n").replace("\r", "\n")
-                val (plain, synced) = com.example.util.LrcParser.parseLrcContent(content)
-                if (!synced.isNullOrBlank()) {
-                    val entity = LyricsEntity(
-                        songId = song.id,
-                        plainLyrics = plain ?: fallbackPlain,
-                        syncedLyricsJson = synced,
-                        isCached = true,
-                        source = "Local LRC (${localLrcFile.name})"
-                    )
-                    return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh, song.path, song.displayTitle)
-                } else if (!plain.isNullOrBlank()) {
-                    fallbackPlain = plain
-                    fallbackSource = "Local LRC (${localLrcFile.name})"
-                }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
 
         // 3. Check for embedded lyrics in audio file tags
         val embedded = extractEmbeddedLyrics(song.path)
@@ -942,7 +979,7 @@ class LyricsFetcher(
                 isCached = true,
                 source = bestSource
             )
-            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh)
+            return@withContext persistFetchedLyricsIfNotOverridden(entity, forceRefresh, song.path, song.displayTitle)
         }
 
         if (!forceRefresh) {

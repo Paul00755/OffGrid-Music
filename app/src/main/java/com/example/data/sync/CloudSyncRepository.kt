@@ -154,11 +154,14 @@ class CloudSyncRepository(
     private val auth: FirebaseAuth?
         get() = injectedAuth ?: com.example.util.FirebaseInitializer.getAuth(context)
 
+    @androidx.annotation.VisibleForTesting
+    internal var testCurrentUidOverride: String? = null
+
     fun getCurrentUid(): String? {
         return try {
-            auth?.currentUser?.uid?.takeIf { it.isNotBlank() }
+            auth?.currentUser?.uid?.takeIf { it.isNotBlank() } ?: testCurrentUidOverride
         } catch (_: Throwable) {
-            null
+            testCurrentUidOverride
         }
     }
 
@@ -248,7 +251,34 @@ class CloudSyncRepository(
 
     /** Observe account changes for isolation and cleanup only; app startup never downloads cloud state. */
     fun onAuthStateChanged(newUid: String?) {
-        scope.launch { prepareAuthState(newUid) }
+        scope.launch {
+            if (prepareAuthState(newUid)) {
+                checkAndTriggerScheduledAutoBackupIfDue()
+            }
+        }
+    }
+
+    fun checkAndTriggerScheduledAutoBackupIfDue() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val uid = getCurrentUid() ?: return@launch
+                if (!userPreferences.getAutomaticBackupEnabledSync()) return@launch
+                val freq = userPreferences.getBackupFrequencySync()
+                val intervalMs = when (freq) {
+                    BackupFrequency.DAILY -> 24L * 60L * 60L * 1000L
+                    BackupFrequency.WEEKLY -> 7L * 24L * 60L * 60L * 1000L
+                    BackupFrequency.MONTHLY -> 30L * 24L * 60L * 60L * 1000L
+                }
+                val lastBackup = userPreferences.lastBackupTimestamp.firstOrNull() ?: 0L
+                val now = System.currentTimeMillis()
+                if (lastBackup > 0L && (now - lastBackup) >= intervalMs && uid.isNotBlank()) {
+                    Log.d(TAG, "Scheduled auto-backup interval (${freq.displayName}) elapsed; running background backup")
+                    performBackupInternal(isAutoBackup = true)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Scheduled auto-backup check skipped: ${e.message}")
+            }
+        }
     }
 
     /** The single automatic sync path: a successful Google or email/password sign-in. */
@@ -296,6 +326,7 @@ class CloudSyncRepository(
                 SongIdentityHelper.clearCache()
 
                 val backupCollection = fs.collection(USERS_COLLECTION).document(uid).collection("backup")
+                var preSyncedLyricSongIds: Set<Long> = emptySet()
                 val latestBackupDoc = backupCollection.document("latest").get(Source.SERVER).await()
                 val latestBackupData = latestBackupDoc.data
                 if (latestBackupDoc.exists() && latestBackupData != null) {
@@ -322,60 +353,13 @@ class CloudSyncRepository(
                         throw IllegalStateException("Cloud playlist history is incomplete; local data was left unchanged")
                     }
                     Log.d(TAG, "Restoring authoritative backup snapshot for user $uid")
-                    restoreFromBackupSnapshot(
+                    preSyncedLyricSongIds = restoreFromBackupSnapshot(
                         uid,
                         latestBackupData,
                         cloudHistory = cloudHistory,
                         cloudPlaylistHistory = cloudPlaylistHistory,
                         cloudLyrics = cloudLyrics
                     )
-                    // Reconcile live collections (settings, favorites, playlists, smart playlists, lyrics, offsets)
-                    // in parallel so real-time updates made after the last backup snapshot are never lost!
-                    coroutineScope {
-                        val settingsJob = launch {
-                            try {
-                                syncSettings(uid, fs, forceRestoreIfInitial = isInitialLogin, pushLocalIfNewer = true)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental settings sync skipped: ${e.message}")
-                            }
-                        }
-                        val favsJob = launch {
-                            try {
-                                syncFavorites(uid, fs, pushLocalMissing = true, replaceLocal = false)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental favorites sync skipped: ${e.message}")
-                            }
-                        }
-                        val playlistsJob = launch {
-                            try {
-                                syncPlaylists(uid, fs, pushLocalMissing = true, forceCloudRestore = false)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental playlists sync skipped: ${e.message}")
-                            }
-                        }
-                        val smartPlJob = launch {
-                            try {
-                                syncSmartPlaylists(uid, fs, pushLocalMissing = true, replaceLocal = false)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental smart playlists sync skipped: ${e.message}")
-                            }
-                        }
-                        val offsetsJob = launch {
-                            try {
-                                syncLyricsOffsets(uid, fs, pushLocalMissing = true, replaceLocal = false)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental lyrics offset sync skipped: ${e.message}")
-                            }
-                        }
-                        val lyricsJob = launch {
-                            try {
-                                syncLiveCloudLyrics(uid, fs, pushLocalMissing = true, replaceLocal = false)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Incremental live cloud lyrics sync skipped: ${e.message}")
-                            }
-                        }
-                        joinAll(settingsJob, favsJob, playlistsJob, smartPlJob, offsetsJob, lyricsJob)
-                    }
                 } else {
                     // The first-login migration policy remains in place for accounts without a snapshot.
                     // All reads must complete before an account can be classified as empty.
@@ -415,9 +399,12 @@ class CloudSyncRepository(
                 }
 
                 if (getCurrentUid() != uid) throw CancellationException("Account changed during cloud sync")
-                relinkHistoryAndRecomputePlayStats()
-                ensureLocalCompanionLrcFilesAndCleanupTxt()
-                if (!manualSync) syncUserRootDocument(uid, fs)
+                coroutineScope {
+                    val relinkJob = async { relinkHistoryAndRecomputePlayStats() }
+                    val lrcJob = async { ensureLocalCompanionLrcFilesAndCleanupTxt(skipSongIds = preSyncedLyricSongIds) }
+                    val rootJob = async { if (!manualSync) syncUserRootDocument(uid, fs) }
+                    awaitAll(relinkJob, lrcJob, rootJob)
+                }
 
                 val now = System.currentTimeMillis()
                 userPreferences.setLastSyncedTimestamp(now)
@@ -699,17 +686,23 @@ class CloudSyncRepository(
         songsByFilename: Map<String, List<SongEntity>>,
         songsByCleanTitle: Map<String, List<SongEntity>>
     ): SongEntity? {
-        // 1. Direct signature match
-        songsBySig[signature]?.let { return it }
+        if (signature == "unresolved" && title.isBlank() && filename.isBlank()) return null
 
-        val cleanTitle = com.example.util.TagCleaner.cleanTitle(title, filename).lowercase()
-        val cleanTitleRaw = com.example.util.TagCleaner.cleanTitle(title, "").lowercase()
-        val cleanArtist = com.example.util.TagCleaner.cleanArtist(artist).lowercase()
+        // 1. Direct signature match
+        if (signature.isNotBlank() && signature != "unresolved") {
+            songsBySig[signature]?.let { return it }
+        }
+
+        val cleanTitle = com.example.util.TagCleaner.cleanTitle(title, filename).lowercase().trim()
+        val cleanTitleRaw = com.example.util.TagCleaner.cleanTitle(title, "").lowercase().trim()
+        val cleanArtist = com.example.util.TagCleaner.cleanArtist(artist).lowercase().trim()
         val primaryArtist = SongIdentityHelper.extractPrimaryArtist(artist)
+
+        if (cleanTitle.isBlank() || cleanTitle == "unknown title") return null
 
         // 2. Normalized Title + Artist match
         songsByNormKey["$cleanTitle|$cleanArtist"]?.firstOrNull()?.let { return it }
-        if (cleanTitleRaw.isNotBlank() && cleanTitleRaw != cleanTitle) {
+        if (cleanTitleRaw.isNotBlank() && cleanTitleRaw != "unknown title" && cleanTitleRaw != cleanTitle) {
             songsByNormKey["$cleanTitleRaw|$cleanArtist"]?.firstOrNull()?.let { return it }
         }
 
@@ -726,7 +719,7 @@ class CloudSyncRepository(
 
         // 4. Clean title candidates (exact or with primary artist / duration tolerance)
         val titleCandidates = songsByCleanTitle[cleanTitle]
-            ?: (if (cleanTitleRaw.isNotBlank()) songsByCleanTitle[cleanTitleRaw] else null)
+            ?: (if (cleanTitleRaw.isNotBlank() && cleanTitleRaw != "unknown title") songsByCleanTitle[cleanTitleRaw] else null)
         if (!titleCandidates.isNullOrEmpty()) {
             if (titleCandidates.size == 1) return titleCandidates.first()
             if (primaryArtist.isNotBlank() && primaryArtist != "unknown artist") {
@@ -743,8 +736,8 @@ class CloudSyncRepository(
 
         // 5. Filename-cleaned-as-title lookup (critical when a track was renamed from raw filename to clean title or vice versa)
         if (filename.isNotBlank()) {
-            val cleanedFromFilename = com.example.util.TagCleaner.cleanTitle(filename.substringBeforeLast('.'), filename).lowercase()
-            if (cleanedFromFilename.isNotBlank()) {
+            val cleanedFromFilename = com.example.util.TagCleaner.cleanTitle(filename.substringBeforeLast('.'), filename).lowercase().trim()
+            if (cleanedFromFilename.isNotBlank() && cleanedFromFilename != "unknown title") {
                 val fileTitleCandidates = songsByCleanTitle[cleanedFromFilename]
                 if (!fileTitleCandidates.isNullOrEmpty()) {
                     if (fileTitleCandidates.size == 1) return fileTitleCandidates.first()
@@ -757,12 +750,11 @@ class CloudSyncRepository(
 
         // 6. Alphanumeric fuzzy title + artist/duration fallback across songsBySig values
         val targetAlphaTitle = SongIdentityHelper.normalizeAlphanumeric(cleanTitle.ifBlank { filename.substringBeforeLast('.') })
-        if (targetAlphaTitle.length >= 3) {
+        if (targetAlphaTitle.length >= 4) {
             val alphaMatches = songsBySig.values.filter { song ->
                 val songCleanTitle = com.example.util.TagCleaner.cleanTitle(song.title, song.path.substringAfterLast('/'))
                 val songAlpha = SongIdentityHelper.normalizeAlphanumeric(songCleanTitle)
-                songAlpha == targetAlphaTitle ||
-                    (songAlpha.length >= 5 && targetAlphaTitle.length >= 5 && (songAlpha.startsWith(targetAlphaTitle) || targetAlphaTitle.startsWith(songAlpha)))
+                songAlpha == targetAlphaTitle
             }
             if (alphaMatches.size == 1) return alphaMatches.first()
             if (alphaMatches.size > 1) {
@@ -826,11 +818,11 @@ class CloudSyncRepository(
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
         val songsByNormKey = allSongs.groupBy {
             "${com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
+        }.filterKeys { !it.startsWith("|") }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }.filterKeys { it.isNotBlank() }
         val songsByCleanTitle = allSongs.groupBy {
             com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()
-        }
+        }.filterKeys { it.isNotBlank() }
         val restoredPlaylistIds = HashSet<Long>()
 
         for (cloudPl in cloudPlaylists) {
@@ -1060,8 +1052,10 @@ class CloudSyncRepository(
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
         val songsByNormKey = allSongs.groupBy {
             "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByCleanTitle = allSongs.groupBy { com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase() }
+        }.filterKeys { !it.startsWith("|") }
+        val songsByCleanTitle = allSongs.groupBy {
+            com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()
+        }.filterKeys { it.isNotBlank() }
         val existingSessionIds = historyDao.getAllHistoryOnce().mapNotNull { it.sessionId.takeIf(String::isNotBlank) }.toHashSet()
         val toInsert = mutableListOf<PlaybackHistoryEntity>()
         for (event in cloudEvents) {
@@ -1101,17 +1095,18 @@ class CloudSyncRepository(
         var histBatch = fs.batch()
         var histBatchCount = 0
         for (history in localHistory) {
-            val matchingSong = songIdMap[history.trackId]
-            val songSignature = matchingSong?.let { SongIdentityHelper.computeSignature(it) } ?: "unresolved"
+            val matchingSong = songIdMap[history.trackId] ?: continue
+            val songSignature = SongIdentityHelper.computeSignature(matchingSong)
+            if (songSignature.isBlank() || songSignature == "unresolved") continue
             val sessionId = stableHistorySessionId(history, songSignature)
             if (cachedCloudHistoryEvents.containsKey(sessionId)) continue
             val event = CloudPlaybackEvent(
                 sessionId = sessionId,
                 songSignature = songSignature,
-                title = matchingSong?.title ?: "",
-                artist = matchingSong?.artist ?: "",
-                album = matchingSong?.album ?: "",
-                durationMs = matchingSong?.durationMs ?: 0L,
+                title = matchingSong.title,
+                artist = matchingSong.artist,
+                album = matchingSong.album,
+                durationMs = matchingSong.durationMs,
                 startedAt = history.startedAt,
                 endedAt = history.endedAt,
                 listenedDurationMs = history.listenedDurationMs,
@@ -1133,82 +1128,186 @@ class CloudSyncRepository(
     }
 
     /**
-     * Relinks any `playback_history` rows with `trackId == 0` against local songs and recomputes
-     * `playCount` and `lastPlayed` on `songs` so Most Played, Recently Played, and Listening Stats
-     * immediately reflect cloud history after login or library scan.
+     * Relinks any `playback_history` rows with `trackId == 0` against local songs, cleans up
+     * unresolvable orphan history rows, and authoritatively recomputes `playCount` and `lastPlayed`
+     * on `songs` from qualified `playback_history` records so Most Played, Recently Played, and
+     * Listening Stats are always 100% accurate and never inflated.
      */
     suspend fun relinkHistoryAndRecomputePlayStats() = withContext(Dispatchers.IO) {
         val allSongs = songDao.getAllSongsOnce()
         if (allSongs.isEmpty()) return@withContext
 
+        val songById = allSongs.associateBy { it.id }
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
         val songsByNormKey = allSongs.groupBy {
-            "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByCleanTitle = allSongs.groupBy { com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase() }
+            "${com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
+        }.filterKeys { !it.startsWith("|") }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }.filterKeys { it.isNotBlank() }
+        val songsByCleanTitle = allSongs.groupBy {
+            com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()
+        }.filterKeys { it.isNotBlank() }
 
-        val unmatched = historyDao.getUnmatchedHistory()
-        for (h in unmatched) {
+        val allHistory = historyDao.getAllHistoryOnce()
+        val idsToDelete = mutableListOf<Long>()
+        val seenQualifiedSessions = HashSet<String>()
+
+        for (h in allHistory) {
             val cachedEv = cachedCloudHistoryEvents[h.sessionId]
-            if (cachedEv != null) {
-                val matched = resolveSongFromCloudItem(
-                    signature = cachedEv.songSignature,
-                    title = cachedEv.title,
-                    artist = cachedEv.artist,
-                    filename = "",
-                    durationMs = cachedEv.durationMs,
-                    songsBySig = songsBySig,
-                    songsByNormKey = songsByNormKey,
-                    songsByFilename = emptyMap(),
-                    songsByCleanTitle = songsByCleanTitle
-                )
+            var effectiveSong = songById[h.trackId]
+
+            if (h.trackId <= 0L) {
+                val matched = if (cachedEv != null && cachedEv.songSignature != "unresolved" && cachedEv.title.isNotBlank()) {
+                    resolveSongFromCloudItem(
+                        signature = cachedEv.songSignature,
+                        title = cachedEv.title,
+                        artist = cachedEv.artist,
+                        filename = "",
+                        durationMs = cachedEv.durationMs,
+                        songsBySig = songsBySig,
+                        songsByNormKey = songsByNormKey,
+                        songsByFilename = songsByFilename,
+                        songsByCleanTitle = songsByCleanTitle
+                    )
+                } else null
                 if (matched != null) {
                     historyDao.updateTrackIdById(h.id, matched.id)
+                    effectiveSong = matched
+                } else {
+                    idsToDelete += h.id
+                    continue
+                }
+            } else if (effectiveSong == null) {
+                idsToDelete += h.id
+                continue
+            } else if (cachedEv != null && cachedEv.title.isNotBlank() && cachedEv.songSignature != "unresolved") {
+                val stillMatches = SongIdentityHelper.matches(
+                    song = effectiveSong,
+                    cloudSignature = cachedEv.songSignature,
+                    cloudTitle = cachedEv.title,
+                    cloudArtist = cachedEv.artist,
+                    cloudAlbum = cachedEv.album,
+                    cloudDurationMs = cachedEv.durationMs,
+                    cloudFilename = ""
+                )
+                if (!stillMatches) {
+                    val corrected = resolveSongFromCloudItem(
+                        signature = cachedEv.songSignature,
+                        title = cachedEv.title,
+                        artist = cachedEv.artist,
+                        filename = "",
+                        durationMs = cachedEv.durationMs,
+                        songsBySig = songsBySig,
+                        songsByNormKey = songsByNormKey,
+                        songsByFilename = songsByFilename,
+                        songsByCleanTitle = songsByCleanTitle
+                    )
+                    if (corrected != null) {
+                        historyDao.updateTrackIdById(h.id, corrected.id)
+                        effectiveSong = corrected
+                    } else {
+                        idsToDelete += h.id
+                        continue
+                    }
+                }
+            }
+
+            // Purge hijacked history rows whose completion ratio disagrees substantially with the linked song's duration
+            val trackDurationMs = effectiveSong.durationMs
+            if (trackDurationMs > 0L && h.listenedDurationMs > 0L && h.completionPercentage in 0.02f..0.98f) {
+                val expectedPct = (h.listenedDurationMs.toFloat() / trackDurationMs.toFloat()).coerceIn(0f, 1f)
+                val expectedDuration = (h.completionPercentage * trackDurationMs).toLong()
+                if (kotlin.math.abs(expectedPct - h.completionPercentage) > 0.15f &&
+                    kotlin.math.abs(h.listenedDurationMs - expectedDuration) > 10_000L
+                ) {
+                    idsToDelete += h.id
+                    continue
+                }
+            }
+
+            // Clamp runaway single-session durations caused by legacy idle/paused wall-clock bugs (e.g., overnight paused sessions)
+            val maxReasonableSessionMs = if (trackDurationMs > 0L) {
+                maxOf(trackDurationMs * 3L, 1_800_000L)
+            } else {
+                3_600_000L
+            }
+            if (h.listenedDurationMs > maxReasonableSessionMs) {
+                val clampedDuration = if (trackDurationMs > 0L) trackDurationMs.coerceAtLeast(180_000L) else 300_000L
+                val clampedEndedAt = h.startedAt + clampedDuration
+                try {
+                    historyDao.updateHistorySessionMetrics(
+                        id = h.id,
+                        listenedDurationMs = clampedDuration,
+                        endedAt = clampedEndedAt,
+                        completionPercentage = 1.0f
+                    )
+                } catch (_: Exception) {}
+            }
+
+            // Deduplicate identical qualified playback events for the same track at the same timestamp
+            if (h.isQualified) {
+                val dedupeKey = "${effectiveSong.id}:${h.startedAt}"
+                if (!seenQualifiedSessions.add(dedupeKey)) {
+                    idsToDelete += h.id
+                    continue
                 }
             }
         }
+
+        if (idsToDelete.isNotEmpty()) {
+            try {
+                idsToDelete.chunked(400).forEach { chunk ->
+                    historyDao.deleteHistoryByIds(chunk)
+                }
+            } catch (_: Exception) {}
+        }
+        try {
+            historyDao.deleteUnresolvedHistory()
+        } catch (_: Exception) {}
 
         val aggregatedStats = historyDao.getAggregateSongPlayStats()
+        try {
+            songDao.resetPlayCountsWithoutQualifiedHistory()
+        } catch (_: Exception) {}
+
         if (aggregatedStats.isNotEmpty()) {
-            val songById = allSongs.associateBy { it.id }
             for (stat in aggregatedStats) {
                 val song = songById[stat.trackId] ?: continue
-                val mergedPlayCount = maxOf(song.playCount, stat.pCount)
-                val mergedLastPlayed = maxOf(song.lastPlayed, stat.maxStartedAt)
-                if (mergedPlayCount != song.playCount || mergedLastPlayed != song.lastPlayed) {
-                    songDao.updatePlayStats(stat.trackId, mergedPlayCount, mergedLastPlayed)
+                val authoritativePlayCount = stat.pCount
+                val authoritativeLastPlayed = if (authoritativePlayCount < song.playCount) {
+                    stat.maxStartedAt
+                } else {
+                    maxOf(song.lastPlayed, stat.maxStartedAt)
+                }
+                if (authoritativePlayCount != song.playCount || authoritativeLastPlayed != song.lastPlayed) {
+                    songDao.updatePlayStats(stat.trackId, authoritativePlayCount, authoritativeLastPlayed)
                 }
             }
         }
     }
 
-    private fun writeLocalLyricsFileCache(songId: Long, plainLyrics: String?, syncedLyricsJson: String?) {
-        try {
-            val dir = context.cacheDir.resolve("lyrics")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, "$songId.lrc")
-            val content = if (!syncedLyricsJson.isNullOrBlank()) {
-                com.example.util.LrcParser.formatSyncedJsonToLrc(syncedLyricsJson) ?: plainLyrics ?: ""
-            } else {
-                plainLyrics ?: ""
-            }
-            if (content.isNotBlank()) {
-                file.writeText(content, Charsets.UTF_8)
-            }
-        } catch (_: Exception) {}
+    private fun writeLocalLyricsFileCache(songId: Long, plainLyrics: String?, syncedLyricsJson: String?, offsetMs: Long = 0L) {
+        com.example.util.LrcParser.writeCachedLrcFile(
+            context = context,
+            songId = songId,
+            plainLyrics = plainLyrics,
+            syncedLyricsJson = syncedLyricsJson,
+            offsetMs = offsetMs
+        )
     }
 
-    private suspend fun matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst: Boolean = false) = withContext(Dispatchers.IO) {
-        if (cachedCloudLyrics.isEmpty() && cachedCloudLyricsOffsets.isEmpty()) return@withContext
+    private suspend fun matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst: Boolean = false): Set<Long> = withContext(Dispatchers.IO) {
+        if (cachedCloudLyrics.isEmpty() && cachedCloudLyricsOffsets.isEmpty()) return@withContext emptySet()
         val allSongs = songDao.getAllSongsOnce()
-        if (allSongs.isEmpty()) return@withContext
+        if (allSongs.isEmpty()) return@withContext emptySet()
 
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
         val songsByNormKey = allSongs.groupBy {
-            "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
-        val songsByCleanTitle = allSongs.groupBy { com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase() }
+            "${com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
+        }.filterKeys { !it.startsWith("|") }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }.filterKeys { it.isNotBlank() }
+        val songsByCleanTitle = allSongs.groupBy {
+            com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()
+        }.filterKeys { it.isNotBlank() }
 
         // 1. Merge offsets from both cachedCloudLyricsOffsets and embedded offsets in cachedCloudLyrics
         val combinedOffsetsBySig = LinkedHashMap<String, CloudLyricsOffset>()
@@ -1235,6 +1334,8 @@ class CloudSyncRepository(
             }
         }
 
+        val localOffsets = userPreferences.getAllLyricsSyncOffsets()
+        val localOffsetTimestamps = userPreferences.getAllLyricsSyncOffsetUpdatedAt()
         val matchedOffsetSongIds = mutableSetOf<Long>()
         val offsetsBySongId = mutableMapOf<Long, Long>()
         val offsetTimestampsBySongId = mutableMapOf<Long, Long>()
@@ -1252,8 +1353,8 @@ class CloudSyncRepository(
                 songsByCleanTitle = songsByCleanTitle
             ) ?: continue
 
-            val localUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(matchedSong.id)
-            val localOffset = userPreferences.getLyricsSyncOffsetMs(matchedSong.id)
+            val localUpdatedAt = localOffsetTimestamps[matchedSong.id] ?: 0L
+            val localOffset = localOffsets[matchedSong.id] ?: 0L
             val shouldApply = clearMatchedOffsetsFirst ||
                 localUpdatedAt == 0L ||
                 cloudOffset.updatedAt >= localUpdatedAt ||
@@ -1266,17 +1367,20 @@ class CloudSyncRepository(
             }
         }
 
-        if (offsetsBySongId.isNotEmpty() || matchedOffsetSongIds.isNotEmpty()) {
+        if (clearMatchedOffsetsFirst || offsetsBySongId.isNotEmpty() || matchedOffsetSongIds.isNotEmpty()) {
             userPreferences.applyLyricsSyncOffsets(
                 offsetsBySongId,
+                replace = clearMatchedOffsetsFirst,
                 clearSongIds = if (clearMatchedOffsetsFirst) matchedOffsetSongIds else emptySet(),
                 timestampsBySongId = offsetTimestampsBySongId
             )
         }
 
         // 2. Apply synced and plain lyrics into Room + local LRC file cache
+        val writtenSongIds = java.util.Collections.synchronizedSet(HashSet<Long>())
         if (cachedCloudLyrics.isNotEmpty()) {
             val localLyricsBySongId = lyricsDao.getAllLyricsOnce().associateBy { it.songId }
+            val resolvedEntries = mutableListOf<Triple<SongEntity, LyricsEntity, Long>>()
             for (entry in cachedCloudLyrics.values) {
                 if (entry.plainLyrics.isNullOrBlank() && entry.syncedLyricsJson.isNullOrBlank()) continue
                 val song = resolveSongFromCloudItem(
@@ -1294,9 +1398,14 @@ class CloudSyncRepository(
                 val local = localLyricsBySongId[song.id]
                 val cloudHasSynced = !entry.syncedLyricsJson.isNullOrBlank()
                 val localHasSynced = !local?.syncedLyricsJson.isNullOrBlank()
-                // Upgrade if local is missing, older, or lacks synced lyrics when cloud has synced lyrics
-                if (local != null && local.updatedAt > entry.updatedAt && (localHasSynced || !cloudHasSynced)) {
-                    continue
+                // When restoring from an authoritative backup snapshot (clearMatchedOffsetsFirst = true),
+                // always apply the backup's lyrics; otherwise protect user-selected manual lyrics and newer local edits.
+                if (!clearMatchedOffsetsFirst && local != null) {
+                    val localManualBeatsCloudCached = !local.isCached && entry.isCached && (localHasSynced || !cloudHasSynced)
+                    val localNewer = local.updatedAt > entry.updatedAt && (localHasSynced || !cloudHasSynced)
+                    if (localManualBeatsCloudCached || localNewer) {
+                        continue
+                    }
                 }
                 val mergedPlain = entry.plainLyrics?.takeIf { it.isNotBlank() } ?: local?.plainLyrics
                 val mergedSynced = entry.syncedLyricsJson?.takeIf { it.isNotBlank() } ?: local?.syncedLyricsJson
@@ -1308,19 +1417,56 @@ class CloudSyncRepository(
                     source = entry.source,
                     updatedAt = if (entry.updatedAt > 0L) entry.updatedAt else System.currentTimeMillis()
                 )
+                val effectiveOffsetMs = offsetsBySongId[song.id] ?: localOffsets[song.id] ?: 0L
                 lyricsDao.insertLyrics(entity)
-                writeLocalLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson)
-                if (!entity.syncedLyricsJson.isNullOrBlank() && song.path.isNotBlank()) {
-                    com.example.util.LrcParser.writeCompanionLrcForSong(
-                        context = context,
-                        songPath = song.path,
-                        songTitle = song.title,
-                        plainLyrics = entity.plainLyrics,
-                        syncedLyricsJson = entity.syncedLyricsJson
-                    )
+                resolvedEntries.add(Triple(song, entity, effectiveOffsetMs))
+            }
+
+            if (resolvedEntries.isNotEmpty()) {
+                // Clean shared and unique parent directories once before batch writing companion files
+                val cleanedDirs = HashSet<String>()
+                try {
+                    val publicMusic = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+                    if (publicMusic != null && cleanedDirs.add(publicMusic.absolutePath)) {
+                        com.example.util.LrcParser.cleanupLegacyLrcTxtFiles(context, publicMusic)
+                    }
+                    val publicLyrics = File(publicMusic, "Lyrics")
+                    if (cleanedDirs.add(publicLyrics.absolutePath)) {
+                        com.example.util.LrcParser.cleanupLegacyLrcTxtFiles(context, publicLyrics)
+                    }
+                } catch (_: Exception) {}
+                for ((song, _, _) in resolvedEntries) {
+                    val parent = File(song.path).parentFile
+                    if (parent != null && cleanedDirs.add(parent.absolutePath)) {
+                        com.example.util.LrcParser.cleanupLegacyLrcTxtFiles(context, parent)
+                    }
+                }
+
+                // Write local cache and companion .lrc files concurrently in bounded chunks
+                resolvedEntries.chunked(24).forEach { chunk ->
+                    coroutineScope {
+                        chunk.map { (song, entity, effectiveOffsetMs) ->
+                            async(Dispatchers.IO) {
+                                writeLocalLyricsFileCache(song.id, entity.plainLyrics, entity.syncedLyricsJson, effectiveOffsetMs)
+                                if ((!entity.syncedLyricsJson.isNullOrBlank() || !entity.plainLyrics.isNullOrBlank()) && song.path.isNotBlank()) {
+                                    com.example.util.LrcParser.writeCompanionLrcForSong(
+                                        context = context,
+                                        songPath = song.path,
+                                        songTitle = song.title,
+                                        plainLyrics = entity.plainLyrics,
+                                        syncedLyricsJson = entity.syncedLyricsJson,
+                                        offsetMs = effectiveOffsetMs,
+                                        skipDirectoryCleanup = true
+                                    )
+                                }
+                                writtenSongIds.add(song.id)
+                            }
+                        }.awaitAll()
+                    }
                 }
             }
         }
+        writtenSongIds
     }
 
     /**
@@ -1508,6 +1654,33 @@ class CloudSyncRepository(
         }
     }
 
+    private fun firestoreValuesEqual(a: Any?, b: Any?): Boolean {
+        if (a === b) return true
+        if (a == null || b == null) return false
+        if (a is Number && b is Number) {
+            return when {
+                a is Double || a is Float || b is Double || b is Float ->
+                    kotlin.math.abs(a.toDouble() - b.toDouble()) < 0.0001
+                else -> a.toLong() == b.toLong()
+            }
+        }
+        if (a is Map<*, *> && b is Map<*, *>) {
+            if (a.size != b.size) return false
+            return a.all { (k, v) -> b.containsKey(k) && firestoreValuesEqual(v, b[k]) }
+        }
+        if (a is List<*> && b is List<*>) {
+            if (a.size != b.size) return false
+            return a.indices.all { i -> firestoreValuesEqual(a[i], b[i]) }
+        }
+        return a == b
+    }
+
+    private fun firestoreMapsEqual(a: Map<String, Any?>?, b: Map<String, Any?>): Boolean {
+        if (a == null) return false
+        if (a.size != b.size) return false
+        return a.all { (k, v) -> b.containsKey(k) && firestoreValuesEqual(v, b[k]) }
+    }
+
     private fun cloudLyricsItemsRef(uid: String, snapshotId: String, fs: FirebaseFirestore) =
         fs.collection(USERS_COLLECTION).document(uid)
             .collection("lyrics_snapshots").document(snapshotId).collection("items")
@@ -1516,10 +1689,28 @@ class CloudSyncRepository(
         uid: String,
         snapshotId: String,
         entries: List<CloudLyricsEntry>,
-        fs: FirebaseFirestore
+        fs: FirebaseFirestore,
+        existingLatestSnapshotId: String? = null,
+        existingLatestComplete: Boolean = false,
+        existingLatestCount: Int = -1
     ) {
         if (entries.isEmpty()) return
         val ref = cloudLyricsItemsRef(uid, snapshotId, fs)
+        val expectedIds = entries.filter { it.songSignature.isNotBlank() }.map { sha256(it.songSignature) }.toSet()
+
+        // Fast-path: if latest snapshot already references this identical lyricsSnapshotId,
+        // verify completeness with a single read and skip re-uploading all documents.
+        if (existingLatestComplete && existingLatestSnapshotId == snapshotId && existingLatestCount == entries.size) {
+            val existingDocs = try { ref.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() }
+            val existingIds = existingDocs.map { it.id }.toSet()
+            if (existingIds.containsAll(expectedIds) &&
+                existingDocs.none { it.id in expectedIds && it.getString("songSignature").isNullOrBlank() }
+            ) {
+                return
+            }
+        }
+
+        val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
         var batch = fs.batch()
         var count = 0
         var batchBytes = 0
@@ -1532,7 +1723,7 @@ class CloudSyncRepository(
                 continue
             }
             if (count > 0 && (count >= 50 || batchBytes + entryBytes > 500 * 1024)) {
-                batch.commit().await()
+                batches += batch
                 batch = fs.batch()
                 count = 0
                 batchBytes = 0
@@ -1541,10 +1732,15 @@ class CloudSyncRepository(
             count++
             batchBytes += entryBytes
         }
-        if (count > 0) batch.commit().await()
+        if (count > 0) batches += batch
+
+        if (batches.isNotEmpty()) {
+            batches.chunked(6).forEach { group ->
+                coroutineScope { group.map { b -> async { b.commit().await() } }.awaitAll() }
+            }
+        }
 
         val verified = ref.get(Source.SERVER).await().documents
-        val expectedIds = entries.map { sha256(it.songSignature) }.toSet()
         val verifiedIds = verified.map { it.id }.toSet()
         if (!verifiedIds.containsAll(expectedIds) ||
             verified.any { it.id in expectedIds && it.getString("songSignature").isNullOrBlank() }) {
@@ -1874,13 +2070,13 @@ class CloudSyncRepository(
     /**
      * Restores complete account state from latest backup snapshot without clobbering newer local custom playlist ordering.
      */
-    private suspend fun restoreFromBackupSnapshot(
+    internal suspend fun restoreFromBackupSnapshot(
         uid: String,
         data: Map<String, Any?>,
         cloudHistory: List<CloudPlaybackEvent>,
         cloudPlaylistHistory: List<CloudPlaylistPlayEvent>,
         cloudLyrics: List<CloudLyricsEntry>
-    ) = withContext(Dispatchers.IO) {
+    ): Set<Long> = withContext(Dispatchers.IO) {
         if (getCurrentUid() != uid) throw CancellationException("Account changed before snapshot restore")
         val payload = UserBackupPayload.fromMap(data)
         val historyById = LinkedHashMap<String, CloudPlaybackEvent>()
@@ -1898,15 +2094,13 @@ class CloudSyncRepository(
 
         val allSongs = songDao.getAllSongsOnce()
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
-        val uniqueSongsBySig = allSongs.groupBy { SongIdentityHelper.computeSignature(it) }
-            .filterValues { it.size == 1 }.mapValues { it.value.single() }
         val songsByNormKey = allSongs.groupBy {
             "${com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
+        }.filterKeys { !it.startsWith("|") }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }.filterKeys { it.isNotBlank() }
         val songsByCleanTitle = allSongs.groupBy {
             com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()
-        }
+        }.filterKeys { it.isNotBlank() }
 
         val localSettings = userPreferences.exportUserSettings()
         val avatarBytes = (payload.profile.avatarBase64 ?: payload.settings.avatarBase64)
@@ -1929,7 +2123,9 @@ class CloudSyncRepository(
         userPreferences.setCustomDisplayName(payload.profile.customDisplayName)
         userPreferences.setCustomAvatarUri(portableAvatarUri)
 
-        // Merge snapshot favorites with local favorites (subsequent syncFavorites will reconcile live collection)
+        // Apply authoritative snapshot favorites (clear local favorites first so unfavorited songs in backup are updated)
+        songDao.clearAllFavorites()
+        cachedCloudFavorites.clear()
         payload.favorites.filter { it.isFavorite && it.songSignature.isNotBlank() }.forEach {
             cachedCloudFavorites[it.songSignature] = it
         }
@@ -1947,26 +2143,27 @@ class CloudSyncRepository(
         }.toMutableMap()
         val existingByName = existingPlaylists.associateBy { it.name.trim().lowercase() }.toMutableMap()
         val retainedPlaylistIds = HashSet<Long>()
+        val retainedCloudIds = HashSet<String>()
         for (cloudPl in payload.playlists) {
             val canonicalCloudId = cloudPl.cloudId.ifBlank { legacyPlaylistCloudId(cloudPl.name, cloudPl.createdAt) }
             val key = cloudPl.name.trim().lowercase()
             val existing = existingByIdentity[canonicalCloudId] ?: existingByName[key]
+            // Preserve custom playlist cover image if playlist already exists locally
+            val preservedArtwork = existing?.artworkUri?.takeIf { it.isNotBlank() }
+                ?: cloudPl.artworkUri?.takeIf { it.isNotBlank() }
             val playlist = PlaylistEntity(
                 id = existing?.id ?: 0L,
                 name = cloudPl.name,
                 createdAt = cloudPl.createdAt,
-                isPinned = cloudPl.isPinned || (existing?.isPinned == true),
-                artworkUri = cloudPl.artworkUri?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
-                    ?: existing?.artworkUri,
+                isPinned = cloudPl.isPinned,
+                artworkUri = preservedArtwork,
                 cloudId = canonicalCloudId
             )
             val playlistId = playlistDao.insertPlaylist(playlist)
             retainedPlaylistIds += playlistId
+            retainedCloudIds += canonicalCloudId
             playlistLocalToCloudMap[playlistId] = canonicalCloudId
             playlistCloudToLocalMap[canonicalCloudId] = playlistId
-
-            val existingLocalSongs = playlistDao.getPlaylistSongsOnce(playlistId)
-            val localUpdatedAt = getLocalPlaylistUpdatedAt(playlistId)
 
             val snapshotSongs = mutableListOf<SongEntity>()
             val seenSnapshotIds = HashSet<Long>()
@@ -1987,43 +2184,35 @@ class CloudSyncRepository(
                 }
             }
 
-            // Merge non-destructively so local songs added after the snapshot are never wiped
-            val mergedSongs = mutableListOf<SongEntity>()
-            val mergedIds = HashSet<Long>()
-            val isLocalNewer = existingLocalSongs.isNotEmpty() &&
-                localUpdatedAt > cloudPl.updatedAt && cloudPl.updatedAt > 0L
-
-            if (isLocalNewer && existingLocalSongs.size >= snapshotSongs.size) {
-                for (s in existingLocalSongs) {
-                    if (mergedIds.add(s.id)) mergedSongs += s
-                }
-                for (s in snapshotSongs) {
-                    if (mergedIds.add(s.id)) mergedSongs += s
-                }
-            } else {
-                for (s in snapshotSongs) {
-                    if (mergedIds.add(s.id)) mergedSongs += s
-                }
-                for (s in existingLocalSongs) {
-                    if (mergedIds.add(s.id)) mergedSongs += s
-                }
-            }
-
-            val crossRefs = mergedSongs.mapIndexed { idx, s ->
+            val crossRefs = snapshotSongs.mapIndexed { idx, s ->
                 PlaylistSongCrossRef(playlistId, s.id, idx)
             }
             playlistDao.updatePlaylistOrder(playlistId, crossRefs)
-            setLocalPlaylistUpdatedAt(playlistId, maxOf(localUpdatedAt, cloudPl.updatedAt))
+            setLocalPlaylistUpdatedAt(playlistId, cloudPl.updatedAt.takeIf { it > 0L } ?: System.currentTimeMillis())
         }
 
+        // Delete any local playlists that were not present in the latest cloud backup
+        for (localPl in existingPlaylists) {
+            if (localPl.id !in retainedPlaylistIds) {
+                playlistDao.clearPlaylistSongs(localPl.id)
+                playlistDao.deletePlaylist(localPl.id)
+                val staleCloudId = playlistLocalToCloudMap.remove(localPl.id) ?: localPl.cloudId
+                if (staleCloudId.isNotBlank() && staleCloudId !in retainedCloudIds) {
+                    playlistCloudToLocalMap.remove(staleCloudId)
+                }
+            }
+        }
+
+        playlistDao.clearAllPlaylistPlayEvents()
         applyCloudPlaylistPlayEvents(cloudPlaylistHistory)
 
-        // History is append-only: merge all valid events and never clear locally recorded sessions.
+        // Apply authoritative playback history from the latest cloud backup
+        historyDao.clearHistory()
         cachedCloudHistoryEvents.clear()
         historyById.values.forEach { cachedCloudHistoryEvents[it.sessionId] = it }
         val historyToInsert = mutableListOf<PlaybackHistoryEntity>()
         for (event in historyById.values) {
-            if (historyDao.getHistoryBySessionId(event.sessionId) != null) continue
+            if (event.songSignature == "unresolved" && event.title.isBlank()) continue
             val matchedSong = resolveSongFromCloudItem(
                 signature = event.songSignature,
                 title = event.title,
@@ -2035,6 +2224,7 @@ class CloudSyncRepository(
                 songsByFilename = songsByFilename,
                 songsByCleanTitle = songsByCleanTitle
             )
+            if (matchedSong == null && allSongs.isNotEmpty()) continue
             historyToInsert += PlaybackHistoryEntity(
                 id = 0L,
                 trackId = matchedSong?.id ?: 0L,
@@ -2092,8 +2282,9 @@ class CloudSyncRepository(
                 }
             }
         }
-        matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst = true)
+        val syncedLyricSongIds = matchAndApplyCloudLyricsAndOffsetsToRoom(clearMatchedOffsetsFirst = true)
         Log.i(TAG, "Restored authoritative snapshot successfully")
+        syncedLyricSongIds
     }
 
     // ==================== REAL-TIME ASYNC EVENT HOOKS ====================
@@ -2371,32 +2562,83 @@ class CloudSyncRepository(
             val currentUser = auth?.currentUser
             if (currentUser?.uid != uid) throw CancellationException("Account changed before backup")
 
-            // First reconcile live playlists & favorites from Firestore so any tracks that were
-            // unlinked locally (e.g. during a prior file rename) are healed into Room BEFORE taking the snapshot!
-            try {
-                coroutineScope {
-                    val favHealJob = launch {
-                        try {
-                            syncFavorites(uid, fs, pushLocalMissing = true, replaceLocal = false)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Pre-backup favorite reconciliation skipped: ${e.message}")
-                        }
-                    }
-                    val plHealJob = launch {
-                        try {
-                            syncPlaylists(uid, fs, pushLocalMissing = true, forceCloudRestore = false)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Pre-backup playlist reconciliation skipped: ${e.message}")
-                        }
-                    }
-                    joinAll(favHealJob, plHealJob)
+            // Gather all local Room & preference state concurrently before hitting the network
+            val (
+                currentSettings,
+                avatarBase64,
+                allSongs,
+                localPlaylistEntities,
+                playlistSongsById,
+                historyRecords,
+                playlistPlayEvents,
+                topArtists,
+                recentSearchesList,
+                smartPlaylistsList,
+                localLyricsOffsets,
+                localOffsetTimestamps,
+                dbLyricsList,
+                lastHash
+            ) = coroutineScope {
+                val settingsDef = async(Dispatchers.IO) {
+                    val exp = userPreferences.exportUserSettings()
+                    val av = encodeAvatarForBackup(exp.customAvatarUri)
+                    exp.copy(customAvatarUri = null, avatarBase64 = av) to av
                 }
-            } catch (_: Exception) {}
+                val songsDef = async(Dispatchers.IO) { songDao.getAllSongsOnce() }
+                val playlistsDef = async(Dispatchers.IO) { playlistDao.getAllPlaylistsOnce() }
+                val historyDef = async(Dispatchers.IO) { historyDao.getAllHistoryOnce() }
+                val plEventsDef = async(Dispatchers.IO) { playlistDao.getAllPlaylistPlayEventsOnce() }
+                val topArtistsDef = async(Dispatchers.IO) {
+                    historyDao.getTopArtistsBetween(0L, limit = 5).firstOrNull()?.map { it.name } ?: emptyList()
+                }
+                val searchesDef = async(Dispatchers.IO) {
+                    recentSearchDao?.getAllRecentSearchesOnce().orEmpty().map {
+                        CloudRecentSearch(query = it.query, timestamp = it.timestamp)
+                    }
+                }
+                val smartDef = async(Dispatchers.IO) {
+                    smartPlaylistDao.getAllSmartPlaylistsOnce().map {
+                        CloudSmartPlaylist(
+                            name = it.name,
+                            filterType = it.genreFilter,
+                            rulesJson = "{}",
+                            sortOrder = it.sortCriteria,
+                            limit = it.maxTrackLimit,
+                            createdAt = it.createdAt
+                        )
+                    }
+                }
+                val offsetsDef = async(Dispatchers.IO) { userPreferences.getAllLyricsSyncOffsets() }
+                val offsetTsDef = async(Dispatchers.IO) { userPreferences.getAllLyricsSyncOffsetUpdatedAt() }
+                val lyricsDef = async(Dispatchers.IO) { lyricsDao.getAllLyricsOnce() }
+                val lastHashDef = async(Dispatchers.IO) { userPreferences.lastBackupDataHash.firstOrNull() }
 
-            val exportedSettings = userPreferences.exportUserSettings()
-            val avatarBase64 = encodeAvatarForBackup(exportedSettings.customAvatarUri)
-            val currentSettings = exportedSettings.copy(customAvatarUri = null, avatarBase64 = avatarBase64)
-            val allSongs = songDao.getAllSongsOnce()
+                val pls = playlistsDef.await()
+                val plSongsMap = coroutineScope {
+                    pls.associate { p ->
+                        p.id to async(Dispatchers.IO) { playlistDao.getPlaylistSongsOnce(p.id) }
+                    }.mapValues { it.value.await() }
+                }
+
+                val (cfg, av64) = settingsDef.await()
+                BackupGatheredData(
+                    currentSettings = cfg,
+                    avatarBase64 = av64,
+                    allSongs = songsDef.await(),
+                    localPlaylistEntities = pls,
+                    playlistSongsById = plSongsMap,
+                    historyRecords = historyDef.await(),
+                    playlistPlayEvents = plEventsDef.await(),
+                    topArtists = topArtistsDef.await(),
+                    recentSearches = searchesDef.await(),
+                    smartPlaylists = smartDef.await(),
+                    localOffsets = offsetsDef.await(),
+                    localOffsetTimestamps = offsetTsDef.await(),
+                    dbLyrics = lyricsDef.await(),
+                    lastHash = lastHashDef.await()
+                )
+            }
+
             val favorites = allSongs.filter { it.isFavorite }.map { song ->
                 val sig = SongIdentityHelper.computeSignature(song)
                 val filename = song.path.substringAfterLast('/')
@@ -2412,13 +2654,12 @@ class CloudSyncRepository(
                 )
             }.filter { it.songSignature.isNotBlank() }.distinctBy { it.songSignature }
 
-            val localPlaylistEntities = playlistDao.getAllPlaylistsOnce()
             val localPlaylistCloudIds = mutableMapOf<Long, String>()
             for (playlist in localPlaylistEntities) {
                 localPlaylistCloudIds[playlist.id] = ensureCloudPlaylistId(playlist)
             }
             val playlists = localPlaylistEntities.map { p ->
-                val songsInPlaylist = playlistDao.getPlaylistSongsOnce(p.id)
+                val songsInPlaylist = playlistSongsById[p.id].orEmpty()
                 val cloudSongs = songsInPlaylist.mapIndexed { idx, s ->
                     CloudPlaylistSongItem(
                         position = idx,
@@ -2442,18 +2683,18 @@ class CloudSyncRepository(
                 )
             }.distinctBy { it.cloudId }
 
-            val historyRecords = historyDao.getAllHistoryOnce()
             val songIdMap = allSongs.associateBy { it.id }
-            val localHistory = historyRecords.map { h ->
-                val matchingSong = songIdMap[h.trackId]
-                val sig = matchingSong?.let { SongIdentityHelper.computeSignature(it) } ?: "unresolved"
+            val localHistory = historyRecords.mapNotNull { h ->
+                val matchingSong = songIdMap[h.trackId] ?: return@mapNotNull null
+                val sig = SongIdentityHelper.computeSignature(matchingSong)
+                if (sig.isBlank() || sig == "unresolved") return@mapNotNull null
                 CloudPlaybackEvent(
                     sessionId = stableHistorySessionId(h, sig),
                     songSignature = sig,
-                    title = matchingSong?.title ?: "",
-                    artist = matchingSong?.artist ?: "",
-                    album = matchingSong?.album ?: "",
-                    durationMs = matchingSong?.durationMs ?: 0L,
+                    title = matchingSong.title,
+                    artist = matchingSong.artist,
+                    album = matchingSong.album,
+                    durationMs = matchingSong.durationMs,
                     startedAt = h.startedAt,
                     endedAt = h.endedAt,
                     listenedDurationMs = h.listenedDurationMs,
@@ -2464,18 +2705,12 @@ class CloudSyncRepository(
                 )
             }
             val historyById = LinkedHashMap<String, CloudPlaybackEvent>()
-            val existingCloudHistory = fetchCloudHistoryEvents(uid, fs)
-            val existingCloudHistoryById = existingCloudHistory.associateBy { it.sessionId }
-            existingCloudHistory.forEach { historyById[it.sessionId] = it }
             localHistory.forEach { historyById[it.sessionId] = it }
             val fullHistory = historyById.values.toList()
             val historySample = fullHistory.sortedByDescending { it.startedAt }.take(100)
 
-            val existingPlaylistHistory = fetchCloudPlaylistPlayEvents(uid, fs)
-            val existingPlaylistHistoryById = existingPlaylistHistory.associateBy { it.eventId }
             val playlistHistoryById = LinkedHashMap<String, CloudPlaylistPlayEvent>()
-            existingPlaylistHistory.forEach { playlistHistoryById[it.eventId] = it }
-            playlistDao.getAllPlaylistPlayEventsOnce().forEach { localEvent ->
+            playlistPlayEvents.forEach { localEvent ->
                 val cloudPlaylistId = localPlaylistCloudIds[localEvent.playlistId] ?: return@forEach
                 val eventId = sha256("$cloudPlaylistId:${localEvent.timestamp}")
                 playlistHistoryById[eventId] = CloudPlaylistPlayEvent(
@@ -2486,9 +2721,8 @@ class CloudSyncRepository(
             }
             val fullPlaylistHistory = playlistHistoryById.values.toList()
 
-            val totalPlays = fullHistory.size.toLong()
+            val totalPlays = fullHistory.count { it.isQualified }.toLong()
             val totalListeningMs = fullHistory.sumOf { it.listenedDurationMs }
-            val topArtists = historyDao.getTopArtistsBetween(0L, limit = 5).firstOrNull()?.map { it.name } ?: emptyList()
             val statsSummary = BackupStatisticsSummary(
                 totalPlayCount = totalPlays,
                 totalListeningTimeMs = totalListeningMs,
@@ -2509,41 +2743,24 @@ class CloudSyncRepository(
 
             // Folder URIs and paths are device-specific permissions; they are deliberately not backed up.
             val foldersList = emptyList<CloudFolderConfig>()
-            val recentSearchesList = recentSearchDao?.getAllRecentSearchesOnce().orEmpty().map {
-                CloudRecentSearch(
-                    query = it.query,
-                    timestamp = it.timestamp
-                )
-            }
-            val smartPlaylistsList = smartPlaylistDao.getAllSmartPlaylistsOnce().map {
-                CloudSmartPlaylist(
-                    name = it.name,
-                    filterType = it.genreFilter,
-                    rulesJson = "{}",
-                    sortOrder = it.sortCriteria,
-                    limit = it.maxTrackLimit,
-                    createdAt = it.createdAt
-                )
-            }
-
             val storyCardData = BackupStoryCardData(
                 lastGeneratedPeriod = "ALL_TIME",
                 totalMinutesListened = totalListeningMs / (60 * 1000L),
                 storyHighlights = topArtists.take(3)
             )
 
-            val localLyricsOffsets = userPreferences.getAllLyricsSyncOffsets()
+            val now = System.currentTimeMillis()
             val lyricsOffsetsBySig = LinkedHashMap<String, CloudLyricsOffset>()
             for (song in allSongs) {
                 val signature = SongIdentityHelper.computeSignature(song)
                 if (signature.isBlank()) continue
                 val offset = localLyricsOffsets[song.id] ?: 0L
-                val updatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                val updatedAt = localOffsetTimestamps[song.id] ?: 0L
                 if (offset == 0L && updatedAt == 0L) continue
                 val candidate = CloudLyricsOffset(
                     songSignature = signature,
                     offsetMs = offset,
-                    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis(),
+                    updatedAt = if (updatedAt > 0L) updatedAt else now,
                     title = song.title,
                     artist = song.artist,
                     album = song.album,
@@ -2560,18 +2777,16 @@ class CloudSyncRepository(
             }
             val lyricsOffsets = lyricsOffsetsBySig.values.toList()
 
-            val songsById = allSongs.associateBy { it.id }
-            val dbLyricsList = lyricsDao.getAllLyricsOnce()
             val dbLyricsBySongId = dbLyricsList.associateBy { it.songId }
             val cloudLyricsBySig = LinkedHashMap<String, CloudLyricsEntry>()
 
             for (lyrics in dbLyricsList) {
-                val song = songsById[lyrics.songId] ?: continue
+                val song = songIdMap[lyrics.songId] ?: continue
                 val signature = SongIdentityHelper.computeSignature(song)
                 if (signature.isBlank()) continue
                 if (lyrics.plainLyrics.isNullOrBlank() && lyrics.syncedLyricsJson.isNullOrBlank()) continue
                 val songOffset = localLyricsOffsets[song.id] ?: lyricsOffsetsBySig[signature]?.offsetMs ?: 0L
-                val songOffsetUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                val songOffsetUpdatedAt = (localOffsetTimestamps[song.id] ?: 0L)
                     .takeIf { it > 0L } ?: (lyricsOffsetsBySig[signature]?.updatedAt ?: 0L)
                 val candidate = CloudLyricsEntry(
                     songSignature = signature,
@@ -2614,7 +2829,7 @@ class CloudSyncRepository(
                         val (plain, synced) = com.example.util.LrcParser.parseLrcContent(content)
                         if (!plain.isNullOrBlank() || !synced.isNullOrBlank()) {
                             val songOffset = localLyricsOffsets[song.id] ?: lyricsOffsetsBySig[signature]?.offsetMs ?: 0L
-                            val songOffsetUpdatedAt = userPreferences.getLyricsSyncOffsetUpdatedAt(song.id)
+                            val songOffsetUpdatedAt = (localOffsetTimestamps[song.id] ?: 0L)
                                 .takeIf { it > 0L } ?: (lyricsOffsetsBySig[signature]?.updatedAt ?: 0L)
                             val entry = CloudLyricsEntry(
                                 songSignature = signature,
@@ -2622,7 +2837,7 @@ class CloudSyncRepository(
                                 syncedLyricsJson = synced,
                                 isCached = true,
                                 source = "local",
-                                updatedAt = cachedFile.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis(),
+                                updatedAt = cachedFile.lastModified().takeIf { it > 0L } ?: now,
                                 offsetMs = songOffset,
                                 offsetUpdatedAt = songOffsetUpdatedAt,
                                 title = song.title,
@@ -2656,11 +2871,12 @@ class CloudSyncRepository(
             val lyricsSnapshotId = sha256(cloudLyrics.map { it.toMap().toSortedMap() }
                 .sortedBy { it["songSignature"].toString() }.toString())
 
-            val lastHash = userPreferences.lastBackupDataHash.firstOrNull()
-            val now = System.currentTimeMillis()
+            val backupCollection = fs.collection(USERS_COLLECTION).document(uid).collection("backup")
+            val stagingDoc = backupCollection.document("staging")
+            val latestDoc = backupCollection.document("latest")
+
             if (isAutoBackup && lastHash == dataHash) {
-                val latest = fs.collection(USERS_COLLECTION).document(uid).collection("backup")
-                    .document("latest").get(Source.SERVER).await()
+                val latest = latestDoc.get(Source.SERVER).await()
                 if (latest.exists() && latest.data?.let { UserBackupPayload.isCompleteSnapshot(it, uid) } == true &&
                     latest.getString("dataHash") == dataHash) {
                     Log.d(TAG, "Auto-backup: verified snapshot is unchanged; skipping redundant write")
@@ -2703,104 +2919,341 @@ class CloudSyncRepository(
                 storyCardData = storyCardData
             )
 
-            val backupCollection = fs.collection(USERS_COLLECTION).document(uid).collection("backup")
-            val stagingDoc = backupCollection.document("staging")
-            val latestDoc = backupCollection.document("latest")
             val payloadMap = payload.toMap()
             if (payloadMap.toString().toByteArray(Charsets.UTF_8).size > 850 * 1024) {
                 throw IllegalStateException("Snapshot is too large for Firestore; the previous cloud snapshot was kept")
             }
 
-            // Preserve existing history events and verify the history collection before publishing a snapshot.
             if (getCurrentUid() != uid) throw CancellationException("Account changed during backup")
-            var historyBatch = fs.batch()
-            var historyBatchSize = 0
-            val historyToWrite = fullHistory.filter { existingCloudHistoryById[it.sessionId]?.toMap() != it.toMap() }
-            for (event in historyToWrite) {
-                historyBatch.set(fs.collection(USERS_COLLECTION).document(uid)
-                    .collection(HISTORY_COLLECTION).document(event.sessionId), event.toMap(), SetOptions.merge())
-                historyBatchSize++
-                if (historyBatchSize >= 400) {
-                    historyBatch.commit().await()
-                    historyBatch = fs.batch()
-                    historyBatchSize = 0
-                }
-            }
-            if (historyBatchSize > 0) historyBatch.commit().await()
-            val verifiedHistoryIds = fetchCloudHistoryEvents(uid, fs).map { it.sessionId }.toHashSet()
-            if (!verifiedHistoryIds.containsAll(fullHistory.map { it.sessionId })) {
-                throw IllegalStateException("Listening history could not be fully verified; the previous snapshot was kept")
+
+            val userRootRef = fs.collection(USERS_COLLECTION).document(uid)
+            val playlistsRef = userRootRef.collection(PLAYLISTS_COLLECTION)
+            val favsRef = userRootRef.collection(FAVORITES_COLLECTION)
+            val spRef = userRootRef.collection(SMART_PLAYLISTS_COLLECTION)
+            val offsetsRef = userRootRef.collection(LYRICS_OFFSETS_COLLECTION)
+            val liveLyricsRef = userRootRef.collection(LYRICS_COLLECTION)
+
+            // Fetch all existing cloud collections & latest doc metadata in parallel
+            val (
+                existingLatestSnap,
+                existingCloudHistory,
+                existingPlaylistHistory,
+                existingCloudPlDocs,
+                existingCloudFavDocs,
+                existingSpDocs,
+                existingOffsetDocs,
+                existingLiveLyricsDocs
+            ) = coroutineScope {
+                val latestDef = async { try { latestDoc.get(Source.SERVER).await() } catch (_: Exception) { null } }
+                val histDef = async { fetchCloudHistoryEvents(uid, fs) }
+                val plHistDef = async { fetchCloudPlaylistPlayEvents(uid, fs) }
+                val plDocsDef = async { try { playlistsRef.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() } }
+                val favDocsDef = async { try { favsRef.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() } }
+                val spDocsDef = async { try { spRef.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() } }
+                val offDocsDef = async { try { offsetsRef.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() } }
+                val lyrDocsDef = async { try { liveLyricsRef.get(Source.SERVER).await().documents } catch (_: Exception) { emptyList() } }
+                CloudExistingState(
+                    latestSnap = latestDef.await(),
+                    history = histDef.await(),
+                    playlistHistory = plHistDef.await(),
+                    playlistsDocs = plDocsDef.await(),
+                    favoritesDocs = favDocsDef.await(),
+                    smartPlaylistDocs = spDocsDef.await(),
+                    offsetDocs = offDocsDef.await(),
+                    liveLyricsDocs = lyrDocsDef.await()
+                )
             }
 
-            val playlistHistoryToWrite = fullPlaylistHistory.filter {
-                existingPlaylistHistoryById[it.eventId]?.toMap() != it.toMap()
-            }
-            var playlistHistoryBatch = fs.batch()
-            var playlistHistoryBatchSize = 0
-            val playlistHistoryRef = fs.collection(USERS_COLLECTION).document(uid)
-                .collection(PLAYLIST_HISTORY_COLLECTION)
-            for (event in playlistHistoryToWrite) {
-                playlistHistoryBatch.set(playlistHistoryRef.document(event.eventId), event.toMap(), SetOptions.merge())
-                playlistHistoryBatchSize++
-                if (playlistHistoryBatchSize >= 400) {
-                    playlistHistoryBatch.commit().await()
-                    playlistHistoryBatch = fs.batch()
-                    playlistHistoryBatchSize = 0
-                }
-            }
-            if (playlistHistoryBatchSize > 0) playlistHistoryBatch.commit().await()
-            val verifiedPlaylistHistoryIds = fetchCloudPlaylistPlayEvents(uid, fs).map { it.eventId }.toHashSet()
-            if (!verifiedPlaylistHistoryIds.containsAll(fullPlaylistHistory.map { it.eventId })) {
-                throw IllegalStateException("Playlist history could not be fully verified; the previous snapshot was kept")
-            }
+            if (getCurrentUid() != uid) throw CancellationException("Account changed before subcollection backup")
 
-            if (getCurrentUid() != uid) throw CancellationException("Account changed before lyrics snapshot publication")
-            writeCloudLyricsSnapshot(uid, lyricsSnapshotId, cloudLyrics, fs)
+            // Execute all subcollection diffs, writes, pruning, and verifications in parallel
+            coroutineScope {
+                val historyJob = async {
+                    val existingCloudHistoryById = existingCloudHistory.associateBy { it.sessionId }
+                    val retainedHistoryIds = fullHistory.map { it.sessionId }.toHashSet()
+                    val historyRef = userRootRef.collection(HISTORY_COLLECTION)
+                    val historyToWrite = fullHistory.filter { existingCloudHistoryById[it.sessionId]?.toMap() != it.toMap() }
+                    val historyToDelete = existingCloudHistory.filter { it.sessionId !in retainedHistoryIds }
 
-            // Also keep the lyrics_offsets and cloud_lyrics collections in sync with the snapshot
-            if (lyricsOffsets.isNotEmpty()) {
-                try {
-                    val offsetsRef = fs.collection(USERS_COLLECTION).document(uid).collection(LYRICS_OFFSETS_COLLECTION)
-                    var offsetsBatch = fs.batch()
-                    var offsetsBatchSize = 0
-                    for (offsetItem in lyricsOffsets) {
-                        offsetsBatch.set(offsetsRef.document(sha256(offsetItem.songSignature)), offsetItem.toMap(), SetOptions.merge())
-                        offsetsBatchSize++
-                        if (offsetsBatchSize >= 100) {
-                            offsetsBatch.commit().await()
-                            offsetsBatch = fs.batch()
-                            offsetsBatchSize = 0
+                    val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                    var batch = fs.batch()
+                    var size = 0
+                    for (event in historyToWrite) {
+                        batch.set(historyRef.document(event.sessionId), event.toMap(), SetOptions.merge())
+                        size++
+                        if (size >= 400) {
+                            batches += batch; batch = fs.batch(); size = 0
                         }
                     }
-                    if (offsetsBatchSize > 0) offsetsBatch.commit().await()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Non-fatal error mirroring lyrics offsets collection during backup: ${e.message}")
-                }
-            }
-            if (cloudLyrics.isNotEmpty()) {
-                try {
-                    val liveLyricsRef = fs.collection(USERS_COLLECTION).document(uid).collection(LYRICS_COLLECTION)
-                    var lyricsBatch = fs.batch()
-                    var lyricsBatchCount = 0
-                    var lyricsBatchBytes = 0
-                    for (entry in cloudLyrics) {
-                        val mapData = entry.toMap()
-                        val entryBytes = mapData.toString().toByteArray(Charsets.UTF_8).size
-                        if (entryBytes > 700 * 1024) continue
-                        if (lyricsBatchCount > 0 && (lyricsBatchCount >= 45 || lyricsBatchBytes + entryBytes > 450 * 1024)) {
-                            lyricsBatch.commit().await()
-                            lyricsBatch = fs.batch()
-                            lyricsBatchCount = 0
-                            lyricsBatchBytes = 0
+                    for (oldEvent in historyToDelete) {
+                        batch.delete(historyRef.document(oldEvent.sessionId))
+                        size++
+                        if (size >= 400) {
+                            batches += batch; batch = fs.batch(); size = 0
                         }
-                        lyricsBatch.set(liveLyricsRef.document(sha256(entry.songSignature)), mapData, SetOptions.merge())
-                        lyricsBatchCount++
-                        lyricsBatchBytes += entryBytes
                     }
-                    if (lyricsBatchCount > 0) lyricsBatch.commit().await()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Non-fatal error mirroring live cloud_lyrics collection during backup: ${e.message}")
+                    if (size > 0) batches += batch
+                    if (batches.isNotEmpty()) {
+                        batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                    }
+                    cachedCloudHistoryEvents.clear()
+                    fullHistory.forEach { cachedCloudHistoryEvents[it.sessionId] = it }
+
+                    if (historyToWrite.isNotEmpty() || historyToDelete.isNotEmpty() || !existingCloudHistoryById.keys.containsAll(retainedHistoryIds)) {
+                        val verifiedHistoryIds = fetchCloudHistoryEvents(uid, fs).map { it.sessionId }.toHashSet()
+                        if (!verifiedHistoryIds.containsAll(retainedHistoryIds)) {
+                            throw IllegalStateException("Listening history could not be fully verified; the previous snapshot was kept")
+                        }
+                    }
                 }
+
+                val playlistHistoryJob = async {
+                    val existingPlaylistHistoryById = existingPlaylistHistory.associateBy { it.eventId }
+                    val retainedPlHistoryIds = fullPlaylistHistory.map { it.eventId }.toHashSet()
+                    val playlistHistoryRef = userRootRef.collection(PLAYLIST_HISTORY_COLLECTION)
+                    val toWrite = fullPlaylistHistory.filter { existingPlaylistHistoryById[it.eventId]?.toMap() != it.toMap() }
+                    val toDelete = existingPlaylistHistory.filter { it.eventId !in retainedPlHistoryIds }
+
+                    val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                    var batch = fs.batch()
+                    var size = 0
+                    for (event in toWrite) {
+                        batch.set(playlistHistoryRef.document(event.eventId), event.toMap(), SetOptions.merge())
+                        size++
+                        if (size >= 400) {
+                            batches += batch; batch = fs.batch(); size = 0
+                        }
+                    }
+                    for (oldPlEvent in toDelete) {
+                        batch.delete(playlistHistoryRef.document(oldPlEvent.eventId))
+                        size++
+                        if (size >= 400) {
+                            batches += batch; batch = fs.batch(); size = 0
+                        }
+                    }
+                    if (size > 0) batches += batch
+                    if (batches.isNotEmpty()) {
+                        batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                    }
+                    if (toWrite.isNotEmpty() || toDelete.isNotEmpty() || !existingPlaylistHistoryById.keys.containsAll(retainedPlHistoryIds)) {
+                        val verifiedIds = fetchCloudPlaylistPlayEvents(uid, fs).map { it.eventId }.toHashSet()
+                        if (!verifiedIds.containsAll(retainedPlHistoryIds)) {
+                            throw IllegalStateException("Playlist history could not be fully verified; the previous snapshot was kept")
+                        }
+                    }
+                }
+
+                val lyricsSnapshotJob = async {
+                    val existingSnapId = existingLatestSnap?.getString("lyricsSnapshotId")
+                    val existingSnapComplete = existingLatestSnap?.data?.let { UserBackupPayload.isCompleteSnapshot(it, uid) } == true
+                    val existingSnapCount = (existingLatestSnap?.getLong("lyricsCount") ?: -1L).toInt()
+                    writeCloudLyricsSnapshot(
+                        uid = uid,
+                        snapshotId = lyricsSnapshotId,
+                        entries = cloudLyrics,
+                        fs = fs,
+                        existingLatestSnapshotId = existingSnapId,
+                        existingLatestComplete = existingSnapComplete,
+                        existingLatestCount = existingSnapCount
+                    )
+                }
+
+                val playlistsJob = async {
+                    try {
+                        val existingPlById = existingCloudPlDocs.associateBy { it.id }
+                        val retainedCloudPlIds = playlists.map { it.cloudId }.toHashSet()
+                        val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                        var plBatch = fs.batch()
+                        var plBatchSize = 0
+                        for (pl in playlists) {
+                            val map = pl.toMap()
+                            if (!firestoreMapsEqual(existingPlById[pl.cloudId]?.data, map)) {
+                                plBatch.set(playlistsRef.document(pl.cloudId), map)
+                                plBatchSize++
+                                if (plBatchSize >= 200) {
+                                    batches += plBatch; plBatch = fs.batch(); plBatchSize = 0
+                                }
+                            }
+                        }
+                        for (doc in existingCloudPlDocs) {
+                            if (doc.id !in retainedCloudPlIds) {
+                                plBatch.delete(doc.reference)
+                                plBatchSize++
+                                if (plBatchSize >= 200) {
+                                    batches += plBatch; plBatch = fs.batch(); plBatchSize = 0
+                                }
+                            }
+                        }
+                        if (plBatchSize > 0) batches += plBatch
+                        if (batches.isNotEmpty()) {
+                            batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                        }
+                        playlistLocalToCloudMap.clear()
+                        playlistCloudToLocalMap.clear()
+                        for ((localId, cId) in localPlaylistCloudIds) {
+                            playlistLocalToCloudMap[localId] = cId
+                            playlistCloudToLocalMap[cId] = localId
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal error mirroring playlists collection during backup: ${e.message}")
+                    }
+                }
+
+                val favoritesJob = async {
+                    try {
+                        val existingFavById = existingCloudFavDocs.associateBy { it.id }
+                        val retainedFavSigs = favorites.map { it.songSignature }.toHashSet()
+                        val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                        var favBatch = fs.batch()
+                        var favBatchSize = 0
+                        for (fav in favorites) {
+                            val map = fav.toMap()
+                            if (!firestoreMapsEqual(existingFavById[fav.songSignature]?.data, map)) {
+                                favBatch.set(favsRef.document(fav.songSignature), map)
+                                favBatchSize++
+                                if (favBatchSize >= 300) {
+                                    batches += favBatch; favBatch = fs.batch(); favBatchSize = 0
+                                }
+                            }
+                        }
+                        for (doc in existingCloudFavDocs) {
+                            if (doc.id !in retainedFavSigs) {
+                                favBatch.delete(doc.reference)
+                                favBatchSize++
+                                if (favBatchSize >= 300) {
+                                    batches += favBatch; favBatch = fs.batch(); favBatchSize = 0
+                                }
+                            }
+                        }
+                        if (favBatchSize > 0) batches += favBatch
+                        if (batches.isNotEmpty()) {
+                            batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                        }
+                        cachedCloudFavorites.clear()
+                        favorites.forEach { cachedCloudFavorites[it.songSignature] = it }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal error mirroring favorites collection during backup: ${e.message}")
+                    }
+                }
+
+                val smartAndSettingsJob = async {
+                    try {
+                        val existingSpById = existingSpDocs.associateBy { it.id }
+                        val retainedSpIds = HashSet<String>()
+                        var spBatch = fs.batch()
+                        var spBatchSize = 0
+                        for (sp in smartPlaylistsList) {
+                            val docId = sha256(sp.name.trim().lowercase())
+                            retainedSpIds += docId
+                            val map = sp.toMap()
+                            if (!firestoreMapsEqual(existingSpById[docId]?.data, map)) {
+                                spBatch.set(spRef.document(docId), map)
+                                spBatchSize++
+                            }
+                        }
+                        for (doc in existingSpDocs) {
+                            if (doc.id !in retainedSpIds) {
+                                spBatch.delete(doc.reference)
+                                spBatchSize++
+                            }
+                        }
+                        if (spBatchSize > 0) spBatch.commit().await()
+                        userRootRef.collection(SETTINGS_COLLECTION).document(SETTINGS_DOC_PREFERENCES)
+                            .set(currentSettings.toMap()).await()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal error mirroring smart playlists/settings during backup: ${e.message}")
+                    }
+                }
+
+                val offsetsJob = async {
+                    try {
+                        val existingOffById = existingOffsetDocs.associateBy { it.id }
+                        val retainedOffsetDocIds = lyricsOffsets.map { sha256(it.songSignature) }.toHashSet()
+                        val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                        var offsetsBatch = fs.batch()
+                        var offsetsBatchSize = 0
+                        for (offsetItem in lyricsOffsets) {
+                            val docId = sha256(offsetItem.songSignature)
+                            val map = offsetItem.toMap()
+                            if (!firestoreMapsEqual(existingOffById[docId]?.data, map)) {
+                                offsetsBatch.set(offsetsRef.document(docId), map, SetOptions.merge())
+                                offsetsBatchSize++
+                                if (offsetsBatchSize >= 100) {
+                                    batches += offsetsBatch; offsetsBatch = fs.batch(); offsetsBatchSize = 0
+                                }
+                            }
+                        }
+                        for (doc in existingOffsetDocs) {
+                            if (doc.id !in retainedOffsetDocIds) {
+                                offsetsBatch.delete(doc.reference)
+                                offsetsBatchSize++
+                                if (offsetsBatchSize >= 100) {
+                                    batches += offsetsBatch; offsetsBatch = fs.batch(); offsetsBatchSize = 0
+                                }
+                            }
+                        }
+                        if (offsetsBatchSize > 0) batches += offsetsBatch
+                        if (batches.isNotEmpty()) {
+                            batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                        }
+                        cachedCloudLyricsOffsets.clear()
+                        lyricsOffsets.forEach { cachedCloudLyricsOffsets[it.songSignature] = it }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal error mirroring lyrics offsets collection during backup: ${e.message}")
+                    }
+                }
+
+                val liveLyricsJob = async {
+                    try {
+                        val existingLyricsById = existingLiveLyricsDocs.associateBy { it.id }
+                        val retainedLyricsDocIds = cloudLyrics.map { sha256(it.songSignature) }.toHashSet()
+                        val batches = mutableListOf<com.google.firebase.firestore.WriteBatch>()
+                        var lyricsBatch = fs.batch()
+                        var lyricsBatchCount = 0
+                        var lyricsBatchBytes = 0
+                        for (entry in cloudLyrics) {
+                            val docId = sha256(entry.songSignature)
+                            val mapData = entry.toMap()
+                            if (firestoreMapsEqual(existingLyricsById[docId]?.data, mapData)) continue
+                            val entryBytes = mapData.toString().toByteArray(Charsets.UTF_8).size
+                            if (entryBytes > 700 * 1024) continue
+                            if (lyricsBatchCount > 0 && (lyricsBatchCount >= 45 || lyricsBatchBytes + entryBytes > 450 * 1024)) {
+                                batches += lyricsBatch; lyricsBatch = fs.batch(); lyricsBatchCount = 0; lyricsBatchBytes = 0
+                            }
+                            lyricsBatch.set(liveLyricsRef.document(docId), mapData, SetOptions.merge())
+                            lyricsBatchCount++
+                            lyricsBatchBytes += entryBytes
+                        }
+                        for (doc in existingLiveLyricsDocs) {
+                            if (doc.id !in retainedLyricsDocIds) {
+                                if (lyricsBatchCount >= 45) {
+                                    batches += lyricsBatch; lyricsBatch = fs.batch(); lyricsBatchCount = 0; lyricsBatchBytes = 0
+                                }
+                                lyricsBatch.delete(doc.reference)
+                                lyricsBatchCount++
+                            }
+                        }
+                        if (lyricsBatchCount > 0) batches += lyricsBatch
+                        if (batches.isNotEmpty()) {
+                            batches.chunked(6).forEach { g -> coroutineScope { g.map { b -> async { b.commit().await() } }.awaitAll() } }
+                        }
+                        cachedCloudLyrics.clear()
+                        cloudLyrics.forEach { cachedCloudLyrics[it.songSignature] = it }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Non-fatal error mirroring live cloud_lyrics collection during backup: ${e.message}")
+                    }
+                }
+
+                awaitAll(
+                    historyJob,
+                    playlistHistoryJob,
+                    lyricsSnapshotJob,
+                    playlistsJob,
+                    favoritesJob,
+                    smartAndSettingsJob,
+                    offsetsJob,
+                    liveLyricsJob
+                )
             }
 
             if (getCurrentUid() != uid) throw CancellationException("Account changed before snapshot publication")
@@ -2821,26 +3274,31 @@ class CloudSyncRepository(
                 throw IllegalStateException("Failed to verify latest backup document")
             }
 
-            try {
-                stagingDoc.delete().await()
-            } catch (_: Exception) {}
-
-            try {
-                val allBackups = backupCollection.get(Source.SERVER).await()
-                for (doc in allBackups.documents) {
-                    if (doc.id != "latest") {
-                        doc.reference.delete().await()
+            // Cleanup staging/legacy backup docs and update timestamp concurrently
+            coroutineScope {
+                val cleanupJob = async {
+                    try {
+                        val allBackups = backupCollection.get(Source.SERVER).await()
+                        val docsToDelete = allBackups.documents.filter { it.id != "latest" }
+                        if (docsToDelete.isNotEmpty()) {
+                            docsToDelete.chunked(400).forEach { chunk ->
+                                val delBatch = fs.batch()
+                                chunk.forEach { delBatch.delete(it.reference) }
+                                delBatch.commit().await()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error pruning previous backup documents: ${e.message}")
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error pruning previous backup documents: ${e.message}")
-            }
-
-            try {
-                fs.collection(USERS_COLLECTION).document(uid)
-                    .set(mapOf("lastBackupAt" to now), SetOptions.merge()).await()
-            } catch (e: Exception) {
-                Log.w(TAG, "Snapshot succeeded but updating the account timestamp failed: ${e.message}")
+                val rootUpdateJob = async {
+                    try {
+                        userRootRef.set(mapOf("lastBackupAt" to now), SetOptions.merge()).await()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Snapshot succeeded but updating the account timestamp failed: ${e.message}")
+                    }
+                }
+                awaitAll(cleanupJob, rootUpdateJob)
             }
 
             userPreferences.setLastBackupTimestamp(now, dataHash)
@@ -2855,6 +3313,34 @@ class CloudSyncRepository(
         }
     }
 
+    private data class BackupGatheredData(
+        val currentSettings: CloudUserSettings,
+        val avatarBase64: String?,
+        val allSongs: List<SongEntity>,
+        val localPlaylistEntities: List<PlaylistEntity>,
+        val playlistSongsById: Map<Long, List<SongEntity>>,
+        val historyRecords: List<PlaybackHistoryEntity>,
+        val playlistPlayEvents: List<PlaylistPlayEventEntity>,
+        val topArtists: List<String>,
+        val recentSearches: List<CloudRecentSearch>,
+        val smartPlaylists: List<CloudSmartPlaylist>,
+        val localOffsets: Map<Long, Long>,
+        val localOffsetTimestamps: Map<Long, Long>,
+        val dbLyrics: List<LyricsEntity>,
+        val lastHash: String?
+    )
+
+    private data class CloudExistingState(
+        val latestSnap: com.google.firebase.firestore.DocumentSnapshot?,
+        val history: List<CloudPlaybackEvent>,
+        val playlistHistory: List<CloudPlaylistPlayEvent>,
+        val playlistsDocs: List<com.google.firebase.firestore.DocumentSnapshot>,
+        val favoritesDocs: List<com.google.firebase.firestore.DocumentSnapshot>,
+        val smartPlaylistDocs: List<com.google.firebase.firestore.DocumentSnapshot>,
+        val offsetDocs: List<com.google.firebase.firestore.DocumentSnapshot>,
+        val liveLyricsDocs: List<com.google.firebase.firestore.DocumentSnapshot>
+    )
+
     /**
      * Called when LibraryScanner completes a scan.
      * Automatically matches newly discovered songs against cloud favorites, playlists, and listening history.
@@ -2868,10 +3354,12 @@ class CloudSyncRepository(
         val allSongs = songDao.getAllSongsOnce()
         val songsBySig = allSongs.associateBy { SongIdentityHelper.computeSignature(it) }
         val songsByNormKey = allSongs.groupBy {
-            "${com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
-        }
-        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }
-        val songsByCleanTitle = allSongs.groupBy { com.example.util.TagCleaner.cleanTitle(it.title, "").lowercase() }
+            "${com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()}|${com.example.util.TagCleaner.cleanArtist(it.artist).lowercase()}"
+        }.filterKeys { !it.startsWith("|") }
+        val songsByFilename = allSongs.groupBy { it.path.substringAfterLast('/').lowercase() }.filterKeys { it.isNotBlank() }
+        val songsByCleanTitle = allSongs.groupBy {
+            com.example.util.TagCleaner.cleanTitle(it.title, it.path.substringAfterLast('/')).lowercase()
+        }.filterKeys { it.isNotBlank() }
         val localPlaylists = playlistDao.getAllPlaylistsOnce()
         for (cloudPl in payload.playlists) {
             val cloudId = cloudPl.cloudId
@@ -2903,7 +3391,7 @@ class CloudSyncRepository(
         }
     }
 
-    private suspend fun ensureLocalCompanionLrcFilesAndCleanupTxt() = withContext(Dispatchers.IO) {
+    private suspend fun ensureLocalCompanionLrcFilesAndCleanupTxt(skipSongIds: Set<Long> = emptySet()) = withContext(Dispatchers.IO) {
         try {
             val allSongs = songDao.getAllSongsOnce()
             val visitedDirs = HashSet<String>()
@@ -2928,17 +3416,30 @@ class CloudSyncRepository(
             val allLyrics = lyricsDao.getAllLyricsOnce()
             if (allLyrics.isNotEmpty()) {
                 val songsById = allSongs.associateBy { it.id }
-                for (lyrics in allLyrics) {
-                    if (lyrics.syncedLyricsJson.isNullOrBlank()) continue
-                    val song = songsById[lyrics.songId] ?: continue
-                    if (song.path.isBlank()) continue
-                    com.example.util.LrcParser.writeCompanionLrcForSong(
-                        context = context,
-                        songPath = song.path,
-                        songTitle = song.title,
-                        plainLyrics = lyrics.plainLyrics,
-                        syncedLyricsJson = lyrics.syncedLyricsJson
-                    )
+                val allOffsets = userPreferences.getAllLyricsSyncOffsets()
+                val pendingLyrics = allLyrics.filter { lyrics ->
+                    lyrics.songId !in skipSongIds &&
+                        (!lyrics.syncedLyricsJson.isNullOrBlank() || !lyrics.plainLyrics.isNullOrBlank()) &&
+                        songsById[lyrics.songId]?.path?.isNotBlank() == true
+                }
+                pendingLyrics.chunked(24).forEach { chunk ->
+                    coroutineScope {
+                        chunk.map { lyrics ->
+                            async(Dispatchers.IO) {
+                                val song = songsById[lyrics.songId] ?: return@async
+                                val offsetMs = allOffsets[song.id] ?: 0L
+                                com.example.util.LrcParser.writeCompanionLrcForSong(
+                                    context = context,
+                                    songPath = song.path,
+                                    songTitle = song.title,
+                                    plainLyrics = lyrics.plainLyrics,
+                                    syncedLyricsJson = lyrics.syncedLyricsJson,
+                                    offsetMs = offsetMs,
+                                    skipDirectoryCleanup = true
+                                )
+                            }
+                        }.awaitAll()
+                    }
                 }
             }
         } catch (e: Exception) {

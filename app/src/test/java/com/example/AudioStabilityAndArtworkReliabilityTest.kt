@@ -1008,6 +1008,175 @@ class AudioStabilityAndArtworkReliabilityTest {
             snapshot.dispose()
         }
     }
+
+    @Test
+    fun testIdlePreSleepAndLockscreenTransientFocusIgnoredWithoutPausing() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.reduceVolumeOnNotification = true
+
+        // 1. Simulate device starting screen sleep / turning non-interactive right before black-out
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        org.robolectric.Shadows.shadowOf(powerManager).setIsInteractive(false)
+        try {
+            focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+            assertTrue(
+                "Pre-sleep / non-interactive transient focus loss must NOT pause playback",
+                isPlaying
+            )
+            assertEquals(0, pauseCount)
+        } finally {
+            org.robolectric.Shadows.shadowOf(powerManager).setIsInteractive(true)
+        }
+
+        // 2. Simulate device keyguard locking while display is transitioning to lockscreen
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        org.robolectric.Shadows.shadowOf(keyguardManager).setKeyguardLocked(true)
+        try {
+            focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+            assertTrue(
+                "Keyguard lock transient focus loss must NOT pause playback",
+                isPlaying
+            )
+            assertEquals(0, pauseCount)
+        } finally {
+            org.robolectric.Shadows.shadowOf(keyguardManager).setKeyguardLocked(false)
+        }
+        assertEquals(0, resumeCount)
+    }
+
+    @Test
+    fun testNotificationPlaybackObserverDucksImmediatelyWhileHoldingFocusWithoutWaiting() {
+        var isPlaying = true
+        var duckCallCount = 0
+        var lastDuckVol = 1.0f
+        var restoreCallCount = 0
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { 1 },
+            onDuckRequested = { vol ->
+                duckCallCount++
+                lastDuckVol = vol
+            },
+            onRestoreVolumeRequested = {
+                restoreCallCount++
+                lastDuckVol = 1.0f
+            }
+        )
+        focusManager.reduceVolumeOnNotification = true
+        focusManager.requestAudioFocus()
+        assertTrue(focusManager.hasAudioFocus)
+
+        // Build an AudioPlaybackConfiguration representing an active notification chime
+        val notifAttrs = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        val mockConfig = org.robolectric.shadow.api.Shadow.newInstanceOf(android.media.AudioPlaybackConfiguration::class.java)
+        var stateField: java.lang.reflect.Field? = null
+        try {
+            val attrField = android.media.AudioPlaybackConfiguration::class.java.getDeclaredField("mPlayerAttr")
+            attrField.isAccessible = true
+            attrField.set(mockConfig, notifAttrs)
+            stateField = android.media.AudioPlaybackConfiguration::class.java.getDeclaredField("mPlayerState").apply {
+                isAccessible = true
+                setInt(mockConfig, 3) // PLAYER_STATE_PAUSED
+            }
+        } catch (_: Throwable) {}
+
+        if (mockConfig.audioAttributes?.usage == android.media.AudioAttributes.USAGE_NOTIFICATION) {
+            // Stale/paused notification player must not trigger a false duck
+            if (stateField != null) {
+                focusManager.onActivePlaybackConfigurationsChanged(listOf(mockConfig))
+                assertEquals("Paused/stale notification config must not duck playback", 0, duckCallCount)
+                stateField.setInt(mockConfig, 2) // PLAYER_STATE_STARTED
+            }
+
+            focusManager.onActivePlaybackConfigurationsChanged(listOf(mockConfig))
+            assertEquals("PlaybackCallback must immediately duck even while holding audio focus", 1, duckCallCount)
+            assertEquals(AudioFocusManager.DEFAULT_NOTIFICATION_DUCK_VOLUME, lastDuckVol, 0.001f)
+
+            // If AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK arrives milliseconds later for the same notification,
+            // it must NOT re-trigger onDuckRequested or compound attenuation.
+            focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+            assertEquals(1, duckCallCount)
+
+            focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+            assertEquals(1, restoreCallCount)
+            assertEquals(1.0f, lastDuckVol, 0.001f)
+        }
+        focusManager.unregisterCameraCallback()
+    }
+
+    @Test
+    fun testSystemMusicStreamDropDetectedAsBuiltInOemDuckingAvoidsDoubleDuck() {
+        var duckCallCount = 0
+        var restoreCallCount = 0
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { true },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { 1 },
+            onDuckRequested = { duckCallCount++ },
+            onRestoreVolumeRequested = { restoreCallCount++ }
+        )
+        focusManager.reduceVolumeOnNotification = true
+
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 10, 0)
+
+        // Establish normal baseline volume during playback
+        focusManager.onMusicStreamVolumeObserved(10)
+
+        // Simulate OEM built-in notification ducking dropping STREAM_MUSIC transiently just before focus callback
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 5, 0)
+        focusManager.onMusicStreamVolumeObserved(5)
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(
+            "When built-in OS ducking already lowered STREAM_MUSIC, in-app duck must not stack on top",
+            0,
+            duckCallCount
+        )
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 10, 0)
+        assertEquals(0, restoreCallCount)
+
+        // Subsequent normal notification with steady STREAM_MUSIC ducks cleanly via in-app control
+        focusManager.onMusicStreamVolumeObserved(10)
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(1, duckCallCount)
+
+        // Repeated CAN_DUCK during same episode must not stack or re-invoke onDuckRequested
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(1, duckCallCount)
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals(1, restoreCallCount)
+        focusManager.unregisterCameraCallback()
+    }
 }
 
 

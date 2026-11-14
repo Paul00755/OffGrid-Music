@@ -8,7 +8,10 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 
 /**
@@ -48,6 +51,8 @@ class AudioFocusManager(
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
     private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var focusCallbackThread: HandlerThread? = null
+    @Volatile private var focusCallbackHandler: Handler? = null
     private var audioFocusRequest: AudioFocusRequest? = null
 
     @Volatile var hasAudioFocus: Boolean = false
@@ -55,20 +60,66 @@ class AudioFocusManager(
 
     private val activeInterruptions = mutableSetOf<InterruptionSource>()
     private val activeCameraIds = mutableSetOf<String>()
+    private val hardwareUnavailableCameraIds = mutableSetOf<String>()
     private val pendingTransientCheckRunnables = mutableListOf<Runnable>()
+    private var pendingPlaybackDuckRestoreRunnable: Runnable? = null
 
     @Volatile var wasPlayingBeforeInterruption: Boolean = false
         private set
     @Volatile var userManuallyPausedOrStopped: Boolean = false
         private set
     @Volatile private var wasDuckedByTransientFocus: Boolean = false
+    @Volatile private var duckStartedViaPlaybackObserver: Boolean = false
+    @Volatile private var duckStartedAtMs: Long = 0L
+    @Volatile private var systemHandledDuckingForNotification: Boolean = false
+    @Volatile private var baselineMusicStreamVolume: Int = -1
+    @Volatile private var baselineMusicStreamObservedAtMs: Long = 0L
+    @Volatile private var recentMusicStreamDropAtMs: Long = 0L
+    @Volatile private var musicStreamVolumeBeforeDrop: Int = -1
     @Volatile private var cameraCallbackRegistered: Boolean = false
     @Volatile private var cameraRegistrationReady: Boolean = false
     @Volatile private var playbackCallbackRegistered: Boolean = false
     @Volatile private var recordingCallbackRegistered: Boolean = false
     @Volatile private var modeListenerRegistered: Boolean = false
+    @Volatile private var screenReceiverRegistered: Boolean = false
+    @Volatile private var lastCameraOrTransientInterruptionAtMs: Long = 0L
 
     private val pendingCameraOpenRunnables = mutableMapOf<String, Runnable>()
+
+    private fun getOrCreateFocusCallbackHandler(): Handler {
+        val existing = focusCallbackHandler
+        if (existing != null && focusCallbackThread?.isAlive == true) {
+            return existing
+        }
+        synchronized(this) {
+            val recheck = focusCallbackHandler
+            if (recheck != null && focusCallbackThread?.isAlive == true) {
+                return recheck
+            }
+            return try {
+                val thread = HandlerThread("OffGridAudioFocus", Process.THREAD_PRIORITY_URGENT_AUDIO).apply {
+                    isDaemon = true
+                    start()
+                }
+                val handler = Handler(thread.looper)
+                focusCallbackThread = thread
+                focusCallbackHandler = handler
+                handler
+            } catch (_: Throwable) {
+                mainHandler
+            }
+        }
+    }
+
+    private fun runUrgentOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            try { block() } catch (_: Throwable) {}
+        } else {
+            mainHandler.postAtFrontOfQueue {
+                try { block() } catch (_: Throwable) {}
+            }
+        }
+    }
 
     @Volatile var autoPauseCamera: Boolean = false
         set(value) {
@@ -79,6 +130,7 @@ class AudioFocusManager(
                 synchronized(this) {
                     cancelPendingCameraOpenRunnablesLocked()
                     activeCameraIds.clear()
+                    hardwareUnavailableCameraIds.clear()
                     if (activeInterruptions.contains(InterruptionSource.CAMERA)) {
                         endInterruptionLocked(InterruptionSource.CAMERA)
                     }
@@ -112,8 +164,7 @@ class AudioFocusManager(
             if (!value && wasDuckedByTransientFocus) {
                 synchronized(this) {
                     if (wasDuckedByTransientFocus) {
-                        wasDuckedByTransientFocus = false
-                        try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+                        clearDuckStateAndRestoreLocked()
                     }
                 }
             }
@@ -121,31 +172,64 @@ class AudioFocusManager(
 
     private val cameraAvailabilityCallback = object : CameraManager.AvailabilityCallback() {
         override fun onCameraUnavailable(cameraId: String) {
+            synchronized(this@AudioFocusManager) {
+                hardwareUnavailableCameraIds.add(cameraId)
+            }
             if (!cameraRegistrationReady || !autoPauseCamera) return
-            // Ignore background system camera checks (e.g. lockscreen Face Unlock or idle Screen Attention)
-            // when the screen is off or non-interactive.
-            if (!isDeviceScreenInteractive()) return
+            // Ignore background system camera checks (e.g. Android Adaptive Timeout / Screen Attention
+            // 1–2s before screen sleep, lockscreen Face Unlock, or when OffGrid Music itself is in the foreground).
+            if (isDeviceIdleOrSleepingOrLocking()) return
+            if (PlaybackManager.activeInstance?.takeIf { it.audioFocusManager === this@AudioFocusManager }?.isUiInForeground == true) return
+            val confirmDelayMs = if (isFrontFacingCamera(cameraId)) 2400L else 900L
             synchronized(this@AudioFocusManager) {
                 pendingCameraOpenRunnables.remove(cameraId)?.let { mainHandler.removeCallbacks(it) }
                 val runnable = Runnable {
                     synchronized(this@AudioFocusManager) {
                         pendingCameraOpenRunnables.remove(cameraId)
-                        if (autoPauseCamera && isDeviceScreenInteractive()) {
+                        if (autoPauseCamera &&
+                            hardwareUnavailableCameraIds.contains(cameraId) &&
+                            !isDeviceIdleOrSleepingOrLocking() &&
+                            PlaybackManager.activeInstance?.takeIf { it.audioFocusManager === this@AudioFocusManager }?.isUiInForeground != true
+                        ) {
                             onCameraOpened(cameraId)
                         }
                     }
                 }
                 pendingCameraOpenRunnables[cameraId] = runnable
-                mainHandler.postDelayed(runnable, 450L)
+                mainHandler.postDelayed(runnable, confirmDelayMs)
             }
         }
 
         override fun onCameraAvailable(cameraId: String) {
-            if (!cameraRegistrationReady) return
             synchronized(this@AudioFocusManager) {
+                hardwareUnavailableCameraIds.remove(cameraId)
                 pendingCameraOpenRunnables.remove(cameraId)?.let { mainHandler.removeCallbacks(it) }
             }
+            if (!cameraRegistrationReady) return
             onCameraClosed(cameraId)
+        }
+    }
+
+    private val screenStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+            if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                synchronized(this@AudioFocusManager) {
+                    cancelPendingCameraOpenRunnablesLocked()
+                    hardwareUnavailableCameraIds.clear()
+                    activeCameraIds.clear()
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val wasRecentPreSleepTrigger = (now - lastCameraOrTransientInterruptionAtMs) in 0L..4000L
+                    if (activeInterruptions.contains(InterruptionSource.CAMERA)) {
+                        endInterruptionLocked(InterruptionSource.CAMERA)
+                    }
+                    if (wasRecentPreSleepTrigger &&
+                        activeInterruptions.contains(InterruptionSource.SYSTEM_AUDIO_TRANSIENT) &&
+                        !isCallOrRingtoneActive()
+                    ) {
+                        endInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
+                    }
+                }
+            }
         }
     }
 
@@ -157,7 +241,7 @@ class AudioFocusManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             object : AudioManager.AudioPlaybackCallback() {
                 override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
-                    onActivePlaybackConfigurationsChanged()
+                    onActivePlaybackConfigurationsChanged(configs)
                 }
             }
         } else null
@@ -187,6 +271,30 @@ class AudioFocusManager(
         registerPlaybackCallbackIfNeeded()
         registerRecordingCallbackIfNeeded()
         registerModeChangedListenerIfNeeded()
+        registerScreenReceiverIfNeeded()
+    }
+
+    private fun registerScreenReceiverIfNeeded() {
+        if (screenReceiverRegistered) return
+        try {
+            val filter = android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(screenStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(screenStateReceiver, filter)
+            }
+            screenReceiverRegistered = true
+        } catch (_: Throwable) {}
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (!screenReceiverRegistered) return
+        try {
+            context.unregisterReceiver(screenStateReceiver)
+        } catch (_: Throwable) {
+        } finally {
+            screenReceiverRegistered = false
+        }
     }
 
     private fun registerPlaybackCallbackIfNeeded() {
@@ -195,7 +303,7 @@ class AudioFocusManager(
         val mgr = audioManager ?: return
         val cb = audioPlaybackCallback ?: return
         try {
-            mgr.registerAudioPlaybackCallback(cb, mainHandler)
+            mgr.registerAudioPlaybackCallback(cb, getOrCreateFocusCallbackHandler())
             playbackCallbackRegistered = true
         } catch (e: Throwable) {
             Log.w(TAG, "Unable to register audio playback callback", e)
@@ -220,7 +328,7 @@ class AudioFocusManager(
         val mgr = audioManager ?: return
         val cb = audioRecordingCallback ?: return
         try {
-            mgr.registerAudioRecordingCallback(cb, mainHandler)
+            mgr.registerAudioRecordingCallback(cb, getOrCreateFocusCallbackHandler())
             recordingCallbackRegistered = true
         } catch (e: Throwable) {
             Log.w(TAG, "Unable to register audio recording callback", e)
@@ -273,10 +381,7 @@ class AudioFocusManager(
             mode == 5    // AudioManager.MODE_COMMUNICATION_REDIRECT
         if (isCallMode) {
             if (!activeInterruptions.contains(InterruptionSource.PHONE_CALL)) {
-                if (wasDuckedByTransientFocus) {
-                    wasDuckedByTransientFocus = false
-                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                }
+                clearDuckStateAndRestoreLocked()
                 cancelTransientVerificationChecksLocked()
                 Log.d(TAG, "AudioModeChangedListener detected call/ringtone mode ($mode); pausing playback")
                 beginInterruptionLocked(InterruptionSource.PHONE_CALL)
@@ -297,10 +402,7 @@ class AudioFocusManager(
     private fun onActiveRecordingConfigurationsChanged() {
         val callNowActive = isCallOrRingtoneActive()
         if (callNowActive && !activeInterruptions.contains(InterruptionSource.PHONE_CALL)) {
-            if (wasDuckedByTransientFocus) {
-                wasDuckedByTransientFocus = false
-                try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-            }
+            clearDuckStateAndRestoreLocked()
             cancelTransientVerificationChecksLocked()
             Log.d(TAG, "RecordingCallback detected active call/VoIP mic; pausing playback")
             beginInterruptionLocked(InterruptionSource.PHONE_CALL)
@@ -311,14 +413,11 @@ class AudioFocusManager(
     }
 
     @Synchronized
-    private fun onActivePlaybackConfigurationsChanged() {
+    internal fun onActivePlaybackConfigurationsChanged(configs: List<AudioPlaybackConfiguration>? = null) {
         val callNowActive = isCallOrRingtoneActive()
         if (callNowActive) {
             if (!activeInterruptions.contains(InterruptionSource.PHONE_CALL)) {
-                if (wasDuckedByTransientFocus) {
-                    wasDuckedByTransientFocus = false
-                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                }
+                clearDuckStateAndRestoreLocked()
                 cancelTransientVerificationChecksLocked()
                 Log.d(TAG, "PlaybackCallback detected active call/ringtone; pausing playback")
                 beginInterruptionLocked(InterruptionSource.PHONE_CALL)
@@ -329,14 +428,33 @@ class AudioFocusManager(
             return
         }
 
-        if (hasAudioFocus || activeInterruptions.isNotEmpty()) return
-        val notificationStreamActive = hasActiveNotificationOrSystemStream()
-        val videoNowActive = !notificationStreamActive && hasExternalVideoOrMediaPlaying()
-        if (videoNowActive && autoPauseSystemAudio) {
-            if (wasDuckedByTransientFocus) {
-                wasDuckedByTransientFocus = false
-                try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+        val notificationStreamActive = hasNotificationConfigActive(configs)
+        if (notificationStreamActive && activeInterruptions.isEmpty()) {
+            cancelPendingPlaybackDuckRestoreLocked()
+            val isCurrentlyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
+            if (isCurrentlyPlaying && !wasDuckedByTransientFocus) {
+                handleNotificationDuckOrContinueLocked(
+                    isExplicitDuckableFocus = true,
+                    viaPlaybackObserver = true
+                )
             }
+            return
+        }
+
+        if (!notificationStreamActive &&
+            wasDuckedByTransientFocus &&
+            duckStartedViaPlaybackObserver &&
+            hasAudioFocus &&
+            activeInterruptions.isEmpty()
+        ) {
+            scheduleQuickPlaybackObserverRestoreLocked()
+        }
+
+        if (hasAudioFocus || activeInterruptions.isNotEmpty()) return
+        val anyNotificationActive = notificationStreamActive || isSystemNotificationOrRingStreamActive()
+        val videoNowActive = !anyNotificationActive && hasExternalVideoOrMediaPlaying()
+        if (videoNowActive && autoPauseSystemAudio) {
+            clearDuckStateAndRestoreLocked()
             cancelTransientVerificationChecksLocked()
             Log.d(TAG, "PlaybackCallback detected external video/media stream; pausing playback")
             beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
@@ -346,19 +464,67 @@ class AudioFocusManager(
     /**
      * Lightweight poll invoked from PlaybackManager's active playback loop to guarantee
      * that incoming/active cellular or WhatsApp/VoIP calls pause music even on OEM ROMs
-     * that delay or suppress audio focus callbacks when switching into call/ringtone mode.
+     * that delay or suppress audio focus callbacks when switching into call/ringtone mode,
+     * and to keep the device's baseline speaker volume calibrated for OEM ducking detection.
      */
     @Synchronized
     fun pollActiveCallStateWhilePlaying() {
+        val currentVol = try { audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1 } catch (_: Throwable) { -1 }
+        if (currentVol >= 0) {
+            recordMusicStreamVolumeLocked(currentVol)
+        }
         if (activeInterruptions.contains(InterruptionSource.PHONE_CALL)) return
         if (isCallOrRingtoneActive()) {
-            if (wasDuckedByTransientFocus) {
-                wasDuckedByTransientFocus = false
-                try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-            }
+            clearDuckStateAndRestoreLocked()
             cancelTransientVerificationChecksLocked()
             Log.d(TAG, "Active call/ringtone detected during playback poll; pausing playback")
             beginInterruptionLocked(InterruptionSource.PHONE_CALL)
+        }
+    }
+
+    /**
+     * Called when STREAM_MUSIC changes while playing so built-in OEM notification ducking
+     * that transiently lowers STREAM_MUSIC won't stack with in-app volume attenuation.
+     */
+    @Synchronized
+    fun onMusicStreamVolumeObserved(streamVolume: Int) {
+        if (streamVolume < 0) return
+        recordMusicStreamVolumeLocked(streamVolume)
+    }
+
+    private fun recordMusicStreamVolumeLocked(currentVol: Int) {
+        val now = SystemClock.elapsedRealtime()
+        if (wasDuckedByTransientFocus) {
+            if (!systemHandledDuckingForNotification &&
+                baselineMusicStreamVolume > 0 &&
+                currentVol in 1 until baselineMusicStreamVolume &&
+                (now - duckStartedAtMs) <= 1800L
+            ) {
+                // OEM built-in ducking lowered STREAM_MUSIC right after our in-app duck started;
+                // yield attenuation to the OS so both settings do not double-duck playback.
+                systemHandledDuckingForNotification = true
+                Log.d(TAG, "System STREAM_MUSIC dropped ($baselineMusicStreamVolume -> $currentVol) during notification; yielding ducking to OS")
+                runUrgentOnMain { onRestoreVolumeRequested() }
+            }
+            return
+        }
+        if (activeInterruptions.isNotEmpty()) return
+
+        if (baselineMusicStreamVolume > 0 &&
+            currentVol in 1 until baselineMusicStreamVolume &&
+            (now - baselineMusicStreamObservedAtMs) <= 1500L
+        ) {
+            musicStreamVolumeBeforeDrop = baselineMusicStreamVolume
+            recentMusicStreamDropAtMs = now
+        } else if (recentMusicStreamDropAtMs > 0L && (now - recentMusicStreamDropAtMs) > 1500L) {
+            musicStreamVolumeBeforeDrop = -1
+            recentMusicStreamDropAtMs = 0L
+        }
+        baselineMusicStreamVolume = currentVol
+        baselineMusicStreamObservedAtMs = now
+        if (musicStreamVolumeBeforeDrop > 0 && currentVol >= musicStreamVolumeBeforeDrop) {
+            musicStreamVolumeBeforeDrop = -1
+            recentMusicStreamDropAtMs = 0L
         }
     }
 
@@ -397,11 +563,18 @@ class AudioFocusManager(
 
     fun unregisterCameraCallback() {
         cancelTransientVerificationChecksLocked()
+        cancelPendingPlaybackDuckRestoreLocked()
         cancelPendingCameraOpenRunnablesLocked()
         unregisterPlaybackCallback()
         unregisterRecordingCallback()
         unregisterModeChangedListener()
+        unregisterScreenReceiver()
         unregisterOnlyCameraAvailabilityCallback()
+        try {
+            focusCallbackThread?.quitSafely()
+        } catch (_: Throwable) {}
+        focusCallbackThread = null
+        focusCallbackHandler = null
     }
 
     private fun cancelTransientVerificationChecksLocked() {
@@ -410,6 +583,26 @@ class AudioFocusManager(
             mainHandler.removeCallbacks(runnable)
         }
         pendingTransientCheckRunnables.clear()
+    }
+
+    private fun cancelPendingPlaybackDuckRestoreLocked() {
+        pendingPlaybackDuckRestoreRunnable?.let {
+            mainHandler.removeCallbacks(it)
+            focusCallbackHandler?.removeCallbacks(it)
+        }
+        pendingPlaybackDuckRestoreRunnable = null
+    }
+
+    private fun clearDuckStateAndRestoreLocked() {
+        cancelPendingPlaybackDuckRestoreLocked()
+        if (!wasDuckedByTransientFocus) return
+        val wasSystemHandled = systemHandledDuckingForNotification
+        wasDuckedByTransientFocus = false
+        duckStartedViaPlaybackObserver = false
+        systemHandledDuckingForNotification = false
+        if (!wasSystemHandled) {
+            runUrgentOnMain { onRestoreVolumeRequested() }
+        }
     }
 
     private fun isCallOrRingtoneActive(): Boolean {
@@ -472,7 +665,7 @@ class AudioFocusManager(
         return false
     }
 
-    private fun isSystemNotificationOrRingStreamActive(): Boolean {
+    private fun isSystemNotificationOrRingStreamActive(lookbackMs: Int = 350): Boolean {
         return try {
             val audioSystemClass = Class.forName("android.media.AudioSystem")
             val isStreamActiveMethod = audioSystemClass.getMethod(
@@ -480,40 +673,55 @@ class AudioFocusManager(
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType
             )
-            val notificationActive = (isStreamActiveMethod.invoke(null, AudioManager.STREAM_NOTIFICATION, 350) as? Boolean) == true
-            val systemActive = (isStreamActiveMethod.invoke(null, AudioManager.STREAM_SYSTEM, 350) as? Boolean) == true
+            val notificationActive = (isStreamActiveMethod.invoke(null, AudioManager.STREAM_NOTIFICATION, lookbackMs) as? Boolean) == true
+            val systemActive = (isStreamActiveMethod.invoke(null, AudioManager.STREAM_SYSTEM, lookbackMs) as? Boolean) == true
             notificationActive || systemActive
         } catch (_: Throwable) {
             false
         }
     }
 
-    private fun hasActiveNotificationOrSystemStream(): Boolean {
-        if (isCallOrRingtoneActive()) return false
-        if (isSystemNotificationOrRingStreamActive()) return true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val configs = try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
-            for (config in configs) {
-                val attrs = config.audioAttributes ?: continue
-                when (attrs.usage) {
-                    AudioAttributes.USAGE_VOICE_COMMUNICATION,
-                    AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING,
-                    AudioAttributes.USAGE_NOTIFICATION_RINGTONE,
-                    AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST,
-                    AudioAttributes.USAGE_ALARM -> continue
-                    AudioAttributes.USAGE_NOTIFICATION,
-                    AudioAttributes.USAGE_NOTIFICATION_EVENT,
-                    AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT,
-                    AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_DELAYED,
-                    AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
-                    AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE -> return true
-                }
-                if (attrs.contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION) {
-                    return true
-                }
+    private fun isPlaybackConfigurationActive(config: AudioPlaybackConfiguration): Boolean {
+        return try {
+            val stateMethod = config.javaClass.getMethod("getPlayerState")
+            val state = (stateMethod.invoke(config) as? Int) ?: -1
+            // Exclude explicit RELEASED (0), PAUSED (3), STOPPED (4); allow STARTED (2) and redacted/test UNKNOWN (-1)
+            state != 0 && state != 3 && state != 4
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    private fun hasNotificationConfigActive(overrideConfigs: List<AudioPlaybackConfiguration>? = null): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val configs = overrideConfigs ?: try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
+        for (config in configs) {
+            if (!isPlaybackConfigurationActive(config)) continue
+            val attrs = config.audioAttributes ?: continue
+            when (attrs.usage) {
+                AudioAttributes.USAGE_VOICE_COMMUNICATION,
+                AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING,
+                AudioAttributes.USAGE_NOTIFICATION_RINGTONE,
+                AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST,
+                AudioAttributes.USAGE_ALARM -> continue
+                AudioAttributes.USAGE_NOTIFICATION,
+                AudioAttributes.USAGE_NOTIFICATION_EVENT,
+                AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT,
+                AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_DELAYED,
+                AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
+                AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE -> return true
+            }
+            if (attrs.contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION) {
+                return true
             }
         }
         return false
+    }
+
+    private fun hasActiveNotificationOrSystemStream(): Boolean {
+        if (isCallOrRingtoneActive()) return false
+        if (isSystemNotificationOrRingStreamActive()) return true
+        return hasNotificationConfigActive()
     }
 
     private fun isDeviceScreenInteractive(): Boolean {
@@ -525,6 +733,39 @@ class AudioFocusManager(
         }
     }
 
+    private fun isDefaultDisplayOn(): Boolean {
+        return try {
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+            val display = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            display == null || display.state == android.view.Display.STATE_ON
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    private fun isKeyguardLocked(): Boolean {
+        return try {
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            km?.isKeyguardLocked == true || km?.isDeviceLocked == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isDeviceIdleOrSleepingOrLocking(): Boolean {
+        return !isDeviceScreenInteractive() || !isDefaultDisplayOn() || isKeyguardLocked()
+    }
+
+    private fun isFrontFacingCamera(cameraId: String): Boolean {
+        return try {
+            val characteristics = cameraManager?.getCameraCharacteristics(cameraId)
+            val facing = characteristics?.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+            facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun hasExternalVideoOrMediaPlaying(): Boolean {
         try {
             externalVideoOrMediaActiveProvider?.let { return it.invoke() }
@@ -533,7 +774,7 @@ class AudioFocusManager(
         // When the phone screen is off / idle and no explicit test provider is set, the user is not
         // watching a video or playing a foreground game. Background focus losses while idle come from
         // notifications, hotspot client events, or download alerts.
-        if (!isDeviceScreenInteractive()) {
+        if (!isDeviceScreenInteractive() || !isDefaultDisplayOn()) {
             return false
         }
 
@@ -613,53 +854,125 @@ class AudioFocusManager(
             return !explicitVideoProvider.invoke() && ownMediaCount > 0
         }
 
-        // When the device screen is off / non-interactive and no call or external video is active,
-        // any transient focus loss comes from a background system service or silent notification
-        // and must never pause music for 2–5 seconds while the device sits idle.
-        if (!isDeviceScreenInteractive()) {
+        // When the device screen is off / turning off / non-interactive, or keyguard is locking/locked,
+        // or OffGrid Music itself is in the foreground (with no external video/media or phone call active),
+        // any transient focus loss comes from a background system service (e.g. pre-sleep AttentionService /
+        // Screen Off dim transition / SystemUI lock) or notification and must never pause music.
+        if (isDeviceIdleOrSleepingOrLocking()) {
+            return true
+        }
+        if (PlaybackManager.activeInstance?.takeIf { it.audioFocusManager === this@AudioFocusManager }?.isUiInForeground == true) {
             return true
         }
 
         return false
     }
 
-    private fun handleNotificationDuckOrContinueLocked() {
-        val shouldDuckVolume = reduceVolumeOnNotification && (
+    private fun hasSystemAlreadyDuckedMusicStreamLocked(): Boolean {
+        val currentVol = try { audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: -1 } catch (_: Throwable) { -1 }
+        if (currentVol <= 0) return false
+        val now = SystemClock.elapsedRealtime()
+        if (recentMusicStreamDropAtMs > 0L &&
+            (now - recentMusicStreamDropAtMs) <= 1200L &&
+            musicStreamVolumeBeforeDrop > currentVol
+        ) {
+            return true
+        }
+        return baselineMusicStreamVolume > 0 &&
+            currentVol < baselineMusicStreamVolume &&
+            (now - baselineMusicStreamObservedAtMs) <= 1500L
+    }
+
+    private fun handleNotificationDuckOrContinueLocked(
+        isExplicitDuckableFocus: Boolean = false,
+        viaPlaybackObserver: Boolean = false
+    ) {
+        val shouldDuckVolume = reduceVolumeOnNotification && !isDeviceIdleOrSleepingOrLocking() && (
+            isExplicitDuckableFocus ||
             hasActiveNotificationOrSystemStream() ||
-            isDeviceScreenInteractive() ||
             externalVideoOrMediaActiveProvider != null
         )
         if (shouldDuckVolume) {
-            Log.d(TAG, "Notification/hotspot focus loss detected: ducking volume by 40% (to 60% of current volume) without pausing")
+            if (!viaPlaybackObserver) {
+                // Focus loss supersedes playback-observer auto-restore until AUDIOFOCUS_GAIN or safety check
+                duckStartedViaPlaybackObserver = false
+                cancelPendingPlaybackDuckRestoreLocked()
+            } else if (!wasDuckedByTransientFocus) {
+                duckStartedViaPlaybackObserver = true
+            }
+
+            if (wasDuckedByTransientFocus) {
+                // Already ducked for this notification episode (e.g. AudioPlaybackCallback caught it before
+                // AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK arrived): avoid redundant callbacks or double-ducking.
+                scheduleDuckRestoreSafetyFallbackLocked()
+                return
+            }
+
+            duckStartedAtMs = SystemClock.elapsedRealtime()
             wasDuckedByTransientFocus = true
-            try { onDuckRequested(DEFAULT_NOTIFICATION_DUCK_VOLUME) } catch (_: Throwable) {}
+
+            if (hasSystemAlreadyDuckedMusicStreamLocked()) {
+                systemHandledDuckingForNotification = true
+                Log.d(TAG, "Built-in OS notification ducking already active on speaker stream; skipping redundant in-app duck")
+            } else {
+                systemHandledDuckingForNotification = false
+                Log.d(TAG, "Notification/hotspot detected (playbackObserver=$viaPlaybackObserver): immediately ducking volume to 60% without pausing")
+                runUrgentOnMain { onDuckRequested(DEFAULT_NOTIFICATION_DUCK_VOLUME) }
+            }
             scheduleDuckRestoreSafetyFallbackLocked()
         } else {
-            if (wasDuckedByTransientFocus) {
-                wasDuckedByTransientFocus = false
-                try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-            }
-            Log.d(TAG, "Notification focus loss with ducking OFF: continuing playback at 100% volume without pause")
+            clearDuckStateAndRestoreLocked()
+            Log.d(TAG, "Notification focus loss with ducking OFF or silent system event: continuing playback at 100% volume without pause")
         }
     }
 
-    private fun scheduleDuckRestoreSafetyFallbackLocked() {
-        val restoreSafetyRunnable = Runnable {
+    private fun scheduleQuickPlaybackObserverRestoreLocked() {
+        cancelPendingPlaybackDuckRestoreLocked()
+        val elapsed = (SystemClock.elapsedRealtime() - duckStartedAtMs).coerceAtLeast(0L)
+        val delayMs = maxOf(160L, 320L - elapsed)
+        val handler = focusCallbackHandler?.takeIf { focusCallbackThread?.isAlive == true } ?: mainHandler
+        val runnable = Runnable {
             synchronized(this@AudioFocusManager) {
-                if (wasDuckedByTransientFocus && activeInterruptions.isEmpty() && !hasActiveNotificationOrSystemStream()) {
-                    if (isCallOrRingtoneActive()) {
-                        wasDuckedByTransientFocus = false
-                        try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        beginInterruptionLocked(InterruptionSource.PHONE_CALL)
-                    } else {
-                        wasDuckedByTransientFocus = false
-                        try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+                pendingPlaybackDuckRestoreRunnable = null
+                if (!wasDuckedByTransientFocus || !duckStartedViaPlaybackObserver || activeInterruptions.isNotEmpty()) {
+                    return@synchronized
+                }
+                if (isCallOrRingtoneActive()) {
+                    clearDuckStateAndRestoreLocked()
+                    cancelTransientVerificationChecksLocked()
+                    beginInterruptionLocked(InterruptionSource.PHONE_CALL)
+                    return@synchronized
+                }
+                if (hasNotificationConfigActive() || isSystemNotificationOrRingStreamActive(lookbackMs = 120)) {
+                    // Reschedule briefly while notification sound is still finishing
+                    scheduleQuickPlaybackObserverRestoreLocked()
+                    return@synchronized
+                }
+                clearDuckStateAndRestoreLocked()
+            }
+        }
+        pendingPlaybackDuckRestoreRunnable = runnable
+        handler.postDelayed(runnable, delayMs)
+    }
+
+    private fun scheduleDuckRestoreSafetyFallbackLocked() {
+        val checkDelaysMs = longArrayOf(650L, 1300L, 2200L)
+        for (delayMs in checkDelaysMs) {
+            val restoreSafetyRunnable = Runnable {
+                synchronized(this@AudioFocusManager) {
+                    if (wasDuckedByTransientFocus && activeInterruptions.isEmpty() && !hasActiveNotificationOrSystemStream()) {
+                        if (isCallOrRingtoneActive()) {
+                            clearDuckStateAndRestoreLocked()
+                            beginInterruptionLocked(InterruptionSource.PHONE_CALL)
+                        } else {
+                            clearDuckStateAndRestoreLocked()
+                        }
                     }
                 }
             }
+            pendingTransientCheckRunnables.add(restoreSafetyRunnable)
+            mainHandler.postDelayed(restoreSafetyRunnable, delayMs)
         }
-        pendingTransientCheckRunnables.add(restoreSafetyRunnable)
-        mainHandler.postDelayed(restoreSafetyRunnable, 2200L)
     }
 
     private fun scheduleTransientCallVerificationOnlyLocked() {
@@ -671,10 +984,7 @@ class AudioFocusManager(
                 synchronized(this@AudioFocusManager) {
                     if (hasAudioFocus || activeInterruptions.isNotEmpty()) return@synchronized
                     if (isCallOrRingtoneActive()) {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         cancelTransientVerificationChecksLocked()
                         Log.d(TAG, "Deferred check detected active call; pausing playback")
                         beginInterruptionLocked(InterruptionSource.PHONE_CALL)
@@ -702,18 +1012,12 @@ class AudioFocusManager(
                     val notificationStreamActive = hasActiveNotificationOrSystemStream()
                     val videoNowActive = !notificationStreamActive && hasExternalVideoOrMediaPlaying()
                     if (callNowActive) {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         cancelTransientVerificationChecksLocked()
                         Log.d(TAG, "Deferred check detected active call; pausing playback")
                         beginInterruptionLocked(InterruptionSource.PHONE_CALL)
                     } else if (videoNowActive && autoPauseSystemAudio) {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         cancelTransientVerificationChecksLocked()
                         Log.d(TAG, "Deferred check detected external video/media stream; pausing playback")
                         beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
@@ -763,10 +1067,7 @@ class AudioFocusManager(
                 cancelTransientVerificationChecksLocked()
                 hasAudioFocus = false
                 if (isCallOrRingtoneActive()) {
-                    if (wasDuckedByTransientFocus) {
-                        wasDuckedByTransientFocus = false
-                        try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                    }
+                    clearDuckStateAndRestoreLocked()
                     Log.d(TAG, "Audio focus loss during call/ringtone, pausing playback")
                     beginInterruptionLocked(InterruptionSource.PHONE_CALL)
                     return
@@ -776,10 +1077,7 @@ class AudioFocusManager(
                     scheduleTransientCallVerificationOnlyLocked()
                     return
                 }
-                if (wasDuckedByTransientFocus) {
-                    wasDuckedByTransientFocus = false
-                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                }
+                clearDuckStateAndRestoreLocked()
                 if (autoPauseSystemAudio) {
                     Log.d(TAG, "Audio focus loss with autoPauseSystemAudio=true, pausing and awaiting potential focus return")
                     beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_LOSS)
@@ -789,7 +1087,7 @@ class AudioFocusManager(
                     activeInterruptions.clear()
                     wasPlayingBeforeInterruption = false
                     if (isCurrentlyPlaying) {
-                        try { onPauseRequested() } catch (_: Throwable) {}
+                        runUrgentOnMain { onPauseRequested() }
                     }
                 }
             }
@@ -797,14 +1095,13 @@ class AudioFocusManager(
                 cancelTransientVerificationChecksLocked()
                 hasAudioFocus = false
                 val isPhoneCall = isCallOrRingtoneActive()
-                val isCameraActive = activeCameraIds.isNotEmpty()
+                val isCameraActive = activeCameraIds.isNotEmpty() ||
+                    (!autoPauseCamera && hardwareUnavailableCameraIds.isNotEmpty())
+                val externalVideoPlayingNow = hasExternalVideoOrMediaPlaying()
 
                 when {
                     isPhoneCall -> {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         Log.d(TAG, "Phone call audio focus loss, pausing playback")
                         beginInterruptionLocked(InterruptionSource.PHONE_CALL)
                     }
@@ -822,12 +1119,41 @@ class AudioFocusManager(
                         scheduleTransientCallVerificationOnlyLocked()
                     }
                     autoPauseSystemAudio -> {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
+                        val liveManager = PlaybackManager.activeInstance?.takeIf { it.audioFocusManager === this@AudioFocusManager }
+                        val justLeftForeground = liveManager != null &&
+                            (android.os.SystemClock.elapsedRealtime() - liveManager.lastBackgroundTransitionAtMs) in 0L..2500L
+                        val shouldConfirmNotPreSleep = liveManager != null &&
+                            externalVideoOrMediaActiveProvider == null &&
+                            !externalVideoPlayingNow
+                        if (shouldConfirmNotPreSleep) {
+                            val confirmDelayMs = if (justLeftForeground) 550L else 300L
+                            val confirmRunnable = Runnable {
+                                synchronized(this@AudioFocusManager) {
+                                    if (hasAudioFocus || activeInterruptions.isNotEmpty() || !autoPauseSystemAudio) {
+                                        return@synchronized
+                                    }
+                                    if (isCallOrRingtoneActive()) {
+                                        clearDuckStateAndRestoreLocked()
+                                        beginInterruptionLocked(InterruptionSource.PHONE_CALL)
+                                        return@synchronized
+                                    }
+                                    if (isDeviceIdleOrSleepingOrLocking() || PlaybackManager.activeInstance?.takeIf { it.audioFocusManager === this@AudioFocusManager }?.isUiInForeground == true) {
+                                        Log.d(TAG, "Suppressed pre-sleep/idle transient focus loss without interrupting playback")
+                                        scheduleTransientVideoOrCallVerificationLocked()
+                                        return@synchronized
+                                    }
+                                    clearDuckStateAndRestoreLocked()
+                                    Log.d(TAG, "Confirmed external transient audio focus loss, pausing playback")
+                                    beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
+                                }
+                            }
+                            pendingTransientCheckRunnables.add(confirmRunnable)
+                            mainHandler.postDelayed(confirmRunnable, confirmDelayMs)
+                        } else {
+                            clearDuckStateAndRestoreLocked()
+                            Log.d(TAG, "Transient video/system/call audio focus loss with autoPauseSystemAudio=true, pausing playback")
+                            beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
                         }
-                        Log.d(TAG, "Transient video/system/call audio focus loss with autoPauseSystemAudio=true, pausing playback")
-                        beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
                     }
                     else -> {
                         // Even if autoPauseSystemAudio is false, verify if a phone/WhatsApp call is starting up
@@ -840,32 +1166,27 @@ class AudioFocusManager(
                 cancelTransientVerificationChecksLocked()
                 hasAudioFocus = false
                 val isPhoneCall = isCallOrRingtoneActive()
-                val isCameraActive = activeCameraIds.isNotEmpty()
+                val isCameraActive = activeCameraIds.isNotEmpty() ||
+                    (!autoPauseCamera && hardwareUnavailableCameraIds.isNotEmpty())
                 val explicitExternalVideo = try { externalVideoOrMediaActiveProvider?.invoke() == true } catch (_: Throwable) { false }
 
                 when {
                     isPhoneCall -> {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         beginInterruptionLocked(InterruptionSource.PHONE_CALL)
                     }
                     isCameraActive && !autoPauseCamera -> {
                         Log.d(TAG, "Ignoring camera-correlated duckable focus loss because autoPauseCamera=false")
                     }
                     explicitExternalVideo && autoPauseSystemAudio -> {
-                        if (wasDuckedByTransientFocus) {
-                            wasDuckedByTransientFocus = false
-                            try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                        }
+                        clearDuckStateAndRestoreLocked()
                         beginInterruptionLocked(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
                     }
                     else -> {
                         // AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK is requested by notifications and short alerts.
                         // Never pause playback via autoPauseSystemAudio here — only duck by 40% (to 60% of song volume)
                         // when reduceVolumeOnNotification is enabled, or continue at full volume when disabled.
-                        handleNotificationDuckOrContinueLocked()
+                        handleNotificationDuckOrContinueLocked(isExplicitDuckableFocus = true)
                         scheduleTransientCallVerificationOnlyLocked()
                     }
                 }
@@ -874,10 +1195,7 @@ class AudioFocusManager(
                 Log.d(TAG, "Audio focus restored")
                 cancelTransientVerificationChecksLocked()
                 hasAudioFocus = true
-                if (wasDuckedByTransientFocus) {
-                    wasDuckedByTransientFocus = false
-                    try { onRestoreVolumeRequested() } catch (_: Throwable) {}
-                }
+                clearDuckStateAndRestoreLocked()
                 endAudioFocusInterruptionsLocked()
             }
         }
@@ -892,9 +1210,12 @@ class AudioFocusManager(
             wasPlayingBeforeInterruption = currentlyPlaying && !userManuallyPausedOrStopped && !sleepStopped
         }
         activeInterruptions.add(source)
+        if (source == InterruptionSource.CAMERA || source == InterruptionSource.SYSTEM_AUDIO_TRANSIENT) {
+            lastCameraOrTransientInterruptionAtMs = android.os.SystemClock.elapsedRealtime()
+        }
 
         if (currentlyPlaying) {
-            try { onPauseRequested() } catch (_: Throwable) {}
+            runUrgentOnMain { onPauseRequested() }
         } else if (!wasPlayingBeforeInterruption) {
             Log.d(TAG, "Interruption ($source) received while already paused; preserving paused state")
         }
@@ -928,7 +1249,7 @@ class AudioFocusManager(
             val alreadyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
             if (!alreadyPlaying) {
                 Log.d(TAG, "All interruptions ended; automatically resuming playback once")
-                try { onResumeRequested() } catch (_: Throwable) {}
+                runUrgentOnMain { onResumeRequested() }
             }
         }
     }
@@ -954,7 +1275,7 @@ class AudioFocusManager(
                         .setAudioAttributes(attrs)
                         .setAcceptsDelayedFocusGain(true)
                         .setWillPauseWhenDucked(true)
-                        .setOnAudioFocusChangeListener(focusChangeListener, mainHandler)
+                        .setOnAudioFocusChangeListener(focusChangeListener, getOrCreateFocusCallbackHandler())
                         .build()
                 }
                 mgr.requestAudioFocus(audioFocusRequest!!)
@@ -973,6 +1294,7 @@ class AudioFocusManager(
     @Synchronized
     fun abandonAudioFocus() {
         cancelTransientVerificationChecksLocked()
+        cancelPendingPlaybackDuckRestoreLocked()
         val mgr = audioManager ?: return
         if (!hasAudioFocus && activeInterruptions.isEmpty()) return
 
@@ -990,6 +1312,8 @@ class AudioFocusManager(
             activeInterruptions.clear()
             wasPlayingBeforeInterruption = false
             wasDuckedByTransientFocus = false
+            duckStartedViaPlaybackObserver = false
+            systemHandledDuckingForNotification = false
         }
     }
 

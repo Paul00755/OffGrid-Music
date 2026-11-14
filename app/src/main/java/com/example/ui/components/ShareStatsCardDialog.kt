@@ -885,6 +885,8 @@ fun StoryCalendarRangePickerDialog(
 @Composable
 fun SharePeriodSelectionDialog(
     selectedRange: StoryTimeRange? = null,
+    title: String = "Select Time Period",
+    subtitle: String = "Choose a timeframe for your Story Card",
     onDismiss: () -> Unit,
     onRangeSelected: (StoryTimeRange) -> Unit
 ) {
@@ -964,13 +966,13 @@ fun SharePeriodSelectionDialog(
                         }
                         Column {
                             Text(
-                                text = "Select Time Period",
+                                text = title,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BentoTextPrimary
                             )
                             Text(
-                                text = "Choose a timeframe for your Story Card",
+                                text = subtitle,
                                 fontSize = 12.sp,
                                 color = BentoTextSecondary
                             )
