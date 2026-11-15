@@ -299,6 +299,72 @@ class AppUpdateSystemTest {
         assertEquals(2, networkCalls)
     }
 
+    @Test
+    fun testReopenFromBackgroundAndColdRestartDetectReleasePublishedWhileAppWasRunning() = runBlocking {
+        var publishedTag = "v1.0.4"
+        var networkCalls = 0
+        val client = fakeHttpClient { req ->
+            networkCalls++
+            buildJsonResponse(
+                req,
+                200,
+                """
+                {
+                  "tag_name": "$publishedTag",
+                  "name": "OffGrid Music $publishedTag",
+                  "body": "- Bug fixes and lyrics improvements",
+                  "published_at": "2026-11-15T09:00:00Z",
+                  "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/$publishedTag",
+                  "draft": false,
+                  "prerelease": false,
+                  "assets": [
+                    {
+                      "name": "OffGrid-Music.apk",
+                      "browser_download_url": "https://github.com/Paul00755/OffGrid-Music/releases/download/$publishedTag/OffGrid-Music.apk",
+                      "size": 16000000
+                    }
+                  ]
+                }
+                """.trimIndent()
+            )
+        }
+        repo.setHttpClientForTesting(client)
+
+        // 1. User opens app initially -> up to date
+        val firstOpen = repo.checkForUpdates(isManual = false)
+        assertTrue(firstOpen is UpdateCheckResult.UpToDate)
+        assertEquals(1, networkCalls)
+
+        // 2. While user is already using the app, a new CI build succeeds and publishes a release
+        publishedTag = "v1.0.4-build.99"
+
+        // Same foreground session does not spam GitHub on every recomposition/resume
+        val sameSession = repo.checkForUpdates(isManual = false)
+        assertTrue(sameSession is UpdateCheckResult.UpToDate)
+        assertEquals(1, networkCalls)
+
+        // 3. User backgrounds and re-opens the app -> immediately queries GitHub and surfaces update
+        repo.onAppEnteredForegroundFromBackground()
+        val reopenedForeground = repo.checkForUpdates(isManual = false)
+        assertTrue("Reopen from background must detect newly published release", reopenedForeground is UpdateCheckResult.UpdateAvailable)
+        val avail = reopenedForeground as UpdateCheckResult.UpdateAvailable
+        assertFalse(avail.isDismissed)
+        assertEquals("v1.0.4-build.99", avail.release.tagName)
+        assertEquals("https://github.com/Paul00755/OffGrid-Music", AppUpdateRepository.GITHUB_REPO_URL)
+        assertEquals(2, networkCalls)
+
+        // 4. Cold app restart also resets in-memory session flag so new releases are caught on reopen
+        publishedTag = "v1.0.4-build.100"
+        AppUpdateRepository.resetInstanceForTesting()
+        val coldRepo = AppUpdateRepository.getInstance(context)
+        coldRepo.installedVersionOverrideForTest = AppVersion.parse("1.0.4")
+        coldRepo.setHttpClientForTesting(client)
+        val coldOpen = coldRepo.checkForUpdates(isManual = false)
+        assertTrue("Cold restart must detect newly published release", coldOpen is UpdateCheckResult.UpdateAvailable)
+        assertEquals("v1.0.4-build.100", (coldOpen as UpdateCheckResult.UpdateAvailable).release.tagName)
+        assertEquals(3, networkCalls)
+    }
+
     // =========================================================================
     // B. In-App Dialog & Dismissal Persistence Tests
     // =========================================================================

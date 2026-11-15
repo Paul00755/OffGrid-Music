@@ -1,8 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,25 +23,37 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.Lyrics
 import com.example.data.model.Song
+import com.example.ui.screens.cleanLyricDisplayText
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
+
+private fun formatOffsetClock(ms: Long): String {
+    val clamped = ms.coerceAtLeast(0L)
+    val totalSec = clamped / 1000L
+    val min = totalSec / 60L
+    val sec = totalSec % 60L
+    val tenths = (clamped % 1000L) / 100L
+    return "%02d:%02d.%d".format(min, sec, tenths)
+}
 
 @Composable
 fun LyricsOffsetDialog(
     song: Song,
     currentOffsetMs: Long,
     onOffsetChanged: (Long) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    syncedLines: List<Pair<Long, String>> = emptyList(),
+    positionMs: Long = 0L,
+    playbackPositionFlow: StateFlow<Long>? = null
 ) {
     val context = LocalContext.current
     var offsetMs by remember(song.id) { mutableLongStateOf(currentOffsetMs) }
-    LaunchedEffect(currentOffsetMs) {
-        if (offsetMs != currentOffsetMs) {
-            offsetMs = currentOffsetMs
-        }
-    }
+    val livePosState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
 
     fun applyOffset(newOffset: Long, playHaptic: Boolean = true) {
         val clamped = newOffset.coerceIn(-15000L, 15000L)
@@ -69,7 +81,8 @@ fun LyricsOffsetDialog(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Box(
                         modifier = Modifier
@@ -85,7 +98,7 @@ fun LyricsOffsetDialog(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Lyrics Sync Offset",
                             color = BentoTextPrimary,
@@ -101,7 +114,7 @@ fun LyricsOffsetDialog(
                         )
                     }
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
@@ -123,7 +136,7 @@ fun LyricsOffsetDialog(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     color = if (isDark) Color(0xFF1E1E2C) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    border = androidx.compose.foundation.BorderStroke(
+                    border = BorderStroke(
                         1.dp,
                         if (offsetMs != 0L) BentoPrimary.copy(alpha = 0.6f) else (if (isDark) Color.White.copy(alpha = 0.1f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                     )
@@ -131,7 +144,7 @@ fun LyricsOffsetDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 16.dp, horizontal = 12.dp),
+                            .padding(vertical = 12.dp, horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         val seconds = offsetMs / 1000.0
@@ -145,7 +158,7 @@ fun LyricsOffsetDialog(
 
                         Text(
                             text = formattedOffset,
-                            fontSize = 32.sp,
+                            fontSize = 30.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             color = if (offsetMs != 0L) BentoPrimary else BentoTextPrimary
@@ -154,8 +167,8 @@ fun LyricsOffsetDialog(
                         Spacer(modifier = Modifier.height(4.dp))
 
                         val explanationText = when {
-                            offsetMs > 0 -> "Lyrics appear ${"%.2f".format(seconds)}s earlier (ahead)"
-                            offsetMs < 0 -> "Lyrics appear ${"%.2f".format(abs(seconds))}s later (delayed)"
+                            offsetMs > 0 -> "Advance: lyrics appear ${"%.2f".format(seconds)}s earlier"
+                            offsetMs < 0 -> "Delay: lyrics appear ${"%.2f".format(abs(seconds))}s later"
                             else -> "Original timing (no offset applied)"
                         }
 
@@ -169,7 +182,74 @@ fun LyricsOffsetDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                // Live Lyric Preview (shows track position, effective lyric position, and active line)
+                if (syncedLines.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    val rawPos = livePosState?.value ?: positionMs
+                    val effectivePos = rawPos + offsetMs
+                    val isBeforeFirst = effectivePos < syncedLines[0].first
+                    val previewIdx = if (isBeforeFirst) -1 else Lyrics.findActiveLineIndex(syncedLines, effectivePos)
+                    val activeText = if (previewIdx in syncedLines.indices) {
+                        cleanLyricDisplayText(syncedLines[previewIdx].second)
+                    } else {
+                        "Intro • First line at ${formatOffsetClock(syncedLines[0].first)}"
+                    }
+                    val nextText = if (previewIdx + 1 in syncedLines.indices) {
+                        cleanLyricDisplayText(syncedLines[previewIdx + 1].second)
+                    } else null
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isDark) Color(0xFF181824) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.25f))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Track ${formatOffsetClock(rawPos)}",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = BentoTextSecondary
+                                )
+                                Text(
+                                    text = "Lyrics ${if (effectivePos < 0L) "-${formatOffsetClock(-effectivePos)}" else formatOffsetClock(effectivePos)}",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoPrimary
+                                )
+                            }
+                            Text(
+                                text = activeText,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (previewIdx >= 0) BentoTextPrimary else BentoTextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (nextText != null) {
+                                Text(
+                                    text = "Next: $nextText",
+                                    fontSize = 11.5.sp,
+                                    color = BentoTextSecondary.copy(alpha = 0.8f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Continuous Slider (-15s to +15s)
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -184,7 +264,6 @@ fun LyricsOffsetDialog(
                     Slider(
                         value = offsetMs.toFloat().coerceIn(-15000f, 15000f),
                         onValueChange = { newVal ->
-                            // Snap to nearest 50ms
                             val rounded = (kotlin.math.round(newVal / 50f) * 50).toLong()
                             if (rounded != offsetMs) {
                                 applyOffset(rounded, playHaptic = false)
@@ -200,7 +279,7 @@ fun LyricsOffsetDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 val buttonBg = if (isDark) Color(0xFF282838) else MaterialTheme.colorScheme.surfaceVariant
                 val buttonSecondaryBg = if (isDark) Color(0xFF232332) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
@@ -213,7 +292,7 @@ fun LyricsOffsetDialog(
                 ) {
                     FilledTonalButton(
                         onClick = { applyOffset(offsetMs - 500L) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonBg,
@@ -225,7 +304,7 @@ fun LyricsOffsetDialog(
                     }
                     FilledTonalButton(
                         onClick = { applyOffset(offsetMs - 100L) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonBg,
@@ -237,7 +316,7 @@ fun LyricsOffsetDialog(
                     }
                     FilledTonalButton(
                         onClick = { applyOffset(offsetMs + 100L) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonBg,
@@ -249,7 +328,7 @@ fun LyricsOffsetDialog(
                     }
                     FilledTonalButton(
                         onClick = { applyOffset(offsetMs + 500L) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonBg,
@@ -261,57 +340,81 @@ fun LyricsOffsetDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Quick Increment Steppers Row 2 (Coarse tuning: ±1.0s, ±2.0s)
+                // Quick Increment Steppers Row 2 (Coarse tuning: ±1.0s, ±2.0s & Reset)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilledTonalButton(
-                        onClick = { applyOffset(offsetMs - 1000L) },
-                        modifier = Modifier.weight(1f),
+                        onClick = { applyOffset(offsetMs - 2000L) },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonSecondaryBg,
                             contentColor = buttonTextColor
                         ),
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp)
                     ) {
-                        Text("-1.0s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("-2s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    FilledTonalButton(
+                        onClick = { applyOffset(offsetMs - 1000L) },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = buttonSecondaryBg,
+                            contentColor = buttonTextColor
+                        ),
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp)
+                    ) {
+                        Text("-1s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                     FilledTonalButton(
                         onClick = { applyOffset(0L) },
-                        modifier = Modifier.weight(1.2f),
+                        modifier = Modifier.weight(1.3f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = if (offsetMs != 0L) BentoPrimary.copy(alpha = 0.2f) else buttonSecondaryBg,
                             contentColor = if (offsetMs != 0L) BentoPrimary else buttonTextColor
                         ),
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Reset", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Reset", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
                     FilledTonalButton(
                         onClick = { applyOffset(offsetMs + 1000L) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = buttonSecondaryBg,
                             contentColor = buttonTextColor
                         ),
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp)
                     ) {
-                        Text("+1.0s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("+1s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    FilledTonalButton(
+                        onClick = { applyOffset(offsetMs + 2000L) },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = buttonSecondaryBg,
+                            contentColor = buttonTextColor
+                        ),
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp)
+                    ) {
+                        Text("+2s", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = "Offset shifts lyrics timing for this track. Saved and remembered across app restart.",
+                    text = "Tip: Use negative values (Delay) if lyrics show before the vocals; positive (Advance) if lyrics fall behind.",
                     fontSize = 11.sp,
                     color = BentoTextSecondary,
                     textAlign = TextAlign.Center,
@@ -324,7 +427,8 @@ fun LyricsOffsetDialog(
                 onClick = onDismiss,
                 colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary),
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
             ) {
                 Text("Done", color = BentoOnPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }

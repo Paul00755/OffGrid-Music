@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,7 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -38,7 +40,8 @@ import com.example.update.ReleaseInfo
 fun AppUpdateDialog(
     release: ReleaseInfo,
     onDismiss: () -> Unit,
-    onUpdateNow: (String) -> Unit = {}
+    onUpdateNow: (String) -> Unit = {},
+    onOpenRepoUrl: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val publishDate = release.getFormattedPublishDate()
@@ -99,7 +102,7 @@ fun AppUpdateDialog(
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = "New Version Available",
+                            text = "New Update Available",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextPrimary
@@ -152,7 +155,7 @@ fun AppUpdateDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 90.dp, max = 220.dp)
+                        .heightIn(min = 90.dp, max = 200.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color.Black.copy(alpha = 0.25f))
                         .border(1.dp, BentoBorder.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
@@ -181,7 +184,70 @@ fun AppUpdateDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Explicit clickable GitHub Repository link card
+                Surface(
+                    onClick = {
+                        val repoUrl = AppUpdateRepository.GITHUB_REPO_URL
+                        if (onOpenRepoUrl != null) {
+                            onOpenRepoUrl(repoUrl)
+                        } else {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(repoUrl))
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Could not open GitHub repository", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("update_github_repo_link"),
+                    shape = RoundedCornerShape(12.dp),
+                    color = BentoPrimary.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Code,
+                            contentDescription = "GitHub Repository",
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "GitHub Repository",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoTextSecondary
+                            )
+                            Text(
+                                text = AppUpdateRepository.GITHUB_REPO_URL,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = BentoPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = "Open GitHub repository",
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Action Buttons: Update Now (Direct Verified URL) & Later
                 Row(
@@ -193,7 +259,7 @@ fun AppUpdateDialog(
                         onClick = onDismiss,
                         modifier = Modifier
                             .weight(1f)
-                            .height(46.dp)
+                            .height(48.dp)
                             .testTag("update_later_button"),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, BentoBorder),
@@ -217,7 +283,7 @@ fun AppUpdateDialog(
                         },
                         modifier = Modifier
                             .weight(1.3f)
-                            .height(46.dp)
+                            .height(48.dp)
                             .testTag("update_now_button"),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(

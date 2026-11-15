@@ -411,6 +411,14 @@ class LyricsFetcher(
         songPath: String? = null,
         songTitle: String? = null
     ): Lyrics = withContext(Dispatchers.IO) {
+        val embeddedOffset = syncedLyricsRaw?.let { com.example.util.LrcParser.extractOffsetFromLrc(it) }
+        if (embeddedOffset != null && context != null) {
+            try {
+                com.example.data.local.UserPreferencesRepository.getInstance(context)
+                    .setLyricsSyncOffsetMs(songId, embeddedOffset)
+            } catch (_: Exception) {}
+        }
+
         val (parsedPlainFromLrc, parsedSynced) = if (!syncedLyricsRaw.isNullOrBlank()) {
             val (p, json) = com.example.util.LrcParser.parseLrcContent(syncedLyricsRaw)
             Pair(p, json ?: if (syncedLyricsRaw.trim().startsWith("[{")) syncedLyricsRaw else null)

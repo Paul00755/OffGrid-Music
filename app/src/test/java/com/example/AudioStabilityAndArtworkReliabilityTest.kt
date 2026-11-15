@@ -1177,7 +1177,301 @@ class AudioStabilityAndArtworkReliabilityTest {
         assertEquals(1, restoreCallCount)
         focusManager.unregisterCameraCallback()
     }
+
+    private fun createMockAudioPlaybackConfig(
+        usage: Int,
+        contentType: Int,
+        playerState: Int = 2 // AudioPlaybackConfiguration.PLAYER_STATE_STARTED
+    ): android.media.AudioPlaybackConfiguration? {
+        return try {
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(usage)
+                .setContentType(contentType)
+                .build()
+            val config = org.robolectric.shadow.api.Shadow.newInstanceOf(android.media.AudioPlaybackConfiguration::class.java)
+            android.media.AudioPlaybackConfiguration::class.java.getDeclaredField("mPlayerAttr").apply {
+                isAccessible = true
+                set(config, attrs)
+            }
+            android.media.AudioPlaybackConfiguration::class.java.getDeclaredField("mPlayerState").apply {
+                isAccessible = true
+                setInt(config, playerState)
+            }
+            config
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    @Test
+    fun testYouTubeLossAndExternalPlaybackAutoResumesWithoutAudioFocusGain() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var externalVideoPlaying = false
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { externalVideoPlaying },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.requestAudioFocus()
+        assertTrue(focusManager.hasAudioFocus)
+
+        // 1. YouTube requests permanent AUDIOFOCUS_GAIN -> OffGrid receives AUDIOFOCUS_LOSS
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        assertFalse("YouTube AUDIOFOCUS_LOSS must pause playback when autoPauseSystemAudio is ON", isPlaying)
+        assertEquals(1, pauseCount)
+
+        // 2. YouTube starts playing video audio, then finishes/closes without Android resending AUDIOFOCUS_GAIN
+        externalVideoPlaying = true
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(600))
+        assertFalse("Playback must remain paused while YouTube video is active", isPlaying)
+        assertEquals(0, resumeCount)
+
+        externalVideoPlaying = false
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(1600))
+        assertTrue("Playback must auto-resume once YouTube stops without requiring AUDIOFOCUS_GAIN", isPlaying)
+        assertEquals(1, resumeCount)
+        assertTrue(focusManager.hasAudioFocus)
+        focusManager.unregisterCameraCallback()
+    }
+
+    @Test
+    fun testReelsAndShortsPlaybackCallbackSwipeGapAndAutoResume() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var externalVideoPlaying = false
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { externalVideoPlaying },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.requestAudioFocus()
+
+        // 1. Reels/Shorts starts video playback before/without releasing focus cleanly
+        externalVideoPlaying = true
+        focusManager.onActivePlaybackConfigurationsChanged(emptyList())
+        assertFalse("External Reels/Shorts stream must pause music immediately", isPlaying)
+        assertEquals(1, pauseCount)
+
+        // Duplicate transient focus loss for same Reel must not double-pause
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertEquals(1, pauseCount)
+
+        // 2. Brief 300ms swipe gap between Reel 1 and Reel 2 must NOT cause flicker resume
+        externalVideoPlaying = false
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(650))
+        assertFalse("Brief swipe gap between Reels/Shorts must stay paused", isPlaying)
+        assertEquals(0, resumeCount)
+
+        // Next Reel starts within settle window
+        externalVideoPlaying = true
+        focusManager.onActivePlaybackConfigurationsChanged(emptyList())
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(600))
+        assertFalse(isPlaying)
+        assertEquals(0, resumeCount)
+
+        // 3. User exits Reels/Shorts -> resumes cleanly after settle window
+        externalVideoPlaying = false
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(1600))
+        assertTrue("Playback must auto-resume after Reels/Shorts ends", isPlaying)
+        assertEquals(1, resumeCount)
+
+        // Verify PlaybackCallback detects USAGE_MEDIA + CONTENT_TYPE_MOVIE directly when provider is null
+        var directPlaying = true
+        var directPauseCount = 0
+        val directManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { directPlaying },
+            ownActiveMediaPlayerCountProvider = { if (directPlaying) 1 else 0 },
+            onPauseRequested = {
+                directPlaying = false
+                directPauseCount++
+            }
+        )
+        directManager.autoPauseSystemAudio = true
+        directManager.requestAudioFocus()
+        val movieConfig = createMockAudioPlaybackConfig(
+            usage = android.media.AudioAttributes.USAGE_MEDIA,
+            contentType = android.media.AudioAttributes.CONTENT_TYPE_MOVIE,
+            playerState = 2
+        )
+        if (movieConfig != null && movieConfig.audioAttributes?.contentType == android.media.AudioAttributes.CONTENT_TYPE_MOVIE) {
+            directManager.onActivePlaybackConfigurationsChanged(listOf(movieConfig))
+            assertFalse("Movie/Reel config must pause immediately even while holding focus", directPlaying)
+            assertEquals(1, directPauseCount)
+        }
+        directManager.unregisterCameraCallback()
+        focusManager.unregisterCameraCallback()
+    }
+
+    @Test
+    fun testAlarmAndTimerUsageAlarmPausesOnLockscreenAndAutoResumes() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var alarmActive = false
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            callActiveProvider = { alarmActive },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.requestAudioFocus()
+
+        // Simulate device locked when alarm/timer rings
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        org.robolectric.Shadows.shadowOf(keyguardManager).setKeyguardLocked(true)
+        try {
+            alarmActive = true
+            focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+            assertFalse("Alarm/timer sound must pause playback even while device is locked", isPlaying)
+            assertEquals(1, pauseCount)
+
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+                .idleFor(java.time.Duration.ofMillis(700))
+            assertFalse("Playback must remain paused while alarm/timer is sounding", isPlaying)
+
+            // Dismiss alarm/timer without AUDIOFOCUS_GAIN arriving
+            alarmActive = false
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+                .idleFor(java.time.Duration.ofMillis(1200))
+            assertTrue("Playback must auto-resume after alarm/timer is dismissed", isPlaying)
+            assertEquals(1, resumeCount)
+        } finally {
+            org.robolectric.Shadows.shadowOf(keyguardManager).setKeyguardLocked(false)
+        }
+
+        // Verify PlaybackCallback USAGE_ALARM state transitions (STARTED -> STOPPED)
+        val alarmStartedConfig = createMockAudioPlaybackConfig(
+            usage = android.media.AudioAttributes.USAGE_ALARM,
+            contentType = android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION,
+            playerState = 2 // PLAYER_STATE_STARTED
+        )
+        val alarmStoppedConfig = createMockAudioPlaybackConfig(
+            usage = android.media.AudioAttributes.USAGE_ALARM,
+            contentType = android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION,
+            playerState = 4 // PLAYER_STATE_STOPPED
+        )
+        if (alarmStartedConfig != null && alarmStoppedConfig != null &&
+            alarmStartedConfig.audioAttributes?.usage == android.media.AudioAttributes.USAGE_ALARM
+        ) {
+            var directPlaying = true
+            var directResumeCount = 0
+            val alarmDirectManager = AudioFocusManager(
+                context = context,
+                isPlayingProvider = { directPlaying },
+                ownActiveMediaPlayerCountProvider = { if (directPlaying) 1 else 0 },
+                onPauseRequested = { directPlaying = false },
+                onResumeRequested = {
+                    directPlaying = true
+                    directResumeCount++
+                }
+            )
+            alarmDirectManager.requestAudioFocus()
+            alarmDirectManager.onActivePlaybackConfigurationsChanged(listOf(alarmStartedConfig))
+            assertFalse("USAGE_ALARM STARTED must pause music", directPlaying)
+
+            alarmDirectManager.onActivePlaybackConfigurationsChanged(listOf(alarmStoppedConfig))
+            assertTrue("USAGE_ALARM STOPPED must allow auto-resume with focus held", directPlaying)
+            assertEquals(1, directResumeCount)
+            alarmDirectManager.unregisterCameraCallback()
+        }
+
+        focusManager.unregisterCameraCallback()
+    }
+
+    @Test
+    fun testPhoneCallDetectedViaPollOrFocusAutoResumesOnModeNormalWithoutFocusGain() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.mode = AudioManager.MODE_NORMAL
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.requestAudioFocus()
+
+        // 1. Incoming cellular/VoIP ringtone detected during playback poll even without focus callback
+        audioManager.mode = AudioManager.MODE_RINGTONE
+        focusManager.pollActiveCallStateWhilePlaying()
+        assertFalse("Incoming call ringtone must pause playback immediately", isPlaying)
+        assertEquals(1, pauseCount)
+
+        // 2. User answers call (MODE_IN_CALL) -> remains paused
+        audioManager.mode = AudioManager.MODE_IN_CALL
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(700))
+        assertFalse("Active call must remain paused", isPlaying)
+        assertEquals(0, resumeCount)
+
+        // 3. Call ends -> MODE_NORMAL without OS sending AUDIOFOCUS_GAIN -> monitor resumes playback once
+        audioManager.mode = AudioManager.MODE_NORMAL
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(1200))
+        assertTrue("Playback must auto-resume after call ends", isPlaying)
+        assertEquals(1, resumeCount)
+
+        focusManager.unregisterCameraCallback()
+    }
 }
+
 
 
 

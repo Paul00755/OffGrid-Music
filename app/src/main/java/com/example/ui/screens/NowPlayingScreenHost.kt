@@ -47,6 +47,7 @@ fun NowPlayingScreenHost(
         val transcribeStatusMessage by viewModel.transcribeStatusMessage.collectAsState()
         val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsState()
         val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsState()
+        val currentLyricsOffsetMs by viewModel.currentLyricsOffsetMs.collectAsState()
 
         NowPlayingScreen(
             playbackState = playbackState,
@@ -61,6 +62,10 @@ fun NowPlayingScreenHost(
             },
             onGetLyricsOffset = { songId ->
                 viewModel.getLyricsSyncOffset(songId)
+            },
+            lyricsSyncOffsetMs = currentLyricsOffsetMs,
+            onFlushLyricsOffset = { songId ->
+                viewModel.flushPendingLyricsOffset(songId)
             },
             onSelectAudioDevice = { viewModel.selectAudioRoute(it) },
             onLaunchSystemOutputSwitcher = { viewModel.launchSystemOutputSwitcher(activity) },

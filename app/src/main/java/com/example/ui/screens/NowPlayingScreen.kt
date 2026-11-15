@@ -117,6 +117,8 @@ fun NowPlayingScreen(
     lyricsAutoScroll: Boolean = true,
     onSaveLyricsOffset: ((Long, Long) -> Unit)? = null,
     onGetLyricsOffset: ((Long) -> Long)? = null,
+    lyricsSyncOffsetMs: Long? = null,
+    onFlushLyricsOffset: ((Long) -> Unit)? = null,
     isTranscribeTranslateEnabled: Boolean = false,
     audioTranscribeMode: String = "OFF",
     audioTranscribeTargetLang: String = "ta",
@@ -905,6 +907,8 @@ fun NowPlayingScreen(
                         lyricsAutoScroll = lyricsAutoScroll,
                         onSaveLyricsOffset = onSaveLyricsOffset,
                         onGetLyricsOffset = onGetLyricsOffset,
+                        lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                        onFlushLyricsOffset = onFlushLyricsOffset,
                         ambientThemeColor = ambientThemeColor,
                         onUserIsScrollingChange = { userIsScrollingLyrics = it },
                         onSeekTo = onSeekTo,
@@ -1649,6 +1653,8 @@ fun NowPlayingScreen(
                 lyricsAutoScroll = lyricsAutoScroll,
                 onSaveLyricsOffset = onSaveLyricsOffset,
                 onGetLyricsOffset = onGetLyricsOffset,
+                lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                onFlushLyricsOffset = onFlushLyricsOffset,
                 ambientThemeColor = ambientThemeColor,
                 onUserIsScrollingChange = { userIsScrollingLyrics = it },
                 onSeekTo = onSeekTo,
@@ -1841,6 +1847,8 @@ private fun LyricsPanelContent(
     lyricsAutoScroll: Boolean = true,
     onSaveLyricsOffset: ((Long, Long) -> Unit)? = null,
     onGetLyricsOffset: ((Long) -> Long)? = null,
+    lyricsSyncOffsetMs: Long? = null,
+    onFlushLyricsOffset: ((Long) -> Unit)? = null,
     ambientThemeColor: Color = BentoPrimary,
     onUserIsScrollingChange: (Boolean) -> Unit,
     onSeekTo: (Long) -> Unit,
@@ -1868,10 +1876,10 @@ private fun LyricsPanelContent(
     val livePositionState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
     val context = LocalContext.current
     var syncOffsetMs by remember(song.id) {
-        mutableLongStateOf(onGetLyricsOffset?.invoke(song.id) ?: 0L)
+        mutableLongStateOf(lyricsSyncOffsetMs ?: onGetLyricsOffset?.invoke(song.id) ?: 0L)
     }
-    LaunchedEffect(song.id, currentLyrics) {
-        syncOffsetMs = onGetLyricsOffset?.invoke(song.id) ?: 0L
+    LaunchedEffect(song.id, lyricsSyncOffsetMs, currentLyrics) {
+        syncOffsetMs = lyricsSyncOffsetMs ?: onGetLyricsOffset?.invoke(song.id) ?: 0L
     }
     var showOffsetDialog by remember { mutableStateOf(false) }
     var showTranscribeDialog by remember { mutableStateOf(false) }
@@ -2122,12 +2130,19 @@ private fun LyricsPanelContent(
                 var userHasManuallyScrolled by remember(song.id) { mutableStateOf(false) }
                 var lastAppliedOffsetMs by remember(song.id) { mutableLongStateOf(syncOffsetMs) }
                 val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
-                val activeIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
+                val highlightedIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
                     derivedStateOf {
+                        if (syncedLines.isEmpty()) return@derivedStateOf -1
                         val liveVal = livePositionState?.value
                         val rawPos = if (liveVal != null && (liveVal > 0L || positionMs == 0L)) liveVal else positionMs
                         val effectivePos = rawPos + syncOffsetMs
-                        Lyrics.findActiveLineIndex(syncedLines, effectivePos)
+                        if (effectivePos < syncedLines[0].first) -1
+                        else Lyrics.findActiveLineIndex(syncedLines, effectivePos)
+                    }
+                }
+                val scrollIndex by remember {
+                    derivedStateOf {
+                        if (syncedLines.isEmpty()) 0 else highlightedIndex.coerceAtLeast(0)
                     }
                 }
 
@@ -2136,13 +2151,13 @@ private fun LyricsPanelContent(
                     derivedStateOf {
                         val layoutInfo = listState.layoutInfo
                         val visible = layoutInfo.visibleItemsInfo
-                        if (visible.isEmpty()) activeIndex
+                        if (visible.isEmpty()) scrollIndex
                         else {
                             val center = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
                             visible.minByOrNull { item ->
                                 val itemCenter = item.offset + item.size / 2
                                 kotlin.math.abs(itemCenter - center)
-                            }?.index ?: activeIndex
+                            }?.index ?: scrollIndex
                         }
                     }
                 }
@@ -2160,48 +2175,49 @@ private fun LyricsPanelContent(
                     if (showLyricsView) {
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
-                        if (lyricsAutoScroll && activeIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(activeIndex)
+                        if (lyricsAutoScroll && scrollIndex in syncedLines.indices) {
+                            listState.animateScrollToItem(scrollIndex)
                         }
                     }
                 }
 
-                // Immediately re-lock and scroll to the newly offset active line whenever the user adjusts syncOffsetMs
+                // Immediately re-lock whenever the user adjusts syncOffsetMs
                 LaunchedEffect(syncOffsetMs) {
                     if (syncOffsetMs != lastAppliedOffsetMs) {
                         lastAppliedOffsetMs = syncOffsetMs
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
-                        if (activeIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(activeIndex)
+                        if (!lyricsAutoScroll && scrollIndex in syncedLines.indices) {
+                            listState.animateScrollToItem(scrollIndex)
                         }
                     }
                 }
 
-                // Auto-scroll to current line:
-                // Only scrolls when setting is enabled AND user has not manually scrolled away
-                // Also updates smoothly when syncOffsetMs changes
-                LaunchedEffect(activeIndex, userHasManuallyScrolled, lyricsAutoScroll, syncOffsetMs) {
-                    if (lyricsAutoScroll && !userHasManuallyScrolled && activeIndex in syncedLines.indices) {
-                        listState.animateScrollToItem(activeIndex)
+                // Auto-scroll to current line when setting is enabled AND user has not manually scrolled away
+                LaunchedEffect(scrollIndex, userHasManuallyScrolled, lyricsAutoScroll) {
+                    if (lyricsAutoScroll && !userHasManuallyScrolled && scrollIndex in syncedLines.indices) {
+                        listState.animateScrollToItem(scrollIndex)
                     }
                 }
 
-                // Re-sync to currently playing line when seeking (>2.5s jump) occurs, without recomposing on every tick
-                LaunchedEffect(song.id, playbackPositionFlow, syncOffsetMs) {
-                    var lastPos = (playbackPositionFlow?.value ?: positionMs) + syncOffsetMs
+                // Re-sync to currently playing line when seeking (>2.5s jump) occurs, without restarting on offset drags
+                val latestSyncOffsetMs by rememberUpdatedState(syncOffsetMs)
+                val latestSyncedLines by rememberUpdatedState(syncedLines)
+                val latestAutoScroll by rememberUpdatedState(lyricsAutoScroll)
+                LaunchedEffect(song.id, playbackPositionFlow) {
+                    var lastRawPos = playbackPositionFlow?.value ?: positionMs
                     if (playbackPositionFlow != null) {
                         playbackPositionFlow.collect { rawPos ->
-                            val effPos = rawPos + syncOffsetMs
-                            if (kotlin.math.abs(effPos - lastPos) > 2500L) {
+                            if (kotlin.math.abs(rawPos - lastRawPos) > 2500L) {
                                 userHasManuallyScrolled = false
                                 onUserIsScrollingChange(false)
-                                val idx = Lyrics.findActiveLineIndex(syncedLines, effPos)
-                                if (lyricsAutoScroll && idx in syncedLines.indices) {
+                                val effPos = rawPos + latestSyncOffsetMs
+                                val idx = Lyrics.findActiveLineIndex(latestSyncedLines, effPos).coerceAtLeast(0)
+                                if (latestAutoScroll && idx in latestSyncedLines.indices) {
                                     listState.animateScrollToItem(idx)
                                 }
                             }
-                            lastPos = effPos
+                            lastRawPos = rawPos
                         }
                     }
                 }
@@ -2214,7 +2230,7 @@ private fun LyricsPanelContent(
                         if (lyricsAutoScroll) {
                             userHasManuallyScrolled
                         } else {
-                            manuallyViewedIndex != activeIndex
+                            manuallyViewedIndex != scrollIndex
                         }
                     }
                 }
@@ -2247,7 +2263,7 @@ private fun LyricsPanelContent(
                             items = syncedLines,
                             key = { index, pair -> "${index}_${pair.first}" }
                         ) { index, (timeMs, lineText) ->
-                            val isCurrentLine = index == activeIndex
+                            val isCurrentLine = index == highlightedIndex
                             val lineScale by androidx.compose.animation.core.animateFloatAsState(
                                 targetValue = if (isCurrentLine) 1.05f else 0.95f,
                                 animationSpec = androidx.compose.animation.core.spring(
@@ -2331,8 +2347,8 @@ private fun LyricsPanelContent(
                                     userHasManuallyScrolled = false
                                     onUserIsScrollingChange(false)
                                     coroutineScope.launch {
-                                        if (activeIndex in syncedLines.indices) {
-                                            listState.animateScrollToItem(activeIndex)
+                                        if (scrollIndex in syncedLines.indices) {
+                                            listState.animateScrollToItem(scrollIndex)
                                         }
                                     }
                                 },
@@ -2597,7 +2613,13 @@ private fun LyricsPanelContent(
                     syncOffsetMs = newOffset
                     onSaveLyricsOffset?.invoke(song.id, newOffset)
                 },
-                onDismiss = { showOffsetDialog = false }
+                onDismiss = {
+                    showOffsetDialog = false
+                    onFlushLyricsOffset?.invoke(song.id)
+                },
+                syncedLines = syncedLines,
+                positionMs = livePositionState?.value ?: positionMs,
+                playbackPositionFlow = playbackPositionFlow
             )
         }
     }

@@ -93,7 +93,7 @@ class PlaybackManager(
             var count = 0
             try {
                 if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) count++
-                if (_crossfadePlayer?.isPlaying == true) count++
+                if (isCrossfadeTransitioning || _crossfadePlayer?.isPlaying == true || _crossfadePlayer?.playWhenReady == true) count++
             } catch (_: Throwable) {
             }
             count

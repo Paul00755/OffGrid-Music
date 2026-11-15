@@ -28,6 +28,9 @@ class AppUpdateRepository(
 
     private val checkMutex = Mutex()
 
+    @Volatile
+    private var hasAutoCheckedThisOpen: Boolean = false
+
     private val _updateState = MutableStateFlow<UpdateCheckResult>(UpdateCheckResult.Idle)
     val updateState: StateFlow<UpdateCheckResult> = _updateState.asStateFlow()
 
@@ -51,8 +54,18 @@ class AppUpdateRepository(
     }
 
     /**
-     * Checks GitHub for the latest stable release.
-     * When [isManual] is false, enforces a 4-hour cooldown to avoid redundant requests.
+     * Marks that the app is returning to the foreground on a fresh open so the next automatic
+     * update check queries GitHub even if a release was published while the user was using the app earlier.
+     */
+    fun onAppEnteredForegroundFromBackground() {
+        hasAutoCheckedThisOpen = false
+    }
+
+    /**
+     * Checks GitHub for the latest stable (successful build) release.
+     * Always queries GitHub once on each fresh app open (cold launch or background-to-foreground return)
+     * so newly published releases are surfaced on next open, while enforcing [COOLDOWN_MS] for repeated
+     * automatic checks within the same active foreground session.
      */
     suspend fun checkForUpdates(isManual: Boolean = false): UpdateCheckResult = withContext(Dispatchers.IO) {
         checkMutex.withLock {
@@ -61,8 +74,8 @@ class AppUpdateRepository(
             val dismissedTag = preferences.dismissedUpdateTag.first()
             val currentInstalled = installedVersion
 
-            // 1. Cooldown check for automatic checks
-            if (!isManual && lastCheck > 0L && (now - lastCheck) < COOLDOWN_MS) {
+            // 1. Cooldown check for duplicate automatic checks within the same foreground open session
+            if (!isManual && hasAutoCheckedThisOpen && lastCheck > 0L && (now - lastCheck) < COOLDOWN_MS) {
                 val cachedJson = preferences.cachedLatestReleaseJson.first()
                 if (cachedJson.isNotBlank()) {
                     val cachedRelease = ReleaseInfo.fromJsonString(cachedJson)
@@ -104,6 +117,7 @@ class AppUpdateRepository(
                             // Persist verified stable release cache and successful check timestamp
                             preferences.setCachedLatestReleaseJson(bodyString)
                             preferences.setLastUpdateCheckTimestamp(now)
+                            hasAutoCheckedThisOpen = true
 
                             val isNewer = release.version.isNewerThan(currentInstalled)
                             // Manual checks explicitly requested by the user always show the dialog even if previously dismissed
@@ -123,6 +137,7 @@ class AppUpdateRepository(
                         }
                         304 -> {
                             preferences.setLastUpdateCheckTimestamp(now)
+                            hasAutoCheckedThisOpen = true
                             val cachedJson = preferences.cachedLatestReleaseJson.first()
                             val cachedRelease = ReleaseInfo.fromJsonString(cachedJson)
                             val result = if (cachedRelease != null && cachedRelease.version.isNewerThan(currentInstalled)) {
@@ -136,6 +151,7 @@ class AppUpdateRepository(
                         }
                         404 -> {
                             // Repository has no published stable releases yet
+                            hasAutoCheckedThisOpen = true
                             val upToDate = UpdateCheckResult.UpToDate(currentInstalled.displayString)
                             _updateState.value = upToDate
                             upToDate

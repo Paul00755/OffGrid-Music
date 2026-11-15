@@ -1835,7 +1835,7 @@ class UserPreferencesRepository(private val context: Context) {
             val sp = context.getSharedPreferences("lyrics_offsets_prefs", Context.MODE_PRIVATE)
             val editor = sp.edit().putLong("offset_updated_$songId", System.currentTimeMillis())
             if (offsetMs == 0L) editor.remove("offset_$songId") else editor.putLong("offset_$songId", offsetMs)
-            editor.commit()
+            editor.apply()
         } catch (_: Exception) {}
     }
 

@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var mediaStoreObserver: android.database.ContentObserver? = null
+    private var wasStoppedInBackground: Boolean = false
     private val openNowPlayingRequest = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val pendingWidgetActionRequest = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
@@ -178,6 +179,12 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()
                     val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()
+
+                    LaunchedEffect(showSplash, isOnboardingCompleted) {
+                        if (!showSplash && isOnboardingCompleted) {
+                            viewModel.checkForUpdates(isManual = false)
+                        }
+                    }
 
                     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
                     val jamInviteCode by pendingJamInviteCode.collectAsStateWithLifecycle()
@@ -935,6 +942,7 @@ class MainActivity : ComponentActivity() {
                                 val transcribeStatusMessage by viewModel.transcribeStatusMessage.collectAsStateWithLifecycle()
                                 val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsStateWithLifecycle()
                                 val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsStateWithLifecycle()
+                                val currentLyricsOffsetMs by viewModel.currentLyricsOffsetMs.collectAsStateWithLifecycle()
                                 NowPlayingScreen(
                                     playbackState = playbackState,
                                     currentLyrics = currentLyrics,
@@ -948,6 +956,10 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onGetLyricsOffset = { songId ->
                                         viewModel.getLyricsSyncOffset(songId)
+                                    },
+                                    lyricsSyncOffsetMs = currentLyricsOffsetMs,
+                                    onFlushLyricsOffset = { songId ->
+                                        viewModel.flushPendingLyricsOffset(songId)
                                     },
                                     onSelectAudioDevice = { viewModel.selectAudioRoute(it) },
                                     onLaunchSystemOutputSwitcher = { viewModel.launchSystemOutputSwitcher(this@MainActivity) },
@@ -1147,6 +1159,14 @@ class MainActivity : ComponentActivity() {
                                         } catch (_: Exception) {
                                             android.widget.Toast.makeText(this@MainActivity, "Could not open browser", android.widget.Toast.LENGTH_SHORT).show()
                                         }
+                                    },
+                                    onOpenRepoUrl = { repoUrl ->
+                                        try {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(repoUrl))
+                                            startActivity(browserIntent)
+                                        } catch (_: Exception) {
+                                            android.widget.Toast.makeText(this@MainActivity, "Could not open browser", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 )
                             }
@@ -1322,6 +1342,16 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         isActivityAlive = true
+        val reopenedFromBackground = wasStoppedInBackground
+        wasStoppedInBackground = false
+        if (reopenedFromBackground) {
+            try {
+                val vm = androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
+                if (!vm.showSplash.value && vm.isOnboardingCompleted.value) {
+                    vm.onAppReopenedFromBackground()
+                }
+            } catch (_: Exception) {}
+        }
         try {
             com.example.service.PlaybackManager.activeInstance?.let { pm ->
                 pm.onAppForegroundStateChanged(true)
@@ -1473,6 +1503,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         if (!isChangingConfigurations) {
+            wasStoppedInBackground = true
             isActivityAlive = false
             try {
                 com.example.service.PlaybackManager.activeInstance?.onAppForegroundStateChanged(false)
