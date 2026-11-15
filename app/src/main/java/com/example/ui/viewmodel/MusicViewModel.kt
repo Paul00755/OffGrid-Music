@@ -665,7 +665,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val audioBalance: StateFlow<Float> = preferences.audioBalance.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAudioBalanceSync())
     val equalizerPreset: StateFlow<String> = preferences.equalizerPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getEqualizerPresetSync())
     val reduceVolumeOnNotification: StateFlow<Boolean> = preferences.reduceVolumeOnNotification.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getReduceVolumeOnNotificationSync())
-    val autoPauseCamera: StateFlow<Boolean> = preferences.autoPauseCamera.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPauseCameraSync())
     val autoPauseSystemAudio: StateFlow<Boolean> = preferences.autoPauseSystemAudio.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPauseSystemAudioSync())
     val playDuringCamera: StateFlow<Boolean> = preferences.playDuringCamera.stateIn(viewModelScope, SharingStarted.Eagerly, !preferences.getAutoPauseSystemAudioSync())
     val sleepTimerMode: StateFlow<String> = preferences.sleepTimerMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getSleepTimerModeSync())
@@ -992,11 +991,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            autoPauseCamera.collect { enabled ->
-                playbackManager.autoPauseCamera = enabled
-            }
-        }
-        viewModelScope.launch {
             autoPauseSystemAudio.collect { enabled ->
                 playbackManager.autoPauseSystemAudio = enabled
             }
@@ -1194,12 +1188,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playbackManager.pauseOnZeroVolume = enabled
         viewModelScope.launch {
             withContext(kotlinx.coroutines.NonCancellable) { preferences.setPauseOnZeroVolume(enabled) }
-        }
-    }
-    fun setAutoPauseCamera(enabled: Boolean) {
-        playbackManager.autoPauseCamera = enabled
-        viewModelScope.launch {
-            withContext(kotlinx.coroutines.NonCancellable) { preferences.setAutoPauseCamera(enabled) }
         }
     }
     fun setAutoPauseSystemAudio(enabled: Boolean) {

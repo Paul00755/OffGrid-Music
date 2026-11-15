@@ -80,21 +80,46 @@ class PlaybackManager(
     val audioFocusManager = AudioFocusManager(
         context = context,
         isPlayingProvider = {
+            val isMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
             try {
-                if (isFadingOutToPause) false else (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying)
+                if (isFadingOutToPause) {
+                    false
+                } else if (isMain) {
+                    player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
+                } else {
+                    _playbackState.value.isPlaying
+                }
             } catch (_: Throwable) {
-                false
+                !isFadingOutToPause && _playbackState.value.isPlaying
             }
         },
         isSleepTimerStoppedProvider = {
             isSleepTimerFinalStopping || (sleepTimerManager.state.value.phase == TrackSleepTimerPhase.STOPPED)
         },
         ownActiveMediaPlayerCountProvider = {
+            val isMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
             var count = 0
             try {
-                if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) count++
-                if (isCrossfadeTransitioning || _crossfadePlayer?.isPlaying == true || _crossfadePlayer?.playWhenReady == true) count++
+                val primaryPlaying = if (isFadingOutToPause) {
+                    false
+                } else if (isMain) {
+                    player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying
+                } else {
+                    _playbackState.value.isPlaying
+                }
+                if (primaryPlaying) count++
+                val cf = _crossfadePlayer
+                val crossfadePlaying = if (isCrossfadeTransitioning) {
+                    true
+                } else if (isMain && cf != null) {
+                    cf.isPlaying || (cf.playWhenReady && cf.mediaItemCount > 0 &&
+                        cf.playbackState != Player.STATE_IDLE && cf.playbackState != Player.STATE_ENDED)
+                } else {
+                    false
+                }
+                if (crossfadePlaying) count++
             } catch (_: Throwable) {
+                if (!isFadingOutToPause && _playbackState.value.isPlaying) count = 1
             }
             count
         },
@@ -237,7 +262,7 @@ class PlaybackManager(
                         )
                         setHandleAudioBecomingNoisy(true)
                         setWakeMode(C.WAKE_MODE_LOCAL)
-                        playWhenReady = true
+                        playWhenReady = false
                     }.also { _crossfadePlayer = it }
             }
         }
@@ -707,6 +732,7 @@ class PlaybackManager(
         isCrossfadeTransitioning = false
         hasTriggeredCrossfadeTransition = false
         try {
+            _crossfadePlayer?.playWhenReady = false
             _crossfadePlayer?.stop()
             _crossfadePlayer?.clearMediaItems()
         } catch (_: Exception) {}
@@ -2254,12 +2280,6 @@ class PlaybackManager(
             audioFocusManager.reduceVolumeOnNotification = value
         }
 
-    var autoPauseCamera: Boolean
-        get() = audioFocusManager.autoPauseCamera
-        set(value) {
-            audioFocusManager.autoPauseCamera = value
-        }
-
     var autoPauseSystemAudio: Boolean
         get() = audioFocusManager.autoPauseSystemAudio
         set(value) {
@@ -2291,7 +2311,6 @@ class PlaybackManager(
         // Synchronously restore persisted audio engine settings before any playback or ViewModel collection
         try {
             addToQueuePosition = userPreferences.getAddToQueuePositionSync()
-            autoPauseCamera = userPreferences.getAutoPauseCameraSync()
             autoPauseSystemAudio = userPreferences.getAutoPauseSystemAudioSync()
             reduceVolumeOnNotification = userPreferences.getReduceVolumeOnNotificationSync()
             pauseOnZeroVolume = userPreferences.getPauseOnZeroVolumeSync()
@@ -2315,11 +2334,6 @@ class PlaybackManager(
         scope.launch {
             userPreferences.addToQueuePosition.collect { pos ->
                 addToQueuePosition = pos
-            }
-        }
-        scope.launch {
-            userPreferences.autoPauseCamera.collect { enabled ->
-                autoPauseCamera = enabled
             }
         }
         scope.launch {
@@ -3185,6 +3199,7 @@ class PlaybackManager(
             } finally {
                 val wasCancelled = coroutineContext[Job]?.isCancelled == true
                 try {
+                    crossfadePlayer.playWhenReady = false
                     crossfadePlayer.stop()
                     crossfadePlayer.clearMediaItems()
                 } catch (_: Exception) {}

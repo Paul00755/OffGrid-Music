@@ -43,7 +43,6 @@ fun SettingsTabRoute(
     val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
     val normalizeAudio by viewModel.normalizeAudio.collectAsState()
     val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
-    val autoPauseCamera by viewModel.autoPauseCamera.collectAsState()
     val autoPauseSystemAudio by viewModel.autoPauseSystemAudio.collectAsState()
     val sleepTimerMode by viewModel.sleepTimerMode.collectAsState()
 
@@ -221,12 +220,8 @@ fun SettingsTabRoute(
         onSetLyricsAutoScroll = { viewModel.setLyricsAutoScroll(it) },
         reduceVolumeOnNotification = reduceVolumeOnNotification,
         onSetReduceVolumeOnNotification = { viewModel.setReduceVolumeOnNotification(it) },
-        autoPauseCamera = autoPauseCamera,
-        onSetAutoPauseCamera = { viewModel.setAutoPauseCamera(it) },
         autoPauseSystemAudio = autoPauseSystemAudio,
         onSetAutoPauseSystemAudio = { viewModel.setAutoPauseSystemAudio(it) },
-        pauseDuringCamera = autoPauseSystemAudio,
-        onSetPauseDuringCamera = { viewModel.setAutoPauseSystemAudio(it) },
         onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
         onRemoveFolder = { viewModel.removeFolder(it) },
         scrobbleThresholdType = viewModel.scrobbleThresholdType.collectAsState().value,

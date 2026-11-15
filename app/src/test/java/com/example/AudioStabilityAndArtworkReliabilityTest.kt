@@ -89,7 +89,7 @@ class AudioStabilityAndArtworkReliabilityTest {
     // =========================================================================
 
     @Test
-    fun testCameraTransientFocusIgnoredWhenAutoPauseCameraDisabledEvenIfSystemAudioEnabled() {
+    fun testCameraPhotoDoesNotPauseWhileVideoRecordingPausesAndAutoResumesNatively() {
         var isPlaying = true
         var pauseCount = 0
         var resumeCount = 0
@@ -98,6 +98,7 @@ class AudioStabilityAndArtworkReliabilityTest {
             context = context,
             isPlayingProvider = { isPlaying },
             isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
             onPauseRequested = {
                 isPlaying = false
                 pauseCount++
@@ -107,31 +108,78 @@ class AudioStabilityAndArtworkReliabilityTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = false
         focusManager.autoPauseSystemAudio = true
 
-        // 1. User opens camera while Auto-Pause on Camera is OFF
-        focusManager.onCameraOpened("0")
-        assertTrue("Opening camera must not pause when autoPauseCamera is OFF", isPlaying)
-
-        // 2. Camera app requests transient audio focus (for shutter sound / video preview)
-        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
-        assertTrue(
-            "Camera-correlated transient focus loss must NOT pause playback when autoPauseCamera is OFF, even if autoPauseSystemAudio is ON",
-            isPlaying
-        )
-        assertEquals(0, pauseCount)
-
-        // 3. Camera closes and focus returns -> no spurious pause or resume
-        focusManager.onCameraClosed("0")
-        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        // 1. Opening camera in photo mode causes no focus loss -> music continues uninterrupted
         assertTrue(isPlaying)
         assertEquals(0, pauseCount)
-        assertEquals(0, resumeCount)
+
+        // 2. User switches to Video mode & taps record -> Android requests AUDIOFOCUS_LOSS_TRANSIENT
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Camera video recording transient focus loss must pause playback", isPlaying)
+        assertEquals(1, pauseCount)
+
+        // 3. Video recording finishes -> Android restores focus via AUDIOFOCUS_GAIN -> auto-resumes
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Playback must auto-resume when camera video recording ends", isPlaying)
+        assertEquals(1, resumeCount)
     }
 
     @Test
-    fun testNonCameraSystemAudioStillPausesWhenSystemAudioEnabled() {
+    fun testUnmutedReelOrShortViaDuckableFocusOrPollPausesAndAutoResumes() {
+        var isPlaying = true
+        var pauseCount = 0
+        var resumeCount = 0
+        var isVideoPlaying = false
+        var currentVolume = 1.0f
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { isVideoPlaying },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            },
+            onDuckRequested = { vol -> currentVolume = vol },
+            onRestoreVolumeRequested = { currentVolume = 1.0f }
+        )
+        focusManager.autoPauseSystemAudio = true
+        focusManager.reduceVolumeOnNotification = true
+
+        // 1. User opens a muted Reel/Short (no external audio active yet) -> music keeps playing
+        focusManager.pollActiveCallStateWhilePlaying()
+        assertTrue("Muted Reel/Short with no external audio must not interrupt music", isPlaying)
+        assertEquals(0, pauseCount)
+
+        // 2. User unmutes the Reel/Short -> external media active + duckable focus loss -> must PAUSE (not merely duck)
+        isVideoPlaying = true
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertFalse("Unmuting a Reel/Short must pause music immediately", isPlaying)
+        assertEquals(1, pauseCount)
+        assertEquals(1.0f, currentVolume, 0.001f)
+
+        // 3. Reel/Short ends and focus returns -> music auto-resumes
+        isVideoPlaying = false
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Music must auto-resume after Reel/Short stops", isPlaying)
+        assertEquals(1, resumeCount)
+
+        // 4. External video/Reel starts/unmutes without dispatching focus callback -> playback poll catches and pauses
+        isVideoPlaying = true
+        focusManager.pollActiveCallStateWhilePlaying()
+        assertFalse("Playback poll must pause music when external video/Reel starts without focus callback", isPlaying)
+        assertEquals(2, pauseCount)
+    }
+
+    @Test
+    fun testPreSleepScreenOffNeverCausesFalsePause() {
         var isPlaying = true
         var pauseCount = 0
         var resumeCount = 0
@@ -140,6 +188,9 @@ class AudioStabilityAndArtworkReliabilityTest {
             context = context,
             isPlayingProvider = { isPlaying },
             isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { false },
+            callActiveProvider = { false },
             onPauseRequested = {
                 isPlaying = false
                 pauseCount++
@@ -149,17 +200,57 @@ class AudioStabilityAndArtworkReliabilityTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = false
         focusManager.autoPauseSystemAudio = true
 
-        // Camera is NOT active -> normal system audio transient focus loss pauses and auto-resumes
+        // Simulate device going to sleep / screen turning off with no active call or external video
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        org.robolectric.Shadows.shadowOf(pm).setIsInteractive(false)
         focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
-        assertFalse(isPlaying)
-        assertEquals(1, pauseCount)
 
-        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
-        assertTrue(isPlaying)
-        assertEquals(1, resumeCount)
+        assertTrue("Pre-sleep / screen-off transient focus blip must NOT pause playback", isPlaying)
+        assertEquals(0, pauseCount)
+        assertEquals(0, resumeCount)
+        org.robolectric.Shadows.shadowOf(pm).setIsInteractive(true)
+    }
+
+    @Test
+    fun testAudioFocusCallbacksFromWorkerThreadPauseAndResumeSafely() {
+        val isPlaying = java.util.concurrent.atomic.AtomicBoolean(true)
+        val pauseCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val resumeCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying.get() },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying.get()) 1 else 0 },
+            onPauseRequested = {
+                isPlaying.set(false)
+                pauseCount.incrementAndGet()
+            },
+            onResumeRequested = {
+                isPlaying.set(true)
+                resumeCount.incrementAndGet()
+            }
+        )
+        focusManager.autoPauseSystemAudio = true
+
+        // Dispatch focus loss from a background thread (matching OffGridAudioFocus HandlerThread)
+        val t1 = Thread { focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) }
+        t1.start()
+        t1.join()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertFalse("Background focus callback must pause playback on main thread", isPlaying.get())
+        assertEquals(1, pauseCount.get())
+
+        val t2 = Thread { focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN) }
+        t2.start()
+        t2.join()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertTrue("Background focus gain must auto-resume playback on main thread", isPlaying.get())
+        assertEquals(1, resumeCount.get())
     }
 
     @Test

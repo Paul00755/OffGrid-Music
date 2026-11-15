@@ -604,10 +604,6 @@ fun SettingsScreen(
     onSetLyricsAutoScroll: (Boolean) -> Unit = {},
     reduceVolumeOnNotification: Boolean = true,
     onSetReduceVolumeOnNotification: (Boolean) -> Unit = {},
-    pauseDuringCamera: Boolean = true,
-    onSetPauseDuringCamera: (Boolean) -> Unit = {},
-    autoPauseCamera: Boolean = false,
-    onSetAutoPauseCamera: (Boolean) -> Unit = {},
     autoPauseSystemAudio: Boolean = true,
     onSetAutoPauseSystemAudio: (Boolean) -> Unit = {},
     sleepTimerMode: String = "TIME",
@@ -1405,13 +1401,10 @@ fun SettingsScreen(
                 searchTokens,
                 "duck", "ducking", "duck volume for notifications", "notification chimes", "lower volume"
             )
-            val matchAudioCameraPause = matchesSettingsTokens(
-                searchTokens,
-                "camera", "auto-pause for camera", "camera interruption", "shutter", "video recording"
-            )
             val matchAudioSystemAudioPause = matchesSettingsTokens(
                 searchTokens,
-                "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption", "calls"
+                "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption",
+                "calls", "video", "reels", "shorts", "alarm", "timer", "camera"
             )
             val matchAudioTranscribe = matchesSettingsTokens(
                 searchTokens,
@@ -1428,7 +1421,7 @@ fun SettingsScreen(
             )
             val anyAudioItemMatches = matchAudioCrossfade || matchAudioFadeIn || matchAudioFadeOut ||
                 matchAudioPauseZero || matchAudioAutoResume || matchAudioGapless || matchAudioNormalize ||
-                matchAudioDucking || matchAudioCameraPause || matchAudioSystemAudioPause ||
+                matchAudioDucking || matchAudioSystemAudioPause ||
                 matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
 
             // Section 2: UI & Themes granular matchers
@@ -2261,24 +2254,11 @@ fun SettingsScreen(
                             if (!isSearching || broadAudioMatch) SettingsDivider()
                         }
 
-                        // Auto-pause for Camera
-                        if (!isSearching || matchAudioCameraPause || broadAudioMatch) {
-                            SettingsToggleRow(
-                                title = "Auto-pause for Camera",
-                                subtitle = "Pause music when the device camera opens and automatically resume when the camera closes",
-                                checked = autoPauseCamera,
-                                onCheckedChange = onSetAutoPauseCamera,
-                                icon = Icons.Default.PhotoCamera,
-                                accentColor = Color(0xFF00E5FF)
-                            )
-                            if (!isSearching || broadAudioMatch) SettingsDivider()
-                        }
-
                         // Auto-pause for System Audio
                         if (!isSearching || matchAudioSystemAudioPause || broadAudioMatch) {
                             SettingsToggleRow(
                                 title = "Auto-pause for System Audio",
-                                subtitle = "Pause music when another app plays audio and automatically resume when the interruption ends",
+                                subtitle = "Pause music when videos, Reels, Shorts, alarms, timers, calls, or other apps play audio and auto-resume when ended",
                                 checked = autoPauseSystemAudio,
                                 onCheckedChange = onSetAutoPauseSystemAudio,
                                 icon = Icons.Default.GraphicEq,

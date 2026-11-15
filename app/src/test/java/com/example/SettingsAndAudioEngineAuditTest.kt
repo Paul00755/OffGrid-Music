@@ -234,7 +234,7 @@ class SettingsAndAudioEngineAuditTest {
     }
 
     @Test
-    fun testCameraAutoPauseWhenEnabled() {
+    fun testCameraPhotoDoesNotPauseWhileVideoRecordingPausesViaAudioFocus() {
         var isPlaying = true
         var pauseCount = 0
         var resumeCount = 0
@@ -252,46 +252,20 @@ class SettingsAndAudioEngineAuditTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = true
         focusManager.autoPauseSystemAudio = true
 
-        focusManager.onCameraOpened("0")
-        assertFalse("Playback must pause when camera opens and autoPauseCamera is ON", isPlaying)
-        assertEquals(1, pauseCount)
-
-        focusManager.onCameraClosed("0")
-        assertTrue("Playback must automatically resume when camera closes", isPlaying)
-        assertEquals(1, resumeCount)
-    }
-
-    @Test
-    fun testCameraAutoPauseWhenDisabled() {
-        var isPlaying = true
-        var pauseCount = 0
-        var resumeCount = 0
-
-        val focusManager = AudioFocusManager(
-            context = context,
-            isPlayingProvider = { isPlaying },
-            isSleepTimerStoppedProvider = { false },
-            onPauseRequested = {
-                isPlaying = false
-                pauseCount++
-            },
-            onResumeRequested = {
-                isPlaying = true
-                resumeCount++
-            }
-        )
-        focusManager.autoPauseCamera = false
-        focusManager.autoPauseSystemAudio = true
-
-        focusManager.onCameraOpened("0")
-        assertTrue("Playback must continue when autoPauseCamera is OFF", isPlaying)
+        // Opening camera for photo mode causes no audio focus loss -> music keeps playing
+        assertTrue("Playback must continue in camera photo mode", isPlaying)
         assertEquals(0, pauseCount)
 
-        focusManager.onCameraClosed("0")
-        assertEquals(0, resumeCount)
+        // Shooting video causes Android to dispatch AUDIOFOCUS_LOSS_TRANSIENT -> pauses & resumes natively
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Playback must pause when Android grants transient focus to camera video recording", isPlaying)
+        assertEquals(1, pauseCount)
+
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue("Playback must automatically resume when camera video recording ends", isPlaying)
+        assertEquals(1, resumeCount)
     }
 
     @Test
@@ -313,7 +287,6 @@ class SettingsAndAudioEngineAuditTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = false
         focusManager.autoPauseSystemAudio = true
 
         focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
@@ -348,7 +321,6 @@ class SettingsAndAudioEngineAuditTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = true
         focusManager.autoPauseSystemAudio = true
 
         // 1. Already paused before interruption
@@ -372,11 +344,16 @@ class SettingsAndAudioEngineAuditTest {
         var isPlaying = true
         var pauseCount = 0
         var resumeCount = 0
+        var isCallActive = false
+        var isVideoActive = false
 
         val focusManager = AudioFocusManager(
             context = context,
             isPlayingProvider = { isPlaying },
             isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { isVideoActive },
+            callActiveProvider = { isCallActive },
             onPauseRequested = {
                 isPlaying = false
                 pauseCount++
@@ -386,25 +363,28 @@ class SettingsAndAudioEngineAuditTest {
                 resumeCount++
             }
         )
-        focusManager.autoPauseCamera = true
         focusManager.autoPauseSystemAudio = true
 
-        // Camera opens first
-        focusManager.onCameraOpened("0")
+        // External video triggers transient interruption first
+        isVideoActive = true
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         assertFalse(isPlaying)
         assertEquals(1, pauseCount)
 
-        // System audio transient focus loss occurs while camera is still open
-        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        // Incoming phone call overlaps while video interruption is still active
+        isCallActive = true
+        focusManager.onActivePlaybackConfigurationsChanged()
         assertEquals("Should not issue duplicate pause while already paused by interruption", 1, pauseCount)
 
-        // Audio focus returns, but camera is still open -> must NOT resume yet
+        // Video stops, but call is still active -> must NOT resume yet
+        isVideoActive = false
         focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
-        assertFalse("Must not resume while camera interruption is still active", isPlaying)
+        assertFalse("Must not resume while call interruption is still active", isPlaying)
         assertEquals(0, resumeCount)
 
-        // Camera closes -> all interruptions cleared -> resumes exactly once
-        focusManager.onCameraClosed("0")
+        // Wait — after call ends, focus gain or playback callback ends PHONE_CALL -> resumes once
+        isCallActive = false
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_GAIN)
         assertTrue("Must resume once all overlapping interruptions have ended", isPlaying)
         assertEquals(1, resumeCount)
     }
