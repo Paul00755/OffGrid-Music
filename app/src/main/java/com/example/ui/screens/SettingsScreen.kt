@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -503,6 +504,12 @@ fun SettingsScreen(
     onSetNowPlayingLayout: (String) -> Unit = {},
     playlistsLayout: String = "BENTO_GRID",
     onSetPlaylistsLayout: (String) -> Unit = {},
+    lyricsLayout: String = "CLASSIC_DEFAULT",
+    onSetLyricsLayout: (String) -> Unit = {},
+    showNowPlayingVolumeBar: Boolean = false,
+    onSetShowNowPlayingVolumeBar: (Boolean) -> Unit = {},
+    showAdvancedSongInfo: Boolean = false,
+    onSetShowAdvancedSongInfo: (Boolean) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
     isGradientEffect: Boolean = true,
@@ -1433,8 +1440,10 @@ fun SettingsScreen(
             val matchUiScreenLayouts = matchesSettingsTokens(
                 searchTokens,
                 "screen layout", "screen layout architecture", "layout architecture", "wireframe",
-                "now playing layout", "home screen layout", "playlists layout", "bento", "vinyl",
-                "turntable", "minimal glass", "hero spotlight", "magazine", "minimal stream", "studio deck", "neon studio", "compact list"
+                "now playing layout", "home screen layout", "playlists layout", "lyrics layout", "lyrics ui",
+                "bento", "vinyl", "turntable", "minimal glass", "hero spotlight", "magazine",
+                "minimal stream", "studio deck", "neon studio", "compact list",
+                "classic bento", "fluid glow", "karaoke stage", "karaoke spotlight", "studio timeline", "editorial timeline"
             )
             val matchUiDisplayMode = matchesSettingsTokens(
                 searchTokens,
@@ -1469,6 +1478,15 @@ fun SettingsScreen(
                 searchTokens,
                 "lyrics auto-scroll", "auto-scroll", "autoscroll", "synced lyrics", "lrc"
             )
+            val matchUiVolumeBar = matchesSettingsTokens(
+                searchTokens,
+                "volume seek bar", "volume bar", "volume slider", "volume control", "now-playing", "now playing"
+            )
+            val matchUiAdvancedSongInfo = matchesSettingsTokens(
+                searchTokens,
+                "advanced song information", "song info", "audio format", "bitrate", "frequency", "sample rate",
+                "bit depth", "128", "192", "320", "khz", "flac", "kbps"
+            )
             val matchUiWaveform = matchesSettingsTokens(
                 searchTokens,
                 "waveform", "waveform visualizer", "visualizer style", "sleek line", "snake", "symmetric", "dotted", "bars", "wave", "seekbar"
@@ -1483,7 +1501,8 @@ fun SettingsScreen(
             )
             val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
                 matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiGradientGlass ||
-                matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
+                matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiVolumeBar ||
+                matchUiAdvancedSongInfo || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
 
             // Section 3: Home Feed granular matcher
             val matchHomeFeedItem = matchesSettingsTokens(
@@ -2857,7 +2876,8 @@ fun SettingsScreen(
                                 options = listOf(
                                     "NOW_PLAYING" to "Now Playing",
                                     "HOME" to "Home Screen",
-                                    "PLAYLISTS" to "Playlists"
+                                    "PLAYLISTS" to "Playlists",
+                                    "LYRICS" to "Lyrics UI"
                                 ),
                                 selectedOption = selectedLayoutCustomizerScreen,
                                 onSelectOption = {
@@ -2942,6 +2962,33 @@ fun SettingsScreen(
                                                     PlaylistsLayout.MAGAZINE_HERO -> PlaylistsMiniatureMagazineHero()
                                                     PlaylistsLayout.COMPACT_LIST -> PlaylistsMiniatureCompactList()
                                                     PlaylistsLayout.GLOW_CARDS -> PlaylistsMiniatureGlowCards()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                "LYRICS" -> {
+                                    LazyRow(
+                                        modifier = Modifier.testTag("lyrics_layout_preview_row"),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(vertical = 4.dp)
+                                    ) {
+                                        items(LyricsLayout.entries, key = { it.id }, contentType = { "layout_preview" }) { layout ->
+                                            val isSelected = lyricsLayout.equals(layout.id, ignoreCase = true)
+                                            ScreenLayoutPreviewCard(
+                                                title = layout.displayName,
+                                                subtitle = layout.subtitle,
+                                                isSelected = isSelected,
+                                                onClick = {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onSetLyricsLayout(layout.id)
+                                                }
+                                            ) {
+                                                when (layout) {
+                                                    LyricsLayout.CLASSIC_DEFAULT -> LyricsMiniatureClassicDefault()
+                                                    LyricsLayout.FLUID_GLOW -> LyricsMiniatureFluidGlow()
+                                                    LyricsLayout.KARAOKE_SPOTLIGHT -> LyricsMiniatureKaraokeStage()
+                                                    LyricsLayout.EDITORIAL_TIMELINE -> LyricsMiniatureStudioTimeline()
                                                 }
                                             }
                                         }
@@ -3158,6 +3205,32 @@ fun SettingsScreen(
                                 checked = lyricsAutoScroll,
                                 onCheckedChange = onSetLyricsAutoScroll,
                                 icon = Icons.Default.FormatQuote,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
+
+                        // 7b. Include Volume Seek bar in Now-Playing screen
+                        if (!isSearching || matchUiVolumeBar || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Include Volume Seek bar in Now-Playing screen",
+                                subtitle = "Display a sleek media volume slider across all 4 Now Playing screen styles",
+                                checked = showNowPlayingVolumeBar,
+                                onCheckedChange = onSetShowNowPlayingVolumeBar,
+                                icon = Icons.Default.VolumeUp,
+                                accentColor = Color(0xFFBB86FC)
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
+
+                        // 7c. Display advanced song information in the Now-Playing screen
+                        if (!isSearching || matchUiAdvancedSongInfo || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Display advanced song information in the Now-Playing screen",
+                                subtitle = "Show audio codec, bit depth, sample frequency, and bitrate in small typography",
+                                checked = showAdvancedSongInfo,
+                                onCheckedChange = onSetShowAdvancedSongInfo,
+                                icon = Icons.Default.GraphicEq,
                                 accentColor = Color(0xFFBB86FC)
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()

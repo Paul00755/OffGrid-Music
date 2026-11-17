@@ -111,6 +111,9 @@ fun NowPlayingScreen(
     onApplyLyricsCandidate: (com.example.service.LyricsCandidate) -> Unit = {},
     waveformStyle: String = "SNAKE",
     nowPlayingLayout: String = "MODERN_BENTO",
+    lyricsLayout: String = "CLASSIC_DEFAULT",
+    showVolumeBar: Boolean = false,
+    showAdvancedSongInfo: Boolean = false,
     playbackPositionFlow: StateFlow<Long>? = null,
     keepScreenAwake: Boolean = false,
     gesturePlaybackEnabled: Boolean = true,
@@ -593,6 +596,18 @@ fun NowPlayingScreen(
     val glassConfig = LocalGlassThemeConfig.current
     val currentBg = BentoBackground
     val ambientThemeColor = dynamicArtworkColor ?: glassConfig.tintColor
+    val audioTechnicalInfo by produceState<com.example.util.AudioTechnicalInfo?>(
+        initialValue = null,
+        key1 = song.id,
+        key2 = song.path,
+        key3 = showAdvancedSongInfo
+    ) {
+        value = if (showAdvancedSongInfo) {
+            com.example.util.AudioTechnicalMetadataReader.readForSong(context, song)
+        } else {
+            null
+        }
+    }
     val bgBrush = remember(ambientThemeColor, currentBg, glassConfig.gradientEnabled, glassConfig.secondaryTintColor) {
         if (glassConfig.gradientEnabled) {
             androidx.compose.ui.graphics.Brush.verticalGradient(
@@ -630,6 +645,7 @@ fun NowPlayingScreen(
             }
     ) {
         val currentLayout = com.example.ui.theme.NowPlayingLayout.fromId(nowPlayingLayout)
+        val currentLyricsLayout = com.example.ui.theme.LyricsLayout.fromId(lyricsLayout)
 
         if (isLandscape) {
             // Horizontal Landscape Split View: Exact 50/50 equal halves
@@ -695,6 +711,14 @@ fun NowPlayingScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (showAdvancedSongInfo && audioTechnicalInfo != null) {
+                                com.example.ui.components.AdvancedSongInfoRow(
+                                    info = audioTechnicalInfo,
+                                    inkColor = BentoTextPrimary,
+                                    centered = false,
+                                    usePillSurface = false
+                                )
+                            }
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -865,6 +889,14 @@ fun NowPlayingScreen(
                             Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = BentoTextSecondary, modifier = Modifier.size(18.dp))
                         }
                     }
+
+                    if (showVolumeBar) {
+                        com.example.ui.components.NowPlayingVolumeBar(
+                            inkColor = BentoTextPrimary,
+                            accentColor = BentoPrimary,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
                 }
 
                 // RIGHT HALF (50%): High-Visibility Lyrics Container
@@ -896,44 +928,87 @@ fun NowPlayingScreen(
                         )
                         .padding(12.dp)
                 ) {
-                    LyricsPanelContent(
-                        song = song,
-                        currentLyrics = currentLyrics,
-                        playbackState = playbackState,
-                        positionMs = livePositionMs,
-                        showLyricsView = true,
-                        isLandscape = true,
-                        userIsScrollingLyrics = userIsScrollingLyrics,
-                        lyricsAutoScroll = lyricsAutoScroll,
-                        onSaveLyricsOffset = onSaveLyricsOffset,
-                        onGetLyricsOffset = onGetLyricsOffset,
-                        lyricsSyncOffsetMs = lyricsSyncOffsetMs,
-                        onFlushLyricsOffset = onFlushLyricsOffset,
-                        ambientThemeColor = ambientThemeColor,
-                        onUserIsScrollingChange = { userIsScrollingLyrics = it },
-                        onSeekTo = onSeekTo,
-                        onForceFetchLyrics = { onForceFetchLyrics(song) },
-                        onOpenSearchLyrics = { showSearchLyricsDialog = true },
-                        onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
-                        onCloseLyrics = { showLyricsView = false },
-                        coroutineScope = coroutineScope,
-                        isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
-                        audioTranscribeMode = audioTranscribeMode,
-                        audioTranscribeTargetLang = audioTranscribeTargetLang,
-                        isTranscribingLyrics = isTranscribingLyrics,
-                        transcribeStatusMessage = transcribeStatusMessage,
-                        transcribeErrorMessage = transcribeErrorMessage,
-                        canUndoLyrics = canUndoLyrics,
-                        transcribeLyricsPreview = transcribeLyricsPreview,
-                        onSaveTranscribedLyrics = onSaveTranscribedLyrics,
-                        onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
-                        onRetranscribedLyrics = onRetranscribedLyrics,
-                        onTranslateLyrics = onTranslateLyrics,
-                        onTranscribeAudio = onTranscribeAudio,
-                        onUndoLyricsChanges = onUndoLyricsChanges,
-                        onClearTranscribeError = onClearTranscribeError,
-                        playbackPositionFlow = playbackPositionFlow
-                    )
+                    if (currentLyricsLayout == com.example.ui.theme.LyricsLayout.CLASSIC_DEFAULT) {
+                        LyricsPanelContent(
+                            song = song,
+                            currentLyrics = currentLyrics,
+                            playbackState = playbackState,
+                            positionMs = livePositionMs,
+                            showLyricsView = true,
+                            isLandscape = true,
+                            userIsScrollingLyrics = userIsScrollingLyrics,
+                            lyricsAutoScroll = lyricsAutoScroll,
+                            onSaveLyricsOffset = onSaveLyricsOffset,
+                            onGetLyricsOffset = onGetLyricsOffset,
+                            lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                            onFlushLyricsOffset = onFlushLyricsOffset,
+                            ambientThemeColor = ambientThemeColor,
+                            onUserIsScrollingChange = { userIsScrollingLyrics = it },
+                            onSeekTo = onSeekTo,
+                            onForceFetchLyrics = { onForceFetchLyrics(song) },
+                            onOpenSearchLyrics = { showSearchLyricsDialog = true },
+                            onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
+                            onCloseLyrics = { showLyricsView = false },
+                            coroutineScope = coroutineScope,
+                            isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                            audioTranscribeMode = audioTranscribeMode,
+                            audioTranscribeTargetLang = audioTranscribeTargetLang,
+                            isTranscribingLyrics = isTranscribingLyrics,
+                            transcribeStatusMessage = transcribeStatusMessage,
+                            transcribeErrorMessage = transcribeErrorMessage,
+                            canUndoLyrics = canUndoLyrics,
+                            transcribeLyricsPreview = transcribeLyricsPreview,
+                            onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                            onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                            onRetranscribedLyrics = onRetranscribedLyrics,
+                            onTranslateLyrics = onTranslateLyrics,
+                            onTranscribeAudio = onTranscribeAudio,
+                            onUndoLyricsChanges = onUndoLyricsChanges,
+                            onClearTranscribeError = onClearTranscribeError,
+                            playbackPositionFlow = playbackPositionFlow
+                        )
+                    } else {
+                        com.example.ui.screens.layouts.AlternateLyricsPanel(
+                            lyricsLayout = currentLyricsLayout,
+                            song = song,
+                            currentLyrics = currentLyrics,
+                            playbackState = playbackState,
+                            positionMs = livePositionMs,
+                            showLyricsView = true,
+                            isLandscape = true,
+                            userIsScrollingLyrics = userIsScrollingLyrics,
+                            lyricsAutoScroll = lyricsAutoScroll,
+                            onSaveLyricsOffset = onSaveLyricsOffset,
+                            onGetLyricsOffset = onGetLyricsOffset,
+                            lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                            onFlushLyricsOffset = onFlushLyricsOffset,
+                            ambientThemeColor = ambientThemeColor,
+                            onUserIsScrollingChange = { userIsScrollingLyrics = it },
+                            onSeekTo = onSeekTo,
+                            onTogglePlayPause = onTogglePlayPause,
+                            onForceFetchLyrics = { onForceFetchLyrics(song) },
+                            onOpenSearchLyrics = { showSearchLyricsDialog = true },
+                            onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
+                            onCloseLyrics = { showLyricsView = false },
+                            coroutineScope = coroutineScope,
+                            isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                            audioTranscribeMode = audioTranscribeMode,
+                            audioTranscribeTargetLang = audioTranscribeTargetLang,
+                            isTranscribingLyrics = isTranscribingLyrics,
+                            transcribeStatusMessage = transcribeStatusMessage,
+                            transcribeErrorMessage = transcribeErrorMessage,
+                            canUndoLyrics = canUndoLyrics,
+                            transcribeLyricsPreview = transcribeLyricsPreview,
+                            onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                            onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                            onRetranscribedLyrics = onRetranscribedLyrics,
+                            onTranslateLyrics = onTranslateLyrics,
+                            onTranscribeAudio = onTranscribeAudio,
+                            onUndoLyricsChanges = onUndoLyricsChanges,
+                            onClearTranscribeError = onClearTranscribeError,
+                            playbackPositionFlow = playbackPositionFlow
+                        )
+                    }
                 }
             }
         } else {
@@ -960,6 +1035,9 @@ fun NowPlayingScreen(
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
                         playbackPositionFlow = playbackPositionFlow,
+                        showVolumeBar = showVolumeBar,
+                        showAdvancedSongInfo = showAdvancedSongInfo,
+                        audioTechnicalInfo = audioTechnicalInfo,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -985,6 +1063,9 @@ fun NowPlayingScreen(
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
                         playbackPositionFlow = playbackPositionFlow,
+                        showVolumeBar = showVolumeBar,
+                        showAdvancedSongInfo = showAdvancedSongInfo,
+                        audioTechnicalInfo = audioTechnicalInfo,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1010,6 +1091,9 @@ fun NowPlayingScreen(
                         waveformStyle = waveformStyle,
                         gesturePlaybackEnabled = gesturePlaybackEnabled,
                         playbackPositionFlow = playbackPositionFlow,
+                        showVolumeBar = showVolumeBar,
+                        showAdvancedSongInfo = showAdvancedSongInfo,
+                        audioTechnicalInfo = audioTechnicalInfo,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1163,7 +1247,7 @@ fun NowPlayingScreen(
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding()
                                 .padding(horizontal = 24.dp, vertical = 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                            verticalArrangement = Arrangement.spacedBy(if (showVolumeBar) 10.dp else 14.dp)
                         ) {
                             // Title + Artist on Left, Circular Options (⋮) + Favorite (♡) on Right
                             Row(
@@ -1193,6 +1277,15 @@ fun NowPlayingScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (showAdvancedSongInfo && audioTechnicalInfo != null) {
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        com.example.ui.components.AdvancedSongInfoRow(
+                                            info = audioTechnicalInfo,
+                                            inkColor = Color.White,
+                                            centered = false,
+                                            usePillSurface = false
+                                        )
+                                    }
                                 }
 
                                 Row(
@@ -1332,6 +1425,14 @@ fun NowPlayingScreen(
                                         modifier = Modifier.size(40.dp)
                                     )
                                 }
+                            }
+
+                            if (showVolumeBar) {
+                                com.example.ui.components.NowPlayingVolumeBar(
+                                    inkColor = Color.White,
+                                    accentColor = Color.White,
+                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                )
                             }
 
                             // Centered Audio Output Device Label (e.g. earbuds icon + device name)
@@ -1643,43 +1744,85 @@ fun NowPlayingScreen(
                 }
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            LyricsPanelContent(
-                song = song,
-                currentLyrics = currentLyrics,
-                playbackState = playbackState,
-                positionMs = livePositionMs,
-                showLyricsView = showLyricsView,
-                userIsScrollingLyrics = userIsScrollingLyrics,
-                lyricsAutoScroll = lyricsAutoScroll,
-                onSaveLyricsOffset = onSaveLyricsOffset,
-                onGetLyricsOffset = onGetLyricsOffset,
-                lyricsSyncOffsetMs = lyricsSyncOffsetMs,
-                onFlushLyricsOffset = onFlushLyricsOffset,
-                ambientThemeColor = ambientThemeColor,
-                onUserIsScrollingChange = { userIsScrollingLyrics = it },
-                onSeekTo = onSeekTo,
-                onForceFetchLyrics = { onForceFetchLyrics(song) },
-                onOpenSearchLyrics = { showSearchLyricsDialog = true },
-                onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
-                onCloseLyrics = { showLyricsView = false },
-                coroutineScope = coroutineScope,
-                isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
-                audioTranscribeMode = audioTranscribeMode,
-                audioTranscribeTargetLang = audioTranscribeTargetLang,
-                isTranscribingLyrics = isTranscribingLyrics,
-                transcribeStatusMessage = transcribeStatusMessage,
-                transcribeErrorMessage = transcribeErrorMessage,
-                canUndoLyrics = canUndoLyrics,
-                transcribeLyricsPreview = transcribeLyricsPreview,
-                onSaveTranscribedLyrics = onSaveTranscribedLyrics,
-                onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
-                onRetranscribedLyrics = onRetranscribedLyrics,
-                onTranslateLyrics = onTranslateLyrics,
-                onTranscribeAudio = onTranscribeAudio,
-                onUndoLyricsChanges = onUndoLyricsChanges,
-                onClearTranscribeError = onClearTranscribeError,
-                playbackPositionFlow = playbackPositionFlow
-            )
+            if (currentLyricsLayout == com.example.ui.theme.LyricsLayout.CLASSIC_DEFAULT) {
+                LyricsPanelContent(
+                    song = song,
+                    currentLyrics = currentLyrics,
+                    playbackState = playbackState,
+                    positionMs = livePositionMs,
+                    showLyricsView = showLyricsView,
+                    userIsScrollingLyrics = userIsScrollingLyrics,
+                    lyricsAutoScroll = lyricsAutoScroll,
+                    onSaveLyricsOffset = onSaveLyricsOffset,
+                    onGetLyricsOffset = onGetLyricsOffset,
+                    lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                    onFlushLyricsOffset = onFlushLyricsOffset,
+                    ambientThemeColor = ambientThemeColor,
+                    onUserIsScrollingChange = { userIsScrollingLyrics = it },
+                    onSeekTo = onSeekTo,
+                    onForceFetchLyrics = { onForceFetchLyrics(song) },
+                    onOpenSearchLyrics = { showSearchLyricsDialog = true },
+                    onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
+                    onCloseLyrics = { showLyricsView = false },
+                    coroutineScope = coroutineScope,
+                    isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                    audioTranscribeMode = audioTranscribeMode,
+                    audioTranscribeTargetLang = audioTranscribeTargetLang,
+                    isTranscribingLyrics = isTranscribingLyrics,
+                    transcribeStatusMessage = transcribeStatusMessage,
+                    transcribeErrorMessage = transcribeErrorMessage,
+                    canUndoLyrics = canUndoLyrics,
+                    transcribeLyricsPreview = transcribeLyricsPreview,
+                    onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                    onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                    onRetranscribedLyrics = onRetranscribedLyrics,
+                    onTranslateLyrics = onTranslateLyrics,
+                    onTranscribeAudio = onTranscribeAudio,
+                    onUndoLyricsChanges = onUndoLyricsChanges,
+                    onClearTranscribeError = onClearTranscribeError,
+                    playbackPositionFlow = playbackPositionFlow
+                )
+            } else {
+                com.example.ui.screens.layouts.AlternateLyricsPanel(
+                    lyricsLayout = currentLyricsLayout,
+                    song = song,
+                    currentLyrics = currentLyrics,
+                    playbackState = playbackState,
+                    positionMs = livePositionMs,
+                    showLyricsView = showLyricsView,
+                    userIsScrollingLyrics = userIsScrollingLyrics,
+                    lyricsAutoScroll = lyricsAutoScroll,
+                    onSaveLyricsOffset = onSaveLyricsOffset,
+                    onGetLyricsOffset = onGetLyricsOffset,
+                    lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                    onFlushLyricsOffset = onFlushLyricsOffset,
+                    ambientThemeColor = ambientThemeColor,
+                    onUserIsScrollingChange = { userIsScrollingLyrics = it },
+                    onSeekTo = onSeekTo,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onForceFetchLyrics = { onForceFetchLyrics(song) },
+                    onOpenSearchLyrics = { showSearchLyricsDialog = true },
+                    onPickLrcFile = { lrcPickerLauncher.launch(Unit) },
+                    onCloseLyrics = { showLyricsView = false },
+                    coroutineScope = coroutineScope,
+                    isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
+                    audioTranscribeMode = audioTranscribeMode,
+                    audioTranscribeTargetLang = audioTranscribeTargetLang,
+                    isTranscribingLyrics = isTranscribingLyrics,
+                    transcribeStatusMessage = transcribeStatusMessage,
+                    transcribeErrorMessage = transcribeErrorMessage,
+                    canUndoLyrics = canUndoLyrics,
+                    transcribeLyricsPreview = transcribeLyricsPreview,
+                    onSaveTranscribedLyrics = onSaveTranscribedLyrics,
+                    onDiscardTranscribedLyrics = onDiscardTranscribedLyrics,
+                    onRetranscribedLyrics = onRetranscribedLyrics,
+                    onTranslateLyrics = onTranslateLyrics,
+                    onTranscribeAudio = onTranscribeAudio,
+                    onUndoLyricsChanges = onUndoLyricsChanges,
+                    onClearTranscribeError = onClearTranscribeError,
+                    playbackPositionFlow = playbackPositionFlow
+                )
+            }
         }
     }
 

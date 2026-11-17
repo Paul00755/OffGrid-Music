@@ -282,6 +282,7 @@ class MainActivity : ComponentActivity() {
                     val homeSections by viewModel.homeSections.collectAsStateWithLifecycle()
                     val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsStateWithLifecycle()
                     val playlistsLayout by viewModel.playlistsLayout.collectAsStateWithLifecycle()
+                    val lyricsLayout by viewModel.lyricsLayout.collectAsStateWithLifecycle()
 
                     val userAccount by viewModel.userAccount.collectAsStateWithLifecycle()
                     val effectiveDisplayName by viewModel.effectiveDisplayName.collectAsStateWithLifecycle()
@@ -911,6 +912,7 @@ class MainActivity : ComponentActivity() {
                                                      homeScreenLayout = homeScreenLayout,
                                                      nowPlayingLayout = nowPlayingLayout,
                                                      playlistsLayout = playlistsLayout,
+                                                     lyricsLayout = lyricsLayout,
                                                      isDynamicArtworkTheme = isDynamicArtworkTheme,
                                                      customAccentColor = customAccentColor,
                                                      accentColorPreset = accentColorPreset,
@@ -943,6 +945,8 @@ class MainActivity : ComponentActivity() {
                                 val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsStateWithLifecycle()
                                 val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsStateWithLifecycle()
                                 val currentLyricsOffsetMs by viewModel.currentLyricsOffsetMs.collectAsStateWithLifecycle()
+                                val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsStateWithLifecycle()
+                                val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsStateWithLifecycle()
                                 NowPlayingScreen(
                                     playbackState = playbackState,
                                     currentLyrics = currentLyrics,
@@ -967,6 +971,9 @@ class MainActivity : ComponentActivity() {
                                     dynamicArtworkColor = dynamicArtworkColor,
                                     waveformStyle = waveformStyle,
                                     nowPlayingLayout = nowPlayingLayout,
+                                    lyricsLayout = lyricsLayout,
+                                    showVolumeBar = showNowPlayingVolumeBar,
+                                    showAdvancedSongInfo = showAdvancedSongInfo,
                                     playbackPositionFlow = viewModel.playbackPositionMs,
                                     onDismiss = { viewModel.showNowPlaying.value = false },
                                     onTogglePlayPause = { viewModel.togglePlayPause() },

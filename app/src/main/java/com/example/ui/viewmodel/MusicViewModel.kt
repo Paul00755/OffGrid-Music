@@ -603,6 +603,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val homeScreenLayout: StateFlow<String> = preferences.homeScreenLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getHomeScreenLayoutSync())
     val nowPlayingLayout: StateFlow<String> = preferences.nowPlayingLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNowPlayingLayoutSync())
     val playlistsLayout: StateFlow<String> = preferences.playlistsLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistsLayoutSync())
+    val lyricsLayout: StateFlow<String> = preferences.lyricsLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLyricsLayoutSync())
+    val showNowPlayingVolumeBar: StateFlow<Boolean> = preferences.showNowPlayingVolumeBar.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowNowPlayingVolumeBarSync())
+    val showAdvancedSongInfo: StateFlow<Boolean> = preferences.showAdvancedSongInfo.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAdvancedSongInfoSync())
     val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortOptionSync())
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortAscendingSync())
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistViewModeSync())
@@ -1086,6 +1089,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setPlaylistsLayout(layoutId) }
+    }
+    fun setLyricsLayout(layoutId: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setLyricsLayout(layoutId) }
+    }
+    fun setShowNowPlayingVolumeBar(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowNowPlayingVolumeBar(enabled) }
+    }
+    fun setShowAdvancedSongInfo(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowAdvancedSongInfo(enabled) }
     }
     fun setWaveformStyle(style: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setWaveformStyle(style) }

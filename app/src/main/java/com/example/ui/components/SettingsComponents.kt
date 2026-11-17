@@ -408,13 +408,17 @@ fun <T> SettingsSegmentedSelector(
                             }
                         )
                 ) {
+                    val hasLongLabels = options.size >= 4 && options.any { it.second.length > 7 }
                     Box(
-                        modifier = Modifier.padding(vertical = 7.dp),
+                        modifier = Modifier.padding(
+                            horizontal = if (hasLongLabels) 2.dp else 4.dp,
+                            vertical = 7.dp
+                        ),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = label,
-                            fontSize = 11.5.sp,
+                            fontSize = if (hasLongLabels) 10.2.sp else 11.5.sp,
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                             color = when {
                                 !isEnabled -> BentoTextSecondary.copy(alpha = 0.5f)
@@ -422,7 +426,8 @@ fun <T> SettingsSegmentedSelector(
                                 else -> BentoTextPrimary
                             },
                             textAlign = TextAlign.Center,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
 object ArtworkColorExtractor {
     private const val PREFS_NAME = "artwork_palette_cache_v3"
     private val colorCache = object : android.util.LruCache<String, Color>(500) {}
+    private val dualGradientCache = object : android.util.LruCache<String, Pair<Color, Color>>(250) {}
     private val failedCache = object : android.util.LruCache<String, Boolean>(250) {}
     private val diskColorMemoryMirror = ConcurrentHashMap<String, Int>()
     @Volatile
@@ -24,6 +25,7 @@ object ArtworkColorExtractor {
     @Synchronized
     fun clearCache() {
         colorCache.evictAll()
+        dualGradientCache.evictAll()
         failedCache.evictAll()
         diskColorMemoryMirror.clear()
     }
@@ -145,6 +147,83 @@ object ArtworkColorExtractor {
                 }
                 null
             } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * Extracts a lush top-to-bottom dual-tone ambient gradient pair from a song's album artwork.
+     * Samples the upper region for the top gradient color and lower region / complementary accent
+     * for the bottom color, guaranteeing visible richness even on dark or monochrome covers.
+     */
+    suspend fun extractDualGradientColorsForSong(context: Context, song: Song?): Pair<Color, Color>? {
+        if (song == null) return null
+        val thumbImgBmp = com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path)
+        val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+        val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+        val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
+        val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
+        val cacheKey = "dual_v1_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        synchronized(this) {
+            dualGradientCache.get(cacheKey)?.let { return it }
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                if (thumbImgBmp != null) {
+                    val androidBmp: Bitmap? = try { thumbImgBmp.asAndroidBitmap() } catch (_: Throwable) { null }
+                    if (androidBmp != null && !androidBmp.isRecycled) {
+                        val pair = findDualGradientColors(androidBmp)
+                        if (pair != null) {
+                            synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                            return@withContext pair
+                        }
+                    }
+                }
+                val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
+                if (cachedBmp != null && !cachedBmp.isRecycled) {
+                    val pair = findDualGradientColors(cachedBmp)
+                    if (pair != null) {
+                        synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                        return@withContext pair
+                    }
+                }
+                val candidateUris = listOfNotNull(manualCover, cachedMemUri, cachedDisk, song.artworkUri).distinct()
+                for (uriCandidate in candidateUris) {
+                    if (uriCandidate.isNotBlank()) {
+                        val bmp = loadThumbnailBitmap(context, uriCandidate)
+                        if (bmp != null) {
+                            val pair = findDualGradientColors(bmp)
+                            bmp.recycle()
+                            if (pair != null) {
+                                synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                                return@withContext pair
+                            }
+                        }
+                    }
+                }
+                val rawBytes = ArtworkManager.getNotificationArtworkBytes(
+                    context,
+                    song.id,
+                    song.path,
+                    song.albumId,
+                    song.artworkUri
+                )
+                if (rawBytes != null && rawBytes.isNotEmpty()) {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+                    if (bmp != null) {
+                        val pair = findDualGradientColors(bmp)
+                        bmp.recycle()
+                        if (pair != null) {
+                            synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                            return@withContext pair
+                        }
+                    }
+                }
+                null
+            } catch (_: Exception) {
                 null
             }
         }
@@ -377,6 +456,53 @@ object ArtworkColorExtractor {
 
         val adjustedColorInt = android.graphics.Color.HSVToColor(hsv)
         return Color(adjustedColorInt)
+    }
+
+    internal fun findDualGradientColors(bitmap: Bitmap): Pair<Color, Color>? {
+        val rawWidth = bitmap.width
+        val rawHeight = bitmap.height
+        if (rawWidth <= 1 || rawHeight <= 1 || bitmap.isRecycled) return null
+
+        val scaled = if (rawWidth > 64 || rawHeight > 64) {
+            try { Bitmap.createScaledBitmap(bitmap, 48, 48, true) } catch (_: Throwable) { bitmap }
+        } else bitmap
+
+        return try {
+            val w = scaled.width
+            val h = scaled.height
+            val halfH = (h / 2).coerceAtLeast(1)
+            val topCrop = Bitmap.createBitmap(scaled, 0, 0, w, halfH)
+            val bottomCrop = Bitmap.createBitmap(scaled, 0, h - halfH, w, halfH)
+
+            val topColor = findProminentColor(topCrop) ?: findProminentColor(scaled) ?: return null
+            var bottomColor = findProminentColor(bottomCrop) ?: topColor
+
+            topCrop.recycle()
+            bottomCrop.recycle()
+
+            // If top & bottom hues are nearly indistinguishable, derive a harmonious secondary hue shift
+            val topHsv = FloatArray(3)
+            val botHsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(topColor.toArgb(), topHsv)
+            android.graphics.Color.colorToHSV(bottomColor.toArgb(), botHsv)
+
+            val rawDiff = kotlin.math.abs(topHsv[0] - botHsv[0])
+            val hueDiff = minOf(rawDiff, 360f - rawDiff)
+            if (hueDiff < 20f) {
+                botHsv[0] = (topHsv[0] + 34f) % 360f
+                botHsv[1] = (botHsv[1] * 1.08f).coerceIn(0.38f, 0.72f)
+                botHsv[2] = (botHsv[2] * 0.90f).coerceIn(0.68f, 0.92f)
+                bottomColor = Color(android.graphics.Color.HSVToColor(botHsv))
+            }
+
+            topColor to bottomColor
+        } catch (_: Throwable) {
+            findProminentColor(bitmap)?.let { it to it }
+        } finally {
+            if (scaled !== bitmap && !scaled.isRecycled) {
+                scaled.recycle()
+            }
+        }
     }
 }
 

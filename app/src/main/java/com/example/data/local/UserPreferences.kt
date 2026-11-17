@@ -124,6 +124,9 @@ class UserPreferencesRepository(private val context: Context) {
         val HOME_SCREEN_LAYOUT = stringPreferencesKey("home_screen_layout") // "BENTO_DYNAMIC", "HERO_SPOTLIGHT", "MINIMAL_FEED", "STUDIO_DASHBOARD"
         val NOW_PLAYING_LAYOUT = stringPreferencesKey("now_playing_layout") // "MODERN_BENTO", "VINYL_TURNTABLE", "MINIMAL_GLASS", "NEON_WAVEFORM"
         val PLAYLISTS_LAYOUT = stringPreferencesKey("playlists_layout") // "BENTO_GRID", "MAGAZINE_HERO", "COMPACT_LIST", "GLOW_CARDS"
+        val LYRICS_LAYOUT = stringPreferencesKey("lyrics_layout") // "CLASSIC_DEFAULT", "FLUID_GLOW", "KARAOKE_SPOTLIGHT", "EDITORIAL_TIMELINE"
+        val SHOW_NOW_PLAYING_VOLUME_BAR = booleanPreferencesKey("show_now_playing_volume_bar")
+        val SHOW_ADVANCED_SONG_INFO = booleanPreferencesKey("show_advanced_song_info")
         val ACCENT_COLOR = stringPreferencesKey("accent_color")
         val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
@@ -429,6 +432,9 @@ class UserPreferencesRepository(private val context: Context) {
             homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "HERO_SPOTLIGHT"),
             nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS"),
             playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "BENTO_GRID"),
+            lyricsLayout = prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "CLASSIC_DEFAULT"),
+            showNowPlayingVolumeBar = prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] ?: readBoolCached("show_now_playing_volume_bar", false),
+            showAdvancedSongInfo = prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] ?: readBoolCached("show_advanced_song_info", false),
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0),
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true),
@@ -518,6 +524,9 @@ class UserPreferencesRepository(private val context: Context) {
                 if (bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false) || !cloud.playlistsLayout.equals("GLOW_CARDS", ignoreCase = true)) {
                     prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = cloud.playlistsLayout
                 }
+                prefs[PreferenceKeys.LYRICS_LAYOUT] = cloud.lyricsLayout
+                prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = cloud.showNowPlayingVolumeBar
+                prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = cloud.showAdvancedSongInfo
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
@@ -612,6 +621,9 @@ class UserPreferencesRepository(private val context: Context) {
                                 putString("pref_playlists_layout", cloud.playlistsLayout)
                             }
                         }
+                        .putString("pref_lyrics_layout", cloud.lyricsLayout)
+                        .putBoolean("pref_show_now_playing_volume_bar", cloud.showNowPlayingVolumeBar)
+                        .putBoolean("pref_show_advanced_song_info", cloud.showAdvancedSongInfo)
                         .putString("pref_accent_color_preset", cloud.accentColorPreset)
                         .putInt("pref_custom_accent_color", cloud.customAccentColor)
                         .putBoolean("pref_dynamic_artwork_theme", cloud.dynamicArtworkTheme)
@@ -984,6 +996,21 @@ class UserPreferencesRepository(private val context: Context) {
         val explicitLocal = bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false)
         return if (!explicitLocal) "BENTO_GRID" else readStringCached("playlists_layout", "BENTO_GRID")
     }
+
+    val lyricsLayout: Flow<String> = safeData.map { prefs ->
+        prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "CLASSIC_DEFAULT")
+    }
+    fun getLyricsLayoutSync(): String = readStringCached("lyrics_layout", "CLASSIC_DEFAULT")
+
+    val showNowPlayingVolumeBar: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] ?: readBoolCached("show_now_playing_volume_bar", false)
+    }
+    fun getShowNowPlayingVolumeBarSync(): Boolean = readBoolCached("show_now_playing_volume_bar", false)
+
+    val showAdvancedSongInfo: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] ?: readBoolCached("show_advanced_song_info", false)
+    }
+    fun getShowAdvancedSongInfoSync(): Boolean = readBoolCached("show_advanced_song_info", false)
 
     val isDynamicArtworkTheme: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
@@ -2055,6 +2082,33 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun setLyricsLayout(layoutId: String) {
+        val now = System.currentTimeMillis()
+        writeStringCached("lyrics_layout", layoutId, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.LYRICS_LAYOUT] = layoutId
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setShowNowPlayingVolumeBar(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_now_playing_volume_bar", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setShowAdvancedSongInfo(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_advanced_song_info", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
     suspend fun setDynamicArtworkTheme(enabled: Boolean) {
         val now = System.currentTimeMillis()
         writeBoolCached("dynamic_artwork_theme", enabled, now)
@@ -2508,6 +2562,9 @@ class UserPreferencesRepository(private val context: Context) {
                 .putString("pref_now_playing_layout", "MINIMAL_GLASS")
                 .putString("pref_playlists_layout", "BENTO_GRID")
                 .putBoolean("pref_playlists_layout_explicit_v1", false)
+                .putString("pref_lyrics_layout", "CLASSIC_DEFAULT")
+                .putBoolean("pref_show_now_playing_volume_bar", false)
+                .putBoolean("pref_show_advanced_song_info", false)
                 .putString("pref_accent_color_preset", "ORANGE")
                 .putInt("pref_custom_accent_color", 0)
                 .putBoolean("pref_dynamic_artwork_theme", true)
@@ -2595,6 +2652,9 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = "HERO_SPOTLIGHT"
             prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = "MINIMAL_GLASS"
             prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = "BENTO_GRID"
+            prefs[PreferenceKeys.LYRICS_LAYOUT] = "CLASSIC_DEFAULT"
+            prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = false
+            prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = false
             prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = "ORANGE"
             prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = 0
             prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = true

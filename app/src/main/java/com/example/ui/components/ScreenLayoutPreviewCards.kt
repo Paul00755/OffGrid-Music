@@ -421,96 +421,70 @@ fun NowPlayingMiniatureNeonWaveform() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF07070F))
-            .border(1.dp, Color(0xFF00F5D4).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-            .padding(6.dp),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFF4C8CE6),
+                        Color(0xFF8C72AE),
+                        Color(0xFFF6667E)
+                    )
+                )
+            )
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Tech telemetry Header
+        // Centered rounded square artwork
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF0A1D3D), Color(0xFF6B1A26))
+                    )
+                )
+        )
+
+        // Sleek horizontal seek line with thumb dot
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.25f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.28f)
+                        .fillMaxHeight()
+                        .background(Color.Black.copy(alpha = 0.78f))
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Box(modifier = Modifier.width(14.dp).height(2.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)))
+                Box(modifier = Modifier.width(14.dp).height(2.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)))
+            }
+        }
+
+        // Centered bold title & subtitle
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Box(modifier = Modifier.width(56.dp).height(4.dp).clip(CircleShape).background(Color(0xFF101016)))
+            Box(modifier = Modifier.width(38.dp).height(2.5.dp).clip(CircleShape).background(Color(0xFF101016).copy(alpha = 0.55f)))
+        }
+
+        // Borderless transport row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color(0xFFFF007F).copy(alpha = 0.2f))
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            ) {
-                Text("24-BIT / 96kHz", fontSize = 6.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF007F))
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color(0xFF00F5D4).copy(alpha = 0.2f))
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            ) {
-                Text("NEON STUDIO", fontSize = 6.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00F5D4))
-            }
-        }
-
-        // Live Equalizer Spectrum Visualizer
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            val bars = listOf(14, 28, 38, 20, 44, 32, 18, 48, 36, 24, 40, 30, 16, 26)
-            bars.forEachIndexed { i, h ->
-                val gradient = if (i % 2 == 0) {
-                    listOf(Color(0xFF00F5D4), Color(0xFF00B4D8))
-                } else {
-                    listOf(Color(0xFFFF007F), Color(0xFF7928CA))
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(h.dp)
-                        .clip(RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
-                        .background(Brush.verticalGradient(gradient))
-                )
-            }
-        }
-
-        // Cyber Controls
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFF1A1A2E))
-                    .border(0.5.dp, Color(0xFF00F5D4), RoundedCornerShape(4.dp))
-            )
-            Box(
-                modifier = Modifier
-                    .width(36.dp)
-                    .height(18.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFFF007F)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Pause,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(12.dp)
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFF1A1A2E))
-                    .border(0.5.dp, Color(0xFF00F5D4), RoundedCornerShape(4.dp))
-            )
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)))
+            Icon(Icons.Default.FastRewind, contentDescription = null, tint = Color(0xFF101016), modifier = Modifier.size(11.dp))
+            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF101016), modifier = Modifier.size(15.dp))
+            Icon(Icons.Default.FastForward, contentDescription = null, tint = Color(0xFF101016), modifier = Modifier.size(11.dp))
+            Icon(Icons.Default.Favorite, contentDescription = null, tint = Color(0xFF101016), modifier = Modifier.size(9.dp))
         }
     }
 }
@@ -1097,6 +1071,223 @@ fun PlaylistsMiniatureGlowCards() {
                     Box(modifier = Modifier.fillMaxWidth(0.45f).height(3.dp).clip(CircleShape).background(Color(0xFFFF007F)))
                 }
             }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// LYRICS UI MINIATURE PREVIEWS
+// -------------------------------------------------------------
+
+@Composable
+fun LyricsMiniatureClassicDefault() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0C0D16))
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Header pill row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("SYNCED", fontSize = 6.5.sp, fontWeight = FontWeight.Bold, color = BentoPrimary)
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)))
+                Box(modifier = Modifier.width(14.dp).height(7.dp).clip(CircleShape).background(BentoPrimary.copy(alpha = 0.35f)))
+            }
+        }
+
+        // Centered inactive & boxed highlighted line
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth(0.55f).height(3.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(BentoPrimary.copy(alpha = 0.25f))
+                    .border(0.8.dp, BentoPrimary.copy(alpha = 0.7f), RoundedCornerShape(7.dp))
+                    .padding(vertical = 7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(modifier = Modifier.fillMaxWidth(0.7f).height(5.dp).clip(CircleShape).background(Color.White))
+            }
+            Box(modifier = Modifier.fillMaxWidth(0.6f).height(3.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
+        }
+
+        // Bottom Sync Pill
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+            Box(
+                modifier = Modifier
+                    .width(24.dp)
+                    .height(9.dp)
+                    .clip(CircleShape)
+                    .background(BentoPrimary)
+            )
+        }
+    }
+}
+
+@Composable
+fun LyricsMiniatureFluidGlow() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF282046), Color(0xFF11101C))
+                )
+            )
+            .padding(8.dp),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Mini Album Cover + Title Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Box(modifier = Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(BentoPrimary))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(modifier = Modifier.fillMaxWidth(0.75f).height(3.5.dp).clip(CircleShape).background(Color.White))
+                Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+            }
+            Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)))
+        }
+
+        // Left-aligned bold editorial lines
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth(0.65f).height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)))
+            Box(modifier = Modifier.fillMaxWidth(0.92f).height(6.5.dp).clip(CircleShape).background(Color.White))
+            Box(modifier = Modifier.fillMaxWidth(0.78f).height(6.5.dp).clip(CircleShape).background(Color.White))
+            Box(modifier = Modifier.fillMaxWidth(0.6f).height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.35f)))
+        }
+
+        // Action pills row
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box(modifier = Modifier.width(18.dp).height(8.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)))
+            Box(modifier = Modifier.width(20.dp).height(8.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)))
+            Box(modifier = Modifier.width(18.dp).height(8.dp).clip(CircleShape).background(BentoPrimary.copy(alpha = 0.3f)))
+        }
+    }
+}
+
+@Composable
+fun LyricsMiniatureKaraokeStage() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF100E1B))
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("STAGE", fontSize = 6.5.sp, fontWeight = FontWeight.Black, color = BentoAccentPinkText)
+            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(BentoPrimary))
+        }
+
+        // Spotlight Card with sweep progress bar
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = BentoPrimary.copy(alpha = 0.22f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Box(modifier = Modifier.fillMaxWidth(0.85f).height(5.dp).clip(CircleShape).background(Color.White))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(2.5.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .fillMaxHeight()
+                            .background(Brush.horizontalGradient(listOf(BentoPrimary, BentoAccentPinkText)))
+                    )
+                }
+                Text("NEXT UP •••", fontSize = 5.5.sp, color = Color.White.copy(alpha = 0.65f))
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxWidth(0.6f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
+    }
+}
+
+@Composable
+fun LyricsMiniatureStudioTimeline() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0B0E17))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text("TIMELINE", fontSize = 6.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF00E5FF))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            repeat(4) { i ->
+                val isCurrent = i == 1
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(if (isCurrent) Color(0xFF00E5FF).copy(alpha = 0.16f) else Color.Transparent)
+                        .padding(horizontal = 3.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "0${i + 1}:12",
+                        fontSize = 5.5.sp,
+                        color = if (isCurrent) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.4f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(if (isCurrent) 6.dp else 4.dp)
+                            .clip(CircleShape)
+                            .background(if (isCurrent) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.3f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(if (isCurrent) 0.9f else 0.65f)
+                            .height(if (isCurrent) 4.5.dp else 3.dp)
+                            .clip(CircleShape)
+                            .background(if (isCurrent) Color.White else Color.White.copy(alpha = 0.35f))
+                    )
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box(modifier = Modifier.width(20.dp).height(7.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)))
+            Box(modifier = Modifier.width(20.dp).height(7.dp).clip(CircleShape).background(Color(0xFF00E5FF).copy(alpha = 0.3f)))
         }
     }
 }

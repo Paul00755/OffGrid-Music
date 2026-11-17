@@ -26,6 +26,7 @@ fun SettingsTabRoute(
     homeScreenLayout: String,
     nowPlayingLayout: String,
     playlistsLayout: String,
+    lyricsLayout: String,
     isDynamicArtworkTheme: Boolean,
     customAccentColor: Int,
     accentColorPreset: String,
@@ -57,6 +58,8 @@ fun SettingsTabRoute(
     val audioBalance by viewModel.audioBalance.collectAsState()
     val equalizerPreset by viewModel.equalizerPreset.collectAsState()
     val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
+    val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
+    val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
 
     DisposableEffect(keepScreenAwake) {
         if (keepScreenAwake) {
@@ -119,6 +122,12 @@ fun SettingsTabRoute(
         onSetNowPlayingLayout = { viewModel.setNowPlayingLayout(it) },
         playlistsLayout = playlistsLayout,
         onSetPlaylistsLayout = { viewModel.setPlaylistsLayout(it) },
+        lyricsLayout = lyricsLayout,
+        onSetLyricsLayout = { viewModel.setLyricsLayout(it) },
+        showNowPlayingVolumeBar = showNowPlayingVolumeBar,
+        onSetShowNowPlayingVolumeBar = { viewModel.setShowNowPlayingVolumeBar(it) },
+        showAdvancedSongInfo = showAdvancedSongInfo,
+        onSetShowAdvancedSongInfo = { viewModel.setShowAdvancedSongInfo(it) },
         isDynamicArtworkTheme = isDynamicArtworkTheme,
         onSetDynamicArtworkTheme = { viewModel.setDynamicArtworkTheme(it) },
         isGradientEffect = viewModel.isGradientEffect.collectAsState().value,

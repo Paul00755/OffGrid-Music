@@ -81,7 +81,7 @@ enum class NowPlayingLayout(
     NEON_WAVEFORM(
         id = "NEON_WAVEFORM",
         displayName = "Neon Studio",
-        subtitle = "Multi-band spectrum visualizer & cyber glowing deck",
+        subtitle = "Full-art ambient gradient, sleek seek line & borderless deck",
         icon = Icons.Default.Waves
     );
 
@@ -126,6 +126,44 @@ enum class PlaylistsLayout(
     companion object {
         fun fromId(id: String?): PlaylistsLayout {
             return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: BENTO_GRID
+        }
+    }
+}
+
+enum class LyricsLayout(
+    val id: String,
+    val displayName: String,
+    val subtitle: String,
+    val icon: ImageVector
+) {
+    CLASSIC_DEFAULT(
+        id = "CLASSIC_DEFAULT",
+        displayName = "Classic Bento",
+        subtitle = "Default centered lyrics stage with frosted sync & offset pills",
+        icon = Icons.Default.MusicNote
+    ),
+    FLUID_GLOW(
+        id = "FLUID_GLOW",
+        displayName = "Fluid Glow",
+        subtitle = "Large editorial left-aligned lyrics with mini cover & capsule dock",
+        icon = Icons.Default.Star
+    ),
+    KARAOKE_SPOTLIGHT(
+        id = "KARAOKE_SPOTLIGHT",
+        displayName = "Karaoke Stage",
+        subtitle = "Spotlight active verse with live progress sweep & next-up cue",
+        icon = Icons.Default.GraphicEq
+    ),
+    EDITORIAL_TIMELINE(
+        id = "EDITORIAL_TIMELINE",
+        displayName = "Studio Timeline",
+        subtitle = "Monospace timestamp rail with luminous node & accent bar",
+        icon = Icons.Default.ViewList
+    );
+
+    companion object {
+        fun fromId(id: String?): LyricsLayout {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: CLASSIC_DEFAULT
         }
     }
 }

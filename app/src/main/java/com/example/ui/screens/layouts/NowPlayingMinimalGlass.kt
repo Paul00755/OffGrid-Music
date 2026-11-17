@@ -24,9 +24,12 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.Lyrics
 import com.example.data.model.Song
 import com.example.service.PlaybackState
+import com.example.ui.components.AdvancedSongInfoRow
 import com.example.ui.components.AlbumArtView
+import com.example.ui.components.NowPlayingVolumeBar
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
+import com.example.util.AudioTechnicalInfo
 import com.example.util.HapticUtils
 import kotlinx.coroutines.flow.StateFlow
 
@@ -52,6 +55,9 @@ fun NowPlayingMinimalGlass(
     waveformStyle: String = "SNAKE",
     gesturePlaybackEnabled: Boolean = true,
     playbackPositionFlow: StateFlow<Long>? = null,
+    showVolumeBar: Boolean = false,
+    showAdvancedSongInfo: Boolean = false,
+    audioTechnicalInfo: AudioTechnicalInfo? = null,
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -181,6 +187,14 @@ fun NowPlayingMinimalGlass(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (showAdvancedSongInfo && audioTechnicalInfo != null) {
+                    AdvancedSongInfoRow(
+                        info = audioTechnicalInfo,
+                        inkColor = BentoTextPrimary,
+                        centered = true,
+                        usePillSurface = false
+                    )
+                }
             }
 
             // Waveform & Progress Seeker
@@ -262,6 +276,14 @@ fun NowPlayingMinimalGlass(
                         )
                     }
                 }
+            }
+
+            if (showVolumeBar) {
+                NowPlayingVolumeBar(
+                    inkColor = BentoTextPrimary,
+                    accentColor = BentoPrimary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
             }
 
             // Bottom Actions (Swap: Sleep Timer in pos 2, Up-Next Queue in pos 3, Lyrics in pos 4)

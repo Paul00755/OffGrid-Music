@@ -48,6 +48,9 @@ fun NowPlayingScreenHost(
         val transcribeErrorMessage by viewModel.transcribeErrorMessage.collectAsState()
         val canUndoLyrics by viewModel.canUndoLyricsForCurrentSong.collectAsState()
         val currentLyricsOffsetMs by viewModel.currentLyricsOffsetMs.collectAsState()
+        val lyricsLayout by viewModel.lyricsLayout.collectAsState()
+        val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
+        val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
 
         NowPlayingScreen(
             playbackState = playbackState,
@@ -73,6 +76,9 @@ fun NowPlayingScreenHost(
             dynamicArtworkColor = dynamicArtworkColor,
             waveformStyle = waveformStyle,
             nowPlayingLayout = nowPlayingLayout,
+            lyricsLayout = lyricsLayout,
+            showVolumeBar = showNowPlayingVolumeBar,
+            showAdvancedSongInfo = showAdvancedSongInfo,
             playbackPositionFlow = viewModel.playbackPositionMs,
             onDismiss = onDismiss,
             onTogglePlayPause = { viewModel.togglePlayPause() },

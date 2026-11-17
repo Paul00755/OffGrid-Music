@@ -31,9 +31,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Lyrics
 import com.example.service.PlaybackState
+import com.example.ui.components.AdvancedSongInfoRow
 import com.example.ui.components.AlbumArtView
+import com.example.ui.components.NowPlayingVolumeBar
 import com.example.ui.theme.*
 import com.example.util.AudioRouteInfo
+import com.example.util.AudioTechnicalInfo
 import com.example.util.HapticUtils
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.cos
@@ -62,6 +65,9 @@ fun NowPlayingVinylTurntable(
     waveformStyle: String = "SNAKE",
     gesturePlaybackEnabled: Boolean = true,
     playbackPositionFlow: StateFlow<Long>? = null,
+    showVolumeBar: Boolean = false,
+    showAdvancedSongInfo: Boolean = false,
+    audioTechnicalInfo: AudioTechnicalInfo? = null,
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -450,6 +456,15 @@ fun NowPlayingVinylTurntable(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (showAdvancedSongInfo && audioTechnicalInfo != null) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                AdvancedSongInfoRow(
+                                    info = audioTechnicalInfo,
+                                    inkColor = BentoTextPrimary,
+                                    centered = false,
+                                    usePillSurface = false
+                                )
+                            }
                         }
 
                         Surface(
@@ -589,6 +604,14 @@ fun NowPlayingVinylTurntable(
                             tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) BentoPrimary else BentoTextSecondary
                         )
                     }
+                }
+
+                if (showVolumeBar) {
+                    NowPlayingVolumeBar(
+                        inkColor = BentoTextPrimary,
+                        accentColor = BentoPrimary,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
                 }
 
                 // Bottom Studio Utility Bar
