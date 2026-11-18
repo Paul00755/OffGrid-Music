@@ -14,7 +14,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 object ArtworkColorExtractor {
-    private const val PREFS_NAME = "artwork_palette_cache_v3"
+    private const val PREFS_NAME = "artwork_palette_cache_v4"
     private val colorCache = object : android.util.LruCache<String, Color>(500) {}
     private val dualGradientCache = object : android.util.LruCache<String, Pair<Color, Color>>(250) {}
     private val failedCache = object : android.util.LruCache<String, Boolean>(250) {}
@@ -82,7 +82,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "song_v3_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "song_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         getCachedColor(context, cacheKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
@@ -164,7 +164,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v2_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v3_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -231,7 +231,7 @@ object ArtworkColorExtractor {
 
     suspend fun extractPrimaryColor(context: Context, artworkUriStr: String?): Color? {
         if (artworkUriStr.isNullOrBlank()) return null
-        val uriCacheKey = "uri_v3_$artworkUriStr"
+        val uriCacheKey = "uri_v4_$artworkUriStr"
         synchronized(this) {
             if (failedCache.get(uriCacheKey) == true) return null
         }
@@ -450,9 +450,9 @@ object ArtworkColorExtractor {
         val rawColorInt = android.graphics.Color.rgb(avgR, avgG, avgB)
         android.graphics.Color.colorToHSV(rawColorInt, hsv)
 
-        // Preserve the extracted hue while ensuring rich, clearly visible theme saturation and brightness
-        hsv[1] = hsv[1].coerceIn(0.34f, 0.68f)
-        hsv[2] = hsv[2].coerceIn(0.82f, 0.95f)
+        // Preserve the extracted hue while shaping into a soft, luminous pastel palette
+        hsv[1] = hsv[1].coerceIn(0.28f, 0.45f)
+        hsv[2] = hsv[2].coerceIn(0.90f, 0.97f)
 
         val adjustedColorInt = android.graphics.Color.HSVToColor(hsv)
         return Color(adjustedColorInt)
@@ -487,25 +487,29 @@ object ArtworkColorExtractor {
             android.graphics.Color.colorToHSV(primaryColor.toArgb(), topHsv)
             android.graphics.Color.colorToHSV(rawBottomColor.toArgb(), botHsv)
 
+            topHsv[1] = topHsv[1].coerceIn(0.24f, 0.40f)
+            topHsv[2] = topHsv[2].coerceIn(0.91f, 0.97f)
+            val softTopColor = Color(android.graphics.Color.HSVToColor(topHsv))
+
             val rawDiff = kotlin.math.abs(topHsv[0] - botHsv[0])
             val hueDiff = minOf(rawDiff, 360f - rawDiff)
             val isTopWarmGoldOrAmber = topHsv[0] in 15f..58f
             val isBotMuddyYellowGreen = botHsv[0] in 58f..102f
 
             val bottomColor = if (hueDiff < 24f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
-                // Derive a rich, deeper tonal companion in the same color family (never shifting warm gold into pea-green)
-                val hueShift = if (topHsv[0] in 12f..95f) -14f else 18f
+                // Derive a soft, airy pastel companion in a harmonious adjacent hue
+                val hueShift = if (topHsv[0] in 12f..95f) -18f else 22f
                 botHsv[0] = (topHsv[0] + hueShift + 360f) % 360f
-                botHsv[1] = (topHsv[1] * 1.10f).coerceIn(0.38f, 0.72f)
-                botHsv[2] = (topHsv[2] * 0.74f).coerceIn(0.54f, 0.74f)
+                botHsv[1] = (topHsv[1] * 1.06f).coerceIn(0.26f, 0.44f)
+                botHsv[2] = (topHsv[2] * 0.96f).coerceIn(0.87f, 0.94f)
                 Color(android.graphics.Color.HSVToColor(botHsv))
             } else {
-                botHsv[1] = botHsv[1].coerceIn(0.38f, 0.72f)
-                botHsv[2] = (botHsv[2] * 0.84f).coerceIn(0.56f, 0.82f)
+                botHsv[1] = botHsv[1].coerceIn(0.26f, 0.44f)
+                botHsv[2] = botHsv[2].coerceIn(0.87f, 0.94f)
                 Color(android.graphics.Color.HSVToColor(botHsv))
             }
 
-            primaryColor to bottomColor
+            softTopColor to bottomColor
         } catch (_: Throwable) {
             findProminentColor(bitmap)?.let { it to it }
         } finally {

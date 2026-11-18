@@ -106,25 +106,25 @@ fun NowPlayingNeonWaveform(
     }
 
     val harmonizedTopAccent = remember(gradientPair.first, primaryThemeColor) {
-        androidx.compose.ui.graphics.lerp(gradientPair.first, primaryThemeColor, 0.50f)
+        androidx.compose.ui.graphics.lerp(gradientPair.first, primaryThemeColor, 0.45f)
+            .toPastelBackground(saturationTarget = 0.28f, valueTarget = 0.93f)
     }
     val harmonizedBottomAccent = remember(gradientPair.second, glassConfig.secondaryTintColor, primaryThemeColor) {
         androidx.compose.ui.graphics.lerp(
-            androidx.compose.ui.graphics.lerp(gradientPair.second, glassConfig.secondaryTintColor, 0.40f),
+            androidx.compose.ui.graphics.lerp(gradientPair.second, glassConfig.secondaryTintColor, 0.38f),
             primaryThemeColor,
-            0.25f
-        )
+            0.20f
+        ).toPastelBackground(saturationTarget = 0.32f, valueTarget = 0.90f)
     }
 
-    val targetTopBg = remember(baseBg, harmonizedTopAccent, isDarkTheme) {
-        androidx.compose.ui.graphics.lerp(baseBg, harmonizedTopAccent, if (isDarkTheme) 0.46f else 0.52f)
+    val targetTopBg = remember(baseBg, harmonizedTopAccent) {
+        androidx.compose.ui.graphics.lerp(baseBg, harmonizedTopAccent, 0.85f)
     }
-    val targetMidBg = remember(baseBg, harmonizedTopAccent, harmonizedBottomAccent, isDarkTheme) {
-        val midAccent = androidx.compose.ui.graphics.lerp(harmonizedTopAccent, harmonizedBottomAccent, 0.52f)
-        androidx.compose.ui.graphics.lerp(baseBg, midAccent, if (isDarkTheme) 0.30f else 0.36f)
+    val targetMidBg = remember(harmonizedTopAccent, harmonizedBottomAccent) {
+        androidx.compose.ui.graphics.lerp(harmonizedTopAccent, harmonizedBottomAccent, 0.50f)
     }
-    val targetBottomBg = remember(baseBg, harmonizedBottomAccent, isDarkTheme) {
-        androidx.compose.ui.graphics.lerp(baseBg, harmonizedBottomAccent, if (isDarkTheme) 0.18f else 0.24f)
+    val targetBottomBg = remember(baseBg, harmonizedBottomAccent) {
+        androidx.compose.ui.graphics.lerp(baseBg, harmonizedBottomAccent, 0.88f)
     }
 
     val topBgColor by animateColorAsState(
@@ -143,11 +143,11 @@ fun NowPlayingNeonWaveform(
         label = "neon_bottom_gradient"
     )
 
-    // Ensure crisp text & icon legibility on both luminous light gradients and rich dark gradients
+    // Ensure crisp text & icon legibility on soft pastel gradients
     val bottomLuminance = bottomBgColor.luminance()
-    val primaryInk = if (bottomLuminance > 0.38f) Color(0xFF0E0F14) else Color.White
+    val primaryInk = if (bottomLuminance > 0.38f) Color(0xFF141622) else Color.White
     val secondaryInk = primaryInk.copy(alpha = 0.68f)
-    val topBarInk = if (topBgColor.luminance() > 0.44f) Color(0xFF0E0F14) else Color.White
+    val topBarInk = if (topBgColor.luminance() > 0.44f) Color(0xFF141622) else Color.White
 
     var isDraggingSeek by remember(song.id) { mutableStateOf(false) }
     var dragFraction by remember(song.id) { mutableFloatStateOf(0f) }

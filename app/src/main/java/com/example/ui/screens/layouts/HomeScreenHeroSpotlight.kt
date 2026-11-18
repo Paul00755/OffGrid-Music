@@ -108,12 +108,12 @@ fun HomeScreenHeroSpotlight(
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // 1. Floating Glassmorphic Spotlight Header
+            // 1. Floating Pastel Editorial Header
             item(key = "hero_spotlight_header", contentType = "header") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -123,10 +123,11 @@ fun HomeScreenHeroSpotlight(
                     ) {
                         Surface(
                             onClick = onOpenDrawer,
-                            shape = CircleShape,
-                            color = BentoCardSurface.copy(alpha = 0.78f),
-                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
-                            modifier = Modifier.size(42.dp)
+                            shape = RoundedCornerShape(16.dp),
+                            color = BentoCardSurface.copy(alpha = 0.92f),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.38f)),
+                            shadowElevation = 2.dp,
+                            modifier = Modifier.size(44.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -140,18 +141,24 @@ fun HomeScreenHeroSpotlight(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        Column {
-                            Text(
-                                text = if (allSongs.isEmpty()) "OffGrid Music" else "HERO SPOTLIGHT",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = BentoPrimary,
-                                letterSpacing = 1.3.sp,
-                                maxLines = 1
-                            )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = BentoPrimary.copy(alpha = 0.18f)
+                            ) {
+                                Text(
+                                    text = if (allSongs.isEmpty()) "OffGrid Music" else "✦ SOUNDSTAGE",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = BentoTextPrimary.copy(alpha = 0.82f),
+                                    letterSpacing = 1.1.sp,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
                             Text(
                                 text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
-                                fontSize = 19.sp,
+                                fontSize = 20.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BentoTextPrimary,
                                 maxLines = 1,
@@ -160,63 +167,72 @@ fun HomeScreenHeroSpotlight(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                        val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
-                        Surface(
-                            onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
-                            shape = CircleShape,
-                            color = BentoCardSurface.copy(alpha = 0.78f),
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                            modifier = Modifier.size(38.dp)
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = BentoCardSurface.copy(alpha = 0.90f),
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                        shadowElevation = 2.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                if (!avatarUrl.isNullOrBlank()) {
-                                    coil.compose.AsyncImage(
-                                        model = avatarUrl,
-                                        contentDescription = "Account",
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = if (userAccount != null) Icons.Default.Person else Icons.Default.AccountCircle,
-                                        contentDescription = "Account",
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(19.dp)
-                                    )
+                            val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
+                            Surface(
+                                onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
+                                shape = CircleShape,
+                                color = BentoPrimary.copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (!avatarUrl.isNullOrBlank()) {
+                                        coil.compose.AsyncImage(
+                                            model = avatarUrl,
+                                            contentDescription = "Account",
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = if (userAccount != null) Icons.Default.Person else Icons.Default.AccountCircle,
+                                            contentDescription = "Account",
+                                            tint = BentoTextPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        Surface(
-                            onClick = onOpenSearch,
-                            shape = CircleShape,
-                            color = BentoCardSurface.copy(alpha = 0.78f),
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                            Surface(
+                                onClick = onOpenSearch,
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoTextPrimary, modifier = Modifier.size(18.dp))
+                                }
                             }
-                        }
-                        Surface(
-                            onClick = onScanClick,
-                            shape = CircleShape,
-                            color = BentoCardSurface.copy(alpha = 0.78f),
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Rescan", tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                            Surface(
+                                onClick = onScanClick,
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Rescan", tint = BentoTextPrimary, modifier = Modifier.size(18.dp))
+                                }
                             }
-                        }
-                        Surface(
-                            onClick = { onOpenSettings(null) },
-                            shape = CircleShape,
-                            color = BentoPrimary,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = BentoOnPrimary, modifier = Modifier.size(18.dp))
+                            Surface(
+                                onClick = { onOpenSettings(null) },
+                                shape = CircleShape,
+                                color = BentoPrimary,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = BentoOnPrimary, modifier = Modifier.size(17.dp))
+                                }
                             }
                         }
                     }

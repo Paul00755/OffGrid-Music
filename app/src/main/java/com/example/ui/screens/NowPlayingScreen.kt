@@ -607,38 +607,33 @@ fun NowPlayingScreen(
     }
 
     val parentColorScheme = MaterialTheme.colorScheme
-    val isDarkNowPlaying = parentColorScheme.background.luminance() < 0.5f
     val rawTopArtwork = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
     val rawBottomArtwork = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
-    val ambientThemeColor = androidx.compose.ui.graphics.lerp(rawTopArtwork, parentColorScheme.primary, 0.50f)
+    val ambientThemeColor = androidx.compose.ui.graphics.lerp(rawTopArtwork, parentColorScheme.primary, 0.45f).toPastelAccent()
     val topArtworkColor = ambientThemeColor
-    val bottomArtworkColor = androidx.compose.ui.graphics.lerp(rawBottomArtwork, glassConfig.secondaryTintColor, 0.40f)
+    val bottomArtworkColor = androidx.compose.ui.graphics.lerp(rawBottomArtwork, glassConfig.secondaryTintColor, 0.38f).toPastelCompanionHue()
 
-    val nowPlayingColorScheme = remember(parentColorScheme, ambientThemeColor, bottomArtworkColor, isDarkNowPlaying) {
-        val highContrastOnAccent = if (ambientThemeColor.luminance() > 0.42f) Color(0xFF08080C) else Color.White
-        val harmonizedSurface = androidx.compose.ui.graphics.lerp(
-            parentColorScheme.surface,
-            ambientThemeColor,
-            if (isDarkNowPlaying) 0.16f else 0.08f
-        )
-        val harmonizedSurfaceVariant = androidx.compose.ui.graphics.lerp(
-            parentColorScheme.surfaceVariant,
-            bottomArtworkColor,
-            if (isDarkNowPlaying) 0.22f else 0.12f
-        )
-        val harmonizedOutline = androidx.compose.ui.graphics.lerp(
-            parentColorScheme.outline,
-            ambientThemeColor,
-            if (isDarkNowPlaying) 0.38f else 0.24f
-        )
+    val nowPlayingColorScheme = remember(parentColorScheme, ambientThemeColor, bottomArtworkColor) {
+        val primaryInk = Color(0xFF161824)
+        val secondaryInk = Color(0xFF52566A)
+        val highContrastOnAccent = if (ambientThemeColor.luminance() > 0.40f) Color(0xFF141622) else Color.White
+        val harmonizedBg = ambientThemeColor.toPastelBackground(saturationTarget = 0.16f, valueTarget = 0.965f)
+        val harmonizedSurface = ambientThemeColor.toPastelSurface()
+        val harmonizedSurfaceVariant = bottomArtworkColor.toPastelSurfaceVariant()
+        val harmonizedOutline = ambientThemeColor.toPastelBackground(saturationTarget = 0.24f, valueTarget = 0.86f)
         parentColorScheme.copy(
             primary = ambientThemeColor,
             onPrimary = highContrastOnAccent,
-            primaryContainer = ambientThemeColor.copy(alpha = 0.24f),
-            onPrimaryContainer = ambientThemeColor,
+            primaryContainer = ambientThemeColor.copy(alpha = 0.22f),
+            onPrimaryContainer = primaryInk,
             secondary = bottomArtworkColor,
+            onSecondary = primaryInk,
+            background = harmonizedBg,
+            onBackground = primaryInk,
             surface = harmonizedSurface,
+            onSurface = primaryInk,
             surfaceVariant = harmonizedSurfaceVariant,
+            onSurfaceVariant = secondaryInk,
             outline = harmonizedOutline
         )
     }
@@ -646,6 +641,8 @@ fun NowPlayingScreen(
         glassConfig.copy(
             tintColor = ambientThemeColor,
             secondaryTintColor = bottomArtworkColor,
+            isDark = false,
+            solidBackground = nowPlayingColorScheme.background,
             solidSurface = nowPlayingColorScheme.surface,
             solidSurfaceVariant = nowPlayingColorScheme.surfaceVariant
         )
@@ -664,14 +661,14 @@ fun NowPlayingScreen(
             null
         }
     }
-    val bgBrush = remember(ambientThemeColor, bottomArtworkColor, currentBg, isDarkNowPlaying) {
-        val topGlow = androidx.compose.ui.graphics.lerp(currentBg, ambientThemeColor, if (isDarkNowPlaying) 0.42f else 0.26f)
-        val midGlow = androidx.compose.ui.graphics.lerp(currentBg, bottomArtworkColor, if (isDarkNowPlaying) 0.26f else 0.16f)
-        val lowGlow = androidx.compose.ui.graphics.lerp(currentBg, ambientThemeColor, if (isDarkNowPlaying) 0.16f else 0.10f)
+    val bgBrush = remember(ambientThemeColor, bottomArtworkColor, currentBg) {
+        val topGlow = ambientThemeColor.toPastelBackground(saturationTarget = 0.24f, valueTarget = 0.94f)
+        val midGlow = bottomArtworkColor.toPastelBackground(saturationTarget = 0.18f, valueTarget = 0.96f)
+        val lowGlow = ambientThemeColor.toPastelBackground(saturationTarget = 0.12f, valueTarget = 0.975f)
         androidx.compose.ui.graphics.Brush.verticalGradient(
             0.0f to topGlow,
-            0.42f to midGlow,
-            0.76f to currentBg,
+            0.44f to midGlow,
+            0.78f to currentBg,
             1.0f to lowGlow
         )
     }
