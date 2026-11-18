@@ -723,78 +723,108 @@ fun HomeScreenMiniatureStudioDeck() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF090912))
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        BentoPrimary.copy(alpha = 0.28f),
+                        Color(0xFF0D0E16)
+                    )
+                )
+            )
             .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // Studio Monitor Header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("STUDIO DECK", fontSize = 7.sp, fontWeight = FontWeight.Black, color = BentoPrimary)
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFF00E676).copy(alpha = 0.2f))
-                    .padding(horizontal = 3.dp, vertical = 1.dp)
-            ) {
-                Text("ACTIVE", fontSize = 5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
-            }
-        }
-
-        // Live Audio Spectrum Graphic Monitor
+        // Minimal Ambient Deck Card (Neon Studio inspired)
         Surface(
-            shape = RoundedCornerShape(4.dp),
-            color = Color(0xFF131322),
-            border = androidx.compose.foundation.BorderStroke(0.5.dp, BentoPrimary.copy(alpha = 0.5f)),
-            modifier = Modifier.fillMaxWidth().height(36.dp)
+            shape = RoundedCornerShape(8.dp),
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.14f)),
+            modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(1.5.dp),
-                verticalAlignment = Alignment.Bottom
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                BentoPrimary.copy(alpha = 0.42f),
+                                BentoPrimary.copy(alpha = 0.18f)
+                            )
+                        )
+                    )
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                val heights = listOf(8, 16, 24, 12, 28, 20, 14, 30, 22, 10, 26, 18, 12, 22, 14)
-                heights.forEach { h ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(h.dp)
-                            .clip(RoundedCornerShape(1.dp))
-                            .background(Brush.verticalGradient(listOf(BentoPrimary, Color(0xFF7C4DFF))))
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(Color.White.copy(alpha = 0.22f))
+                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth(0.75f).height(4.dp).clip(CircleShape).background(Color.White))
+                        Box(modifier = Modifier.fillMaxWidth(0.45f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.6f)))
+                    }
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+
+                // Subtle Sleek Progress Line
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.5.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.20f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.55f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.9f))
                     )
                 }
             }
         }
 
-        // 3-Band Equalizer Sliders graphic
+        // Subtle Quick Pill Strip
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             repeat(3) {
-                Column(
+                Box(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color(0xFF161626))
-                        .padding(2.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(modifier = Modifier.width(12.dp).height(2.dp).clip(CircleShape).background(BentoPrimary))
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Box(modifier = Modifier.width(2.dp).height(12.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
-                }
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                )
             }
         }
 
-        // Audio Route Telemetry
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("DAC: 24-bit 96k", fontSize = 6.sp, color = BentoTextSecondary)
-            Text("EQ: Graph Pro", fontSize = 6.sp, color = BentoPrimary)
+        // Clean Track Rows
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            repeat(2) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .padding(horizontal = 4.dp, vertical = 2.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(BentoPrimary.copy(alpha = 0.55f)))
+                    Box(modifier = Modifier.weight(1f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.7f)))
+                }
+            }
         }
     }
 }
@@ -1184,60 +1214,6 @@ fun LyricsMiniatureFluidGlow() {
 }
 
 @Composable
-fun LyricsMiniatureKaraokeStage() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF100E1B))
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("STAGE", fontSize = 6.5.sp, fontWeight = FontWeight.Black, color = BentoAccentPinkText)
-            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(BentoPrimary))
-        }
-
-        // Spotlight Card with sweep progress bar
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = BentoPrimary.copy(alpha = 0.22f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 9.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Box(modifier = Modifier.fillMaxWidth(0.85f).height(5.dp).clip(CircleShape).background(Color.White))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.7f)
-                        .height(2.5.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.2f))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(0.6f)
-                            .fillMaxHeight()
-                            .background(Brush.horizontalGradient(listOf(BentoPrimary, BentoAccentPinkText)))
-                    )
-                }
-                Text("NEXT UP •••", fontSize = 5.5.sp, color = Color.White.copy(alpha = 0.65f))
-            }
-        }
-
-        Box(modifier = Modifier.fillMaxWidth(0.6f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
-    }
-}
-
-@Composable
 fun LyricsMiniatureStudioTimeline() {
     Column(
         modifier = Modifier
@@ -1246,7 +1222,7 @@ fun LyricsMiniatureStudioTimeline() {
             .padding(8.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("TIMELINE", fontSize = 6.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF00E5FF))
+        Text("TIMELINE", fontSize = 6.5.sp, fontWeight = FontWeight.Black, color = BentoPrimary)
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -1258,7 +1234,7 @@ fun LyricsMiniatureStudioTimeline() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(5.dp))
-                        .background(if (isCurrent) Color(0xFF00E5FF).copy(alpha = 0.16f) else Color.Transparent)
+                        .background(if (isCurrent) BentoPrimary.copy(alpha = 0.16f) else Color.Transparent)
                         .padding(horizontal = 3.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1266,13 +1242,13 @@ fun LyricsMiniatureStudioTimeline() {
                     Text(
                         text = "0${i + 1}:12",
                         fontSize = 5.5.sp,
-                        color = if (isCurrent) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.4f)
+                        color = if (isCurrent) BentoPrimary else Color.White.copy(alpha = 0.4f)
                     )
                     Box(
                         modifier = Modifier
                             .size(if (isCurrent) 6.dp else 4.dp)
                             .clip(CircleShape)
-                            .background(if (isCurrent) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.3f))
+                            .background(if (isCurrent) BentoPrimary else Color.White.copy(alpha = 0.3f))
                     )
                     Box(
                         modifier = Modifier
@@ -1287,7 +1263,7 @@ fun LyricsMiniatureStudioTimeline() {
 
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(modifier = Modifier.width(20.dp).height(7.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)))
-            Box(modifier = Modifier.width(20.dp).height(7.dp).clip(CircleShape).background(Color(0xFF00E5FF).copy(alpha = 0.3f)))
+            Box(modifier = Modifier.width(20.dp).height(7.dp).clip(CircleShape).background(BentoPrimary.copy(alpha = 0.3f)))
         }
     }
 }

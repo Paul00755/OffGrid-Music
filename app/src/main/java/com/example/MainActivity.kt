@@ -117,8 +117,14 @@ class MainActivity : ComponentActivity() {
             val isGradientGlassEffect by viewModel.isGradientGlassEffect.collectAsStateWithLifecycle()
             val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsStateWithLifecycle()
 
+            val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsStateWithLifecycle()
+            val homeScreenLayout by viewModel.homeScreenLayout.collectAsStateWithLifecycle()
+            val shouldUseArtworkAccent = isDynamicArtworkTheme ||
+                nowPlayingLayout.equals("NEON_WAVEFORM", ignoreCase = true) ||
+                homeScreenLayout.equals("STUDIO_DASHBOARD", ignoreCase = true)
+
             val effectiveAccentColor: Color? = when {
-                isDynamicArtworkTheme && dynamicArtworkColor != null -> dynamicArtworkColor
+                shouldUseArtworkAccent && dynamicArtworkColor != null -> dynamicArtworkColor
                 customAccentColor != 0 -> Color(customAccentColor)
                 else -> null
             }

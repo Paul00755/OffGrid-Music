@@ -254,6 +254,59 @@ class AudioStabilityAndArtworkReliabilityTest {
     }
 
     @Test
+    fun testIdleBrowserTabAndManualUserPlayOverrideDuringSystemAudioNeverFalsePause() {
+        var isPlaying = false
+        var pauseCount = 0
+        var resumeCount = 0
+        var externalSoundActive = false
+
+        val focusManager = AudioFocusManager(
+            context = context,
+            isPlayingProvider = { isPlaying },
+            isSleepTimerStoppedProvider = { false },
+            ownActiveMediaPlayerCountProvider = { if (isPlaying) 1 else 0 },
+            externalVideoOrMediaActiveProvider = { externalSoundActive },
+            onPauseRequested = {
+                isPlaying = false
+                pauseCount++
+            },
+            onResumeRequested = {
+                isPlaying = true
+                resumeCount++
+            }
+        )
+
+        // 1. User presses Play while an idle browser tab (e.g., AI Studio in Chrome) is open with no sound
+        isPlaying = true
+        focusManager.onUserPlayRequested()
+        assertTrue("Audio focus request should succeed when user presses Play", focusManager.requestAudioFocus())
+
+        // Poll repeatedly while holding audio focus -> must NEVER false-pause
+        repeat(5) {
+            focusManager.pollActiveCallStateWhilePlaying()
+        }
+        assertTrue("Music must continue playing without false auto-pause while browser tab is open", isPlaying)
+        assertEquals(0, pauseCount)
+
+        // 2. Now an external system sound / video starts playing -> auto-pauses music
+        externalSoundActive = true
+        focusManager.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertFalse("Music should auto-pause when external system audio starts", isPlaying)
+        assertEquals(1, pauseCount)
+
+        // 3. User deliberately clicks Play/Resume while external system audio is still playing
+        focusManager.onUserPlayRequested()
+        isPlaying = true
+
+        // Subsequent background polls while external sound is still active must NOT re-pause the user's manual play!
+        repeat(5) {
+            focusManager.pollActiveCallStateWhilePlaying()
+        }
+        assertTrue("Manual user Play/Resume must override auto-pause and keep playing during system audio", isPlaying)
+        assertEquals(1, pauseCount)
+    }
+
+    @Test
     fun testNotificationFocusLossOnlyDucksVolumeOrContinuesWhileVideoAndCallsPause() {
         var isPlaying = true
         var pauseCount = 0

@@ -43,7 +43,7 @@ enum class HomeScreenLayout(
     STUDIO_DASHBOARD(
         id = "STUDIO_DASHBOARD",
         displayName = "Studio Deck",
-        subtitle = "Live waveform monitor, EQ dials & audio telemetry",
+        subtitle = "Ambient artwork gradient stage, sleek progress & minimal deck",
         icon = Icons.Default.Equalizer
     );
 
@@ -147,12 +147,6 @@ enum class LyricsLayout(
         displayName = "Fluid Glow",
         subtitle = "Large editorial left-aligned lyrics with mini cover & capsule dock",
         icon = Icons.Default.Star
-    ),
-    KARAOKE_SPOTLIGHT(
-        id = "KARAOKE_SPOTLIGHT",
-        displayName = "Karaoke Stage",
-        subtitle = "Spotlight active verse with live progress sweep & next-up cue",
-        icon = Icons.Default.GraphicEq
     ),
     EDITORIAL_TIMELINE(
         id = "EDITORIAL_TIMELINE",

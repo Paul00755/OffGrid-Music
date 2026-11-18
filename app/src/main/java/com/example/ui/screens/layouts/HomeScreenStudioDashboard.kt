@@ -95,7 +95,48 @@ fun HomeScreenStudioDashboard(
     val listState = rememberLazyListState()
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
+    val dualPalette by produceState(
+        initialValue = Pair(BentoPrimary, BentoSecondary),
+        key1 = currentSong?.id,
+        key2 = currentSong?.artworkUri,
+        key3 = currentSong?.path
+    ) {
+        if (currentSong != null) {
+            val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, currentSong)
+            if (extracted != null) {
+                value = extracted
+            }
+        }
+    }
+
+    val topAmbientColor by androidx.compose.animation.animateColorAsState(
+        targetValue = dualPalette.first,
+        animationSpec = tween(durationMillis = 550),
+        label = "studio_deck_top_ambient"
+    )
+    val bottomAmbientColor by androidx.compose.animation.animateColorAsState(
+        targetValue = dualPalette.second,
+        animationSpec = tween(durationMillis = 550),
+        label = "studio_deck_bottom_ambient"
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
+        // Subtle ambient top wash inspired by Neon Studio
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(320.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            topAmbientColor.copy(alpha = 0.20f),
+                            bottomAmbientColor.copy(alpha = 0.08f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -104,7 +145,7 @@ fun HomeScreenStudioDashboard(
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Pro-Audio Studio Rack Header
+            // 1. Subtle, Clean & Elegant Studio Deck Header
             item(key = "studio_deck_header", contentType = "header") {
                 Row(
                     modifier = Modifier
@@ -119,16 +160,16 @@ fun HomeScreenStudioDashboard(
                     ) {
                         Surface(
                             onClick = onOpenDrawer,
-                            shape = RoundedCornerShape(8.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoCardSurface.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
                             modifier = Modifier.size(38.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(Icons.Default.Menu, contentDescription = "Menu", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -138,21 +179,20 @@ fun HomeScreenStudioDashboard(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF00E676))
+                                        .background(BentoPrimary)
                                 )
                                 Text(
-                                    text = "STUDIO DECK // DSP-24",
-                                    fontSize = 9.5.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    text = "STUDIO DECK",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
                                     color = BentoPrimary,
-                                    letterSpacing = 1.1.sp,
+                                    letterSpacing = 1.2.sp,
                                     maxLines = 1
                                 )
                             }
                             Text(
                                 text = if (userAccount != null) effectiveDisplayName else greeting,
-                                fontSize = 18.sp,
+                                fontSize = 19.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = BentoTextPrimary,
                                 maxLines = 1,
@@ -165,9 +205,9 @@ fun HomeScreenStudioDashboard(
                         val avatarUrl = customAvatarUri ?: userAccount?.photoUrl
                         Surface(
                             onClick = { if (userAccount != null) onOpenAccount() else onOpenAuth() },
-                            shape = RoundedCornerShape(8.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoCardSurface.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
                             modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -176,7 +216,7 @@ fun HomeScreenStudioDashboard(
                                         model = avatarUrl,
                                         contentDescription = "Account",
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                        modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
+                                        modifier = Modifier.size(28.dp).clip(RoundedCornerShape(8.dp))
                                     )
                                 } else {
                                     Icon(
@@ -190,41 +230,42 @@ fun HomeScreenStudioDashboard(
                         }
                         Surface(
                             onClick = onOpenSearch,
-                            shape = RoundedCornerShape(8.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoCardSurface.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
                             modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoTextPrimary, modifier = Modifier.size(18.dp))
                             }
                         }
                         Surface(
                             onClick = onScanClick,
-                            shape = RoundedCornerShape(8.dp),
-                            color = BentoCardSurface,
-                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoCardSurface.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
                             modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Rescan", tint = BentoPrimary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Refresh, contentDescription = "Rescan", tint = BentoTextPrimary, modifier = Modifier.size(18.dp))
                             }
                         }
                         Surface(
                             onClick = { onOpenSettings("AUDIO") },
-                            shape = RoundedCornerShape(8.dp),
-                            color = BentoPrimary,
+                            shape = RoundedCornerShape(12.dp),
+                            color = BentoPrimary.copy(alpha = 0.16f),
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f)),
                             modifier = Modifier.size(36.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.GraphicEq, contentDescription = "DSP Equalizer", tint = BentoOnPrimary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.GraphicEq, contentDescription = "DSP Equalizer", tint = BentoPrimary, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
                 }
             }
 
-            // 2. Authoritative Dynamic Home Sections with Studio Deck Channel-Strip Styling
+            // 2. Dynamic Home Sections with Subtle Neon Studio Deck Styling
             renderHomeFeedSections(
                 homeSections = homeSections,
                 speedDialSongs = speedDialSongs,
@@ -271,74 +312,13 @@ fun HomeScreenStudioDashboard(
 
 @Composable
 internal fun StudioPlaybackVisualizer(isPlaying: Boolean) {
-    val (barAnim1, barAnim2, barAnim3) = if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "studio_bars")
-        val b1 by infiniteTransition.animateFloat(
-            initialValue = 0.22f, targetValue = 0.95f,
-            animationSpec = infiniteRepeatable(tween(450, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b1"
-        )
-        val b2 by infiniteTransition.animateFloat(
-            initialValue = 0.35f, targetValue = 0.82f,
-            animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b2"
-        )
-        val b3 by infiniteTransition.animateFloat(
-            initialValue = 0.18f, targetValue = 0.90f,
-            animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), RepeatMode.Reverse),
-            label = "b3"
-        )
-        Triple(b1, b2, b3)
-    } else {
-        Triple(0.22f, 0.35f, 0.18f)
-    }
-
+    // Subtle, minimal sleek line indicator instead of flashy multi-color EQ bars
     val primaryColor = BentoPrimary
-    val peakColor = BentoAccentPinkText
-    val ledGreen = Color(0xFF00E676)
-    val borderColor = BentoBorder
-    val barCount = 36
-    Canvas(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(BentoBackground)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-    ) {
-        val canvasWidth = size.width
-        val canvasHeight = size.height
-        val totalGap = (barCount - 1) * 3f
-        val barWidth = (canvasWidth - totalGap) / barCount
-
-        for (i in 0 until barCount) {
-            val factor = when (i % 3) {
-                0 -> barAnim1
-                1 -> barAnim2
-                else -> barAnim3
-            }
-            val normalizedRatio = (factor * ((i + 6).toFloat() / (barCount + 6))).coerceIn(0.12f, 1f)
-            val barHeight = if (isPlaying) {
-                (canvasHeight * normalizedRatio).coerceIn(5f, canvasHeight)
-            } else {
-                5f
-            }
-            val x = i * (barWidth + 3f)
-            val y = canvasHeight - barHeight
-
-            val barColor = when {
-                !isPlaying -> borderColor
-                normalizedRatio > 0.78f -> peakColor
-                normalizedRatio > 0.48f -> primaryColor
-                else -> ledGreen
-            }
-
-            drawRoundRect(
-                color = barColor,
-                topLeft = Offset(x, y),
-                size = Size(barWidth, barHeight),
-                cornerRadius = CornerRadius(2f, 2f)
-            )
-        }
-    }
+            .height(3.dp)
+            .clip(CircleShape)
+            .background(primaryColor.copy(alpha = if (isPlaying) 0.45f else 0.18f))
+    )
 }

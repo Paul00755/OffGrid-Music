@@ -1408,11 +1408,6 @@ fun SettingsScreen(
                 searchTokens,
                 "duck", "ducking", "duck volume for notifications", "notification chimes", "lower volume"
             )
-            val matchAudioSystemAudioPause = matchesSettingsTokens(
-                searchTokens,
-                "system audio", "auto-pause for system audio", "audio focus", "other apps", "interruption",
-                "calls", "video", "reels", "shorts", "alarm", "timer", "camera"
-            )
             val matchAudioTranscribe = matchesSettingsTokens(
                 searchTokens,
                 "transcribe", "translate", "gemini", "api key", "tamil", "tanglish", "hindi", "malayalam", "lyrics translation", "ai lyrics"
@@ -1428,7 +1423,7 @@ fun SettingsScreen(
             )
             val anyAudioItemMatches = matchAudioCrossfade || matchAudioFadeIn || matchAudioFadeOut ||
                 matchAudioPauseZero || matchAudioAutoResume || matchAudioGapless || matchAudioNormalize ||
-                matchAudioDucking || matchAudioSystemAudioPause ||
+                matchAudioDucking ||
                 matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
 
             // Section 2: UI & Themes granular matchers
@@ -1443,7 +1438,7 @@ fun SettingsScreen(
                 "now playing layout", "home screen layout", "playlists layout", "lyrics layout", "lyrics ui",
                 "bento", "vinyl", "turntable", "minimal glass", "hero spotlight", "magazine",
                 "minimal stream", "studio deck", "neon studio", "compact list",
-                "classic bento", "fluid glow", "karaoke stage", "karaoke spotlight", "studio timeline", "editorial timeline"
+                "classic bento", "fluid glow", "studio timeline", "editorial timeline"
             )
             val matchUiDisplayMode = matchesSettingsTokens(
                 searchTokens,
@@ -1925,7 +1920,7 @@ fun SettingsScreen(
                     val title = catItem.title
                     val subtitle = catItem.subtitle
                     val icon = catItem.icon
-                    val accent = catItem.accentColor
+                    val accent = androidx.compose.ui.graphics.lerp(catItem.accentColor, BentoPrimary, 0.52f)
                     Surface(
                         onClick = {
                             HapticUtils.performClickHaptic(context)
@@ -2025,7 +2020,7 @@ fun SettingsScreen(
             } else if (!isSearching && selectedSection != SettingsSection.ALL) {
                 item(key = "settings_category_subscreen_header") {
                     val catItem = SETTINGS_CATEGORY_CARD_ITEMS.find { it.section == selectedSection }
-                    val accent = catItem?.accentColor ?: BentoPrimary
+                    val accent = if (selectedSection == SettingsSection.UI) BentoPrimary else androidx.compose.ui.graphics.lerp(catItem?.accentColor ?: BentoPrimary, BentoPrimary, 0.52f)
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = BentoCardSurface,
@@ -2268,20 +2263,7 @@ fun SettingsScreen(
                                 checked = reduceVolumeOnNotification,
                                 onCheckedChange = onSetReduceVolumeOnNotification,
                                 icon = Icons.Default.NotificationsActive,
-                                accentColor = Color(0xFF00E5FF)
-                            )
-                            if (!isSearching || broadAudioMatch) SettingsDivider()
-                        }
-
-                        // Auto-pause for System Audio
-                        if (!isSearching || matchAudioSystemAudioPause || broadAudioMatch) {
-                            SettingsToggleRow(
-                                title = "Auto-pause for System Audio",
-                                subtitle = "Pause music when videos, Reels, Shorts, alarms, timers, calls, or other apps play audio and auto-resume when ended",
-                                checked = autoPauseSystemAudio,
-                                onCheckedChange = onSetAutoPauseSystemAudio,
-                                icon = Icons.Default.GraphicEq,
-                                accentColor = Color(0xFF00E5FF)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadAudioMatch) SettingsDivider()
                         }
@@ -2792,13 +2774,13 @@ fun SettingsScreen(
                         subtitle = "Curated aesthetics, screen architecture, accent palettes & refresh rate",
                         kicker = "VISUAL & DISPLAY STUDIO",
                         icon = Icons.Default.Palette,
-                        accentColor = Color(0xFFBB86FC)
+                        accentColor = BentoPrimary
                     )
                 }
 
                 item(key = "settings_ui_card") {
                     SettingsHighlightWrap(isHighlighted = highlightedSettingKey == "SECTION_UI") {
-                    SettingsCardContainer(accentGlow = Color(0xFFBB86FC)) {
+                    SettingsCardContainer(accentGlow = BentoPrimary) {
                         // 1. Curated UI Themes
                         if (!isSearching || matchUiThemes || broadUiMatch) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2817,14 +2799,14 @@ fun SettingsScreen(
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xFFBB86FC).copy(alpha = 0.18f),
-                                    border = BorderStroke(1.dp, Color(0xFFBB86FC).copy(alpha = 0.4f))
+                                    color = BentoPrimary.copy(alpha = 0.18f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.4f))
                                 ) {
                                     Text(
                                         text = AppUiTheme.fromId(uiTheme).displayName,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFBB86FC),
+                                        color = BentoPrimary,
                                         maxLines = 1,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
                                     )
@@ -2884,7 +2866,7 @@ fun SettingsScreen(
                                     HapticUtils.performClickHaptic(context)
                                     selectedLayoutCustomizerScreen = it
                                 },
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
 
                             // Interactive Miniature Preview Cards
@@ -2987,7 +2969,6 @@ fun SettingsScreen(
                                                 when (layout) {
                                                     LyricsLayout.CLASSIC_DEFAULT -> LyricsMiniatureClassicDefault()
                                                     LyricsLayout.FLUID_GLOW -> LyricsMiniatureFluidGlow()
-                                                    LyricsLayout.KARAOKE_SPOTLIGHT -> LyricsMiniatureKaraokeStage()
                                                     LyricsLayout.EDITORIAL_TIMELINE -> LyricsMiniatureStudioTimeline()
                                                 }
                                             }
@@ -3015,7 +2996,7 @@ fun SettingsScreen(
                                     HapticUtils.performClickHaptic(context)
                                     onSetThemeMode(newMode)
                                 },
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
 
                         }
@@ -3057,7 +3038,7 @@ fun SettingsScreen(
                                     HapticUtils.performClickHaptic(context)
                                     onSetDisplayScale(newScale)
                                 },
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                         }
                         if (!isSearching || broadUiMatch) SettingsDivider()
@@ -3092,7 +3073,7 @@ fun SettingsScreen(
                                         Icon(
                                             Icons.Default.Palette,
                                             contentDescription = "Custom RGB",
-                                            tint = if (customAccentColor != 0) Color(customAccentColor) else Color(0xFFBB86FC),
+                                            tint = if (customAccentColor != 0) Color(customAccentColor) else BentoPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
@@ -3153,7 +3134,7 @@ fun SettingsScreen(
                                 checked = isDynamicArtworkTheme,
                                 onCheckedChange = onSetDynamicArtworkTheme,
                                 icon = Icons.Default.AutoAwesome,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3166,7 +3147,7 @@ fun SettingsScreen(
                                 checked = isGradientEffect,
                                 onCheckedChange = onSetGradientEffect,
                                 icon = Icons.Default.Gradient,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3179,7 +3160,7 @@ fun SettingsScreen(
                                 checked = isGlassEffect,
                                 onCheckedChange = onSetGlassEffect,
                                 icon = Icons.Default.BlurOn,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3192,7 +3173,7 @@ fun SettingsScreen(
                                 checked = fetchOnlineArtworkHighRes,
                                 onCheckedChange = onSetFetchOnlineArtworkHighRes,
                                 icon = Icons.Default.Image,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3205,7 +3186,7 @@ fun SettingsScreen(
                                 checked = lyricsAutoScroll,
                                 onCheckedChange = onSetLyricsAutoScroll,
                                 icon = Icons.Default.FormatQuote,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3218,7 +3199,7 @@ fun SettingsScreen(
                                 checked = showNowPlayingVolumeBar,
                                 onCheckedChange = onSetShowNowPlayingVolumeBar,
                                 icon = Icons.Default.VolumeUp,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3231,7 +3212,7 @@ fun SettingsScreen(
                                 checked = showAdvancedSongInfo,
                                 onCheckedChange = onSetShowAdvancedSongInfo,
                                 icon = Icons.Default.GraphicEq,
-                                accentColor = Color(0xFFBB86FC)
+                                accentColor = BentoPrimary
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
@@ -3259,8 +3240,8 @@ fun SettingsScreen(
                                         }
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
-                                            color = if (isSelected) Color(0xFFBB86FC) else BentoCardPurple,
-                                            border = BorderStroke(1.dp, if (isSelected) Color(0xFFBB86FC) else BentoBorder),
+                                            color = if (isSelected) BentoPrimary else BentoCardPurple,
+                                            border = BorderStroke(1.dp, if (isSelected) BentoPrimary else BentoBorder),
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .clickable {
@@ -3292,7 +3273,7 @@ fun SettingsScreen(
                                     checked = highRefreshRate,
                                     onCheckedChange = onSetHighRefreshRate,
                                     icon = Icons.Default.Speed,
-                                    accentColor = Color(0xFFBB86FC)
+                                    accentColor = BentoPrimary
                                 )
                             }
                             if (!isSearching || broadUiMatch) SettingsDivider()
@@ -3312,7 +3293,7 @@ fun SettingsScreen(
                                         HapticUtils.performClickHaptic(context)
                                         onSetMiniPlayerStyle(it)
                                     },
-                                    accentColor = Color(0xFFBB86FC)
+                                    accentColor = BentoPrimary
                                 )
                                 SettingsToggleRow(
                                     title = "Show Previous Track Button",
@@ -3320,7 +3301,7 @@ fun SettingsScreen(
                                     checked = miniPlayerShowPrevious,
                                     onCheckedChange = onSetMiniPlayerShowPrevious,
                                     icon = Icons.Default.SkipPrevious,
-                                    accentColor = Color(0xFFBB86FC)
+                                    accentColor = BentoPrimary
                                 )
                                 SettingsToggleRow(
                                     title = "Show Next Track Button",
@@ -3328,7 +3309,7 @@ fun SettingsScreen(
                                     checked = miniPlayerShowNext,
                                     onCheckedChange = onSetMiniPlayerShowNext,
                                     icon = Icons.Default.SkipNext,
-                                    accentColor = Color(0xFFBB86FC)
+                                    accentColor = BentoPrimary
                                 )
                                 SettingsToggleRow(
                                     title = "Show Favorite Button",
@@ -3336,7 +3317,7 @@ fun SettingsScreen(
                                     checked = miniPlayerShowFavorite,
                                     onCheckedChange = onSetMiniPlayerShowFavorite,
                                     icon = Icons.Default.Favorite,
-                                    accentColor = Color(0xFFBB86FC)
+                                    accentColor = BentoPrimary
                                 )
                             }
                         }

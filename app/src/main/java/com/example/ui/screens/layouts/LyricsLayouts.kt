@@ -259,103 +259,6 @@ fun AlternateLyricsPanel(
                     )
                 }
 
-                LyricsLayout.KARAOKE_SPOTLIGHT -> {
-                    // Stage Spotlight Header with Live Badge + Tools
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = ambientThemeColor.copy(alpha = 0.18f),
-                                border = BorderStroke(1.dp, ambientThemeColor.copy(alpha = 0.5f))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(Icons.Default.Mic, contentDescription = null, tint = ambientThemeColor, modifier = Modifier.size(13.dp))
-                                    Text(
-                                        text = "KARAOKE STAGE",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = ambientThemeColor,
-                                        letterSpacing = 0.8.sp
-                                    )
-                                }
-                            }
-                            Text(
-                                text = song.displayTitle,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = primaryInk,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Surface(
-                                onClick = {
-                                    HapticUtils.performClickHaptic(context)
-                                    onTogglePlayPause()
-                                },
-                                shape = CircleShape,
-                                color = ambientThemeColor,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play/Pause",
-                                        tint = if (ambientThemeColor.luminance() > 0.5f) Color.Black else Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            if (!isLandscape) {
-                                IconButton(
-                                    onClick = onCloseLyrics,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
-                                        .background(surfaceBg)
-                                ) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close Lyrics", tint = primaryInk, modifier = Modifier.size(20.dp))
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    LyricsActionToolbarStrip(
-                        hasSynced = hasSynced,
-                        hasLyrics = hasLyrics,
-                        syncOffsetMs = syncOffsetMs,
-                        offsetText = offsetChipText,
-                        isTranscribeTranslateEnabled = isTranscribeTranslateEnabled,
-                        accentColor = ambientThemeColor,
-                        primaryInk = primaryInk,
-                        surfaceBg = surfaceBg,
-                        borderStrokeColor = borderStrokeColor,
-                        onOpenSearch = onOpenSearchLyrics,
-                        onOpenOffset = { showOffsetDialog = true },
-                        onOpenTranscribe = {
-                            transcribeDialogInitialMode = if (hasLyrics) AudioTranscribeMode.TRANSLATE else AudioTranscribeMode.TRANSCRIBE
-                            showTranscribeDialog = true
-                        },
-                        onPickLrcFile = onPickLrcFile
-                    )
-                }
-
                 LyricsLayout.EDITORIAL_TIMELINE -> {
                     // Studio Telemetry Monospace Header
                     Row(
@@ -630,7 +533,6 @@ fun AlternateLyricsPanel(
                         verticalArrangement = Arrangement.spacedBy(
                             when (lyricsLayout) {
                                 LyricsLayout.FLUID_GLOW -> 18.dp
-                                LyricsLayout.KARAOKE_SPOTLIGHT -> 14.dp
                                 LyricsLayout.EDITORIAL_TIMELINE -> 6.dp
                                 LyricsLayout.CLASSIC_DEFAULT -> 12.dp
                             }
@@ -690,109 +592,6 @@ fun AlternateLyricsPanel(
                                                     scaleY = lineScale
                                                 }
                                         )
-                                    }
-                                }
-
-                                LyricsLayout.KARAOKE_SPOTLIGHT -> {
-                                    // Centered Spotlight Card + Live Sweep Indicator + NEXT UP cue
-                                    val nextLineStart = syncedLines.getOrNull(index + 1)?.first
-                                        ?: (timeMs + 4500L)
-                                    val lineDuration = (nextLineStart - timeMs).coerceAtLeast(600L)
-                                    val lineProgress = if (isCurrentLine) {
-                                        ((effectivePosNow - timeMs).toFloat() / lineDuration.toFloat()).coerceIn(0f, 1f)
-                                    } else if (isPastLine) 1f else 0f
-
-                                    val nextLinePreview = remember(syncedLines, index) {
-                                        syncedLines.getOrNull(index + 1)?.second?.let { cleanLyricDisplayText(it) }
-                                    }
-
-                                    if (isCurrentLine) {
-                                        Surface(
-                                            onClick = {
-                                                val targetSeekMs = (timeMs - syncOffsetMs).coerceAtLeast(0L)
-                                                userHasManuallyScrolled = false
-                                                onUserIsScrollingChange(false)
-                                                onSeekTo(targetSeekMs)
-                                            },
-                                            shape = RoundedCornerShape(22.dp),
-                                            color = ambientThemeColor.copy(alpha = if (isDarkTheme) 0.22f else 0.14f),
-                                            border = BorderStroke(1.5.dp, ambientThemeColor.copy(alpha = 0.72f)),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Text(
-                                                    text = cleanText,
-                                                    fontSize = if (isLandscape) 20.sp else 24.sp,
-                                                    lineHeight = if (isLandscape) 26.sp else 31.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = primaryInk,
-                                                    textAlign = TextAlign.Center,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-
-                                                // Live Sweep Karaoke Bar
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth(0.75f)
-                                                        .height(4.dp)
-                                                        .clip(CircleShape)
-                                                        .background(primaryInk.copy(alpha = 0.14f))
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth(lineProgress)
-                                                            .fillMaxHeight()
-                                                            .clip(CircleShape)
-                                                            .background(
-                                                                Brush.horizontalGradient(
-                                                                    listOf(ambientThemeColor, BentoAccentPinkText)
-                                                                )
-                                                            )
-                                                    )
-                                                }
-
-                                                if (!nextLinePreview.isNullOrBlank()) {
-                                                    Text(
-                                                        text = "NEXT UP • $nextLinePreview",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = secondaryInk,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        textAlign = TextAlign.Center
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .clickable {
-                                                    val targetSeekMs = (timeMs - syncOffsetMs).coerceAtLeast(0L)
-                                                    userHasManuallyScrolled = false
-                                                    onUserIsScrollingChange(false)
-                                                    onSeekTo(targetSeekMs)
-                                                }
-                                                .padding(horizontal = 16.dp, vertical = 6.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = cleanText,
-                                                fontSize = if (isLandscape) 13.5.sp else 15.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = primaryInk.copy(alpha = if (isPastLine) 0.34f else 0.54f),
-                                                textAlign = TextAlign.Center,
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
                                     }
                                 }
 
@@ -941,7 +740,6 @@ fun AlternateLyricsPanel(
                     verticalArrangement = Arrangement.spacedBy(
                         when (lyricsLayout) {
                             LyricsLayout.FLUID_GLOW -> 14.dp
-                            LyricsLayout.KARAOKE_SPOTLIGHT -> 12.dp
                             else -> 8.dp
                         }
                     )
@@ -958,22 +756,6 @@ fun AlternateLyricsPanel(
                                     textAlign = TextAlign.Start,
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                                 )
-                            }
-                            LyricsLayout.KARAOKE_SPOTLIGHT -> {
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = surfaceBg.copy(alpha = 0.5f),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = cleanLine,
-                                        fontSize = if (isLandscape) 15.sp else 16.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = primaryInk,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                                    )
-                                }
                             }
                             LyricsLayout.EDITORIAL_TIMELINE -> {
                                 Row(
@@ -1046,7 +828,6 @@ fun AlternateLyricsPanel(
                     } else {
                         Icon(
                             imageVector = when (lyricsLayout) {
-                                LyricsLayout.KARAOKE_SPOTLIGHT -> Icons.Default.Mic
                                 LyricsLayout.EDITORIAL_TIMELINE -> Icons.Default.GraphicEq
                                 else -> Icons.Default.ChatBubbleOutline
                             },

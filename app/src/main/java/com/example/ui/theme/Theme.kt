@@ -612,10 +612,25 @@ fun MyApplicationTheme(
 
     val glassTintColor = dynamicArtworkColor ?: primaryColor
     val glassSecondaryTint = if (dynamicArtworkColor != null) {
-        lerp(dynamicArtworkColor, primaryColor, 0.22f)
+        lerp(dynamicArtworkColor, primaryColor, 0.25f)
     } else {
-        baseColorScheme.secondary
+        lerp(primaryColor, baseColorScheme.secondary, 0.35f)
     }
+
+    // Harmonize surfaces, variants, and outlines with the active primary/artwork accent so
+    // Home, Library, Search, Settings, and bottom sheets never look disconnected or stuck on purple.
+    val harmonizedColorScheme = remember(baseColorScheme, glassTintColor, glassSecondaryTint, isDark, isExtraDark) {
+        val surfaceBlend = if (isDark) (if (isExtraDark) 0.05f else 0.08f) else 0.03f
+        val variantBlend = if (isDark) (if (isExtraDark) 0.11f else 0.15f) else 0.06f
+        val outlineBlend = if (isDark) 0.28f else 0.18f
+        baseColorScheme.copy(
+            secondary = glassSecondaryTint,
+            surface = lerp(baseColorScheme.surface, glassTintColor, surfaceBlend),
+            surfaceVariant = lerp(baseColorScheme.surfaceVariant, glassTintColor, variantBlend),
+            outline = lerp(baseColorScheme.outline, glassTintColor, outlineBlend)
+        )
+    }
+
     val anyEffectEnabled = isGradientEffect || isGlassEffect
     val glassConfig = remember(
         anyEffectEnabled,
@@ -624,9 +639,9 @@ fun MyApplicationTheme(
         glassTintColor,
         glassSecondaryTint,
         isDark,
-        baseColorScheme.background,
-        baseColorScheme.surface,
-        baseColorScheme.surfaceVariant
+        harmonizedColorScheme.background,
+        harmonizedColorScheme.surface,
+        harmonizedColorScheme.surfaceVariant
     ) {
         GlassThemeConfig(
             enabled = anyEffectEnabled,
@@ -635,15 +650,15 @@ fun MyApplicationTheme(
             tintColor = glassTintColor,
             secondaryTintColor = glassSecondaryTint,
             isDark = isDark,
-            solidBackground = baseColorScheme.background,
-            solidSurface = baseColorScheme.surface,
-            solidSurfaceVariant = baseColorScheme.surfaceVariant
+            solidBackground = harmonizedColorScheme.background,
+            solidSurface = harmonizedColorScheme.surface,
+            solidSurfaceVariant = harmonizedColorScheme.surfaceVariant
         )
     }
 
     CompositionLocalProvider(LocalGlassThemeConfig provides glassConfig) {
         MaterialTheme(
-            colorScheme = baseColorScheme,
+            colorScheme = harmonizedColorScheme,
             typography = Typography,
             content = content
         )

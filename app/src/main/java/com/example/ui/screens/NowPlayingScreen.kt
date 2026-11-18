@@ -241,7 +241,7 @@ fun NowPlayingScreen(
 
         AlertDialog(
             onDismissRequest = { showSearchLyricsDialog = false },
-            containerColor = if (searchDialogDark) Color(0xFF1E1E2C) else Color.White,
+            containerColor = if (searchDialogDark) BentoCardSurface else Color.White,
             title = {
                 Text(
                     text = "Find Lyrics Online",
@@ -291,9 +291,9 @@ fun NowPlayingScreen(
                             focusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
                             unfocusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
                             focusedBorderColor = BentoPrimary,
-                            unfocusedBorderColor = if (searchDialogDark) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1),
-                            focusedContainerColor = if (searchDialogDark) Color(0xFF161622) else Color(0xFFF8FAFC),
-                            unfocusedContainerColor = if (searchDialogDark) Color(0xFF161622) else Color(0xFFF8FAFC),
+                            unfocusedBorderColor = if (searchDialogDark) BentoBorder.copy(alpha = 0.5f) else Color(0xFFCBD5E1),
+                            focusedContainerColor = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC),
+                            unfocusedContainerColor = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC),
                             cursorColor = BentoPrimary,
                             focusedLabelColor = BentoPrimary,
                             unfocusedLabelColor = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
@@ -341,8 +341,8 @@ fun NowPlayingScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(lyricsSearchResults) { candidate ->
-                                val candidateCardBg = if (searchDialogDark) Color(0xFF222232) else Color(0xFFF8FAFC)
-                                val candidateCardBorder = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0)
+                                val candidateCardBg = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC)
+                                val candidateCardBorder = if (searchDialogDark) BentoBorder.copy(alpha = 0.4f) else Color(0xFFE2E8F0)
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -594,8 +594,66 @@ fun NowPlayingScreen(
     }
 
     val glassConfig = LocalGlassThemeConfig.current
-    val currentBg = BentoBackground
-    val ambientThemeColor = dynamicArtworkColor ?: glassConfig.tintColor
+    val currentLayout = com.example.ui.theme.NowPlayingLayout.fromId(nowPlayingLayout)
+    val currentLyricsLayout = com.example.ui.theme.LyricsLayout.fromId(lyricsLayout)
+
+    val dualArtworkPalette by produceState<Pair<Color, Color>?>(
+        initialValue = null,
+        key1 = song.id,
+        key2 = song.artworkUri,
+        key3 = song.path
+    ) {
+        value = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
+    }
+
+    val topArtworkColor = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
+    val bottomArtworkColor = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
+    val ambientThemeColor = if (currentLayout == com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM) {
+        topArtworkColor
+    } else {
+        dynamicArtworkColor ?: topArtworkColor
+    }
+
+    val parentColorScheme = MaterialTheme.colorScheme
+    val isDarkNowPlaying = parentColorScheme.background.luminance() < 0.5f
+    val nowPlayingColorScheme = remember(parentColorScheme, ambientThemeColor, bottomArtworkColor, isDarkNowPlaying) {
+        val highContrastOnAccent = if (ambientThemeColor.luminance() > 0.42f) Color(0xFF08080C) else Color.White
+        val harmonizedSurface = androidx.compose.ui.graphics.lerp(
+            parentColorScheme.surface,
+            ambientThemeColor,
+            if (isDarkNowPlaying) 0.16f else 0.08f
+        )
+        val harmonizedSurfaceVariant = androidx.compose.ui.graphics.lerp(
+            parentColorScheme.surfaceVariant,
+            bottomArtworkColor,
+            if (isDarkNowPlaying) 0.22f else 0.12f
+        )
+        val harmonizedOutline = androidx.compose.ui.graphics.lerp(
+            parentColorScheme.outline,
+            ambientThemeColor,
+            if (isDarkNowPlaying) 0.38f else 0.24f
+        )
+        parentColorScheme.copy(
+            primary = ambientThemeColor,
+            onPrimary = highContrastOnAccent,
+            primaryContainer = ambientThemeColor.copy(alpha = 0.24f),
+            onPrimaryContainer = ambientThemeColor,
+            secondary = bottomArtworkColor,
+            surface = harmonizedSurface,
+            surfaceVariant = harmonizedSurfaceVariant,
+            outline = harmonizedOutline
+        )
+    }
+    val nowPlayingGlassConfig = remember(glassConfig, ambientThemeColor, bottomArtworkColor, nowPlayingColorScheme) {
+        glassConfig.copy(
+            tintColor = ambientThemeColor,
+            secondaryTintColor = bottomArtworkColor,
+            solidSurface = nowPlayingColorScheme.surface,
+            solidSurfaceVariant = nowPlayingColorScheme.surfaceVariant
+        )
+    }
+
+    val currentBg = nowPlayingColorScheme.background
     val audioTechnicalInfo by produceState<com.example.util.AudioTechnicalInfo?>(
         initialValue = null,
         key1 = song.id,
@@ -608,23 +666,28 @@ fun NowPlayingScreen(
             null
         }
     }
-    val bgBrush = remember(ambientThemeColor, currentBg, glassConfig.gradientEnabled, glassConfig.secondaryTintColor) {
-        if (glassConfig.gradientEnabled) {
+    val bgBrush = remember(ambientThemeColor, bottomArtworkColor, currentBg, nowPlayingGlassConfig.gradientEnabled) {
+        if (nowPlayingGlassConfig.gradientEnabled) {
             androidx.compose.ui.graphics.Brush.verticalGradient(
                 0.0f to ambientThemeColor.copy(alpha = 0.48f),
-                0.45f to glassConfig.secondaryTintColor.copy(alpha = 0.24f),
+                0.45f to bottomArtworkColor.copy(alpha = 0.26f),
                 0.82f to ambientThemeColor.copy(alpha = 0.16f),
                 1.0f to currentBg
             )
         } else {
             androidx.compose.ui.graphics.Brush.verticalGradient(
                 0.0f to ambientThemeColor.copy(alpha = 0.42f),
-                0.50f to ambientThemeColor.copy(alpha = 0.18f),
+                0.50f to bottomArtworkColor.copy(alpha = 0.20f),
                 1.0f to currentBg
             )
         }
     }
 
+    CompositionLocalProvider(LocalGlassThemeConfig provides nowPlayingGlassConfig) {
+    MaterialTheme(
+        colorScheme = nowPlayingColorScheme,
+        typography = MaterialTheme.typography
+    ) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -644,8 +707,6 @@ fun NowPlayingScreen(
                 }
             }
     ) {
-        val currentLayout = com.example.ui.theme.NowPlayingLayout.fromId(nowPlayingLayout)
-        val currentLyricsLayout = com.example.ui.theme.LyricsLayout.fromId(lyricsLayout)
 
         if (isLandscape) {
             // Horizontal Landscape Split View: Exact 50/50 equal halves
@@ -1707,23 +1768,38 @@ fun NowPlayingScreen(
     ) {
         val isCurrentDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
         val baseLyricsColor = if (isCurrentDark) Color(0xFF09090E) else Color.White
-        val lyricsBg = if (glassConfig.glassEnabled) {
+        val lyricsBg = if (nowPlayingGlassConfig.glassEnabled) {
             baseLyricsColor.copy(alpha = if (isCurrentDark) 0.78f else 0.85f)
         } else {
             baseLyricsColor
         }
-        val lyricsGlassBrush = remember(glassConfig.gradientEnabled, glassConfig.glassEnabled, ambientThemeColor, glassConfig.secondaryTintColor, isCurrentDark, baseLyricsColor) {
-            if (glassConfig.gradientEnabled) {
-                val topAlpha = if (glassConfig.glassEnabled) 0.36f else 1f
-                val midAlpha = if (glassConfig.glassEnabled) 0.22f else 1f
-                val botAlpha = if (glassConfig.glassEnabled) 0.26f else 1f
+        val lyricsGlassBrush = remember(
+            nowPlayingGlassConfig.gradientEnabled,
+            nowPlayingGlassConfig.glassEnabled,
+            currentLayout,
+            topArtworkColor,
+            bottomArtworkColor,
+            ambientThemeColor,
+            isCurrentDark,
+            baseLyricsColor
+        ) {
+            val useRichArtworkWash = currentLayout == com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM || nowPlayingGlassConfig.gradientEnabled
+            if (useRichArtworkWash) {
+                val topAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.48f else 1f
+                val midAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.36f else 1f
+                val botAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.44f else 1f
                 Brush.verticalGradient(
-                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.36f else 0.22f).copy(alpha = topAlpha),
-                    0.45f to androidx.compose.ui.graphics.lerp(baseLyricsColor, glassConfig.secondaryTintColor, if (isCurrentDark) 0.22f else 0.14f).copy(alpha = midAlpha),
-                    0.80f to if (glassConfig.glassEnabled) Color.Transparent else baseLyricsColor,
-                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.26f else 0.16f).copy(alpha = botAlpha)
+                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, topArtworkColor, if (isCurrentDark) 0.46f else 0.28f).copy(alpha = topAlpha),
+                    0.50f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.38f else 0.22f).copy(alpha = midAlpha),
+                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.48f else 0.26f).copy(alpha = botAlpha)
                 )
-            } else null
+            } else {
+                Brush.verticalGradient(
+                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.28f else 0.16f),
+                    0.55f to baseLyricsColor,
+                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.22f else 0.12f)
+                )
+            }
         }
 
         Box(
@@ -1947,6 +2023,8 @@ fun NowPlayingScreen(
                 onRetranscribe = { currentPreview -> onRetranscribedLyrics(currentPreview) }
             )
         }
+    }
+    }
     }
 }
 

@@ -994,8 +994,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            autoPauseSystemAudio.collect { enabled ->
-                playbackManager.autoPauseSystemAudio = enabled
+            autoPauseSystemAudio.collect {
+                playbackManager.autoPauseSystemAudio = true
             }
         }
         viewModelScope.launch {

@@ -2311,7 +2311,7 @@ class PlaybackManager(
         // Synchronously restore persisted audio engine settings before any playback or ViewModel collection
         try {
             addToQueuePosition = userPreferences.getAddToQueuePositionSync()
-            autoPauseSystemAudio = userPreferences.getAutoPauseSystemAudioSync()
+            autoPauseSystemAudio = true
             reduceVolumeOnNotification = userPreferences.getReduceVolumeOnNotificationSync()
             pauseOnZeroVolume = userPreferences.getPauseOnZeroVolumeSync()
             autoResumeOnVolumeIncrease = userPreferences.getAutoResumeOnVolumeIncreaseSync()
@@ -2337,8 +2337,8 @@ class PlaybackManager(
             }
         }
         scope.launch {
-            userPreferences.autoPauseSystemAudio.collect { enabled ->
-                autoPauseSystemAudio = enabled
+            userPreferences.autoPauseSystemAudio.collect {
+                autoPauseSystemAudio = true
             }
         }
         scope.launch {

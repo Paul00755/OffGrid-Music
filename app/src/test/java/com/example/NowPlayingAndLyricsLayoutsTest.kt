@@ -85,12 +85,12 @@ class NowPlayingAndLyricsLayoutsTest {
     )
 
     @Test
-    fun testLyricsLayoutEnumHasFourOptionsAndClassicDefaultFallback() {
-        assertEquals(4, LyricsLayout.entries.size)
+    fun testLyricsLayoutEnumHasThreeOptionsAndClassicDefaultFallback() {
+        assertEquals(3, LyricsLayout.entries.size)
         assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId(null))
         assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId("UNKNOWN_STYLE"))
+        assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId("KARAOKE_SPOTLIGHT"))
         assertEquals(LyricsLayout.FLUID_GLOW, LyricsLayout.fromId("fluid_glow"))
-        assertEquals(LyricsLayout.KARAOKE_SPOTLIGHT, LyricsLayout.fromId("KARAOKE_SPOTLIGHT"))
         assertEquals(LyricsLayout.EDITORIAL_TIMELINE, LyricsLayout.fromId("EDITORIAL_TIMELINE"))
     }
 
@@ -148,13 +148,13 @@ class NowPlayingAndLyricsLayoutsTest {
         assertFalse(repo.showNowPlayingVolumeBar.first())
         assertFalse(repo.showAdvancedSongInfo.first())
 
-        repo.setLyricsLayout(LyricsLayout.KARAOKE_SPOTLIGHT.id)
+        repo.setLyricsLayout(LyricsLayout.FLUID_GLOW.id)
         repo.setShowNowPlayingVolumeBar(true)
         repo.setShowAdvancedSongInfo(true)
 
         UserPreferencesRepository.resetInstanceForTesting()
         val reloaded = UserPreferencesRepository.getInstance(context)
-        assertEquals("KARAOKE_SPOTLIGHT", reloaded.lyricsLayout.first())
+        assertEquals("FLUID_GLOW", reloaded.lyricsLayout.first())
         assertTrue(reloaded.showNowPlayingVolumeBar.first())
         assertTrue(reloaded.showAdvancedSongInfo.first())
 
@@ -196,13 +196,14 @@ class NowPlayingAndLyricsLayoutsTest {
         composeTestRule.onNodeWithText("Lyrics UI").performScrollTo().assertIsDisplayed().performClick()
         composeTestRule.waitForIdle()
 
-        // Verify Classic Default plus 3 new Lyrics options render and update selection
+        // Verify Classic Default plus Fluid Glow and Studio Timeline render, and Karaoke Stage is removed
         composeTestRule.onNodeWithText("Classic Bento").performScrollTo().assertExists()
         composeTestRule.onNodeWithText("Fluid Glow").assertExists()
-        composeTestRule.onNodeWithTag("lyrics_layout_preview_row").performScrollToNode(hasText("Karaoke Stage"))
-        composeTestRule.onNodeWithText("Karaoke Stage").assertExists().performClick()
+        composeTestRule.onNodeWithText("Karaoke Stage").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("lyrics_layout_preview_row").performScrollToNode(hasText("Studio Timeline"))
+        composeTestRule.onNodeWithText("Studio Timeline").assertExists().performClick()
         composeTestRule.waitForIdle()
-        assertEquals(LyricsLayout.KARAOKE_SPOTLIGHT.id, selectedLyrics.get())
+        assertEquals(LyricsLayout.EDITORIAL_TIMELINE.id, selectedLyrics.get())
 
         // Scroll directly to the two new UI toggles in UI & Themes section
         composeTestRule.onNodeWithText("Include Volume Seek bar in Now-Playing screen")
@@ -221,7 +222,7 @@ class NowPlayingAndLyricsLayoutsTest {
     }
 
     @Test
-    fun testVolumeBarToggleWorksAcrossAllFourNowPlayingLayouts() {
+    fun testVolumeBarAndSelectedWaveformApplyAcrossAllFourNowPlayingLayoutsIncludingNeonStudio() {
         val layouts = listOf(
             NowPlayingLayout.MODERN_BENTO.id,
             NowPlayingLayout.VINYL_TURNTABLE.id,
@@ -230,6 +231,7 @@ class NowPlayingAndLyricsLayoutsTest {
         )
 
         val currentLayout = androidx.compose.runtime.mutableStateOf(layouts.first())
+        val currentWaveform = androidx.compose.runtime.mutableStateOf("BARS")
         val showVol = androidx.compose.runtime.mutableStateOf(true)
         val song = sampleSong()
 
@@ -250,6 +252,7 @@ class NowPlayingAndLyricsLayoutsTest {
                         icon = Icons.Default.Speaker
                     ),
                     sleepTimerState = SleepTimerState(),
+                    waveformStyle = currentWaveform.value,
                     nowPlayingLayout = currentLayout.value,
                     lyricsLayout = LyricsLayout.CLASSIC_DEFAULT.id,
                     showVolumeBar = showVol.value,
@@ -273,6 +276,14 @@ class NowPlayingAndLyricsLayoutsTest {
             composeTestRule.waitForIdle()
             composeTestRule.onNodeWithTag("now_playing_volume_seekbar", useUnmergedTree = true).assertExists()
 
+            if (layoutId == NowPlayingLayout.NEON_WAVEFORM.id) {
+                for (wf in listOf("SLEEK_LINE", "SNAKE", "BARS", "DOTS")) {
+                    currentWaveform.value = wf
+                    composeTestRule.waitForIdle()
+                    composeTestRule.onNodeWithTag("neon_studio_waveform_visualizer", useUnmergedTree = true).assertExists()
+                }
+            }
+
             showVol.value = false
             composeTestRule.waitForIdle()
             composeTestRule.onNodeWithTag("now_playing_volume_seekbar", useUnmergedTree = true).assertDoesNotExist()
@@ -283,7 +294,6 @@ class NowPlayingAndLyricsLayoutsTest {
     fun testAlternateLyricsLayoutsAllExposeSearchOffsetAndTranscribeControls() {
         val layouts = listOf(
             LyricsLayout.FLUID_GLOW,
-            LyricsLayout.KARAOKE_SPOTLIGHT,
             LyricsLayout.EDITORIAL_TIMELINE
         )
         val currentStyle = androidx.compose.runtime.mutableStateOf(LyricsLayout.FLUID_GLOW)

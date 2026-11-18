@@ -215,92 +215,38 @@ fun NowPlayingNeonWaveform(
                 }
             }
 
-            // Seek Line & Elapsed / Remaining Timestamps directly below Album Art
+            // Seek / Waveform Visualizer & Elapsed / Remaining Timestamps directly below Album Art
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                val trackHeight by animateDpAsState(
-                    targetValue = if (isDraggingSeek) 6.dp else 3.5.dp,
-                    animationSpec = tween(140),
-                    label = "neon_seek_height"
-                )
-
-                BoxWithConstraints(
+                com.example.ui.components.NowPlayingWaveformVisualizer(
+                    trackId = song.id,
+                    progressMs = livePositionMs,
+                    durationMs = duration,
+                    isPlaying = playbackState.isPlaying,
+                    style = waveformStyle,
+                    accentColor = primaryInk,
+                    onSeekTo = onSeekTo,
+                    playbackPositionFlow = playbackPositionFlow,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(26.dp)
-                        .pointerInput(song.id, duration) {
-                            detectTapGestures { offset ->
-                                if (size.width > 0 && duration > 0L) {
-                                    val frac = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                                    onSeekTo((frac * duration).toLong())
-                                }
-                            }
-                        }
-                        .pointerInput(song.id, duration) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    isDraggingSeek = true
-                                    if (size.width > 0) {
-                                        dragFraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                                    }
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    if (size.width > 0) {
-                                        dragFraction = (dragFraction + dragAmount.x / size.width.toFloat()).coerceIn(0f, 1f)
-                                    }
-                                },
-                                onDragEnd = {
-                                    if (duration > 0L) {
-                                        onSeekTo((dragFraction * duration).toLong())
-                                    }
-                                    isDraggingSeek = false
-                                },
-                                onDragCancel = { isDraggingSeek = false }
-                            )
-                        },
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(trackHeight)
-                            .clip(CircleShape)
-                            .background(primaryInk.copy(alpha = 0.18f))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(activeFraction)
-                                .fillMaxHeight()
-                                .clip(CircleShape)
-                                .background(primaryInk.copy(alpha = 0.85f))
-                        )
-                    }
-
-                    val thumbSize = if (isDraggingSeek) 13.dp else 9.dp
-                    val thumbOffset = (maxWidth - thumbSize) * activeFraction
-                    Box(
-                        modifier = Modifier
-                            .offset(x = thumbOffset)
-                            .size(thumbSize)
-                            .clip(CircleShape)
-                            .background(primaryInk)
-                    )
-                }
+                        .height(34.dp)
+                        .testTag("neon_studio_waveform_visualizer")
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = formatTime(effectiveSeekMs),
+                    com.example.ui.components.PlaybackPositionText(
+                        playbackPositionFlow = playbackPositionFlow,
+                        positionMs = livePositionMs,
+                        durationMs = duration,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
                         color = secondaryInk
                     )
                     Text(
