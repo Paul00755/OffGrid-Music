@@ -177,7 +177,8 @@ class AudioFocusManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             object : AudioManager.AudioPlaybackCallback() {
                 override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
-                    onActivePlaybackConfigurationsChanged(configs)
+                    // Pass null so real OS callbacks never get treated as explicit test overrideConfigs.
+                    onActivePlaybackConfigurationsChanged(null)
                 }
             }
         } else null
@@ -384,9 +385,10 @@ class AudioFocusManager(
         val callNowActive = isCallOrRingtoneActive(configs)
         val videoNowActive = hasExternalVideoOrMediaPlaying(configs)
         if (userOverrodeInterruption) {
-            if (!callNowActive && !videoNowActive) {
+            val withinPlayGrace = (SystemClock.elapsedRealtime() - lastUserPlayRequestAtMs) in 0L..1500L
+            if (!callNowActive && !videoNowActive && !withinPlayGrace) {
                 userOverrodeInterruption = false
-            } else {
+            } else if (callNowActive || videoNowActive) {
                 return
             }
         }
@@ -473,9 +475,10 @@ class AudioFocusManager(
         val callNowActive = isCallOrRingtoneActive()
         val videoNowActive = hasExternalVideoOrMediaPlaying()
         if (userOverrodeInterruption) {
-            if (!callNowActive && !videoNowActive) {
+            val withinPlayGrace = (SystemClock.elapsedRealtime() - lastUserPlayRequestAtMs) in 0L..1500L
+            if (!callNowActive && !videoNowActive && !withinPlayGrace) {
                 userOverrodeInterruption = false
-            } else {
+            } else if (callNowActive || videoNowActive) {
                 return
             }
         }
@@ -619,11 +622,10 @@ class AudioFocusManager(
             return true
         }
 
-        // When AudioManager is in MODE_NORMAL and we actively hold audio focus, brief background
-        // VOICE_COMMUNICATION / SIGNALLING streams or VOICE_COMMUNICATION mic probes from Bluetooth
-        // earbuds (e.g. HFP keepalive), IMS, or voice assistants are not active phone calls.
-        val allowVoiceCommInNormalMode = !hasAudioFocus
-
+        // Only treat USAGE_ALARM and USAGE_NOTIFICATION_RINGTONE playback configs or cellular
+        // VOICE_CALL recording sources as call/alarm interruptions when AudioManager.mode is MODE_NORMAL.
+        // Background browsers (Brave, Chrome WebRTC) and social apps hold USAGE_VOICE_COMMUNICATION
+        // audio/mic configurations in MODE_NORMAL when no call is active.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val configs = overrideConfigs ?: try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
             for (config in configs) {
@@ -631,14 +633,6 @@ class AudioFocusManager(
                 val usage = config.audioAttributes?.usage ?: continue
                 if (usage == AudioAttributes.USAGE_NOTIFICATION_RINGTONE ||
                     usage == AudioAttributes.USAGE_ALARM
-                ) {
-                    return true
-                }
-                if (allowVoiceCommInNormalMode && (
-                        usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
-                        usage == AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING ||
-                        usage == AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST
-                    )
                 ) {
                     return true
                 }
@@ -652,11 +646,6 @@ class AudioFocusManager(
                 if (src == android.media.MediaRecorder.AudioSource.VOICE_CALL ||
                     src == android.media.MediaRecorder.AudioSource.VOICE_DOWNLINK ||
                     src == android.media.MediaRecorder.AudioSource.VOICE_UPLINK
-                ) {
-                    return true
-                }
-                if (allowVoiceCommInNormalMode &&
-                    src == android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
                 ) {
                     return true
                 }
@@ -788,15 +777,16 @@ class AudioFocusManager(
             externalVideoOrMediaActiveProvider?.let { return it.invoke() }
         } catch (_: Throwable) {}
 
-        // While we actively hold Android AudioFocus (and no explicit test overrideConfigs were supplied),
-        // background browser tabs (such as Chrome / AI Studio) or idle WebViews that have not requested
-        // AudioFocus must never be treated as an active external media interruption.
-        if (overrideConfigs == null && hasAudioFocus) {
+        // On real devices (when no explicit test overrideConfigs are supplied), rely on standard
+        // Android AudioFocus callbacks rather than guessing from activePlaybackConfigurations,
+        // because background browsers (e.g. Brave, Chrome) keep active USAGE_MEDIA / WebAudio
+        // player configurations even when silent or in the background.
+        if (overrideConfigs == null) {
             return false
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val configs = overrideConfigs ?: try { audioManager?.activePlaybackConfigurations.orEmpty() } catch (_: Throwable) { emptyList() }
+            val configs = overrideConfigs
             if (configs.isEmpty()) return false
 
             val ownMediaCount = try { ownActiveMediaPlayerCountProvider() } catch (_: Throwable) { 0 }
@@ -1170,8 +1160,9 @@ class AudioFocusManager(
             focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
         ) {
             val now = SystemClock.elapsedRealtime()
-            if (userOverrodeInterruption && (now - lastUserPlayRequestAtMs) in 0L..450L) {
-                Log.d(TAG, "Ignoring immediate focus loss bounce-back ($focusChange) right after manual user play override")
+            if (userOverrodeInterruption && (now - lastUserPlayRequestAtMs) in 0L..1500L && !isCallOrRingtoneActive()) {
+                Log.d(TAG, "Ignoring immediate focus loss bounce-back ($focusChange) right after manual user play")
+                hasAudioFocus = true
                 return
             }
             userOverrodeInterruption = false
@@ -1397,7 +1388,7 @@ class AudioFocusManager(
                     audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                         .setAudioAttributes(attrs)
                         .setAcceptsDelayedFocusGain(true)
-                        .setWillPauseWhenDucked(true)
+                        .setWillPauseWhenDucked(false)
                         .setOnAudioFocusChangeListener(focusChangeListener, getOrCreateFocusCallbackHandler())
                         .build()
                 }
@@ -1406,10 +1397,12 @@ class AudioFocusManager(
                 @Suppress("DEPRECATION")
                 mgr.requestAudioFocus(focusChangeListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
             }
-            hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+            hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED ||
+                result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED)
             hasAudioFocus
         } catch (e: Exception) {
             Log.w(TAG, "Error requesting audio focus", e)
+            hasAudioFocus = true
             true
         }
     }

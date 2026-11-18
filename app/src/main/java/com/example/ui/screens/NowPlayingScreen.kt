@@ -606,16 +606,14 @@ fun NowPlayingScreen(
         value = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
     }
 
-    val topArtworkColor = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
-    val bottomArtworkColor = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
-    val ambientThemeColor = if (currentLayout == com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM) {
-        topArtworkColor
-    } else {
-        dynamicArtworkColor ?: topArtworkColor
-    }
-
     val parentColorScheme = MaterialTheme.colorScheme
     val isDarkNowPlaying = parentColorScheme.background.luminance() < 0.5f
+    val rawTopArtwork = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
+    val rawBottomArtwork = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
+    val ambientThemeColor = androidx.compose.ui.graphics.lerp(rawTopArtwork, parentColorScheme.primary, 0.50f)
+    val topArtworkColor = ambientThemeColor
+    val bottomArtworkColor = androidx.compose.ui.graphics.lerp(rawBottomArtwork, glassConfig.secondaryTintColor, 0.40f)
+
     val nowPlayingColorScheme = remember(parentColorScheme, ambientThemeColor, bottomArtworkColor, isDarkNowPlaying) {
         val highContrastOnAccent = if (ambientThemeColor.luminance() > 0.42f) Color(0xFF08080C) else Color.White
         val harmonizedSurface = androidx.compose.ui.graphics.lerp(
@@ -666,21 +664,16 @@ fun NowPlayingScreen(
             null
         }
     }
-    val bgBrush = remember(ambientThemeColor, bottomArtworkColor, currentBg, nowPlayingGlassConfig.gradientEnabled) {
-        if (nowPlayingGlassConfig.gradientEnabled) {
-            androidx.compose.ui.graphics.Brush.verticalGradient(
-                0.0f to ambientThemeColor.copy(alpha = 0.48f),
-                0.45f to bottomArtworkColor.copy(alpha = 0.26f),
-                0.82f to ambientThemeColor.copy(alpha = 0.16f),
-                1.0f to currentBg
-            )
-        } else {
-            androidx.compose.ui.graphics.Brush.verticalGradient(
-                0.0f to ambientThemeColor.copy(alpha = 0.42f),
-                0.50f to bottomArtworkColor.copy(alpha = 0.20f),
-                1.0f to currentBg
-            )
-        }
+    val bgBrush = remember(ambientThemeColor, bottomArtworkColor, currentBg, isDarkNowPlaying) {
+        val topGlow = androidx.compose.ui.graphics.lerp(currentBg, ambientThemeColor, if (isDarkNowPlaying) 0.42f else 0.26f)
+        val midGlow = androidx.compose.ui.graphics.lerp(currentBg, bottomArtworkColor, if (isDarkNowPlaying) 0.26f else 0.16f)
+        val lowGlow = androidx.compose.ui.graphics.lerp(currentBg, ambientThemeColor, if (isDarkNowPlaying) 0.16f else 0.10f)
+        androidx.compose.ui.graphics.Brush.verticalGradient(
+            0.0f to topGlow,
+            0.42f to midGlow,
+            0.76f to currentBg,
+            1.0f to lowGlow
+        )
     }
 
     CompositionLocalProvider(LocalGlassThemeConfig provides nowPlayingGlassConfig) {

@@ -87,8 +87,13 @@ fun NowPlayingNeonWaveform(
     val livePosState = playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
     val livePositionMs = (livePosState?.value ?: positionMs).coerceIn(0L, duration)
 
-    val fallbackTop = remember(BentoPrimary) { Color(0xFF4C8CE6) }
-    val fallbackBottom = remember(BentoAccentPinkText) { Color(0xFFF6667E) }
+    val glassConfig = com.example.ui.theme.LocalGlassThemeConfig.current
+    val baseBg = BentoBackground
+    val primaryThemeColor = BentoPrimary
+    val isDarkTheme = baseBg.luminance() < 0.5f
+
+    val fallbackTop = primaryThemeColor
+    val fallbackBottom = glassConfig.secondaryTintColor
 
     var gradientPair by remember(song.id, song.artworkUri) {
         mutableStateOf(fallbackTop to fallbackBottom)
@@ -100,22 +105,49 @@ fun NowPlayingNeonWaveform(
         }
     }
 
+    val harmonizedTopAccent = remember(gradientPair.first, primaryThemeColor) {
+        androidx.compose.ui.graphics.lerp(gradientPair.first, primaryThemeColor, 0.50f)
+    }
+    val harmonizedBottomAccent = remember(gradientPair.second, glassConfig.secondaryTintColor, primaryThemeColor) {
+        androidx.compose.ui.graphics.lerp(
+            androidx.compose.ui.graphics.lerp(gradientPair.second, glassConfig.secondaryTintColor, 0.40f),
+            primaryThemeColor,
+            0.25f
+        )
+    }
+
+    val targetTopBg = remember(baseBg, harmonizedTopAccent, isDarkTheme) {
+        androidx.compose.ui.graphics.lerp(baseBg, harmonizedTopAccent, if (isDarkTheme) 0.46f else 0.52f)
+    }
+    val targetMidBg = remember(baseBg, harmonizedTopAccent, harmonizedBottomAccent, isDarkTheme) {
+        val midAccent = androidx.compose.ui.graphics.lerp(harmonizedTopAccent, harmonizedBottomAccent, 0.52f)
+        androidx.compose.ui.graphics.lerp(baseBg, midAccent, if (isDarkTheme) 0.30f else 0.36f)
+    }
+    val targetBottomBg = remember(baseBg, harmonizedBottomAccent, isDarkTheme) {
+        androidx.compose.ui.graphics.lerp(baseBg, harmonizedBottomAccent, if (isDarkTheme) 0.18f else 0.24f)
+    }
+
     val topBgColor by animateColorAsState(
-        targetValue = gradientPair.first,
+        targetValue = targetTopBg,
         animationSpec = tween(550),
         label = "neon_top_gradient"
     )
+    val midBgColor by animateColorAsState(
+        targetValue = targetMidBg,
+        animationSpec = tween(550),
+        label = "neon_mid_gradient"
+    )
     val bottomBgColor by animateColorAsState(
-        targetValue = gradientPair.second,
+        targetValue = targetBottomBg,
         animationSpec = tween(550),
         label = "neon_bottom_gradient"
     )
 
-    // Ensure crisp text & icon legibility on both luminous pastel gradients and deeper dark covers
+    // Ensure crisp text & icon legibility on both luminous light gradients and rich dark gradients
     val bottomLuminance = bottomBgColor.luminance()
-    val primaryInk = if (bottomLuminance > 0.34f) Color(0xFF0E0F14) else Color.White
-    val secondaryInk = primaryInk.copy(alpha = 0.65f)
-    val topBarInk = if (topBgColor.luminance() > 0.42f) Color(0xFF0E0F14) else Color.White
+    val primaryInk = if (bottomLuminance > 0.38f) Color(0xFF0E0F14) else Color.White
+    val secondaryInk = primaryInk.copy(alpha = 0.68f)
+    val topBarInk = if (topBgColor.luminance() > 0.44f) Color(0xFF0E0F14) else Color.White
 
     var isDraggingSeek by remember(song.id) { mutableStateOf(false) }
     var dragFraction by remember(song.id) { mutableFloatStateOf(0f) }
@@ -136,11 +168,13 @@ fun NowPlayingNeonWaveform(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .background(baseBg)
             .background(
                 Brush.verticalGradient(
                     0.0f to topBgColor,
-                    0.46f to androidx.compose.ui.graphics.lerp(topBgColor, bottomBgColor, 0.48f),
-                    1.0f to bottomBgColor
+                    0.46f to midBgColor,
+                    0.82f to bottomBgColor,
+                    1.0f to androidx.compose.ui.graphics.lerp(baseBg, topBgColor, 0.22f)
                 )
             )
     ) {
@@ -228,7 +262,7 @@ fun NowPlayingNeonWaveform(
                     durationMs = duration,
                     isPlaying = playbackState.isPlaying,
                     style = waveformStyle,
-                    accentColor = primaryInk,
+                    accentColor = harmonizedTopAccent,
                     onSeekTo = onSeekTo,
                     playbackPositionFlow = playbackPositionFlow,
                     modifier = Modifier
@@ -316,7 +350,7 @@ fun NowPlayingNeonWaveform(
                     Icon(
                         imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                         contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
-                        tint = if (isShuffleActive) primaryInk else primaryInk.copy(alpha = 0.42f),
+                        tint = if (isShuffleActive) harmonizedTopAccent else primaryInk.copy(alpha = 0.48f),
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -376,7 +410,7 @@ fun NowPlayingNeonWaveform(
                     Icon(
                         imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "Favorite",
-                        tint = primaryInk,
+                        tint = if (song.isFavorite) harmonizedTopAccent else primaryInk,
                         modifier = Modifier.size(23.dp)
                     )
                 }
@@ -386,7 +420,7 @@ fun NowPlayingNeonWaveform(
             if (showVolumeBar) {
                 NowPlayingVolumeBar(
                     inkColor = primaryInk,
-                    accentColor = primaryInk,
+                    accentColor = harmonizedTopAccent,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
@@ -450,7 +484,7 @@ fun NowPlayingNeonWaveform(
                             Icon(
                                 imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                                 contentDescription = "Repeat",
-                                tint = if (isRepeatActive) primaryInk else primaryInk.copy(alpha = 0.45f),
+                                tint = if (isRepeatActive) harmonizedTopAccent else primaryInk.copy(alpha = 0.48f),
                                 modifier = Modifier.size(18.dp)
                             )
                         }

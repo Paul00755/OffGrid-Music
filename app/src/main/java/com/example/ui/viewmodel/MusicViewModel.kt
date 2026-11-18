@@ -912,9 +912,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val shouldExtractFlow = kotlinx.coroutines.flow.combine(
                 isDynamicArtworkTheme,
                 isGradientEffect,
-                isGlassEffect
-            ) { isDynamic, isGradient, isGlass ->
-                isDynamic || isGradient || isGlass
+                isGlassEffect,
+                nowPlayingLayout,
+                homeScreenLayout
+            ) { isDynamic, isGradient, isGlass, npLayout, homeLayout ->
+                isDynamic || isGradient || isGlass ||
+                    npLayout.equals("NEON_WAVEFORM", ignoreCase = true) ||
+                    homeLayout.equals("STUDIO_DASHBOARD", ignoreCase = true)
             }.distinctUntilChanged()
 
             val targetSongWithArtSignalFlow = targetSongFlow.flatMapLatest { song ->

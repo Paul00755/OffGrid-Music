@@ -164,7 +164,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v1_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v2_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -474,28 +474,38 @@ object ArtworkColorExtractor {
             val topCrop = Bitmap.createBitmap(scaled, 0, 0, w, halfH)
             val bottomCrop = Bitmap.createBitmap(scaled, 0, h - halfH, w, halfH)
 
-            val topColor = findProminentColor(topCrop) ?: findProminentColor(scaled) ?: return null
-            var bottomColor = findProminentColor(bottomCrop) ?: topColor
+            // Always anchor topColor to the whole-cover prominent color so Home screen and
+            // Now Playing screen share the exact same primary hue for every song.
+            val primaryColor = findProminentColor(scaled) ?: findProminentColor(topCrop) ?: return null
+            val rawBottomColor = findProminentColor(bottomCrop) ?: primaryColor
 
             topCrop.recycle()
             bottomCrop.recycle()
 
-            // If top & bottom hues are nearly indistinguishable, derive a harmonious secondary hue shift
             val topHsv = FloatArray(3)
             val botHsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(topColor.toArgb(), topHsv)
-            android.graphics.Color.colorToHSV(bottomColor.toArgb(), botHsv)
+            android.graphics.Color.colorToHSV(primaryColor.toArgb(), topHsv)
+            android.graphics.Color.colorToHSV(rawBottomColor.toArgb(), botHsv)
 
             val rawDiff = kotlin.math.abs(topHsv[0] - botHsv[0])
             val hueDiff = minOf(rawDiff, 360f - rawDiff)
-            if (hueDiff < 20f) {
-                botHsv[0] = (topHsv[0] + 34f) % 360f
-                botHsv[1] = (botHsv[1] * 1.08f).coerceIn(0.38f, 0.72f)
-                botHsv[2] = (botHsv[2] * 0.90f).coerceIn(0.68f, 0.92f)
-                bottomColor = Color(android.graphics.Color.HSVToColor(botHsv))
+            val isTopWarmGoldOrAmber = topHsv[0] in 15f..58f
+            val isBotMuddyYellowGreen = botHsv[0] in 58f..102f
+
+            val bottomColor = if (hueDiff < 24f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
+                // Derive a rich, deeper tonal companion in the same color family (never shifting warm gold into pea-green)
+                val hueShift = if (topHsv[0] in 12f..95f) -14f else 18f
+                botHsv[0] = (topHsv[0] + hueShift + 360f) % 360f
+                botHsv[1] = (topHsv[1] * 1.10f).coerceIn(0.38f, 0.72f)
+                botHsv[2] = (topHsv[2] * 0.74f).coerceIn(0.54f, 0.74f)
+                Color(android.graphics.Color.HSVToColor(botHsv))
+            } else {
+                botHsv[1] = botHsv[1].coerceIn(0.38f, 0.72f)
+                botHsv[2] = (botHsv[2] * 0.84f).coerceIn(0.56f, 0.82f)
+                Color(android.graphics.Color.HSVToColor(botHsv))
             }
 
-            topColor to bottomColor
+            primaryColor to bottomColor
         } catch (_: Throwable) {
             findProminentColor(bitmap)?.let { it to it }
         } finally {

@@ -49,34 +49,34 @@ fun GlassGradientBackdrop(
 ) {
     val glassConfig = LocalGlassThemeConfig.current
     val baseBg = glassConfig.solidBackground
-    if (!glassConfig.gradientEnabled) {
-        Box(modifier = modifier.fillMaxSize().background(baseBg))
-        return
-    }
-
     val primaryTint = tintOverride ?: glassConfig.tintColor
     val secondaryTint = secondaryOverride ?: glassConfig.secondaryTintColor
     val isDark = glassConfig.isDark
+    val gradientActive = glassConfig.gradientEnabled
 
-    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark) {
-        val topGlow = lerp(baseBg, primaryTint, if (isDark) 0.34f else 0.20f)
-        val midGlow = lerp(baseBg, secondaryTint, if (isDark) 0.22f else 0.14f)
-        val lowerGlow = lerp(baseBg, primaryTint, if (isDark) 0.18f else 0.12f)
+    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark, gradientActive) {
+        val topWeight = if (gradientActive) (if (isDark) 0.40f else 0.24f) else (if (isDark) 0.28f else 0.16f)
+        val midWeight = if (gradientActive) (if (isDark) 0.24f else 0.15f) else (if (isDark) 0.16f else 0.10f)
+        val lowWeight = if (gradientActive) (if (isDark) 0.16f else 0.10f) else (if (isDark) 0.10f else 0.06f)
+        val topGlow = lerp(baseBg, primaryTint, topWeight)
+        val midGlow = lerp(baseBg, secondaryTint, midWeight)
+        val lowerGlow = lerp(baseBg, primaryTint, lowWeight)
         Brush.verticalGradient(
             0.0f to topGlow,
-            0.38f to midGlow,
-            0.72f to baseBg,
+            0.42f to midGlow,
+            0.76f to baseBg,
             1.0f to lowerGlow
         )
     }
 
-    val diagonalAurora = remember(primaryTint, secondaryTint, isDark) {
+    val diagonalAurora = remember(primaryTint, secondaryTint, isDark, gradientActive) {
+        val alphaScale = if (gradientActive) 1.0f else 0.65f
         Brush.linearGradient(
             colors = listOf(
-                primaryTint.copy(alpha = if (isDark) 0.22f else 0.14f),
+                primaryTint.copy(alpha = (if (isDark) 0.22f else 0.14f) * alphaScale),
                 Color.Transparent,
-                secondaryTint.copy(alpha = if (isDark) 0.18f else 0.11f),
-                primaryTint.copy(alpha = if (isDark) 0.15f else 0.09f)
+                secondaryTint.copy(alpha = (if (isDark) 0.18f else 0.11f) * alphaScale),
+                primaryTint.copy(alpha = (if (isDark) 0.14f else 0.09f) * alphaScale)
             ),
             start = Offset(0f, 0f),
             end = Offset(1400f, 2400f)
@@ -610,9 +610,13 @@ fun MyApplicationTheme(
         }
     }
 
-    val glassTintColor = dynamicArtworkColor ?: primaryColor
+    val glassTintColor = if (dynamicArtworkColor != null) {
+        lerp(primaryColor, dynamicArtworkColor, 0.65f)
+    } else {
+        primaryColor
+    }
     val glassSecondaryTint = if (dynamicArtworkColor != null) {
-        lerp(dynamicArtworkColor, primaryColor, 0.25f)
+        lerp(baseColorScheme.secondary, dynamicArtworkColor, 0.55f)
     } else {
         lerp(primaryColor, baseColorScheme.secondary, 0.35f)
     }
