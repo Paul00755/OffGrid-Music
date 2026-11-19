@@ -164,7 +164,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v3_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -474,21 +474,24 @@ object ArtworkColorExtractor {
             val topCrop = Bitmap.createBitmap(scaled, 0, 0, w, halfH)
             val bottomCrop = Bitmap.createBitmap(scaled, 0, h - halfH, w, halfH)
 
-            // Always anchor topColor to the whole-cover prominent color so Home screen and
-            // Now Playing screen share the exact same primary hue for every song.
-            val primaryColor = findProminentColor(scaled) ?: findProminentColor(topCrop) ?: return null
-            val rawBottomColor = findProminentColor(bottomCrop) ?: primaryColor
+            // Sample upper region for the top gradient color and lower region for the bottom color
+            // (matching the reference Neon Studio two-tone pastel gradient from top sky to bottom glow).
+            val rawTopColor = findProminentColor(topCrop) ?: findProminentColor(scaled) ?: return null
+            val rawBottomColor = findProminentColor(bottomCrop) ?: findProminentColor(scaled) ?: rawTopColor
 
             topCrop.recycle()
             bottomCrop.recycle()
 
             val topHsv = FloatArray(3)
             val botHsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(primaryColor.toArgb(), topHsv)
+            android.graphics.Color.colorToHSV(rawTopColor.toArgb(), topHsv)
             android.graphics.Color.colorToHSV(rawBottomColor.toArgb(), botHsv)
 
-            topHsv[1] = topHsv[1].coerceIn(0.24f, 0.40f)
-            topHsv[2] = topHsv[2].coerceIn(0.91f, 0.97f)
+            if (topHsv[0] in 20f..48f) {
+                topHsv[0] = (topHsv[0] - 6f).coerceAtLeast(12f)
+            }
+            topHsv[1] = topHsv[1].coerceIn(0.36f, 0.56f)
+            topHsv[2] = topHsv[2].coerceIn(0.84f, 0.94f)
             val softTopColor = Color(android.graphics.Color.HSVToColor(topHsv))
 
             val rawDiff = kotlin.math.abs(topHsv[0] - botHsv[0])
@@ -496,16 +499,19 @@ object ArtworkColorExtractor {
             val isTopWarmGoldOrAmber = topHsv[0] in 15f..58f
             val isBotMuddyYellowGreen = botHsv[0] in 58f..102f
 
-            val bottomColor = if (hueDiff < 24f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
-                // Derive a soft, airy pastel companion in a harmonious adjacent hue
-                val hueShift = if (topHsv[0] in 12f..95f) -18f else 22f
+            val bottomColor = if (hueDiff < 26f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
+                // Derive a distinct, silky pastel companion hue so top and bottom always form a lush two-tone gradient
+                val hueShift = if (topHsv[0] in 12f..95f) -28f else 34f
                 botHsv[0] = (topHsv[0] + hueShift + 360f) % 360f
-                botHsv[1] = (topHsv[1] * 1.06f).coerceIn(0.26f, 0.44f)
-                botHsv[2] = (topHsv[2] * 0.96f).coerceIn(0.87f, 0.94f)
+                botHsv[1] = (topHsv[1] * 1.08f).coerceIn(0.38f, 0.62f)
+                botHsv[2] = (topHsv[2] * 0.98f).coerceIn(0.86f, 0.95f)
                 Color(android.graphics.Color.HSVToColor(botHsv))
             } else {
-                botHsv[1] = botHsv[1].coerceIn(0.26f, 0.44f)
-                botHsv[2] = botHsv[2].coerceIn(0.87f, 0.94f)
+                if (botHsv[0] in 20f..48f) {
+                    botHsv[0] = (botHsv[0] - 6f).coerceAtLeast(12f)
+                }
+                botHsv[1] = botHsv[1].coerceIn(0.38f, 0.62f)
+                botHsv[2] = botHsv[2].coerceIn(0.86f, 0.95f)
                 Color(android.graphics.Color.HSVToColor(botHsv))
             }
 

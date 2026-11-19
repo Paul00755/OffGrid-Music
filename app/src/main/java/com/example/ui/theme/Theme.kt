@@ -100,9 +100,20 @@ fun Color.toPastelCompanionHue(): Color {
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
+fun Color.toReadableLightAccent(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[0] in 20f..48f) {
+        hsv[0] = (hsv[0] - 6f).coerceAtLeast(14f)
+    }
+    hsv[1] = hsv[1].coerceIn(0.46f, 0.64f)
+    hsv[2] = hsv[2].coerceIn(0.56f, 0.72f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
 /**
  * Full-screen production-grade ambient Pastel & Frosted Glass gradient backdrop.
- * Reflects the song's artwork color or active theme palette in subtle, light pastel tones.
+ * Uses soft pastel colors for the gradient effect while respecting Dark, AMOLED, and Light modes.
  */
 @Composable
 fun GlassGradientBackdrop(
@@ -114,37 +125,54 @@ fun GlassGradientBackdrop(
     val baseBg = glassConfig.solidBackground
     val primaryTint = tintOverride ?: glassConfig.tintColor
     val secondaryTint = secondaryOverride ?: glassConfig.secondaryTintColor
+    val isDark = glassConfig.isDark
     val gradientActive = glassConfig.gradientEnabled
 
-    val verticalWash = remember(baseBg, primaryTint, secondaryTint, gradientActive) {
-        val topGlow = primaryTint.toPastelBackground(
-            saturationTarget = if (gradientActive) 0.24f else 0.18f,
-            valueTarget = 0.94f
-        )
-        val midGlow = secondaryTint.toPastelBackground(
-            saturationTarget = if (gradientActive) 0.18f else 0.14f,
-            valueTarget = 0.96f
-        )
-        val lowerGlow = primaryTint.toPastelBackground(
-            saturationTarget = if (gradientActive) 0.14f else 0.10f,
-            valueTarget = 0.975f
-        )
-        Brush.verticalGradient(
-            0.0f to topGlow,
-            0.44f to midGlow,
-            0.78f to baseBg,
-            1.0f to lowerGlow
-        )
+    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark, gradientActive) {
+        val pastelTop = primaryTint.toPastelAccent()
+        val pastelMid = secondaryTint.toPastelCompanionHue()
+        if (isDark) {
+            val topAlpha = if (gradientActive) 0.25f else 0.14f
+            val midAlpha = if (gradientActive) 0.16f else 0.09f
+            val lowAlpha = if (gradientActive) 0.12f else 0.06f
+            Brush.verticalGradient(
+                0.0f to pastelTop.copy(alpha = topAlpha),
+                0.42f to pastelMid.copy(alpha = midAlpha),
+                0.76f to Color.Transparent,
+                1.0f to pastelTop.copy(alpha = lowAlpha)
+            )
+        } else {
+            val topGlow = primaryTint.toPastelBackground(
+                saturationTarget = if (gradientActive) 0.24f else 0.18f,
+                valueTarget = 0.94f
+            )
+            val midGlow = secondaryTint.toPastelBackground(
+                saturationTarget = if (gradientActive) 0.18f else 0.14f,
+                valueTarget = 0.96f
+            )
+            val lowerGlow = primaryTint.toPastelBackground(
+                saturationTarget = if (gradientActive) 0.14f else 0.10f,
+                valueTarget = 0.975f
+            )
+            Brush.verticalGradient(
+                0.0f to topGlow,
+                0.44f to midGlow,
+                0.78f to baseBg,
+                1.0f to lowerGlow
+            )
+        }
     }
 
-    val diagonalAurora = remember(primaryTint, secondaryTint, gradientActive) {
-        val alphaScale = if (gradientActive) 1.0f else 0.7f
+    val diagonalAurora = remember(primaryTint, secondaryTint, isDark, gradientActive) {
+        val alphaScale = if (gradientActive) 1.0f else 0.65f
+        val topPastel = primaryTint.toPastelAccent()
+        val secPastel = secondaryTint.toPastelCompanionHue()
         Brush.linearGradient(
             colors = listOf(
-                primaryTint.toPastelAccent().copy(alpha = 0.16f * alphaScale),
+                topPastel.copy(alpha = (if (isDark) 0.18f else 0.15f) * alphaScale),
                 Color.Transparent,
-                secondaryTint.toPastelAccent().copy(alpha = 0.13f * alphaScale),
-                primaryTint.toPastelAccent().copy(alpha = 0.10f * alphaScale)
+                secPastel.copy(alpha = (if (isDark) 0.14f else 0.12f) * alphaScale),
+                topPastel.copy(alpha = (if (isDark) 0.11f else 0.09f) * alphaScale)
             ),
             start = Offset(0f, 0f),
             end = Offset(1400f, 2400f)
@@ -690,34 +718,53 @@ fun MyApplicationTheme(
         rawTintSeed.toPastelCompanionHue()
     }
 
-    // Harmonize all theme surfaces, backgrounds, variants, and outlines into a subtle, light pastel palette
-    // so both Dynamic Artwork Theme and Home/Player screens radiate airy pastel colors rather than heavy dark colors.
-    val harmonizedColorScheme = remember(baseColorScheme, glassTintColor, glassSecondaryTint) {
-        val pastelBg = glassTintColor.toPastelBackground(saturationTarget = 0.16f, valueTarget = 0.965f)
-        val pastelSurface = glassTintColor.toPastelSurface()
-        val pastelVariant = glassSecondaryTint.toPastelSurfaceVariant()
-        val pastelOutline = glassTintColor.toPastelBackground(saturationTarget = 0.24f, valueTarget = 0.86f)
-        val primaryInk = Color(0xFF161824)
-        val secondaryInk = Color(0xFF52566A)
-        val onPastelAccent = if (glassTintColor.luminance() > 0.40f) Color(0xFF141622) else Color.White
+    // Harmonize surfaces, variants, and outlines with soft pastel accents while respecting Dark, AMOLED, and Light modes.
+    val harmonizedColorScheme = remember(baseColorScheme, glassTintColor, glassSecondaryTint, isDark, isExtraDark) {
+        if (isDark) {
+            val surfaceBlend = if (isExtraDark) 0.05f else 0.08f
+            val variantBlend = if (isExtraDark) 0.11f else 0.15f
+            val outlineBlend = 0.28f
+            val onPastelPrimary = if (glassTintColor.luminance() > 0.40f) Color(0xFF10121A) else Color.White
+            baseColorScheme.copy(
+                primary = glassTintColor,
+                onPrimary = onPastelPrimary,
+                primaryContainer = glassTintColor.copy(alpha = 0.22f),
+                onPrimaryContainer = glassTintColor,
+                secondary = glassSecondaryTint,
+                surface = lerp(baseColorScheme.surface, glassTintColor, surfaceBlend),
+                surfaceVariant = lerp(baseColorScheme.surfaceVariant, glassSecondaryTint, variantBlend),
+                outline = lerp(baseColorScheme.outline, glassTintColor, outlineBlend),
+                onBackground = Color(0xFFF8FAFC),
+                onSurface = Color(0xFFF8FAFC),
+                onSurfaceVariant = Color(0xFFD0D5E6)
+            )
+        } else {
+            val pastelBg = glassTintColor.toPastelBackground(saturationTarget = 0.15f, valueTarget = 0.965f)
+            val pastelSurface = glassTintColor.toPastelSurface()
+            val pastelVariant = glassSecondaryTint.toPastelSurfaceVariant()
+            val pastelOutline = glassTintColor.toPastelBackground(saturationTarget = 0.24f, valueTarget = 0.85f)
+            val readableAccent = glassTintColor.toReadableLightAccent()
+            val primaryInk = Color(0xFF141622)
+            val secondaryInk = Color(0xFF42465A)
 
-        lightColorScheme(
-            primary = glassTintColor,
-            onPrimary = onPastelAccent,
-            primaryContainer = glassTintColor.copy(alpha = 0.22f),
-            onPrimaryContainer = primaryInk,
-            secondary = glassSecondaryTint,
-            onSecondary = primaryInk,
-            secondaryContainer = glassSecondaryTint.copy(alpha = 0.22f),
-            onSecondaryContainer = primaryInk,
-            background = pastelBg,
-            onBackground = primaryInk,
-            surface = pastelSurface,
-            onSurface = primaryInk,
-            surfaceVariant = pastelVariant,
-            onSurfaceVariant = secondaryInk,
-            outline = pastelOutline
-        )
+            baseColorScheme.copy(
+                primary = readableAccent,
+                onPrimary = Color.White,
+                primaryContainer = glassTintColor.copy(alpha = 0.28f),
+                onPrimaryContainer = primaryInk,
+                secondary = glassSecondaryTint.toReadableLightAccent(),
+                onSecondary = Color.White,
+                secondaryContainer = glassSecondaryTint.copy(alpha = 0.25f),
+                onSecondaryContainer = primaryInk,
+                background = pastelBg,
+                onBackground = primaryInk,
+                surface = pastelSurface,
+                onSurface = primaryInk,
+                surfaceVariant = pastelVariant,
+                onSurfaceVariant = secondaryInk,
+                outline = pastelOutline
+            )
+        }
     }
 
     val anyEffectEnabled = isGradientEffect || isGlassEffect
@@ -727,6 +774,7 @@ fun MyApplicationTheme(
         isGlassEffect,
         glassTintColor,
         glassSecondaryTint,
+        isDark,
         harmonizedColorScheme.background,
         harmonizedColorScheme.surface,
         harmonizedColorScheme.surfaceVariant
@@ -737,7 +785,7 @@ fun MyApplicationTheme(
             glassEnabled = isGlassEffect,
             tintColor = glassTintColor,
             secondaryTintColor = glassSecondaryTint,
-            isDark = false,
+            isDark = isDark,
             solidBackground = harmonizedColorScheme.background,
             solidSurface = harmonizedColorScheme.surface,
             solidSurfaceVariant = harmonizedColorScheme.surfaceVariant

@@ -49,8 +49,9 @@ fun NowPlayingWaveformVisualizer(
 ) {
     val context = LocalContext.current
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val waveformColor = if (isDarkTheme) Color.White else Color.Black
-    val inactiveTrackColor = waveformColor.copy(alpha = 0.22f)
+    val defaultInk = if (isDarkTheme) Color.White else Color(0xFF141622)
+    val waveformColor = if (accentColor != BentoPrimary) accentColor else defaultInk
+    val inactiveTrackColor = waveformColor.copy(alpha = 0.24f)
 
     val abLoopState by SonicStudioEngine.abLoopState.collectAsStateWithLifecycle()
     val effectiveLoopStartMs = loopStartMs ?: if (trackId != null && abLoopState.songId == trackId) abLoopState.startMs else null

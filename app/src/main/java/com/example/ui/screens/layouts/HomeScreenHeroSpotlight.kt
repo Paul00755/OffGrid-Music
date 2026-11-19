@@ -124,9 +124,8 @@ fun HomeScreenHeroSpotlight(
                         Surface(
                             onClick = onOpenDrawer,
                             shape = RoundedCornerShape(16.dp),
-                            color = BentoCardSurface.copy(alpha = 0.92f),
+                            color = BentoCardSurface,
                             border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.38f)),
-                            shadowElevation = 2.dp,
                             modifier = Modifier.size(44.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -150,7 +149,7 @@ fun HomeScreenHeroSpotlight(
                                     text = if (allSongs.isEmpty()) "OffGrid Music" else "✦ SOUNDSTAGE",
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = BentoTextPrimary.copy(alpha = 0.82f),
+                                    color = BentoTextPrimary.copy(alpha = 0.88f),
                                     letterSpacing = 1.1.sp,
                                     maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -169,9 +168,8 @@ fun HomeScreenHeroSpotlight(
 
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = BentoCardSurface.copy(alpha = 0.90f),
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
-                        shadowElevation = 2.dp
+                        color = BentoCardSurface,
+                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f))
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
