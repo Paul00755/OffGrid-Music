@@ -85,13 +85,15 @@ class NowPlayingAndLyricsLayoutsTest {
     )
 
     @Test
-    fun testLyricsLayoutEnumHasThreeOptionsAndClassicDefaultFallback() {
+    fun testLyricsLayoutEnumHasThreeOptionsAndFluidGlowDefaultFallback() {
         assertEquals(3, LyricsLayout.entries.size)
-        assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId(null))
-        assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId("UNKNOWN_STYLE"))
-        assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId("KARAOKE_SPOTLIGHT"))
+        assertEquals(LyricsLayout.FLUID_GLOW, LyricsLayout.fromId(null))
+        assertEquals(LyricsLayout.FLUID_GLOW, LyricsLayout.fromId("UNKNOWN_STYLE"))
+        assertEquals(LyricsLayout.FLUID_GLOW, LyricsLayout.fromId("KARAOKE_SPOTLIGHT"))
+        assertEquals(LyricsLayout.CLASSIC_DEFAULT, LyricsLayout.fromId("classic_default"))
         assertEquals(LyricsLayout.FLUID_GLOW, LyricsLayout.fromId("fluid_glow"))
         assertEquals(LyricsLayout.EDITORIAL_TIMELINE, LyricsLayout.fromId("EDITORIAL_TIMELINE"))
+        assertEquals(NowPlayingLayout.NEON_WAVEFORM, NowPlayingLayout.fromId(null))
     }
 
     @Test
@@ -144,17 +146,19 @@ class NowPlayingAndLyricsLayoutsTest {
     @Test
     fun testPreferencesAndCloudSyncPersistLyricsLayoutVolumeBarAndAdvancedInfo() = runBlocking {
         val repo = UserPreferencesRepository.getInstance(context)
-        assertEquals("CLASSIC_DEFAULT", repo.lyricsLayout.first())
+        assertEquals("FLUID_GLOW", repo.lyricsLayout.first())
+        assertEquals("NEON_WAVEFORM", repo.nowPlayingLayout.first())
+        assertEquals("SNAKE", repo.waveformStyle.first())
         assertFalse(repo.showNowPlayingVolumeBar.first())
         assertFalse(repo.showAdvancedSongInfo.first())
 
-        repo.setLyricsLayout(LyricsLayout.FLUID_GLOW.id)
+        repo.setLyricsLayout(LyricsLayout.CLASSIC_DEFAULT.id)
         repo.setShowNowPlayingVolumeBar(true)
         repo.setShowAdvancedSongInfo(true)
 
         UserPreferencesRepository.resetInstanceForTesting()
         val reloaded = UserPreferencesRepository.getInstance(context)
-        assertEquals("FLUID_GLOW", reloaded.lyricsLayout.first())
+        assertEquals("CLASSIC_DEFAULT", reloaded.lyricsLayout.first())
         assertTrue(reloaded.showNowPlayingVolumeBar.first())
         assertTrue(reloaded.showAdvancedSongInfo.first())
 

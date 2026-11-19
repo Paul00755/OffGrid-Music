@@ -30,10 +30,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1483,30 +1485,45 @@ private fun ListeningActivityHeatmapCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
+            val isDarkHeatmap = BentoBackground.luminance() < 0.5f
+            val emptyCellColor = if (isDarkHeatmap) {
+                Color(0xFF1E2230)
+            } else {
+                BentoTextPrimary.copy(alpha = 0.08f)
+            }
+            val tier1Color = accentColor.copy(alpha = if (isDarkHeatmap) 0.30f else 0.30f)
+            val tier2Color = accentColor.copy(alpha = if (isDarkHeatmap) 0.52f else 0.54f)
+            val tier3Color = accentColor.copy(alpha = if (isDarkHeatmap) 0.76f else 0.78f)
+            val selectedCellBorderColor = BentoTextPrimary
+            val compactLabelStyle = LocalTextStyle.current.copy(
+                platformStyle = PlatformTextStyle(includeFontPadding = false)
+            )
+
             // Selected Day Info Pill
             selectedDay?.let { day ->
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = BentoCardDarkPurple,
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isDarkHeatmap) BentoCardDarkPurple else BentoPrimary.copy(alpha = 0.11f),
+                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = if (isDarkHeatmap) 0.25f else 0.28f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = if (day.isToday) "Today • ${day.fullDate}" else "${day.dayLabel} • ${day.fullDate}",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = BentoTextPrimary
                         )
                         Text(
                             text = "${formatListeningDuration(day.durationMs)} (${day.trackCount} track${if (day.trackCount != 1) "s" else ""})",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = accentColor
                         )
                     }
@@ -1518,10 +1535,11 @@ private fun ListeningActivityHeatmapCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top
             ) {
-                // Day-of-week labels column (Mon, Wed, Fri) matching reference heatmap
+                // Day-of-week labels column (Mon, Wed, Fri) with includeFontPadding=false so text never clips
                 Column(
                     modifier = Modifier
-                        .padding(top = 18.dp, end = 6.dp),
+                        .width(26.dp)
+                        .padding(top = 18.dp, end = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     val dayLabels = listOf("Mon", "", "Wed", "", "Fri", "", "")
@@ -1530,13 +1548,17 @@ private fun ListeningActivityHeatmapCard(
                             modifier = Modifier.height(12.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
-                            Text(
-                                text = label,
-                                fontSize = 9.sp,
-                                color = BentoTextSecondary,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            if (label.isNotEmpty()) {
+                                Text(
+                                    text = label,
+                                    fontSize = 9.sp,
+                                    lineHeight = 10.sp,
+                                    style = compactLabelStyle,
+                                    color = BentoTextSecondary,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
@@ -1583,6 +1605,8 @@ private fun ListeningActivityHeatmapCard(
                                     Text(
                                         text = monthLabel,
                                         fontSize = 9.sp,
+                                        lineHeight = 10.sp,
+                                        style = compactLabelStyle,
                                         color = BentoTextSecondary,
                                         maxLines = 1,
                                         softWrap = false,
@@ -1595,10 +1619,6 @@ private fun ListeningActivityHeatmapCard(
 
                     Spacer(modifier = Modifier.height(3.dp))
 
-                    val emptyCellColor = Color(0xFF1E2230)
-                    val tier1Color = accentColor.copy(alpha = 0.30f)
-                    val tier2Color = accentColor.copy(alpha = 0.52f)
-                    val tier3Color = accentColor.copy(alpha = 0.76f)
                     val selectedDayStartMs = selectedDay?.dayStartMs
                     val density = LocalDensity.current
                     val cellPx = with(density) { 12.dp.toPx() }
@@ -1627,7 +1647,7 @@ private fun ListeningActivityHeatmapCard(
                         val stepPx = cellPx + gapPx
                         val corner = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx(), 3.dp.toPx())
                         val cellSize = androidx.compose.ui.geometry.Size(cellPx, cellPx)
-                        val borderStroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                        val borderStroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.4.dp.toPx())
 
                         for (col in weeksData.indices) {
                             val week = weeksData[col]
@@ -1655,7 +1675,7 @@ private fun ListeningActivityHeatmapCard(
                                 )
                                 if (selectedDayStartMs == dayStat.dayStartMs) {
                                     drawRoundRect(
-                                        color = Color.White,
+                                        color = selectedCellBorderColor,
                                         topLeft = topLeft,
                                         size = cellSize,
                                         cornerRadius = corner,
@@ -1670,7 +1690,7 @@ private fun ListeningActivityHeatmapCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Bottom-right "Less [][][][][] More" legend matching the reference image
+            // Bottom-right "Less [][][][][] More" legend using theme-aware heatmap ramp
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -1683,10 +1703,10 @@ private fun ListeningActivityHeatmapCard(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 val legendColors = listOf(
-                    Color(0xFF1E2230),
-                    accentColor.copy(alpha = 0.30f),
-                    accentColor.copy(alpha = 0.52f),
-                    accentColor.copy(alpha = 0.76f),
+                    emptyCellColor,
+                    tier1Color,
+                    tier2Color,
+                    tier3Color,
                     accentColor
                 )
                 legendColors.forEach { color ->

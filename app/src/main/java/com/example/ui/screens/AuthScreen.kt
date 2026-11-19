@@ -4,6 +4,7 @@ import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,8 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.auth.AuthUiState
 import com.example.auth.PasswordResetUiState
 import com.example.ui.theme.*
@@ -131,19 +135,18 @@ fun AuthScreen(
 
             // App Brand Header
             Surface(
-                shape = CircleShape,
-                color = BentoPrimary.copy(alpha = 0.15f),
-                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(18.dp),
+                color = Color.Transparent,
+                border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.40f)),
+                shadowElevation = 4.dp,
                 modifier = Modifier.size(72.dp)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.GraphicEq,
-                        contentDescription = "OffGrid Logo",
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(38.dp)
-                    )
-                }
+                Image(
+                    painter = painterResource(id = R.drawable.app_logo),
+                    contentDescription = "OffGrid Logo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))

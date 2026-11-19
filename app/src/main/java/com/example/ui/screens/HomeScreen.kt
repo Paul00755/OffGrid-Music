@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -24,12 +25,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.AlbumStat
 import com.example.data.model.ArtistStat
 import com.example.data.model.Playlist
@@ -513,18 +517,17 @@ fun HomeScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
-                                shape = CircleShape,
-                                color = BentoPrimary.copy(alpha = 0.18f),
-                                modifier = Modifier.size(30.dp)
+                                shape = RoundedCornerShape(9.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                modifier = Modifier.size(32.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = null,
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                                Image(
+                                    painter = painterResource(id = R.drawable.app_logo),
+                                    contentDescription = "OffGrid Music Logo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                             Spacer(modifier = Modifier.width(9.dp))
                             Text(

@@ -1084,7 +1084,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             preferences.setNowPlayingLayout(layoutId)
             val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
                 com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
-                com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "BARS"
+                com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "SNAKE"
                 com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
                 com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
             }

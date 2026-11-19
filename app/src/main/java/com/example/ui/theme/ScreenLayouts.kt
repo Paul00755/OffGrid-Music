@@ -87,7 +87,7 @@ enum class NowPlayingLayout(
 
     companion object {
         fun fromId(id: String?): NowPlayingLayout {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: MODERN_BENTO
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: NEON_WAVEFORM
         }
     }
 }
@@ -157,7 +157,7 @@ enum class LyricsLayout(
 
     companion object {
         fun fromId(id: String?): LyricsLayout {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: CLASSIC_DEFAULT
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: FLUID_GLOW
         }
     }
 }

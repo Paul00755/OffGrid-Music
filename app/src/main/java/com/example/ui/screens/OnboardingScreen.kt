@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,12 +26,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.FolderInfo
 import com.example.scanner.ScanProgress
 import com.example.ui.components.BentoCard
@@ -182,18 +186,18 @@ fun OnboardingScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(80.dp)
-                                        .clip(CircleShape)
-                                        .background(BentoPrimaryContainer),
-                                    contentAlignment = Alignment.Center
+                                Surface(
+                                    shape = RoundedCornerShape(22.dp),
+                                    color = Color.Transparent,
+                                    border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.45f)),
+                                    shadowElevation = 6.dp,
+                                    modifier = Modifier.size(86.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = null,
-                                        tint = BentoOnPrimaryContainer,
-                                        modifier = Modifier.size(40.dp)
+                                    Image(
+                                        painter = painterResource(id = R.drawable.app_logo),
+                                        contentDescription = "OffGrid Music Logo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
 

@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -269,6 +270,7 @@ fun StoryCalendarRangePickerDialog(
             dismissOnClickOutside = true
         )
     ) {
+        val isDarkCalendar = BentoBackground.luminance() < 0.5f
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
@@ -534,17 +536,19 @@ fun StoryCalendarRangePickerDialog(
                                     shape = RoundedCornerShape(9.dp),
                                     color = when {
                                         isSelectedMonth -> BentoPrimary
-                                        else -> Color.White.copy(alpha = 0.04f)
+                                        isDarkCalendar -> Color.White.copy(alpha = 0.05f)
+                                        else -> Color.White.copy(alpha = 0.72f)
                                     },
                                     border = BorderStroke(
                                         1.dp,
                                         when {
                                             isSelectedMonth -> BentoPrimary
-                                            else -> Color.White.copy(alpha = 0.07f)
+                                            isDarkCalendar -> Color.White.copy(alpha = 0.09f)
+                                            else -> BentoBorder.copy(alpha = 0.45f)
                                         }
                                     ),
                                     modifier = Modifier
-                                        .alpha(if (isFutureMonth) 0.32f else 1f)
+                                        .alpha(if (isFutureMonth) 0.38f else 1f)
                                         .clip(RoundedCornerShape(9.dp))
                                         .clickable(enabled = !isFutureMonth) {
                                             HapticUtils.performClickHaptic(context)
@@ -554,7 +558,7 @@ fun StoryCalendarRangePickerDialog(
                                     Text(
                                         text = monthLabel,
                                         fontSize = 11.5.sp,
-                                        fontWeight = if (isSelectedMonth) FontWeight.ExtraBold else FontWeight.Medium,
+                                        fontWeight = if (isSelectedMonth) FontWeight.ExtraBold else FontWeight.SemiBold,
                                         color = if (isSelectedMonth) BentoOnPrimary else BentoTextPrimary,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                     )
@@ -566,11 +570,11 @@ fun StoryCalendarRangePickerDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Calendar Grid Container
+                // Calendar Grid Container (theme-aware for both Light & Dark/AMOLED modes)
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF0E0B16),
-                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f)),
+                    color = if (isDarkCalendar) Color(0xFF0E0B16) else Color.White.copy(alpha = 0.84f),
+                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = if (isDarkCalendar) 0.5f else 0.55f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -726,10 +730,10 @@ fun StoryCalendarRangePickerDialog(
                                                         else -> FontWeight.Medium
                                                     },
                                                     color = when {
-                                                        !isAllowed -> BentoTextSecondary.copy(alpha = 0.24f)
+                                                        !isAllowed -> BentoTextSecondary.copy(alpha = if (isDarkCalendar) 0.26f else 0.36f)
                                                         isEndpoint -> BentoOnPrimary
                                                         isToday -> BentoPrimary
-                                                        isInRange -> Color.White
+                                                        isInRange -> BentoTextPrimary
                                                         else -> BentoTextPrimary
                                                     }
                                                 )

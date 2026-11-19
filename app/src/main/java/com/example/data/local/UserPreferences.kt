@@ -430,9 +430,9 @@ class UserPreferencesRepository(private val context: Context) {
             themeMode = effectiveThemeMode,
             uiTheme = prefs[PreferenceKeys.UI_THEME] ?: readStringCached("ui_theme", "MIDNIGHT_OBSIDIAN"),
             homeScreenLayout = prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] ?: readStringCached("home_screen_layout", "HERO_SPOTLIGHT"),
-            nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS"),
+            nowPlayingLayout = prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "NEON_WAVEFORM"),
             playlistsLayout = prefs[PreferenceKeys.PLAYLISTS_LAYOUT] ?: readStringCached("playlists_layout", "BENTO_GRID"),
-            lyricsLayout = prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "CLASSIC_DEFAULT"),
+            lyricsLayout = prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "FLUID_GLOW"),
             showNowPlayingVolumeBar = prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] ?: readBoolCached("show_now_playing_volume_bar", false),
             showAdvancedSongInfo = prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] ?: readBoolCached("show_advanced_song_info", false),
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
@@ -980,9 +980,9 @@ class UserPreferencesRepository(private val context: Context) {
     fun getHomeScreenLayoutSync(): String = readStringCached("home_screen_layout", "HERO_SPOTLIGHT")
 
     val nowPlayingLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "MINIMAL_GLASS")
+        prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] ?: readStringCached("now_playing_layout", "NEON_WAVEFORM")
     }
-    fun getNowPlayingLayoutSync(): String = readStringCached("now_playing_layout", "MINIMAL_GLASS")
+    fun getNowPlayingLayoutSync(): String = readStringCached("now_playing_layout", "NEON_WAVEFORM")
 
     val playlistsLayout: Flow<String> = safeData.map { prefs ->
         val explicitLocal = bootCachePrefs.getBoolean("pref_playlists_layout_explicit_v1", false)
@@ -998,9 +998,9 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val lyricsLayout: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "CLASSIC_DEFAULT")
+        prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "FLUID_GLOW")
     }
-    fun getLyricsLayoutSync(): String = readStringCached("lyrics_layout", "CLASSIC_DEFAULT")
+    fun getLyricsLayoutSync(): String = readStringCached("lyrics_layout", "FLUID_GLOW")
 
     val showNowPlayingVolumeBar: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] ?: readBoolCached("show_now_playing_volume_bar", false)
@@ -2559,10 +2559,10 @@ class UserPreferencesRepository(private val context: Context) {
                 .putString("pref_ui_theme", "MIDNIGHT_OBSIDIAN")
                 .putString("pref_display_scale", "DEFAULT")
                 .putString("pref_home_screen_layout", "HERO_SPOTLIGHT")
-                .putString("pref_now_playing_layout", "MINIMAL_GLASS")
+                .putString("pref_now_playing_layout", "NEON_WAVEFORM")
                 .putString("pref_playlists_layout", "BENTO_GRID")
                 .putBoolean("pref_playlists_layout_explicit_v1", false)
-                .putString("pref_lyrics_layout", "CLASSIC_DEFAULT")
+                .putString("pref_lyrics_layout", "FLUID_GLOW")
                 .putBoolean("pref_show_now_playing_volume_bar", false)
                 .putBoolean("pref_show_advanced_song_info", false)
                 .putString("pref_accent_color_preset", "ORANGE")
@@ -2650,9 +2650,9 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.UI_THEME] = "MIDNIGHT_OBSIDIAN"
             prefs[PreferenceKeys.DISPLAY_SCALE] = "DEFAULT"
             prefs[PreferenceKeys.HOME_SCREEN_LAYOUT] = "HERO_SPOTLIGHT"
-            prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = "MINIMAL_GLASS"
+            prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = "NEON_WAVEFORM"
             prefs[PreferenceKeys.PLAYLISTS_LAYOUT] = "BENTO_GRID"
-            prefs[PreferenceKeys.LYRICS_LAYOUT] = "CLASSIC_DEFAULT"
+            prefs[PreferenceKeys.LYRICS_LAYOUT] = "FLUID_GLOW"
             prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = false
             prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = false
             prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = "ORANGE"

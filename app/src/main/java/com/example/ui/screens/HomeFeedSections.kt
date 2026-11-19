@@ -490,15 +490,15 @@ fun LazyListScope.renderHomeFeedSections(
                                         value = extracted
                                     }
                                 }
-                                val cardTopColor = dualColors.first.toPastelAccent().copy(alpha = 0.24f)
-                                val cardBottomColor = dualColors.second.toPastelCompanionHue().copy(alpha = 0.18f)
+                                val cardTopColor = dualColors.first.toPastelAccent().copy(alpha = 0.22f)
+                                val cardBottomColor = dualColors.second.toPastelCompanionHue().copy(alpha = 0.14f)
                                 val cardAccentColor = dualColors.first.toPastelAccent()
 
                                 Surface(
                                     onClick = onOpenNowPlaying,
-                                    shape = RoundedCornerShape(24.dp),
+                                    shape = RoundedCornerShape(16.dp),
                                     color = BentoCardSurface,
-                                    border = BorderStroke(1.dp, cardAccentColor.copy(alpha = 0.40f)),
+                                    border = BorderStroke(1.dp, cardAccentColor.copy(alpha = 0.42f)),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(
@@ -509,43 +509,83 @@ fun LazyListScope.renderHomeFeedSections(
                                                     colors = listOf(cardTopColor, cardBottomColor)
                                                 )
                                             )
-                                            .padding(18.dp),
-                                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
+                                        // Deck A Top Telemetry Rail
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (isCurrentActive && playbackState.isPlaying) Color(0xFF10B981) else BentoPrimary)
+                                                )
+                                                Text(
+                                                    text = if (isCurrentActive && playbackState.isPlaying) "DECK A // ON AIR" else "DECK A // STANDBY",
+                                                    fontSize = 9.5.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BentoPrimary,
+                                                    letterSpacing = 1.sp
+                                                )
+                                            }
+                                            Surface(
+                                                onClick = {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onFavoriteToggle(continueSong)
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isFav) BentoPrimary.copy(alpha = 0.18f) else BentoCardSurface.copy(alpha = 0.65f),
+                                                border = BorderStroke(1.dp, if (isFav) BentoPrimary.copy(alpha = 0.45f) else BentoBorder.copy(alpha = 0.4f)),
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                        contentDescription = "Favorite",
+                                                        tint = if (isFav) BentoPrimary else BentoTextSecondary,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Main Transport Row
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
                                             Surface(
-                                                shape = RoundedCornerShape(14.dp),
-                                                shadowElevation = 10.dp,
-                                                color = Color.Black.copy(alpha = 0.2f),
-                                                modifier = Modifier.size(68.dp)
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = BentoCardSurface,
+                                                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                                modifier = Modifier.size(58.dp)
                                             ) {
                                                 AlbumArtView(
                                                     song = continueSong,
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .clip(RoundedCornerShape(14.dp)),
-                                                    cornerRadius = 14
+                                                        .clip(RoundedCornerShape(10.dp)),
+                                                    cornerRadius = 10
                                                 )
                                             }
 
                                             Column(
                                                 modifier = Modifier.weight(1f),
-                                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                                verticalArrangement = Arrangement.spacedBy(2.dp)
                                             ) {
                                                 Text(
-                                                    text = if (isCurrentActive && playbackState.isPlaying) "NOW PLAYING" else "CONTINUE LISTENING",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BentoTextSecondary.copy(alpha = 0.85f),
-                                                    letterSpacing = 1.1.sp
-                                                )
-                                                Text(
                                                     text = continueSong.displayTitle,
-                                                    fontSize = 17.sp,
+                                                    fontSize = 15.5.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = BentoTextPrimary,
                                                     maxLines = 1,
@@ -553,7 +593,7 @@ fun LazyListScope.renderHomeFeedSections(
                                                 )
                                                 Text(
                                                     text = continueSong.displayArtist,
-                                                    fontSize = 13.sp,
+                                                    fontSize = 12.5.sp,
                                                     fontWeight = FontWeight.Medium,
                                                     color = BentoTextSecondary,
                                                     maxLines = 1,
@@ -561,21 +601,7 @@ fun LazyListScope.renderHomeFeedSections(
                                                 )
                                             }
 
-                                            IconButton(
-                                                onClick = {
-                                                    HapticUtils.performClickHaptic(context)
-                                                    onFavoriteToggle(continueSong)
-                                                },
-                                                modifier = Modifier.size(38.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                    contentDescription = "Favorite",
-                                                    tint = if (isFav) BentoPrimary else BentoTextSecondary,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-
+                                            // Rounded-square tactile hardware Play/Pause key
                                             Surface(
                                                 onClick = {
                                                     HapticUtils.performClickHaptic(context)
@@ -585,22 +611,22 @@ fun LazyListScope.renderHomeFeedSections(
                                                         onSongClick(continueSong)
                                                     }
                                                 },
-                                                shape = CircleShape,
-                                                color = BentoTextPrimary,
-                                                modifier = Modifier.size(46.dp)
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = BentoPrimary,
+                                                modifier = Modifier.size(44.dp)
                                             ) {
                                                 Box(contentAlignment = Alignment.Center) {
                                                     Icon(
                                                         imageVector = if (isCurrentActive && playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                                         contentDescription = "Play",
-                                                        tint = BentoBackground,
-                                                        modifier = Modifier.size(24.dp)
+                                                        tint = BentoOnPrimary,
+                                                        modifier = Modifier.size(22.dp)
                                                     )
                                                 }
                                             }
                                         }
 
-                                        // Sleek subtle progress bar inspired by Neon Studio
+                                        // Sleek thin real-time progress rail
                                         if (isCurrentActive && duration > 0) {
                                             com.example.ui.components.RealtimeTrackProgressBar(
                                                 playbackPositionFlow = playbackPositionFlow,
@@ -622,7 +648,7 @@ fun LazyListScope.renderHomeFeedSections(
                                                         .fillMaxWidth(0.32f)
                                                         .fillMaxHeight()
                                                         .clip(CircleShape)
-                                                        .background(BentoTextPrimary.copy(alpha = 0.55f))
+                                                        .background(BentoPrimary.copy(alpha = 0.65f))
                                                 )
                                             }
                                         }
@@ -636,102 +662,51 @@ fun LazyListScope.renderHomeFeedSections(
                                     feedStyle = feedStyle,
                                     trailingContent = if (isCurrentActive && playbackState.isPlaying) {
                                         {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = BentoPrimary.copy(alpha = 0.14f),
+                                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(7.dp)
-                                                        .background(BentoPrimary, CircleShape)
-                                                )
-                                                Text(
-                                                    text = "PLAYING NOW",
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BentoPrimary,
-                                                    letterSpacing = 0.5.sp
-                                                )
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(6.dp)
+                                                            .background(Color(0xFF10B981), CircleShape)
+                                                    )
+                                                    Text(
+                                                        text = "PLAYING",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = BentoTextPrimary,
+                                                        letterSpacing = 0.6.sp
+                                                    )
+                                                }
                                             }
                                         }
                                     } else null
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                BentoCard(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onOpenNowPlaying() },
-                                    backgroundColor = BentoCardSurface
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        AlbumArtView(
-                                            song = continueSong,
-                                            modifier = Modifier.size(50.dp),
-                                            cornerRadius = 10
-                                        )
-
-                                        Spacer(modifier = Modifier.width(10.dp))
-
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = continueSong.displayTitle,
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = BentoTextPrimary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = continueSong.displayArtist,
-                                                fontSize = 12.5.sp,
-                                                color = BentoTextSecondary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(6.dp))
-
-                                            if (duration > 0) {
-                                                com.example.ui.components.RealtimeTrackProgressBar(
-                                                    playbackPositionFlow = playbackPositionFlow,
-                                                    isActive = isCurrentActive,
-                                                    durationMs = duration,
-                                                    showTimestamps = isCurrentActive,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.width(12.dp))
-
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = BentoPrimary,
-                                            modifier = Modifier
-                                                .size(44.dp)
-                                                .clickable {
-                                                    if (playbackState.currentSong?.id == continueSong.id) {
-                                                        onTogglePlayPause()
-                                                    } else {
-                                                        onSongClick(continueSong)
-                                                    }
-                                                }
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = if (playbackState.currentSong?.id == continueSong.id && playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                    contentDescription = "Play",
-                                                    tint = BentoOnPrimary,
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                            }
+                                BentoMosaicContinueRow(
+                                    song = continueSong,
+                                    isCurrentActive = isCurrentActive,
+                                    isPlaying = playbackState.isPlaying,
+                                    durationMs = duration,
+                                    playbackPositionFlow = playbackPositionFlow,
+                                    onOpenNowPlaying = onOpenNowPlaying,
+                                    onPlayPauseClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        if (playbackState.currentSong?.id == continueSong.id) {
+                                            onTogglePlayPause()
+                                        } else {
+                                            onSongClick(continueSong)
                                         }
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -1088,18 +1063,38 @@ fun LazyListScope.renderHomeFeedSections(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(StatsPeriod.values(), key = { it.name }, contentType = { "stats_period_card" }) { period ->
-                            HomeStatsPeriodCard(
-                                period = period,
+                    when (feedStyle) {
+                        HomeFeedVisualStyle.BENTO_DEFAULT -> {
+                            BentoMosaicStatsGrid(
                                 getDurationPlayedBetween = getDurationPlayedBetween,
                                 getTrackCountBetween = getTrackCountBetween,
                                 getUniqueTrackCountBetween = getUniqueTrackCountBetween,
-                                onClick = onOpenStatsDetail,
-                                feedStyle = feedStyle
+                                onClick = onOpenStatsDetail
                             )
+                        }
+                        HomeFeedVisualStyle.STUDIO_DECK -> {
+                            StudioDeckTelemetryConsole(
+                                getDurationPlayedBetween = getDurationPlayedBetween,
+                                getTrackCountBetween = getTrackCountBetween,
+                                getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                                onClick = onOpenStatsDetail
+                            )
+                        }
+                        else -> {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(StatsPeriod.values(), key = { it.name }, contentType = { "stats_period_card" }) { period ->
+                                    HomeStatsPeriodCard(
+                                        period = period,
+                                        getDurationPlayedBetween = getDurationPlayedBetween,
+                                        getTrackCountBetween = getTrackCountBetween,
+                                        getUniqueTrackCountBetween = getUniqueTrackCountBetween,
+                                        onClick = onOpenStatsDetail,
+                                        feedStyle = feedStyle
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1468,75 +1463,187 @@ fun LazyListScope.renderHomeFeedSections(
                                 items = uniqueRecent,
                                 key = { index, item -> "recent_played_${item.id}_$index" },
                                 contentType = { _, _ -> "recent_song" }
-                            ) { _, song ->
-                                val cornerDp = when (feedStyle) {
-                                    HomeFeedVisualStyle.HERO_SPOTLIGHT -> 22
-                                    HomeFeedVisualStyle.MINIMAL_STREAM -> 55
-                                    HomeFeedVisualStyle.STUDIO_DECK -> 8
-                                    HomeFeedVisualStyle.BENTO_DEFAULT -> 12
-                                }
-                                Column(
-                                    modifier = Modifier
-                                        .width(112.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { onPlaySongQueue(song, uniqueRecent) },
-                                    horizontalAlignment = if (feedStyle == HomeFeedVisualStyle.MINIMAL_STREAM) Alignment.CenterHorizontally else Alignment.Start
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(110.dp)
-                                            .clip(RoundedCornerShape(cornerDp.dp))
-                                    ) {
-                                        AlbumArtView(
-                                            song = song,
-                                            modifier = Modifier.fillMaxSize(),
-                                            cornerRadius = cornerDp
-                                        )
-                                        if (song.playCount > 0) {
-                                            Surface(
-                                                shape = RoundedCornerShape(50),
-                                                color = Color.Black.copy(alpha = 0.72f),
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomStart)
-                                                    .padding(bottom = 6.dp, start = 6.dp)
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) { index, song ->
+                                when (feedStyle) {
+                                    HomeFeedVisualStyle.BENTO_DEFAULT -> {
+                                        Surface(
+                                            onClick = { onPlaySongQueue(song, uniqueRecent) },
+                                            shape = RoundedCornerShape(18.dp),
+                                            color = BentoCardSurface,
+                                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                            modifier = Modifier.width(126.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(106.dp)
+                                                        .clip(RoundedCornerShape(12.dp))
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.PlayArrow,
-                                                        contentDescription = null,
-                                                        tint = BentoPrimary,
-                                                        modifier = Modifier.size(10.dp)
+                                                    AlbumArtView(
+                                                        song = song,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        cornerRadius = 12
                                                     )
-                                                    Spacer(modifier = Modifier.width(2.dp))
-                                                    Text(
-                                                        text = "${song.playCount}",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color.White
-                                                    )
+                                                    if (song.playCount > 0) {
+                                                        Surface(
+                                                            shape = RoundedCornerShape(50),
+                                                            color = Color.Black.copy(alpha = 0.72f),
+                                                            modifier = Modifier
+                                                                .align(Alignment.TopEnd)
+                                                                .padding(5.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "${song.playCount}×",
+                                                                fontSize = 9.5.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White,
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                            )
+                                                        }
+                                                    }
                                                 }
+                                                Spacer(modifier = Modifier.height(7.dp))
+                                                Text(
+                                                    text = song.displayTitle,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BentoTextPrimary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = song.displayArtist,
+                                                    fontSize = 10.5.sp,
+                                                    color = BentoTextSecondary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
                                             }
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = song.displayTitle,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = BentoTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = song.displayArtist,
-                                        fontSize = 11.sp,
-                                        color = BentoTextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    HomeFeedVisualStyle.STUDIO_DECK -> {
+                                        Surface(
+                                            onClick = { onPlaySongQueue(song, uniqueRecent) },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = BentoCardSurface,
+                                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                            modifier = Modifier.width(120.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(7.dp)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(98.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                ) {
+                                                    AlbumArtView(
+                                                        song = song,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        cornerRadius = 8
+                                                    )
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = Color.Black.copy(alpha = 0.72f),
+                                                        modifier = Modifier
+                                                            .align(Alignment.TopStart)
+                                                            .padding(5.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "%02d".format(index + 1),
+                                                            fontSize = 9.sp,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = song.displayTitle,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = BentoTextPrimary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = song.displayArtist,
+                                                    fontSize = 10.5.sp,
+                                                    color = BentoTextSecondary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                    else -> {
+                                        val cornerDp = if (feedStyle == HomeFeedVisualStyle.MINIMAL_STREAM) 55 else 22
+                                        Column(
+                                            modifier = Modifier
+                                                .width(112.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable { onPlaySongQueue(song, uniqueRecent) },
+                                            horizontalAlignment = if (feedStyle == HomeFeedVisualStyle.MINIMAL_STREAM) Alignment.CenterHorizontally else Alignment.Start
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(110.dp)
+                                                    .clip(RoundedCornerShape(cornerDp.dp))
+                                            ) {
+                                                AlbumArtView(
+                                                    song = song,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    cornerRadius = cornerDp
+                                                )
+                                                if (song.playCount > 0) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(50),
+                                                        color = Color.Black.copy(alpha = 0.72f),
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomStart)
+                                                            .padding(bottom = 6.dp, start = 6.dp)
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.PlayArrow,
+                                                                contentDescription = null,
+                                                                tint = BentoPrimary,
+                                                                modifier = Modifier.size(10.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(2.dp))
+                                                            Text(
+                                                                text = "${song.playCount}",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = song.displayTitle,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = BentoTextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = song.displayArtist,
+                                                fontSize = 11.sp,
+                                                color = BentoTextSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1652,6 +1759,44 @@ fun LazyListScope.renderHomeFeedSections(
                                                     fontSize = 11.sp,
                                                     color = BentoTextSecondary
                                                 )
+                                            }
+                                        }
+                                    }
+                                    HomeFeedVisualStyle.STUDIO_DECK -> {
+                                        Surface(
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = BentoCardSurface,
+                                            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(9.dp)
+                                            ) {
+                                                com.example.ui.components.ArtistAvatar(
+                                                    artistName = artist.name,
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                )
+                                                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                    Text(
+                                                        text = artist.name,
+                                                        fontSize = 12.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = BentoTextPrimary,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.widthIn(max = 104.dp)
+                                                    )
+                                                    Text(
+                                                        text = "${artist.playCount}× PLAYS",
+                                                        fontSize = 9.5.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = BentoPrimary
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -1921,16 +2066,14 @@ private fun HomeFeedStyledHeader(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(16.dp)
-                            .clip(CircleShape)
-                            .background(BentoPrimary)
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        text = studioCode,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoPrimary,
+                        letterSpacing = 1.sp
                     )
                     Text(
                         text = title,
@@ -1948,12 +2091,23 @@ private fun HomeFeedStyledHeader(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = title,
-                    fontSize = 16.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BentoTextPrimary
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(BentoPrimary)
+                    )
+                    Text(
+                        text = title,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = BentoTextPrimary
+                    )
+                }
                 trailingContent?.invoke()
             }
         }
