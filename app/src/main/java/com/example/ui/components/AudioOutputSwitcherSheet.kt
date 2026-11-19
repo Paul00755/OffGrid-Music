@@ -52,7 +52,7 @@ fun AudioOutputSwitcherSheet(
                     .padding(top = 12.dp, bottom = 8.dp)
                     .size(width = 40.dp, height = 4.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.2f))
+                    .background(BentoTextSecondary.copy(alpha = 0.28f))
             )
         }
     ) {
@@ -129,10 +129,10 @@ fun AudioOutputSwitcherSheet(
                             onSelectDevice(device)
                         },
                         shape = RoundedCornerShape(16.dp),
-                        color = if (isCurrent) BentoPrimary.copy(alpha = 0.12f) else BentoCardDarkPurple,
+                        color = if (isCurrent) BentoPrimary.copy(alpha = 0.14f) else BentoCardDarkPurple,
                         border = BorderStroke(
                             1.dp,
-                            if (isCurrent) BentoPrimary.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)
+                            if (isCurrent) BentoPrimary.copy(alpha = 0.55f) else BentoCardBorder
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -149,14 +149,14 @@ fun AudioOutputSwitcherSheet(
                                     .size(42.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (isCurrent) BentoPrimary else Color.White.copy(alpha = 0.08f)
+                                        if (isCurrent) BentoPrimary else BentoTextPrimary.copy(alpha = 0.08f)
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = device.icon,
                                     contentDescription = null,
-                                    tint = if (isCurrent) BentoOnPrimary else Color.White.copy(alpha = 0.85f),
+                                    tint = if (isCurrent) BentoOnPrimary else BentoTextPrimary.copy(alpha = 0.85f),
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -212,7 +212,7 @@ fun AudioOutputSwitcherSheet(
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = BentoTextPrimary
                 ),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, BentoCardBorder),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("btn_system_audio_switcher")

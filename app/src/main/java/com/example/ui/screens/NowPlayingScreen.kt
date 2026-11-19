@@ -2393,8 +2393,9 @@ private fun LyricsPanelContent(
             }
 
             if (syncedLines.isNotEmpty()) {
+                val lyricsContentKey = remember(syncedLines) { syncedLines.hashCode() to syncedLines.size }
                 val listState = rememberLazyListState()
-                var userHasManuallyScrolled by remember(song.id) { mutableStateOf(false) }
+                var userHasManuallyScrolled by remember(song.id, lyricsContentKey) { mutableStateOf(false) }
                 var lastAppliedOffsetMs by remember(song.id) { mutableLongStateOf(syncOffsetMs) }
                 val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
                 val highlightedIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
@@ -2407,14 +2408,10 @@ private fun LyricsPanelContent(
                         else Lyrics.findActiveLineIndex(syncedLines, effectivePos)
                     }
                 }
-                val scrollIndex by remember {
-                    derivedStateOf {
-                        if (syncedLines.isEmpty()) 0 else highlightedIndex.coerceAtLeast(0)
-                    }
-                }
+                val scrollIndex = if (syncedLines.isEmpty()) 0 else highlightedIndex.coerceAtLeast(0)
 
                 // Track manually viewed lyric index (closest to vertical center of list)
-                val manuallyViewedIndex by remember {
+                val manuallyViewedIndex by remember(listState, scrollIndex) {
                     derivedStateOf {
                         val layoutInfo = listState.layoutInfo
                         val visible = layoutInfo.visibleItemsInfo
@@ -2429,6 +2426,11 @@ private fun LyricsPanelContent(
                     }
                 }
 
+                val latestSyncOffsetMs by rememberUpdatedState(syncOffsetMs)
+                val latestSyncedLines by rememberUpdatedState(syncedLines)
+                val latestAutoScroll by rememberUpdatedState(lyricsAutoScroll)
+                val latestPositionMs by rememberUpdatedState(positionMs)
+
                 // Detect when user manually drags/scrolls the list
                 LaunchedEffect(isUserDragging) {
                     if (isUserDragging) {
@@ -2437,13 +2439,21 @@ private fun LyricsPanelContent(
                     }
                 }
 
-                // Initial auto-scroll when opening lyrics or song changes
-                LaunchedEffect(song.id, showLyricsView) {
+                // Initial auto-scroll when opening lyrics, song changes, or new lyrics load (search/translate/transcribe)
+                LaunchedEffect(song.id, lyricsContentKey, showLyricsView) {
                     if (showLyricsView) {
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
-                        if (lyricsAutoScroll && scrollIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(scrollIndex)
+                        if (latestAutoScroll && latestSyncedLines.isNotEmpty()) {
+                            val liveVal = livePositionState?.value
+                            val rawPos = if (liveVal != null && (liveVal > 0L || latestPositionMs == 0L)) liveVal else latestPositionMs
+                            val effPos = rawPos + latestSyncOffsetMs
+                            val targetIdx = if (effPos < latestSyncedLines[0].first) 0
+                            else Lyrics.findActiveLineIndex(latestSyncedLines, effPos).coerceAtLeast(0)
+                            if (targetIdx in latestSyncedLines.indices) {
+                                withFrameNanos { }
+                                listState.scrollToItem(targetIdx, 0)
+                            }
                         }
                     }
                 }
@@ -2455,22 +2465,19 @@ private fun LyricsPanelContent(
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
                         if (!lyricsAutoScroll && scrollIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(scrollIndex)
+                            listState.animateScrollToItem(scrollIndex, 0)
                         }
                     }
                 }
 
                 // Auto-scroll to current line when setting is enabled AND user has not manually scrolled away
-                LaunchedEffect(scrollIndex, userHasManuallyScrolled, lyricsAutoScroll) {
+                LaunchedEffect(lyricsContentKey, scrollIndex, userHasManuallyScrolled, lyricsAutoScroll) {
                     if (lyricsAutoScroll && !userHasManuallyScrolled && scrollIndex in syncedLines.indices) {
-                        listState.animateScrollToItem(scrollIndex)
+                        listState.animateScrollToItem(scrollIndex, 0)
                     }
                 }
 
                 // Re-sync to currently playing line when seeking (>2.5s jump) occurs, without restarting on offset drags
-                val latestSyncOffsetMs by rememberUpdatedState(syncOffsetMs)
-                val latestSyncedLines by rememberUpdatedState(syncedLines)
-                val latestAutoScroll by rememberUpdatedState(lyricsAutoScroll)
                 LaunchedEffect(song.id, playbackPositionFlow) {
                     var lastRawPos = playbackPositionFlow?.value ?: positionMs
                     if (playbackPositionFlow != null) {
@@ -2481,7 +2488,7 @@ private fun LyricsPanelContent(
                                 val effPos = rawPos + latestSyncOffsetMs
                                 val idx = Lyrics.findActiveLineIndex(latestSyncedLines, effPos).coerceAtLeast(0)
                                 if (latestAutoScroll && idx in latestSyncedLines.indices) {
-                                    listState.animateScrollToItem(idx)
+                                    listState.animateScrollToItem(idx, 0)
                                 }
                             }
                             lastRawPos = rawPos
@@ -2492,14 +2499,10 @@ private fun LyricsPanelContent(
                 // Sync button visibility logic:
                 // Auto-scroll ON: show when user has manually scrolled away
                 // Auto-scroll OFF: show ONLY when user's manually viewed position differs from active playing line
-                val shouldShowSyncButton by remember {
-                    derivedStateOf {
-                        if (lyricsAutoScroll) {
-                            userHasManuallyScrolled
-                        } else {
-                            manuallyViewedIndex != scrollIndex
-                        }
-                    }
+                val shouldShowSyncButton = if (lyricsAutoScroll) {
+                    userHasManuallyScrolled
+                } else {
+                    manuallyViewedIndex != scrollIndex
                 }
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

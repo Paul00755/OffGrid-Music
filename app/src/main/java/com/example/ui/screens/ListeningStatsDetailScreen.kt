@@ -1012,23 +1012,45 @@ fun WrappedSummaryShowcaseCard(
     modifier: Modifier = Modifier
 ) {
     val glassConfig = com.example.ui.theme.LocalGlassThemeConfig.current
-    val cardBaseColor = if (glassConfig.glassEnabled) BentoCardSurface else Color(0xFF140F22)
-    val cardGradientColors = if (glassConfig.gradientEnabled || glassConfig.glassEnabled) {
-        val alphaTop = if (glassConfig.glassEnabled) 0.42f else 0.90f
-        val alphaMid = if (glassConfig.glassEnabled) 0.28f else 0.92f
-        val alphaBot = if (glassConfig.glassEnabled) 0.35f else 0.96f
-        listOf(
-            androidx.compose.ui.graphics.lerp(Color(0xFF181226), glassConfig.tintColor, 0.32f).copy(alpha = alphaTop),
-            androidx.compose.ui.graphics.lerp(Color(0xFF120E1E), glassConfig.secondaryTintColor, 0.22f).copy(alpha = alphaMid),
-            Color(0xFF0E0B18).copy(alpha = alphaBot)
-        )
+    val isDark = BentoBackground.luminance() < 0.5f
+    val onAccentPink = if (BentoAccentPinkText.luminance() > 0.45f) Color.Black else Color.White
+    val cardBaseColor = if (isDark) {
+        if (glassConfig.glassEnabled) BentoCardSurface else Color(0xFF140F22)
+    } else {
+        BentoCardSurface
+    }
+    val cardGradientColors = if (isDark) {
+        if (glassConfig.gradientEnabled || glassConfig.glassEnabled) {
+            val alphaTop = if (glassConfig.glassEnabled) 0.42f else 0.90f
+            val alphaMid = if (glassConfig.glassEnabled) 0.28f else 0.92f
+            val alphaBot = if (glassConfig.glassEnabled) 0.35f else 0.96f
+            listOf(
+                androidx.compose.ui.graphics.lerp(Color(0xFF181226), glassConfig.tintColor, 0.32f).copy(alpha = alphaTop),
+                androidx.compose.ui.graphics.lerp(Color(0xFF120E1E), glassConfig.secondaryTintColor, 0.22f).copy(alpha = alphaMid),
+                Color(0xFF0E0B18).copy(alpha = alphaBot)
+            )
+        } else {
+            listOf(
+                Color(0xFF2E1340),
+                Color(0xFF1B142F),
+                Color(0xFF100D1E)
+            )
+        }
     } else {
         listOf(
-            Color(0xFF2E1340),
-            Color(0xFF1B142F),
-            Color(0xFF100D1E)
+            androidx.compose.ui.graphics.lerp(Color.White, BentoPrimary, 0.11f).copy(alpha = 0.94f),
+            androidx.compose.ui.graphics.lerp(Color.White, BentoAccentPinkText, 0.07f).copy(alpha = 0.92f),
+            BentoCardSurface.copy(alpha = 0.96f)
         )
     }
+    val primaryInk = if (isDark) Color.White else BentoTextPrimary
+    val secondaryInk = if (isDark) Color.White.copy(alpha = 0.74f) else BentoTextSecondary
+    val subtleSurfaceBg = if (isDark) Color.White.copy(alpha = 0.05f) else Color.White.copy(alpha = 0.72f)
+    val subtleSurfaceBorder = if (isDark) Color.White.copy(alpha = 0.12f) else BentoCardBorder
+    val chipSurfaceBg = if (isDark) Color.White.copy(alpha = 0.08f) else BentoTextPrimary.copy(alpha = 0.06f)
+    val chipSurfaceBorder = if (isDark) Color.White.copy(alpha = 0.15f) else BentoTextPrimary.copy(alpha = 0.12f)
+    val anthemSurfaceBg = if (isDark) Color(0xFF1E1736).copy(alpha = 0.95f) else Color.White.copy(alpha = 0.80f)
+    val archetypeIconTint = if (isDark) Color(0xFFFFD54F) else Color(0xFFD97706)
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -1037,15 +1059,15 @@ fun WrappedSummaryShowcaseCard(
             width = 1.5.dp,
             brush = Brush.horizontalGradient(
                 colors = listOf(
-                    BentoAccentPinkText.copy(alpha = 0.85f),
-                    BentoPrimary.copy(alpha = 0.75f),
-                    BentoPrimary.copy(alpha = 0.45f)
+                    BentoAccentPinkText.copy(alpha = if (isDark) 0.85f else 0.50f),
+                    BentoPrimary.copy(alpha = if (isDark) 0.75f else 0.45f),
+                    BentoPrimary.copy(alpha = if (isDark) 0.45f else 0.25f)
                 )
             )
         ),
         modifier = modifier
             .fillMaxWidth()
-            .shadow(if (glassConfig.glassEnabled) 0.dp else 16.dp, RoundedCornerShape(24.dp))
+            .shadow(if (glassConfig.glassEnabled || !isDark) 4.dp else 16.dp, RoundedCornerShape(24.dp))
     ) {
         Box(
             modifier = Modifier
@@ -1069,8 +1091,8 @@ fun WrappedSummaryShowcaseCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = BentoAccentPinkText.copy(alpha = 0.18f),
-                        border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = 0.4f))
+                        color = BentoAccentPinkText.copy(alpha = if (isDark) 0.18f else 0.12f),
+                        border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = if (isDark) 0.4f else 0.32f))
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1095,8 +1117,8 @@ fun WrappedSummaryShowcaseCard(
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = Color.White.copy(alpha = 0.08f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                        color = chipSurfaceBg,
+                        border = BorderStroke(1.dp, chipSurfaceBorder)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1105,7 +1127,7 @@ fun WrappedSummaryShowcaseCard(
                             Icon(
                                 imageVector = Icons.Default.Psychology,
                                 contentDescription = null,
-                                tint = Color(0xFFFFD54F),
+                                tint = archetypeIconTint,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(5.dp))
@@ -1113,7 +1135,7 @@ fun WrappedSummaryShowcaseCard(
                                 text = listenerArchetype,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White.copy(alpha = 0.95f),
+                                color = primaryInk.copy(alpha = 0.95f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1124,8 +1146,8 @@ fun WrappedSummaryShowcaseCard(
                 // Lifetime Playtime Hero Section
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color.White.copy(alpha = 0.04f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                    color = subtleSurfaceBg,
+                    border = BorderStroke(1.dp, subtleSurfaceBorder),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -1149,7 +1171,7 @@ fun WrappedSummaryShowcaseCard(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 0.5.sp,
-                                    color = Color.White.copy(alpha = 0.75f)
+                                    color = secondaryInk
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
@@ -1157,7 +1179,7 @@ fun WrappedSummaryShowcaseCard(
                                 text = formatListeningDuration(lifetimePlaytimeMs),
                                 fontSize = 28.sp,
                                 fontWeight = FontWeight.Black,
-                                color = Color.White,
+                                color = primaryInk,
                                 letterSpacing = (-0.6).sp
                             )
                         }
@@ -1168,7 +1190,7 @@ fun WrappedSummaryShowcaseCard(
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = BentoPrimary.copy(alpha = 0.2f),
+                                color = BentoPrimary.copy(alpha = if (isDark) 0.2f else 0.14f),
                                 border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
                             ) {
                                 Text(
@@ -1181,14 +1203,14 @@ fun WrappedSummaryShowcaseCard(
                             }
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = Color.White.copy(alpha = 0.08f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+                                color = chipSurfaceBg,
+                                border = BorderStroke(1.dp, chipSurfaceBorder)
                             ) {
                                 Text(
                                     text = "$lifetimeUniqueCount unique songs",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = Color.White.copy(alpha = 0.8f),
+                                    color = secondaryInk,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
@@ -1199,8 +1221,8 @@ fun WrappedSummaryShowcaseCard(
                 // Most Played Song Hero Banner
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = Color(0xFF1E1736).copy(alpha = 0.95f),
-                    border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = 0.4f)),
+                    color = anthemSurfaceBg,
+                    border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = if (isDark) 0.4f else 0.30f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -1235,7 +1257,7 @@ fun WrappedSummaryShowcaseCard(
                                     text = "${mostPlayedSong.playCount} plays",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.75f)
+                                    color = secondaryInk
                                 )
                             }
                         }
@@ -1289,7 +1311,7 @@ fun WrappedSummaryShowcaseCard(
                                             text = mostPlayedSong.displayTitle,
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color.White,
+                                            color = primaryInk,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -1297,7 +1319,7 @@ fun WrappedSummaryShowcaseCard(
                                         Text(
                                             text = "${mostPlayedSong.displayArtist} • ${formatListeningDuration(mostPlayedSong.playCount * mostPlayedSong.durationMs)}",
                                             fontSize = 12.sp,
-                                            color = Color.White.copy(alpha = 0.7f),
+                                            color = secondaryInk,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -1318,7 +1340,7 @@ fun WrappedSummaryShowcaseCard(
                                         Icon(
                                             imageVector = if (isThisSongPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                             contentDescription = if (isThisSongPlaying) "Pause Anthem" else "Play Anthem",
-                                            tint = if (isThisSongPlaying) Color.Black else BentoOnPrimary,
+                                            tint = if (isThisSongPlaying) onAccentPink else BentoOnPrimary,
                                             modifier = Modifier.size(22.dp)
                                         )
                                     }
@@ -1328,7 +1350,7 @@ fun WrappedSummaryShowcaseCard(
                             Text(
                                 text = "Play tracks to crown your all-time favorite musical anthem!",
                                 fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.65f),
+                                color = secondaryInk,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
                         }
@@ -1348,13 +1370,13 @@ fun WrappedSummaryShowcaseCard(
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = BentoAccentPinkText,
-                            contentColor = Color.Black
+                            contentColor = onAccentPink
                         )
                     ) {
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,
-                            tint = Color.Black,
+                            tint = onAccentPink,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))

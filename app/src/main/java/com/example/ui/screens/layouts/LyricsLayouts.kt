@@ -415,13 +415,11 @@ fun AlternateLyricsPanel(
             // LYRICS BODY
             // ---------------------------------------------------------
             if (hasSynced) {
+                val lyricsContentKey = remember(syncedLines) { syncedLines.hashCode() to syncedLines.size }
                 val listState = rememberLazyListState()
-                var userHasManuallyScrolled by remember(song.id) { mutableStateOf(false) }
+                var userHasManuallyScrolled by remember(song.id, lyricsContentKey) { mutableStateOf(false) }
                 var lastAppliedOffsetMs by remember(song.id) { mutableLongStateOf(syncOffsetMs) }
                 val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
-
-                val rawPosNow = livePositionState?.value?.let { if (it > 0L || positionMs == 0L) it else positionMs } ?: positionMs
-                val effectivePosNow = rawPosNow + syncOffsetMs
 
                 val highlightedIndex by remember(syncedLines, syncOffsetMs, positionMs, livePositionState) {
                     derivedStateOf {
@@ -433,12 +431,8 @@ fun AlternateLyricsPanel(
                         else Lyrics.findActiveLineIndex(syncedLines, effectivePos)
                     }
                 }
-                val scrollIndex by remember {
-                    derivedStateOf {
-                        if (syncedLines.isEmpty()) 0 else highlightedIndex.coerceAtLeast(0)
-                    }
-                }
-                val manuallyViewedIndex by remember {
+                val scrollIndex = if (syncedLines.isEmpty()) 0 else highlightedIndex.coerceAtLeast(0)
+                val manuallyViewedIndex by remember(listState, scrollIndex) {
                     derivedStateOf {
                         val layoutInfo = listState.layoutInfo
                         val visible = layoutInfo.visibleItemsInfo
@@ -450,18 +444,31 @@ fun AlternateLyricsPanel(
                     }
                 }
 
+                val latestSyncOffsetMs by rememberUpdatedState(syncOffsetMs)
+                val latestSyncedLines by rememberUpdatedState(syncedLines)
+                val latestAutoScroll by rememberUpdatedState(lyricsAutoScroll)
+                val latestPositionMs by rememberUpdatedState(positionMs)
+
                 LaunchedEffect(isUserDragging) {
                     if (isUserDragging) {
                         userHasManuallyScrolled = true
                         onUserIsScrollingChange(true)
                     }
                 }
-                LaunchedEffect(song.id, showLyricsView) {
+                LaunchedEffect(song.id, lyricsContentKey, showLyricsView) {
                     if (showLyricsView) {
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
-                        if (lyricsAutoScroll && scrollIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(scrollIndex)
+                        if (latestAutoScroll && latestSyncedLines.isNotEmpty()) {
+                            val liveVal = livePositionState?.value
+                            val rawPos = if (liveVal != null && (liveVal > 0L || latestPositionMs == 0L)) liveVal else latestPositionMs
+                            val effPos = rawPos + latestSyncOffsetMs
+                            val targetIdx = if (effPos < latestSyncedLines[0].first) 0
+                            else Lyrics.findActiveLineIndex(latestSyncedLines, effPos).coerceAtLeast(0)
+                            if (targetIdx in latestSyncedLines.indices) {
+                                withFrameNanos { }
+                                listState.scrollToItem(targetIdx, 0)
+                            }
                         }
                     }
                 }
@@ -471,19 +478,16 @@ fun AlternateLyricsPanel(
                         userHasManuallyScrolled = false
                         onUserIsScrollingChange(false)
                         if (!lyricsAutoScroll && scrollIndex in syncedLines.indices) {
-                            listState.animateScrollToItem(scrollIndex)
+                            listState.animateScrollToItem(scrollIndex, 0)
                         }
                     }
                 }
-                LaunchedEffect(scrollIndex, userHasManuallyScrolled, lyricsAutoScroll) {
+                LaunchedEffect(lyricsContentKey, scrollIndex, userHasManuallyScrolled, lyricsAutoScroll) {
                     if (lyricsAutoScroll && !userHasManuallyScrolled && scrollIndex in syncedLines.indices) {
-                        listState.animateScrollToItem(scrollIndex)
+                        listState.animateScrollToItem(scrollIndex, 0)
                     }
                 }
 
-                val latestSyncOffsetMs by rememberUpdatedState(syncOffsetMs)
-                val latestSyncedLines by rememberUpdatedState(syncedLines)
-                val latestAutoScroll by rememberUpdatedState(lyricsAutoScroll)
                 LaunchedEffect(song.id, playbackPositionFlow) {
                     var lastRawPos = playbackPositionFlow?.value ?: positionMs
                     if (playbackPositionFlow != null) {
@@ -494,7 +498,7 @@ fun AlternateLyricsPanel(
                                 val effPos = rawPos + latestSyncOffsetMs
                                 val idx = Lyrics.findActiveLineIndex(latestSyncedLines, effPos).coerceAtLeast(0)
                                 if (latestAutoScroll && idx in latestSyncedLines.indices) {
-                                    listState.animateScrollToItem(idx)
+                                    listState.animateScrollToItem(idx, 0)
                                 }
                             }
                             lastRawPos = rawPos
@@ -502,11 +506,10 @@ fun AlternateLyricsPanel(
                     }
                 }
 
-                val shouldShowSyncButton by remember {
-                    derivedStateOf {
-                        if (lyricsAutoScroll) userHasManuallyScrolled
-                        else manuallyViewedIndex != scrollIndex
-                    }
+                val shouldShowSyncButton = if (lyricsAutoScroll) {
+                    userHasManuallyScrolled
+                } else {
+                    manuallyViewedIndex != scrollIndex
                 }
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

@@ -32,6 +32,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.data.model.AlbumStat
 import com.example.data.model.ArtistStat
 import com.example.data.model.Song
@@ -39,6 +43,64 @@ import com.example.data.model.TimeOfDayDistribution
 import com.example.data.model.WrappedData
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
+
+private data class WrappedStoryPalette(
+    val isDark: Boolean,
+    val ink: Color,
+    val subInk: Color,
+    val mutedInk: Color,
+    val cardBg: Color,
+    val cardBorder: Color,
+    val pillBg: Color,
+    val iconBtnBg: Color,
+    val progressIndicator: Color,
+    val progressTrack: Color,
+    val posterCardBg: Color,
+    val posterGradient: List<Color>,
+    val onAccentPink: Color
+)
+
+@Composable
+private fun rememberWrappedStoryPalette(): WrappedStoryPalette {
+    val isDark = BentoBackground.luminance() < 0.5f
+    val onAccentPink = if (BentoAccentPinkText.luminance() > 0.45f) Color.Black else Color.White
+    return if (isDark) {
+        WrappedStoryPalette(
+            isDark = true,
+            ink = Color.White,
+            subInk = Color.White.copy(alpha = 0.78f),
+            mutedInk = Color.White.copy(alpha = 0.55f),
+            cardBg = Color.White.copy(alpha = 0.08f),
+            cardBorder = Color.White.copy(alpha = 0.16f),
+            pillBg = Color.White.copy(alpha = 0.11f),
+            iconBtnBg = Color.Black.copy(alpha = 0.40f),
+            progressIndicator = Color.White,
+            progressTrack = Color.White.copy(alpha = 0.25f),
+            posterCardBg = Color(0xFF1B1B26),
+            posterGradient = listOf(Color(0xFF281E48), Color(0xFF141420)),
+            onAccentPink = onAccentPink
+        )
+    } else {
+        WrappedStoryPalette(
+            isDark = false,
+            ink = BentoTextPrimary,
+            subInk = BentoTextSecondary,
+            mutedInk = BentoTextSecondary.copy(alpha = 0.75f),
+            cardBg = Color.White.copy(alpha = 0.80f),
+            cardBorder = BentoTextPrimary.copy(alpha = 0.10f),
+            pillBg = BentoTextPrimary.copy(alpha = 0.07f),
+            iconBtnBg = Color.White.copy(alpha = 0.82f),
+            progressIndicator = BentoPrimary,
+            progressTrack = BentoTextPrimary.copy(alpha = 0.16f),
+            posterCardBg = Color.White,
+            posterGradient = listOf(
+                Color.White,
+                androidx.compose.ui.graphics.lerp(Color.White, BentoPrimary, 0.10f)
+            ),
+            onAccentPink = onAccentPink
+        )
+    }
+}
 
 @Composable
 fun WrappedStoryDialog(
@@ -126,6 +188,8 @@ fun WrappedStoryDialog(
         }
     }
 
+    val palette = rememberWrappedStoryPalette()
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -134,23 +198,41 @@ fun WrappedStoryDialog(
             dismissOnClickOutside = false
         )
     ) {
+        val bgGradientColors = if (palette.isDark) {
+            listOf(
+                when (currentSlide) {
+                    0 -> Color(0xFF311B92)
+                    1 -> Color(0xFF880E4F)
+                    2 -> Color(0xFF004D40)
+                    3 -> Color(0xFF1A237E)
+                    4 -> Color(0xFF4A148C)
+                    else -> Color(0xFF1E1E2E)
+                },
+                Color(0xFF0D0D14),
+                Color(0xFF050508)
+            )
+        } else {
+            val slideAccentWash = when (currentSlide) {
+                0 -> Color(0xFFE0D7FF)
+                1 -> Color(0xFFFFD8E8)
+                2 -> Color(0xFFD0F3EA)
+                3 -> Color(0xFFD9E6FF)
+                4 -> Color(0xFFEBD7FA)
+                else -> Color(0xFFE8ECF8)
+            }
+            listOf(
+                slideAccentWash,
+                androidx.compose.ui.graphics.lerp(slideAccentWash, Color(0xFFF8FAFC), 0.58f),
+                Color(0xFFF6F7FB)
+            )
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(
-                            when (currentSlide) {
-                                0 -> Color(0xFF311B92)
-                                1 -> Color(0xFF880E4F)
-                                2 -> Color(0xFF004D40)
-                                3 -> Color(0xFF1A237E)
-                                4 -> Color(0xFF4A148C)
-                                else -> Color(0xFF1E1E2E)
-                            },
-                            Color(0xFF0D0D14),
-                            Color(0xFF050508)
-                        ),
+                        colors = bgGradientColors,
                         radius = 1200f
                     )
                 )
@@ -205,8 +287,8 @@ fun WrappedStoryDialog(
                                     .weight(1f)
                                     .height(3.dp)
                                     .clip(CircleShape),
-                                color = Color.White,
-                                trackColor = Color.White.copy(alpha = 0.25f)
+                                color = palette.progressIndicator,
+                                trackColor = palette.progressTrack
                             )
                         }
                     }
@@ -220,7 +302,7 @@ fun WrappedStoryDialog(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = BentoPrimary.copy(alpha = 0.2f),
+                                color = BentoPrimary.copy(alpha = if (palette.isDark) 0.2f else 0.14f),
                                 modifier = Modifier.padding(end = 8.dp)
                             ) {
                                 Text(
@@ -234,7 +316,7 @@ fun WrappedStoryDialog(
                             Text(
                                 text = timePeriodTitle,
                                 fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.7f),
+                                color = palette.subInk,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -249,12 +331,12 @@ fun WrappedStoryDialog(
                                     .padding(end = 6.dp)
                                     .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.4f))
+                                    .background(palette.iconBtnBg)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Share,
                                     contentDescription = "Share Stats Card",
-                                    tint = Color.White,
+                                    tint = palette.ink,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -264,12 +346,12 @@ fun WrappedStoryDialog(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.4f))
+                                    .background(palette.iconBtnBg)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Close",
-                                    tint = Color.White,
+                                    tint = palette.ink,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -299,11 +381,11 @@ fun WrappedStoryDialog(
                         label = "slide_transition"
                     ) { slide ->
                         when (slide) {
-                            0 -> SlideMinutesAndArchetype(activeWrappedData, timePeriodTitle)
-                            1 -> SlideTopTrack(activeWrappedData, onPlaySong)
-                            2 -> SlideTop5Leaderboard(activeWrappedData, onPlaySong)
-                            3 -> SlideTopArtistsAlbums(activeWrappedData)
-                            4 -> SlideTimeOfDay(activeWrappedData)
+                            0 -> SlideMinutesAndArchetype(activeWrappedData, timePeriodTitle, palette)
+                            1 -> SlideTopTrack(activeWrappedData, onPlaySong, palette)
+                            2 -> SlideTop5Leaderboard(activeWrappedData, onPlaySong, palette)
+                            3 -> SlideTopArtistsAlbums(activeWrappedData, palette)
+                            4 -> SlideTimeOfDay(activeWrappedData, palette)
                             5 -> SlideSummaryCard(
                                 data = activeWrappedData,
                                 timePeriodTitle = timePeriodTitle,
@@ -312,7 +394,8 @@ fun WrappedStoryDialog(
                                 onShareStatsCard = {
                                     isPaused = true
                                     showSharePeriodDialog = true
-                                }
+                                },
+                                palette = palette
                             )
                         }
                     }
@@ -329,12 +412,12 @@ fun WrappedStoryDialog(
                     Text(
                         text = if (currentSlide > 0) "◀ Tap left for prev" else "",
                         fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = palette.mutedInk
                     )
                     Text(
                         text = if (currentSlide < totalSlides - 1) "Tap right for next ▶" else "Finish",
                         fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = palette.mutedInk
                     )
                 }
             }
@@ -343,7 +426,11 @@ fun WrappedStoryDialog(
 }
 
 @Composable
-private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String) {
+private fun SlideMinutesAndArchetype(
+    data: WrappedData,
+    timePeriodTitle: String,
+    palette: WrappedStoryPalette
+) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -382,7 +469,7 @@ private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String)
 
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = BentoAccentPinkText.copy(alpha = 0.18f),
+            color = BentoAccentPinkText.copy(alpha = 0.16f),
             border = BorderStroke(1.dp, BentoAccentPinkText.copy(alpha = 0.4f)),
             modifier = Modifier.padding(bottom = 12.dp)
         ) {
@@ -401,21 +488,21 @@ private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String)
             fontSize = 13.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = 2.sp,
-            color = Color.White.copy(alpha = 0.7f)
+            color = palette.subInk
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = "${data.totalMinutes} Minutes",
             fontSize = 36.sp,
             fontWeight = FontWeight.ExtraBold,
-            color = Color.White
+            color = palette.ink
         )
         val daysCount = data.activeDaysCount.coerceAtLeast(if (data.totalTracks > 0 || data.totalMinutes > 0) 1 else 0)
         val daysText = if (daysCount == 1) "1 active listening day" else "$daysCount active listening days"
         Text(
             text = "Across $daysText • ${data.totalTracks} total plays",
             fontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.8f),
+            color = palette.subInk,
             modifier = Modifier.padding(top = 4.dp)
         )
 
@@ -424,8 +511,8 @@ private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String)
         // Archetype Card
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = Color.White.copy(alpha = 0.1f),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+            color = palette.cardBg,
+            border = BorderStroke(1.dp, palette.cardBorder),
             modifier = Modifier.fillMaxWidth(0.9f)
         ) {
             Column(
@@ -444,13 +531,13 @@ private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String)
                     text = data.listenerArchetype,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.White
+                    color = palette.ink
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = data.archetypeDescription,
                     fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.75f),
+                    color = palette.subInk,
                     textAlign = TextAlign.Center
                 )
             }
@@ -459,7 +546,11 @@ private fun SlideMinutesAndArchetype(data: WrappedData, timePeriodTitle: String)
 }
 
 @Composable
-private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
+private fun SlideTopTrack(
+    data: WrappedData,
+    onPlaySong: (Song) -> Unit,
+    palette: WrappedStoryPalette
+) {
     val song = data.topSong
     val infiniteTransition = rememberInfiniteTransition(label = "vinyl")
     val rotation by infiniteTransition.animateFloat(
@@ -496,8 +587,8 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(CircleShape)
-                        .background(Color.Black)
-                        .border(4.dp, Color(0xFF2B2B38), CircleShape)
+                        .background(Color(0xFF14151E))
+                        .border(4.dp, if (palette.isDark) Color(0xFF2B2B38) else Color(0xFF334155), CircleShape)
                         .rotate(rotation)
                 ) {
                     AlbumArtView(
@@ -534,7 +625,7 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
                 text = song.displayTitle,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = palette.ink,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -544,7 +635,7 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
             Text(
                 text = song.displayArtist,
                 fontSize = 15.sp,
-                color = Color.White.copy(alpha = 0.8f),
+                color = palette.subInk,
                 textAlign = TextAlign.Center
             )
 
@@ -552,8 +643,8 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
 
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = Color.White.copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                color = palette.cardBg,
+                border = BorderStroke(1.dp, palette.cardBorder)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -570,7 +661,7 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
                         text = "Played ${data.topSongPlayCount} times (${formatListeningDuration(data.topSongDurationMs)})",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = palette.ink
                     )
                 }
             }
@@ -601,14 +692,18 @@ private fun SlideTopTrack(data: WrappedData, onPlaySong: (Song) -> Unit) {
             Text(
                 text = "No track plays recorded in this period",
                 fontSize = 14.sp,
-                color = Color.White.copy(alpha = 0.7f)
+                color = palette.subInk
             )
         }
     }
 }
 
 @Composable
-private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) {
+private fun SlideTop5Leaderboard(
+    data: WrappedData,
+    onPlaySong: (Song) -> Unit,
+    palette: WrappedStoryPalette
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -625,7 +720,7 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
         Text(
             text = "The tracks on heavy rotation",
             fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.7f),
+            color = palette.subInk,
             modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)
         )
 
@@ -638,8 +733,8 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
                 top5.forEachIndexed { index, song ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = Color.White.copy(alpha = 0.08f),
-                        border = BorderStroke(1.dp, if (index == 0) BentoPrimary.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.12f)),
+                        color = palette.cardBg,
+                        border = BorderStroke(1.dp, if (index == 0) BentoPrimary.copy(alpha = 0.6f) else palette.cardBorder),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onPlaySong(song) }
@@ -654,7 +749,7 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
                                 text = "#${index + 1}",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Black,
-                                color = if (index == 0) BentoPrimary else Color.White.copy(alpha = 0.8f),
+                                color = if (index == 0) BentoPrimary else palette.subInk,
                                 modifier = Modifier.width(30.dp)
                             )
                             AlbumArtView(
@@ -668,14 +763,14 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
                                     text = song.displayTitle,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = palette.ink,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = song.displayArtist,
                                     fontSize = 12.sp,
-                                    color = Color.White.copy(alpha = 0.7f),
+                                    color = palette.subInk,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -683,7 +778,7 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
                             if (song.playCount > 0) {
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
-                                    color = BentoPrimary.copy(alpha = 0.2f)
+                                    color = BentoPrimary.copy(alpha = if (palette.isDark) 0.2f else 0.14f)
                                 ) {
                                     Text(
                                         text = "${song.playCount} plays",
@@ -702,7 +797,7 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
             Text(
                 text = "Keep playing songs to unlock your top 5",
                 fontSize = 14.sp,
-                color = Color.White.copy(alpha = 0.7f),
+                color = palette.subInk,
                 modifier = Modifier.padding(top = 40.dp)
             )
         }
@@ -710,7 +805,10 @@ private fun SlideTop5Leaderboard(data: WrappedData, onPlaySong: (Song) -> Unit) 
 }
 
 @Composable
-private fun SlideTopArtistsAlbums(data: WrappedData) {
+private fun SlideTopArtistsAlbums(
+    data: WrappedData,
+    palette: WrappedStoryPalette
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -729,8 +827,8 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
         // Top Artists Box
         Surface(
             shape = RoundedCornerShape(14.dp),
-            color = Color.White.copy(alpha = 0.08f),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+            color = palette.cardBg,
+            border = BorderStroke(1.dp, palette.cardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
@@ -746,7 +844,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                         text = "Top Artists",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = palette.ink
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -776,7 +874,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                                     text = artist.name,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color.White,
+                                    color = palette.ink,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -784,7 +882,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                             Text(
                                 text = "${artist.playCount} plays",
                                 fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.7f)
+                                color = palette.subInk
                             )
                         }
                     }
@@ -792,7 +890,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                     Text(
                         text = "No artist stats yet",
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.6f)
+                        color = palette.mutedInk
                     )
                 }
             }
@@ -803,8 +901,8 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
         // Top Albums Box
         Surface(
             shape = RoundedCornerShape(14.dp),
-            color = Color.White.copy(alpha = 0.08f),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+            color = palette.cardBg,
+            border = BorderStroke(1.dp, palette.cardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
@@ -820,7 +918,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                         text = "Top Albums",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = palette.ink
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -851,14 +949,14 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                                         text = album.name,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = Color.White,
+                                        color = palette.ink,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = album.artist,
                                         fontSize = 11.sp,
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        color = palette.mutedInk,
                                         maxLines = 1
                                     )
                                 }
@@ -866,7 +964,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                             Text(
                                 text = "${album.playCount} plays",
                                 fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.7f)
+                                color = palette.subInk
                             )
                         }
                     }
@@ -874,7 +972,7 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
                     Text(
                         text = "No album stats yet",
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.6f)
+                        color = palette.mutedInk
                     )
                 }
             }
@@ -883,7 +981,10 @@ private fun SlideTopArtistsAlbums(data: WrappedData) {
 }
 
 @Composable
-private fun SlideTimeOfDay(data: WrappedData) {
+private fun SlideTimeOfDay(
+    data: WrappedData,
+    palette: WrappedStoryPalette
+) {
     val total = data.timeOfDay.totalMs.coerceAtLeast(1L)
     val morningPct = ((data.timeOfDay.morningDurationMs.toFloat() / total) * 100).toInt()
     val afternoonPct = ((data.timeOfDay.afternoonDurationMs.toFloat() / total) * 100).toInt()
@@ -909,7 +1010,7 @@ private fun SlideTimeOfDay(data: WrappedData) {
             text = "Dominant Vibe: ${data.timeOfDay.dominantVibe}",
             fontSize = 20.sp,
             fontWeight = FontWeight.ExtraBold,
-            color = Color.White
+            color = palette.ink
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -924,28 +1025,32 @@ private fun SlideTimeOfDay(data: WrappedData) {
                 percentage = morningPct,
                 durationFormatted = formatListeningDuration(data.timeOfDay.morningDurationMs),
                 icon = Icons.Default.WbSunny,
-                color = Color(0xFFFFB74D)
+                color = if (palette.isDark) Color(0xFFFFB74D) else Color(0xFFD97706),
+                palette = palette
             )
             TimeSlotBar(
                 title = "Afternoon (12:00 - 17:00)",
                 percentage = afternoonPct,
                 durationFormatted = formatListeningDuration(data.timeOfDay.afternoonDurationMs),
                 icon = Icons.Default.LightMode,
-                color = Color(0xFF4FC3F7)
+                color = if (palette.isDark) Color(0xFF4FC3F7) else Color(0xFF0284C7),
+                palette = palette
             )
             TimeSlotBar(
                 title = "Evening (17:00 - 22:00)",
                 percentage = eveningPct,
                 durationFormatted = formatListeningDuration(data.timeOfDay.eveningDurationMs),
                 icon = Icons.Default.NightsStay,
-                color = Color(0xFFBA68C8)
+                color = if (palette.isDark) Color(0xFFBA68C8) else Color(0xFF9333EA),
+                palette = palette
             )
             TimeSlotBar(
                 title = "Night Owl (22:00 - 05:00)",
                 percentage = nightPct,
                 durationFormatted = formatListeningDuration(data.timeOfDay.nightDurationMs),
                 icon = Icons.Default.Bedtime,
-                color = Color(0xFF7986CB)
+                color = if (palette.isDark) Color(0xFF7986CB) else Color(0xFF4F46E5),
+                palette = palette
             )
         }
     }
@@ -957,12 +1062,13 @@ private fun TimeSlotBar(
     percentage: Int,
     durationFormatted: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    color: Color
+    color: Color,
+    palette: WrappedStoryPalette
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = Color.White.copy(alpha = 0.08f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        color = palette.cardBg,
+        border = BorderStroke(1.dp, palette.cardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
@@ -983,7 +1089,7 @@ private fun TimeSlotBar(
                         text = title,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = palette.ink
                     )
                 }
                 Text(
@@ -1003,7 +1109,7 @@ private fun TimeSlotBar(
                     .height(6.dp)
                     .clip(CircleShape),
                 color = color,
-                trackColor = Color.White.copy(alpha = 0.15f)
+                trackColor = palette.progressTrack
             )
         }
     }
@@ -1015,10 +1121,9 @@ private fun SlideSummaryCard(
     timePeriodTitle: String,
     onPlayTopQueue: (List<Song>) -> Unit,
     onDismiss: () -> Unit,
-    onShareStatsCard: () -> Unit
+    onShareStatsCard: () -> Unit,
+    palette: WrappedStoryPalette
 ) {
-    val context = LocalContext.current
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1028,23 +1133,16 @@ private fun SlideSummaryCard(
         // Summary Poster Card
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = Color(0xFF1B1B26),
-            border = BorderStroke(2.dp, BentoPrimary.copy(alpha = 0.8f)),
+            color = palette.posterCardBg,
+            border = BorderStroke(2.dp, BentoPrimary.copy(alpha = if (palette.isDark) 0.8f else 0.55f)),
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(12.dp, RoundedCornerShape(18.dp))
+                .shadow(if (palette.isDark) 12.dp else 6.dp, RoundedCornerShape(18.dp))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF281E48),
-                                Color(0xFF141420)
-                            )
-                        )
-                    )
+                    .background(Brush.verticalGradient(colors = palette.posterGradient))
                     .padding(16.dp)
             ) {
                 // Header
@@ -1054,11 +1152,12 @@ private fun SlideSummaryCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = null,
-                            tint = BentoPrimary,
-                            modifier = Modifier.size(20.dp)
+                        Image(
+                            painter = painterResource(id = R.drawable.app_logo),
+                            contentDescription = "OffGrid Music logo",
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(RoundedCornerShape(6.dp))
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -1071,7 +1170,7 @@ private fun SlideSummaryCard(
                     Text(
                         text = timePeriodTitle,
                         fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.7f),
+                        color = palette.subInk,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -1085,33 +1184,33 @@ private fun SlideSummaryCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color.White.copy(alpha = 0.1f),
+                        color = palette.pillBg,
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(
                             modifier = Modifier.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("${data.totalMinutes}m", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color.White)
-                            Text("Minutes", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
+                            Text("${data.totalMinutes}m", fontSize = 16.sp, fontWeight = FontWeight.Black, color = palette.ink)
+                            Text("Minutes", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color.White.copy(alpha = 0.1f),
+                        color = palette.pillBg,
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(
                             modifier = Modifier.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("${data.totalTracks}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color.White)
-                            Text("Plays", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
+                            Text("${data.totalTracks}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = palette.ink)
+                            Text("Plays", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color.White.copy(alpha = 0.1f),
+                        color = palette.pillBg,
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(
@@ -1119,7 +1218,7 @@ private fun SlideSummaryCard(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(data.timeOfDay.dominantVibe, fontSize = 13.sp, fontWeight = FontWeight.Black, color = BentoPrimary, maxLines = 1)
-                            Text("Vibe", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
+                            Text("Vibe", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
                 }
@@ -1154,7 +1253,7 @@ private fun SlideSummaryCard(
                             text = song.displayTitle,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = palette.ink,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
@@ -1162,7 +1261,7 @@ private fun SlideSummaryCard(
                         Text(
                             text = song.displayArtist,
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = palette.mutedInk,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 6.dp)
@@ -1216,13 +1315,13 @@ private fun SlideSummaryCard(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BentoAccentPinkText,
-                    contentColor = Color.Black
+                    contentColor = palette.onAccentPink
                 )
             ) {
                 Icon(
                     imageVector = Icons.Default.Share,
                     contentDescription = null,
-                    tint = Color.Black,
+                    tint = palette.onAccentPink,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))

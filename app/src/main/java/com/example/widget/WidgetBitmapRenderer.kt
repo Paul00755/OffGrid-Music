@@ -65,9 +65,10 @@ object WidgetBitmapRenderer {
     fun getThemeColors(
         songBitmap: Bitmap?,
         isDynamicTheme: Boolean = true,
-        manualAccentColor: Int? = null
+        manualAccentColor: Int? = null,
+        isLightTheme: Boolean = false
     ): WidgetThemeColors {
-        val colors = computeThemeColors(songBitmap, isDynamicTheme, manualAccentColor)
+        val colors = computeThemeColors(songBitmap, isDynamicTheme, manualAccentColor, isLightTheme)
         cachedColors = colors
         return colors
     }
@@ -91,7 +92,8 @@ object WidgetBitmapRenderer {
     fun computeThemeColors(
         bitmap: Bitmap?,
         isDynamicTheme: Boolean = true,
-        manualAccentColor: Int? = null
+        manualAccentColor: Int? = null,
+        isLightTheme: Boolean = false
     ): WidgetThemeColors {
         val accent = if (isDynamicTheme) {
             val extracted = extractDominantAccentColor(bitmap)
@@ -102,6 +104,29 @@ object WidgetBitmapRenderer {
         val r = Color.red(accent)
         val g = Color.green(accent)
         val b = Color.blue(accent)
+
+        if (isLightTheme) {
+            // Soft luminous pastel-tinted light card surface
+            val bgR = (r * 0.08f + 248 * 0.92f).toInt().coerceIn(0, 255)
+            val bgG = (g * 0.08f + 250 * 0.92f).toInt().coerceIn(0, 255)
+            val bgB = (b * 0.09f + 252 * 0.91f).toInt().coerceIn(0, 255)
+            val containerBg = Color.rgb(bgR, bgG, bgB)
+
+            val strokeR = (r * 0.24f + 203 * 0.76f).toInt().coerceIn(0, 255)
+            val strokeG = (g * 0.24f + 213 * 0.76f).toInt().coerceIn(0, 255)
+            val strokeB = (b * 0.24f + 225 * 0.76f).toInt().coerceIn(0, 255)
+            val containerBorder = Color.rgb(strokeR, strokeG, strokeB)
+
+            return WidgetThemeColors(
+                accentColor = accent,
+                containerBgColor = containerBg,
+                containerBorderColor = containerBorder,
+                iconColor = Color.parseColor("#1E293B"),
+                titleColor = Color.parseColor("#0F172A"),
+                subtitleColor = Color.parseColor("#475569"),
+                durationColor = Color.parseColor("#64748B")
+            )
+        }
 
         // Deep charcoal-navy card surface subtly harmonized with accent
         val bgR = (r * 0.09f + 22 * 0.91f).toInt().coerceIn(0, 255)
@@ -114,13 +139,11 @@ object WidgetBitmapRenderer {
         val strokeB = (b * 0.35f + 58 * 0.65f).toInt().coerceIn(0, 255)
         val containerBorder = Color.rgb(strokeR, strokeG, strokeB)
 
-        val iconColor = Color.rgb(18, 12, 20)
-
         return WidgetThemeColors(
             accentColor = accent,
             containerBgColor = containerBg,
             containerBorderColor = containerBorder,
-            iconColor = iconColor,
+            iconColor = Color.WHITE,
             titleColor = Color.WHITE,
             subtitleColor = Color.parseColor("#9AA2B1"),
             durationColor = Color.parseColor("#8D95A5")
@@ -689,9 +712,10 @@ object WidgetBitmapRenderer {
     fun renderFavoriteChipButton(
         sizePx: Int,
         isFavorite: Boolean,
-        accentColor: Int
+        accentColor: Int,
+        isLightSurface: Boolean = false
     ): Bitmap {
-        val key = "fav_chip_${sizePx}_${isFavorite}_${accentColor}"
+        val key = "fav_chip_${sizePx}_${isFavorite}_${accentColor}_${isLightSurface}"
         buttonBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
         val bitmap = Bitmap.createBitmap(sizePx.coerceAtLeast(1), sizePx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
@@ -701,9 +725,13 @@ object WidgetBitmapRenderer {
         val center = sizePx / 2f
         val radius = center - 1f
 
-        // Translucent dark circular pill backdrop matching the 4-widget reference
+        // Theme-aware circular pill backdrop
         paint.style = Paint.Style.FILL
-        paint.color = Color.argb(140, 32, 36, 48)
+        paint.color = if (isLightSurface) {
+            Color.argb(26, 15, 23, 42)
+        } else {
+            Color.argb(140, 32, 36, 48)
+        }
         canvas.drawCircle(center, center, radius, paint)
 
         val heartScale = sizePx * 0.42f
@@ -727,7 +755,7 @@ object WidgetBitmapRenderer {
             paint.strokeWidth = (sizePx * 0.068f).coerceAtLeast(1.8f)
             paint.strokeJoin = Paint.Join.ROUND
             paint.strokeCap = Paint.Cap.ROUND
-            paint.color = Color.WHITE
+            paint.color = if (isLightSurface) Color.parseColor("#334155") else Color.WHITE
             canvas.drawPath(path, paint)
         }
 
@@ -804,7 +832,7 @@ object WidgetBitmapRenderer {
             }
             ButtonIconType.NEXT -> {
                 // Crisp balanced skip-next icon (▶|) with rounded joins
-                paint.color = Color.WHITE
+                paint.color = iconColor
                 paint.style = Paint.Style.FILL
                 paint.pathEffect = CornerPathEffect(sizePx * 0.035f)
 
@@ -827,7 +855,7 @@ object WidgetBitmapRenderer {
             }
             ButtonIconType.PREV -> {
                 // Crisp balanced skip-previous icon (|◀) with rounded joins
-                paint.color = Color.WHITE
+                paint.color = iconColor
                 paint.style = Paint.Style.FILL
 
                 val halfH = sizePx * 0.21f

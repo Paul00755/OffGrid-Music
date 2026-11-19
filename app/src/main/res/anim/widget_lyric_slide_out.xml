@@ -4,10 +4,10 @@
     android:shareInterpolator="true">
     <translate
         android:fromYDelta="0%p"
-        android:toYDelta="-32%p"
-        android:duration="220" />
+        android:toYDelta="-14%p"
+        android:duration="100" />
     <alpha
         android:fromAlpha="1.0"
         android:toAlpha="0.0"
-        android:duration="220" />
+        android:duration="100" />
 </set>

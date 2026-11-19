@@ -185,6 +185,13 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()
                     val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()
+                    val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
+
+                    LaunchedEffect(themeMode, isSystemDark) {
+                        if (themeMode.equals("SYSTEM", ignoreCase = true)) {
+                            viewModel.syncSystemThemeNowPlayingDefault(isSystemDark)
+                        }
+                    }
 
                     LaunchedEffect(showSplash, isOnboardingCompleted) {
                         if (!showSplash && isOnboardingCompleted) {
@@ -416,6 +423,9 @@ class MainActivity : ComponentActivity() {
                             ignoreDurationSec = ignoreAudioDuration,
                             maxDurationSec = maxSongDurationSetting,
                             fullDeviceScan = fullDeviceScanSetting,
+                            selectedThemeMode = themeMode,
+                            isSystemDark = isSystemDark,
+                            onSelectThemeMode = { mode -> viewModel.setOnboardingThemeMode(mode, isSystemDark) },
                             onSetFullDeviceScan = { viewModel.setFullDeviceScan(it) },
                             onSetIgnoreAudioDuration = { min -> viewModel.setIgnoreAudioDuration(min) },
                             onSetSongDurationRange = { min, max -> viewModel.setSongDurationRange(min, max) },
@@ -423,7 +433,7 @@ class MainActivity : ComponentActivity() {
                             onRemoveFolder = { viewModel.removeFolder(it) },
                             onRequestStoragePermission = { requestAllFilesPermission() },
                             onStartScan = { isFull -> viewModel.scanLibrary(isFull) },
-                            onComplete = { viewModel.completeOnboarding() }
+                            onComplete = { viewModel.completeOnboarding(isSystemDark) }
                         )
                     } else {
                         // 3. Main App UI (Shown after Startup Animation finishes and Onboarding is complete)

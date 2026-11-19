@@ -4304,13 +4304,20 @@ class PlaybackManager(
 
     fun setPreferredAudioDevice(deviceInfo: android.media.AudioDeviceInfo?) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            try {
-                if (currentPreferredDevice?.id == deviceInfo?.id) return
-                currentPreferredDevice = deviceInfo
-                player.setPreferredAudioDevice(deviceInfo)
-                _crossfadePlayer?.setPreferredAudioDevice(deviceInfo)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val applyRoute = {
+                try {
+                    currentPreferredDevice = deviceInfo
+                    player.setPreferredAudioDevice(deviceInfo)
+                    _crossfadePlayer?.setPreferredAudioDevice(deviceInfo)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            val looper = player.applicationLooper
+            if (android.os.Looper.myLooper() == looper) {
+                applyRoute()
+            } else {
+                android.os.Handler(looper).post { applyRoute() }
             }
         }
     }

@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <set xmlns:android="http://schemas.android.com/apk/res/android"
     android:interpolator="@android:interpolator/decelerate_cubic"
-    android:shareInterpolator="true">
+    android:shareInterpolator="true"
+    android:startOffset="100">
     <translate
-        android:fromYDelta="32%p"
+        android:fromYDelta="16%p"
         android:toYDelta="0%p"
-        android:duration="260" />
+        android:duration="160" />
     <alpha
         android:fromAlpha="0.0"
         android:toAlpha="1.0"
-        android:duration="260" />
+        android:duration="160" />
 </set>

@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import com.example.R
 import com.example.data.model.FolderInfo
 import com.example.scanner.ScanProgress
@@ -47,6 +48,17 @@ enum class InitialScanMode {
     FULL_DEVICE
 }
 
+private data class OnboardingThemeOption(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val previewBg: Color,
+    val previewCard: Color,
+    val previewAccent: Color,
+    val previewInk: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
 @Composable
 fun OnboardingScreen(
     scanProgress: ScanProgress,
@@ -55,6 +67,9 @@ fun OnboardingScreen(
     ignoreDurationSec: Int = 0,
     maxDurationSec: Int = 300,
     fullDeviceScan: Boolean = false,
+    selectedThemeMode: String = "DARK",
+    isSystemDark: Boolean = true,
+    onSelectThemeMode: (String) -> Unit = {},
     onSetFullDeviceScan: (Boolean) -> Unit = {},
     onSetIgnoreAudioDuration: (Int) -> Unit = {},
     onSetSongDurationRange: (minSec: Int, maxSec: Int) -> Unit = { _, _ -> },
@@ -66,6 +81,7 @@ fun OnboardingScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val totalSteps = 4
     var currentStep by remember { mutableIntStateOf(1) }
     var localFullScan by remember(fullDeviceScan) { mutableStateOf(fullDeviceScan) }
     var isPickingForExclusion by remember { mutableStateOf(false) }
@@ -157,7 +173,7 @@ fun OnboardingScreen(
                 modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                for (i in 1..3) {
+                for (i in 1..totalSteps) {
                     Box(
                         modifier = Modifier
                             .height(6.dp)
@@ -205,7 +221,7 @@ fun OnboardingScreen(
                                     text = "Welcome to OffGrid Music",
                                     fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = BentoTextPrimary,
                                     textAlign = TextAlign.Center
                                 )
 
@@ -220,6 +236,254 @@ fun OnboardingScreen(
                         }
                     }
                     2 -> {
+                        val normalizedMode = selectedThemeMode.uppercase()
+                        val themeOptions = remember(isSystemDark) {
+                            listOf(
+                                OnboardingThemeOption(
+                                    id = "DARK",
+                                    title = "Dark",
+                                    subtitle = "Deep obsidian surfaces",
+                                    previewBg = Color(0xFF0E1018),
+                                    previewCard = Color(0xFF1A1E2E),
+                                    previewAccent = Color(0xFFA78BFA),
+                                    previewInk = Color.White,
+                                    icon = Icons.Default.DarkMode
+                                ),
+                                OnboardingThemeOption(
+                                    id = "LIGHT",
+                                    title = "Light",
+                                    subtitle = "Crisp bright daylight UI",
+                                    previewBg = Color(0xFFF6F7FB),
+                                    previewCard = Color(0xFFFFFFFF),
+                                    previewAccent = Color(0xFF6D28D9),
+                                    previewInk = Color(0xFF0F172A),
+                                    icon = Icons.Default.LightMode
+                                ),
+                                OnboardingThemeOption(
+                                    id = "AMOLED",
+                                    title = "AMOLED",
+                                    subtitle = "Pure pitch-black OLED",
+                                    previewBg = Color(0xFF000000),
+                                    previewCard = Color(0xFF0E0E12),
+                                    previewAccent = Color(0xFF38BDF8),
+                                    previewInk = Color.White,
+                                    icon = Icons.Default.Contrast
+                                ),
+                                OnboardingThemeOption(
+                                    id = "SYSTEM",
+                                    title = "System",
+                                    subtitle = if (isSystemDark) "Follows OS (Dark)" else "Follows OS (Light)",
+                                    previewBg = if (isSystemDark) Color(0xFF141824) else Color(0xFFEDF2FA),
+                                    previewCard = if (isSystemDark) Color(0xFF202638) else Color(0xFFFFFFFF),
+                                    previewAccent = Color(0xFF8B5CF6),
+                                    previewInk = if (isSystemDark) Color.White else Color(0xFF0F172A),
+                                    icon = Icons.Default.BrightnessAuto
+                                )
+                            )
+                        }
+
+                        val pairedNowPlayingName = when (normalizedMode) {
+                            "LIGHT" -> "Neon Studio"
+                            "SYSTEM" -> if (isSystemDark) "Minimalist Glass (Dark) / Neon Studio (Light)" else "Neon Studio (Light) / Minimalist Glass (Dark)"
+                            else -> "Minimalist Glass"
+                        }
+
+                        BentoCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = BentoCardDarkPurple,
+                            padding = 22.dp
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(CircleShape)
+                                        .background(BentoPrimaryContainer.copy(alpha = 0.85f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Palette,
+                                        contentDescription = null,
+                                        tint = BentoPrimary,
+                                        modifier = Modifier.size(34.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = "Choose Your Look",
+                                    fontSize = 21.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Text(
+                                    text = "Pick the theme that fits your vibe. Your default Now Playing screen automatically adapts to match.",
+                                    fontSize = 13.sp,
+                                    color = BentoTextSecondary,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 18.sp
+                                )
+
+                                // 2x2 Visual Theme Cards
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    themeOptions.chunked(2).forEach { rowOptions ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            rowOptions.forEach { option ->
+                                                val isSelected = normalizedMode == option.id
+                                                Surface(
+                                                    onClick = {
+                                                        HapticUtils.performClickHaptic(context)
+                                                        onSelectThemeMode(option.id)
+                                                    },
+                                                    shape = RoundedCornerShape(16.dp),
+                                                    color = if (isSelected) BentoPrimary.copy(alpha = 0.14f) else BentoCardPurple,
+                                                    border = BorderStroke(
+                                                        width = if (isSelected) 2.dp else 1.dp,
+                                                        color = if (isSelected) BentoPrimary else BentoCardBorder.copy(alpha = 0.65f)
+                                                    ),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("onboarding_theme_${option.id.lowercase()}")
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(12.dp),
+                                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        // Mini visual surface swatch
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(44.dp)
+                                                                .clip(RoundedCornerShape(10.dp))
+                                                                .background(option.previewBg)
+                                                                .border(
+                                                                    width = 1.dp,
+                                                                    color = option.previewInk.copy(alpha = 0.12f),
+                                                                    shape = RoundedCornerShape(10.dp)
+                                                                )
+                                                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.fillMaxSize(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(26.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(option.previewCard),
+                                                                    contentAlignment = Alignment.Center
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = option.icon,
+                                                                        contentDescription = null,
+                                                                        tint = option.previewAccent,
+                                                                        modifier = Modifier.size(16.dp)
+                                                                    )
+                                                                }
+                                                                Column(
+                                                                    modifier = Modifier
+                                                                        .weight(1f)
+                                                                        .padding(start = 8.dp),
+                                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                                ) {
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .fillMaxWidth(0.75f)
+                                                                            .height(5.dp)
+                                                                            .clip(CircleShape)
+                                                                            .background(option.previewInk.copy(alpha = 0.72f))
+                                                                    )
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .fillMaxWidth(0.50f)
+                                                                            .height(4.dp)
+                                                                            .clip(CircleShape)
+                                                                            .background(option.previewAccent.copy(alpha = 0.75f))
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = option.title,
+                                                                    fontSize = 14.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = if (isSelected) BentoPrimary else BentoTextPrimary,
+                                                                    maxLines = 1
+                                                                )
+                                                                Text(
+                                                                    text = option.subtitle,
+                                                                    fontSize = 10.5.sp,
+                                                                    color = BentoTextSecondary,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                            }
+                                                            if (isSelected) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.CheckCircle,
+                                                                    contentDescription = "Selected",
+                                                                    tint = BentoPrimary,
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = BentoPrimary.copy(alpha = 0.10f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.28f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Default Player: $pairedNowPlayingName",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoTextPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    3 -> {
                         BentoCard(
                             modifier = Modifier.fillMaxWidth(),
                             backgroundColor = BentoCardDarkPurple,
@@ -248,7 +512,7 @@ fun OnboardingScreen(
                                     text = "Allow Storage Access",
                                     fontSize = 20.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = BentoTextPrimary,
                                     textAlign = TextAlign.Center
                                 )
 
@@ -310,7 +574,7 @@ fun OnboardingScreen(
                             }
                         }
                     }
-                    3 -> {
+                    4 -> {
                         val scrollState = rememberScrollState()
                         Column(
                             modifier = Modifier
@@ -350,7 +614,7 @@ fun OnboardingScreen(
                                                 text = "Library Setup",
                                                 fontSize = 18.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White
+                                                color = BentoTextPrimary
                                             )
                                             Text(
                                                 text = "Configure scan options, folders & short audio filter before scanning",
@@ -840,7 +1104,7 @@ fun OnboardingScreen(
 
                 Button(
                     onClick = {
-                        if (currentStep < 3) {
+                        if (currentStep < totalSteps) {
                             currentStep++
                         } else {
                             onComplete()
@@ -850,7 +1114,7 @@ fun OnboardingScreen(
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Text(
-                        text = if (currentStep == 3) "Get Started" else "Next",
+                        text = if (currentStep == totalSteps) "Get Started" else "Next",
                         color = BentoOnPrimary,
                         fontWeight = FontWeight.Bold
                     )

@@ -983,7 +983,8 @@ object WidgetUpdateManager {
             val themeColors = WidgetBitmapRenderer.getThemeColors(
                 songBitmap = sourceBitmap,
                 isDynamicTheme = cachedIsDynamicTheme,
-                manualAccentColor = cachedManualAccentArgb
+                manualAccentColor = cachedManualAccentArgb,
+                isLightTheme = cachedIsLightTheme
             )
             cachedLastAccentColor = themeColors.accentColor
             val isFavorite = if (song != null) checkIsFavorite(context, song.id) else false
@@ -1068,13 +1069,20 @@ object WidgetUpdateManager {
             val accentColor = cachedLastAccentColor
             val density = WidgetBitmapRenderer.getRenderDensity(context)
 
+            val progressTrackColor = if (cachedIsLightTheme) {
+                android.graphics.Color.argb(46, 15, 23, 42)
+            } else {
+                android.graphics.Color.argb(85, 255, 255, 255)
+            }
+
             if (mediumIds.isNotEmpty()) {
                 val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
                     context = context,
                     widthPx = (220 * density).toInt(),
                     heightPx = (16 * density).toInt(),
                     progressRatio = progressRatio,
-                    accentColor = accentColor
+                    accentColor = accentColor,
+                    trackColor = progressTrackColor
                 )
                 for (id in mediumIds) {
                     try {
@@ -1093,7 +1101,8 @@ object WidgetUpdateManager {
                     widthPx = (220 * density).toInt(),
                     heightPx = (15 * density).toInt(),
                     progressRatio = progressRatio,
-                    accentColor = accentColor
+                    accentColor = accentColor,
+                    trackColor = progressTrackColor
                 )
                 for (id in secondaryIds) {
                     try {
@@ -1117,7 +1126,8 @@ object WidgetUpdateManager {
                     widthPx = (220 * density).toInt(),
                     heightPx = (12 * density).toInt(),
                     progressRatio = progressRatio,
-                    accentColor = accentColor
+                    accentColor = accentColor,
+                    trackColor = progressTrackColor
                 )
                 val window = resolveLyricsWindow(context, song, posMs, durationMs)
                 val prevSig = lastLyricsLineSignature
@@ -1192,7 +1202,8 @@ object WidgetUpdateManager {
                                     val tColors = WidgetBitmapRenderer.getThemeColors(
                                         songBitmap = srcBmp,
                                         isDynamicTheme = cachedIsDynamicTheme,
-                                        manualAccentColor = cachedManualAccentArgb
+                                        manualAccentColor = cachedManualAccentArgb,
+                                        isLightTheme = cachedIsLightTheme
                                     )
                                     val isFav = if (liveSong != null) checkIsFavorite(appContext, liveSong.id) else false
                                     val awm = AppWidgetManager.getInstance(appContext)
@@ -1475,16 +1486,19 @@ object WidgetUpdateManager {
             cornerRadiusDp = 12f,
             context = context
         )
+        val isLight = cachedIsLightTheme
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
             sizePx = (30 * density).toInt(),
             isFavorite = isFavorite,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            isLightSurface = isLight
         )
         val prevBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
             sizePx = (30 * density).toInt(),
             buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+            iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+            iconColor = themeColors.iconColor
         )
         val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
@@ -1497,7 +1511,8 @@ object WidgetUpdateManager {
             context = context,
             sizePx = (30 * density).toInt(),
             buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+            iconColor = themeColors.iconColor
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 20)
@@ -1518,6 +1533,8 @@ object WidgetUpdateManager {
                 views.setImageViewBitmap(R.id.widget_small_btn_favorite, favBmp)
                 views.setTextViewText(R.id.widget_small_title, title)
                 views.setTextViewText(R.id.widget_small_subtitle, subtitle)
+                views.setTextColor(R.id.widget_small_title, themeColors.titleColor)
+                views.setTextColor(R.id.widget_small_subtitle, themeColors.subtitleColor)
                 views.setImageViewBitmap(R.id.widget_small_btn_prev, prevBmp)
                 views.setImageViewBitmap(R.id.widget_small_btn_play_pause, playPauseBmp)
                 views.setImageViewBitmap(R.id.widget_small_btn_next, nextBmp)
@@ -1551,17 +1568,25 @@ object WidgetUpdateManager {
         val progressRatio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
         val density = WidgetBitmapRenderer.getRenderDensity(context)
+        val isLight = cachedIsLightTheme
+        val progressTrackColor = if (isLight) {
+            android.graphics.Color.argb(46, 15, 23, 42)
+        } else {
+            android.graphics.Color.argb(85, 255, 255, 255)
+        }
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
             sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            isLightSurface = isLight
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
             heightPx = (15 * density).toInt(),
             progressRatio = progressRatio,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            trackColor = progressTrackColor
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 30)
@@ -1590,7 +1615,8 @@ object WidgetUpdateManager {
                     context = context,
                     sizePx = (sideBtnDp * density).toInt(),
                     buttonColor = themeColors.accentColor,
-                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+                    iconColor = themeColors.iconColor
                 )
                 val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
                     context = context,
@@ -1603,7 +1629,8 @@ object WidgetUpdateManager {
                     context = context,
                     sizePx = (sideBtnDp * density).toInt(),
                     buttonColor = themeColors.accentColor,
-                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+                    iconColor = themeColors.iconColor
                 )
 
                 val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 380, 160)
@@ -1621,9 +1648,13 @@ object WidgetUpdateManager {
                 views.setImageViewBitmap(R.id.widget_medium_btn_favorite, favBmp)
                 views.setTextViewText(R.id.widget_medium_title, title)
                 views.setTextViewText(R.id.widget_medium_subtitle, subtitle)
+                views.setTextColor(R.id.widget_medium_title, themeColors.titleColor)
+                views.setTextColor(R.id.widget_medium_subtitle, themeColors.subtitleColor)
                 views.setImageViewBitmap(R.id.widget_medium_progress, progBmp)
                 views.setTextViewText(R.id.widget_medium_time_current, formatTime(posMs))
                 views.setTextViewText(R.id.widget_medium_time_total, formatTime(durationMs))
+                views.setTextColor(R.id.widget_medium_time_current, themeColors.durationColor)
+                views.setTextColor(R.id.widget_medium_time_total, themeColors.durationColor)
                 views.setImageViewBitmap(R.id.widget_medium_btn_prev, prevBmp)
                 views.setImageViewBitmap(R.id.widget_medium_btn_play_pause, playPauseBmp)
                 views.setImageViewBitmap(R.id.widget_medium_btn_next, nextBmp)
@@ -1659,17 +1690,25 @@ object WidgetUpdateManager {
         val progressRatio = if (durationMs > 0L) (posMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
         val density = WidgetBitmapRenderer.getRenderDensity(context)
+        val isLight = cachedIsLightTheme
+        val progressTrackColor = if (isLight) {
+            android.graphics.Color.argb(46, 15, 23, 42)
+        } else {
+            android.graphics.Color.argb(85, 255, 255, 255)
+        }
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
             sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            isLightSurface = isLight
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
             heightPx = (15 * density).toInt(),
             progressRatio = progressRatio,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            trackColor = progressTrackColor
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 40)
@@ -1689,7 +1728,8 @@ object WidgetUpdateManager {
                     context = context,
                     sizePx = (sideBtnDp * density).toInt(),
                     buttonColor = themeColors.accentColor,
-                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+                    iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+                    iconColor = themeColors.iconColor
                 )
                 val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
                     context = context,
@@ -1702,7 +1742,8 @@ object WidgetUpdateManager {
                     context = context,
                     sizePx = (sideBtnDp * density).toInt(),
                     buttonColor = themeColors.accentColor,
-                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+                    iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+                    iconColor = themeColors.iconColor
                 )
 
                 val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 130, 380, 160)
@@ -1727,9 +1768,13 @@ object WidgetUpdateManager {
                 views.setImageViewBitmap(R.id.widget_secondary_btn_favorite, favBmp)
                 views.setTextViewText(R.id.widget_secondary_title, title)
                 views.setTextViewText(R.id.widget_secondary_subtitle, subtitle)
+                views.setTextColor(R.id.widget_secondary_title, themeColors.titleColor)
+                views.setTextColor(R.id.widget_secondary_subtitle, themeColors.subtitleColor)
                 views.setImageViewBitmap(R.id.widget_secondary_progress, progBmp)
                 views.setTextViewText(R.id.widget_secondary_time_current, formatTime(posMs))
                 views.setTextViewText(R.id.widget_secondary_time_total, formatTime(durationMs))
+                views.setTextColor(R.id.widget_secondary_time_current, themeColors.durationColor)
+                views.setTextColor(R.id.widget_secondary_time_total, themeColors.durationColor)
                 views.setImageViewBitmap(R.id.widget_secondary_btn_prev, prevBmp)
                 views.setImageViewBitmap(R.id.widget_secondary_btn_play_pause, playPauseBmp)
                 views.setImageViewBitmap(R.id.widget_secondary_btn_next, nextBmp)
@@ -2138,16 +2183,24 @@ object WidgetUpdateManager {
             cornerRadiusDp = 10f,
             context = context
         )
+        val iconTint = if (isLight) android.graphics.Color.parseColor("#1E293B") else android.graphics.Color.WHITE
+        val progressTrackColor = if (isLight) {
+            android.graphics.Color.argb(46, 15, 23, 42)
+        } else {
+            android.graphics.Color.argb(85, 255, 255, 255)
+        }
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
             sizePx = (26 * density).toInt(),
             isFavorite = isFavorite,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            isLightSurface = isLight
         )
         val prevBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
             sizePx = (26 * density).toInt(),
             buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.PREV
+            iconType = WidgetBitmapRenderer.ButtonIconType.PREV,
+            iconColor = iconTint
         )
         val playPauseBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
@@ -2160,14 +2213,16 @@ object WidgetUpdateManager {
             context = context,
             sizePx = (26 * density).toInt(),
             buttonColor = themeColors.accentColor,
-            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT
+            iconType = WidgetBitmapRenderer.ButtonIconType.NEXT,
+            iconColor = iconTint
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
             widthPx = (220 * density).toInt(),
             heightPx = (12 * density).toInt(),
             progressRatio = progressRatio,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            trackColor = progressTrackColor
         )
 
         val openNowPlayingIntent = createOpenNowPlayingIntent(context, 50)

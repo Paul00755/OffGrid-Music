@@ -421,8 +421,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectAudioRoute(device: com.example.util.AudioRouteDevice) {
         audioRouteManager.selectRoute(device)
-        val resolvedDevice = audioRouteManager.resolveDeviceInfo(device)
-        playbackManager.setPreferredAudioDevice(resolvedDevice)
     }
     fun launchSystemOutputSwitcher(context: android.content.Context) = audioRouteManager.launchSystemOutputSwitcher(context)
 
@@ -1076,12 +1074,49 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun defaultNowPlayingLayoutForTheme(mode: String, isSystemDark: Boolean): String {
+        return when (mode.uppercase()) {
+            "DARK", "AMOLED" -> com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS.id
+            "LIGHT" -> com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM.id
+            "SYSTEM" -> if (isSystemDark) {
+                com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS.id
+            } else {
+                com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM.id
+            }
+            else -> com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS.id
+        }
+    }
+
+    fun setOnboardingThemeMode(mode: String, isSystemDark: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            val targetMode = mode.uppercase()
+            val defaultTheme = com.example.ui.theme.AppUiTheme.getDefaultThemeForMode(targetMode, isSystemDark)
+            preferences.setThemeMode(targetMode, defaultTheme.id)
+            val pairedNowPlaying = defaultNowPlayingLayoutForTheme(targetMode, isSystemDark)
+            preferences.setNowPlayingUserOverridden(false)
+            preferences.setNowPlayingLayout(pairedNowPlaying, isUserExplicit = false)
+            preferences.setWaveformStyle("SNAKE")
+            com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
+        }
+    }
+
+    fun syncSystemThemeNowPlayingDefault(isSystemDark: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            if (themeMode.value.uppercase() == "SYSTEM" && !preferences.isNowPlayingUserOverriddenSync()) {
+                val desiredLayout = defaultNowPlayingLayoutForTheme("SYSTEM", isSystemDark)
+                if (nowPlayingLayout.value != desiredLayout) {
+                    preferences.setNowPlayingLayout(desiredLayout, isUserExplicit = false)
+                }
+            }
+        }
+    }
+
     fun setHomeScreenLayout(layoutId: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setHomeScreenLayout(layoutId) }
     }
     fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
-            preferences.setNowPlayingLayout(layoutId)
+            preferences.setNowPlayingLayout(layoutId, isUserExplicit = true)
             val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
                 com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
                 com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "SNAKE"
@@ -2193,10 +2228,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun completeOnboarding() {
+    fun completeOnboarding(isSystemDark: Boolean = false) {
         _isOnboardingCompleted.value = true
         showSplash.value = false
         viewModelScope.launch(Dispatchers.IO) {
+            if (!preferences.isNowPlayingUserOverriddenSync()) {
+                val pairedNowPlaying = defaultNowPlayingLayoutForTheme(themeMode.value, isSystemDark)
+                preferences.setNowPlayingLayout(pairedNowPlaying, isUserExplicit = false)
+                preferences.setWaveformStyle("SNAKE")
+            }
             preferences.setOnboardingCompleted(true)
             scanner.startAutoDetection()
         }

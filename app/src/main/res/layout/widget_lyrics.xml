@@ -211,7 +211,7 @@
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
-                    android:includeFontPadding="false" />
+                    android:includeFontPadding="true" />
 
                 <TextView
                     android:id="@+id/widget_lyrics_next_0"
@@ -378,7 +378,7 @@
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
-                    android:includeFontPadding="false" />
+                    android:includeFontPadding="true" />
 
                 <TextView
                     android:id="@+id/widget_lyrics_next_1"

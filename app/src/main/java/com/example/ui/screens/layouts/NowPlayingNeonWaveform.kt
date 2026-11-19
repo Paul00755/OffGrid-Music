@@ -105,8 +105,8 @@ fun NowPlayingNeonWaveform(
         }
     }
 
-    val targetTopBg = gradientPair.first
-    val targetBottomBg = gradientPair.second
+    val targetTopBg = remember(gradientPair.first) { gradientPair.first.ensureNeonPastelStage() }
+    val targetBottomBg = remember(gradientPair.second) { gradientPair.second.ensureNeonPastelStage() }
     val targetMidBg = remember(targetTopBg, targetBottomBg) {
         androidx.compose.ui.graphics.lerp(targetTopBg, targetBottomBg, 0.48f)
     }
@@ -127,11 +127,10 @@ fun NowPlayingNeonWaveform(
         label = "neon_bottom_gradient"
     )
 
-    // Ensure crisp text & icon legibility on soft pastel gradients (matching the reference image)
-    val bottomLuminance = bottomBgColor.luminance()
-    val primaryInk = if (bottomLuminance > 0.36f) Color(0xFF10121A) else Color.White
+    // Always use a single consistent high-contrast obsidian ink across every song on the luminous pastel stage
+    val primaryInk = Color(0xFF11131C)
     val secondaryInk = primaryInk.copy(alpha = 0.72f)
-    val topBarInk = if (topBgColor.luminance() > 0.40f) Color(0xFF10121A) else Color.White
+    val topBarInk = primaryInk
     val harmonizedTopAccent = primaryInk
 
     var isDraggingSeek by remember(song.id) { mutableStateOf(false) }
@@ -431,7 +430,7 @@ fun NowPlayingNeonWaveform(
                     )
                 }
 
-                // Subtle center pill housing Lyrics, Repeat, Queue, and Sleep Timer
+                // Subtle center pill housing Audio Output, Repeat, Queue, and Sleep Timer
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = primaryInk.copy(alpha = 0.09f)
@@ -444,13 +443,17 @@ fun NowPlayingNeonWaveform(
                         IconButton(
                             onClick = {
                                 HapticUtils.performClickHaptic(context)
-                                onOpenLyricsSheet()
+                                onOpenAudioOutputSwitcher()
                             },
-                            modifier = Modifier.size(38.dp)
+                            modifier = Modifier
+                                .size(38.dp)
+                                .testTag("audio_output_route_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Lyrics,
-                                contentDescription = "Lyrics",
+                                imageVector = if (audioRouteInfo.name.contains("Speaker", ignoreCase = true) ||
+                                    audioRouteInfo.name.contains("Phone", ignoreCase = true)
+                                ) Icons.Default.Podcasts else audioRouteInfo.icon,
+                                contentDescription = "Audio Output Device",
                                 tint = primaryInk.copy(alpha = 0.85f),
                                 modifier = Modifier.size(18.dp)
                             )
@@ -507,17 +510,13 @@ fun NowPlayingNeonWaveform(
                 IconButton(
                     onClick = {
                         HapticUtils.performClickHaptic(context)
-                        onOpenAudioOutputSwitcher()
+                        onOpenLyricsSheet()
                     },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("audio_output_route_button")
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = if (audioRouteInfo.name.contains("Speaker", ignoreCase = true) ||
-                            audioRouteInfo.name.contains("Phone", ignoreCase = true)
-                        ) Icons.Default.Podcasts else audioRouteInfo.icon,
-                        contentDescription = "Audio Output Device",
+                        imageVector = Icons.Default.Lyrics,
+                        contentDescription = "Lyrics",
                         tint = primaryInk,
                         modifier = Modifier.size(22.dp)
                     )
@@ -525,4 +524,18 @@ fun NowPlayingNeonWaveform(
             }
         }
     }
+}
+
+/**
+ * Ensures extracted Neon Studio gradient stops remain luminous pastel tones
+ * so the consistent dark obsidian icon & typography ink always passes contrast effortlessly.
+ */
+private fun Color.ensureNeonPastelStage(minLuminance: Float = 0.46f): Color {
+    var current = this
+    var steps = 0
+    while (current.luminance() < minLuminance && steps < 6) {
+        current = androidx.compose.ui.graphics.lerp(current, Color.White, 0.20f)
+        steps++
+    }
+    return current
 }

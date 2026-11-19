@@ -123,6 +123,7 @@ class UserPreferencesRepository(private val context: Context) {
         val UI_THEME = stringPreferencesKey("ui_theme") // "MIDNIGHT_OBSIDIAN", "PURE_AMOLED", "CYBERPUNK_NEON", etc.
         val HOME_SCREEN_LAYOUT = stringPreferencesKey("home_screen_layout") // "BENTO_DYNAMIC", "HERO_SPOTLIGHT", "MINIMAL_FEED", "STUDIO_DASHBOARD"
         val NOW_PLAYING_LAYOUT = stringPreferencesKey("now_playing_layout") // "MODERN_BENTO", "VINYL_TURNTABLE", "MINIMAL_GLASS", "NEON_WAVEFORM"
+        val NOW_PLAYING_USER_OVERRIDDEN = booleanPreferencesKey("now_playing_user_overridden")
         val PLAYLISTS_LAYOUT = stringPreferencesKey("playlists_layout") // "BENTO_GRID", "MAGAZINE_HERO", "COMPACT_LIST", "GLOW_CARDS"
         val LYRICS_LAYOUT = stringPreferencesKey("lyrics_layout") // "CLASSIC_DEFAULT", "FLUID_GLOW", "KARAOKE_SPOTLIGHT", "EDITORIAL_TIMELINE"
         val SHOW_NOW_PLAYING_VOLUME_BAR = booleanPreferencesKey("show_now_playing_volume_bar")
@@ -2058,11 +2059,30 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun setNowPlayingLayout(layoutId: String) {
+    fun isNowPlayingUserOverriddenSync(): Boolean {
+        return readBoolCached("now_playing_user_overridden", false)
+    }
+
+    suspend fun setNowPlayingUserOverridden(overridden: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("now_playing_user_overridden", overridden, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NOW_PLAYING_USER_OVERRIDDEN] = overridden
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setNowPlayingLayout(layoutId: String, isUserExplicit: Boolean = true) {
         val now = System.currentTimeMillis()
         writeStringCached("now_playing_layout", layoutId, now)
+        if (isUserExplicit) {
+            writeBoolCached("now_playing_user_overridden", true, now)
+        }
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.NOW_PLAYING_LAYOUT] = layoutId
+            if (isUserExplicit) {
+                prefs[PreferenceKeys.NOW_PLAYING_USER_OVERRIDDEN] = true
+            }
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }

@@ -67,13 +67,28 @@ class AudioRouteManager(private val context: Context) {
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            // If user had manually forced Phone Speaker and now connects a new external headset/BT/USB,
+            // release the manual speaker lock so the newly connected device smoothly takes over.
+            val sel = userSelectedRoute
+            if (sel != null && sel.type == AudioDeviceType.SPEAKER && addedDevices != null) {
+                val hasNewExternalMediaOutput = addedDevices.any { dev ->
+                    dev.isSink && isMediaExternalOutput(dev)
+                }
+                if (hasNewExternalMediaOutput) {
+                    userSelectedRoute = null
+                    onDeviceSelected?.invoke(null)
+                }
+            }
             updateRoute()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
             val sel = userSelectedRoute
             if (sel != null && sel.type != AudioDeviceType.SPEAKER) {
-                val removed = removedDevices?.any { it.id == sel.rawDeviceInfo?.id } ?: false
+                val removed = removedDevices?.any { dev ->
+                    dev.id == sel.rawDeviceInfo?.id ||
+                        (sel.type == AudioDeviceType.HEADPHONES && (dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES))
+                } ?: false
                 if (removed) {
                     userSelectedRoute = null
                     onDeviceSelected?.invoke(null)
@@ -81,6 +96,22 @@ class AudioRouteManager(private val context: Context) {
             }
             updateRoute()
         }
+    }
+
+    private fun isMediaExternalOutput(device: AudioDeviceInfo): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        val isBle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            device.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                device.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                device.type == AudioDeviceInfo.TYPE_BLE_BROADCAST
+        } else false
+        return device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            device.type == AudioDeviceInfo.TYPE_HEARING_AID ||
+            isBle ||
+            device.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+            device.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+            device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+            device.type == AudioDeviceInfo.TYPE_USB_DEVICE
     }
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
@@ -536,115 +567,100 @@ class AudioRouteManager(private val context: Context) {
 
     fun resolveDeviceInfo(routeDevice: AudioRouteDevice): AudioDeviceInfo? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (routeDevice.rawDeviceInfo != null) {
-                return routeDevice.rawDeviceInfo
-            }
             val outputs: Array<AudioDeviceInfo> = try {
                 audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             } catch (_: Exception) { emptyArray() }
+
+            // 1. Prefer a fresh AudioDeviceInfo matching the exact id (never return stale/SCO handles)
+            val cachedId = routeDevice.rawDeviceInfo?.id
+            if (cachedId != null) {
+                val exactFresh = outputs.find {
+                    it.id == cachedId && it.type != AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                }
+                if (exactFresh != null) return exactFresh
+            }
+
+            // 2. Fresh lookup by route type & device identity (highest media quality score first)
             return when (routeDevice.type) {
                 AudioDeviceType.SPEAKER -> {
                     outputs.find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
                         ?: outputs.find { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
                 }
                 AudioDeviceType.BLUETOOTH -> {
-                    outputs.find {
-                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                                it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                                it.type == AudioDeviceInfo.TYPE_HEARING_AID
+                    val btOutputs = outputs.filter { dev ->
+                        val isBle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                                dev.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                                dev.type == AudioDeviceInfo.TYPE_BLE_BROADCAST
+                        } else false
+                        dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                            dev.type == AudioDeviceInfo.TYPE_HEARING_AID ||
+                            isBle
                     }
+                    val cachedAddr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        try { routeDevice.rawDeviceInfo?.address.orEmpty() } catch (_: Exception) { "" }
+                    } else ""
+                    val matchedByAddrOrName = btOutputs.filter { dev ->
+                        val devAddr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            try { dev.address.orEmpty() } catch (_: Exception) { "" }
+                        } else ""
+                        (cachedAddr.isNotBlank() && devAddr.equals(cachedAddr, ignoreCase = true)) ||
+                            getBluetoothDeviceName(dev).equals(routeDevice.name, ignoreCase = true)
+                    }
+                    (matchedByAddrOrName.ifEmpty { btOutputs })
+                        .maxByOrNull { getDeviceMediaScore(it.type) }
                 }
                 AudioDeviceType.HEADPHONES -> {
-                    outputs.find {
-                        it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
-                    }
+                    outputs.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES }
+                        ?: outputs.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
                 }
                 AudioDeviceType.USB -> {
-                    outputs.find {
+                    val usbOutputs = outputs.filter {
                         it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                                it.type == AudioDeviceInfo.TYPE_USB_DEVICE
+                            it.type == AudioDeviceInfo.TYPE_USB_DEVICE
                     }
+                    usbOutputs.find {
+                        it.productName?.toString()?.trim().equals(routeDevice.name, ignoreCase = true)
+                    } ?: usbOutputs.firstOrNull()
                 }
                 else -> null
-            }
+            } ?: routeDevice.rawDeviceInfo
         }
         return null
     }
 
     fun selectRoute(routeDevice: AudioRouteDevice) {
-        userSelectedRoute = routeDevice
+        val freshTargetDeviceInfo: AudioDeviceInfo? = resolveDeviceInfo(routeDevice)
+        val updatedSelection = if (freshTargetDeviceInfo != null) {
+            routeDevice.copy(rawDeviceInfo = freshTargetDeviceInfo, isSelected = true)
+        } else {
+            routeDevice.copy(isSelected = true)
+        }
+        userSelectedRoute = updatedSelection
+
+        // Release any lingering voice-call communication/speakerphone overrides that conflict with USAGE_MEDIA routing.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                audioManager.clearCommunicationDevice()
+            } catch (_: Exception) {}
+        }
+        @Suppress("DEPRECATION")
         try {
-            val targetDeviceInfo: AudioDeviceInfo? = resolveDeviceInfo(routeDevice)
-
-            if (routeDevice.type == AudioDeviceType.SPEAKER) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    try {
-                        val speakerComm = audioManager.availableCommunicationDevices.find {
-                            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
-                        }
-                        if (speakerComm != null) {
-                            audioManager.setCommunicationDevice(speakerComm)
-                        } else {
-                            audioManager.clearCommunicationDevice()
-                        }
-                    } catch (_: Exception) {}
-                }
-                @Suppress("DEPRECATION")
-                try {
-                    audioManager.isSpeakerphoneOn = true
-                } catch (_: Exception) {}
-                onDeviceSelected?.invoke(targetDeviceInfo)
-            } else if (routeDevice.type == AudioDeviceType.BLUETOOTH) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    try {
-                        val matchingComm = if (routeDevice.rawDeviceInfo != null) {
-                            audioManager.availableCommunicationDevices.find { it.id == routeDevice.rawDeviceInfo.id }
-                        } else null
-
-                        val btComm = matchingComm ?: audioManager.availableCommunicationDevices.find {
-                            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                                    it.type == AudioDeviceInfo.TYPE_HEARING_AID
-                        }
-                        if (btComm != null) {
-                            audioManager.setCommunicationDevice(btComm)
-                        }
-                    } catch (_: Exception) {}
-                }
-                @Suppress("DEPRECATION")
-                try {
-                    audioManager.isSpeakerphoneOn = false
-                } catch (_: Exception) {}
-                onDeviceSelected?.invoke(targetDeviceInfo)
-            } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    try {
-                        if (routeDevice.rawDeviceInfo != null) {
-                            val matching = audioManager.availableCommunicationDevices.find { it.id == routeDevice.rawDeviceInfo.id }
-                            if (matching != null) {
-                                audioManager.setCommunicationDevice(matching)
-                            } else {
-                                audioManager.clearCommunicationDevice()
-                            }
-                        } else {
-                            audioManager.clearCommunicationDevice()
-                        }
-                    } catch (_: Exception) {}
-                }
-                @Suppress("DEPRECATION")
-                try {
-                    audioManager.isSpeakerphoneOn = false
-                } catch (_: Exception) {}
-                onDeviceSelected?.invoke(targetDeviceInfo)
+            if (audioManager.isSpeakerphoneOn) {
+                audioManager.isSpeakerphoneOn = false
             }
         } catch (_: Exception) {}
 
+        // Immediately route live ExoPlayer AudioTrack to the exact selected media AudioDeviceInfo.
+        try {
+            onDeviceSelected?.invoke(freshTargetDeviceInfo)
+        } catch (_: Exception) {}
+
         _currentRoute.value = AudioRouteInfo(
-            name = routeDevice.name,
-            type = routeDevice.type,
-            icon = routeDevice.icon,
-            deviceId = routeDevice.rawDeviceInfo?.id?.toString()
+            name = updatedSelection.name,
+            type = updatedSelection.type,
+            icon = updatedSelection.icon,
+            deviceId = freshTargetDeviceInfo?.id?.toString()
         )
         _availableDevices.value = detectAvailableDevices(_currentRoute.value)
     }
