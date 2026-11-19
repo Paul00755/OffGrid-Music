@@ -822,11 +822,13 @@ fun NowPlayingScreen(
                                 .clip(CircleShape)
                                 .background(BentoCardPurple)
                             ) {
-                                Icon(
-                                    imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                com.example.ui.components.AnimatedFavoriteIcon(
+                                    isFavorite = song.isFavorite,
+                                    activeTint = BentoAccentPinkText,
+                                    inactiveTint = BentoTextPrimary,
+                                    size = 18.dp,
                                     contentDescription = "Favorite",
-                                    tint = if (song.isFavorite) BentoAccentPinkText else BentoTextPrimary,
-                                    modifier = Modifier.size(18.dp)
+                                    animationKey = song.id
                                 )
                             }
 
@@ -1430,11 +1432,13 @@ fun NowPlayingScreen(
                                         modifier = Modifier.size(42.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                            com.example.ui.components.AnimatedFavoriteIcon(
+                                                isFavorite = song.isFavorite,
+                                                activeTint = BentoAccentPinkText,
+                                                inactiveTint = bentoInk,
+                                                size = 20.dp,
                                                 contentDescription = "Favorite",
-                                                tint = if (song.isFavorite) BentoAccentPinkText else bentoInk,
-                                                modifier = Modifier.size(20.dp)
+                                                animationKey = song.id
                                             )
                                         }
                                     }

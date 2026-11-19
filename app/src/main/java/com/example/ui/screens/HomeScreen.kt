@@ -279,6 +279,8 @@ fun HomeScreen(
     onOpenAuth: () -> Unit = {},
     onSignOut: () -> Unit = {},
     onScreenEntered: () -> Unit = {},
+    waveformStyle: String = "SNAKE",
+    onSeekTo: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedMostPlayedFilter by remember { mutableStateOf(MostPlayedFilter.SEVEN_DAYS) }
@@ -976,6 +978,8 @@ fun HomeScreen(
                     customAvatarUri = customAvatarUri,
                     onOpenAccount = onOpenAccount,
                     onOpenAuth = onOpenAuth,
+                    waveformStyle = waveformStyle,
+                    onSeekTo = onSeekTo,
                     modifier = modifier
                 )
             }

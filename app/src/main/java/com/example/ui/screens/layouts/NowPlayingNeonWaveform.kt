@@ -127,11 +127,11 @@ fun NowPlayingNeonWaveform(
         label = "neon_bottom_gradient"
     )
 
-    // Always use a single consistent high-contrast obsidian ink across every song on the luminous pastel stage
-    val primaryInk = Color(0xFF11131C)
-    val secondaryInk = primaryInk.copy(alpha = 0.72f)
-    val topBarInk = primaryInk
-    val harmonizedTopAccent = primaryInk
+    // Always render Neon Studio controls, waveforms, icons, and typography in crisp white
+    val primaryInk = Color.White
+    val secondaryInk = Color.White.copy(alpha = 0.78f)
+    val topBarInk = Color.White
+    val harmonizedTopAccent = Color.White
 
     var isDraggingSeek by remember(song.id) { mutableStateOf(false) }
     var dragFraction by remember(song.id) { mutableFloatStateOf(0f) }
@@ -389,11 +389,13 @@ fun NowPlayingNeonWaveform(
                     },
                     modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(
-                        imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    com.example.ui.components.AnimatedFavoriteIcon(
+                        isFavorite = song.isFavorite,
+                        activeTint = Color.White,
+                        inactiveTint = Color.White.copy(alpha = 0.90f),
+                        size = 23.dp,
                         contentDescription = "Favorite",
-                        tint = if (song.isFavorite) harmonizedTopAccent else primaryInk,
-                        modifier = Modifier.size(23.dp)
+                        animationKey = song.id
                     )
                 }
             }
@@ -430,10 +432,10 @@ fun NowPlayingNeonWaveform(
                     )
                 }
 
-                // Subtle center pill housing Audio Output, Repeat, Queue, and Sleep Timer
+                // Subtle center pill housing Audio Output, Repeat, Sleep Timer, and Up-Next Queue
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = primaryInk.copy(alpha = 0.09f)
+                    color = Color.White.copy(alpha = 0.16f)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -454,7 +456,7 @@ fun NowPlayingNeonWaveform(
                                     audioRouteInfo.name.contains("Phone", ignoreCase = true)
                                 ) Icons.Default.Podcasts else audioRouteInfo.icon,
                                 contentDescription = "Audio Output Device",
-                                tint = primaryInk.copy(alpha = 0.85f),
+                                tint = primaryInk.copy(alpha = 0.92f),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -470,22 +472,7 @@ fun NowPlayingNeonWaveform(
                             Icon(
                                 imageVector = if (playbackState.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                                 contentDescription = "Repeat",
-                                tint = if (isRepeatActive) harmonizedTopAccent else primaryInk.copy(alpha = 0.48f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                HapticUtils.performClickHaptic(context)
-                                onOpenQueueSheet()
-                            },
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QueueMusic,
-                                contentDescription = "Up Next Queue",
-                                tint = primaryInk.copy(alpha = 0.85f),
+                                tint = if (isRepeatActive) harmonizedTopAccent else primaryInk.copy(alpha = 0.55f),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -500,8 +487,23 @@ fun NowPlayingNeonWaveform(
                             Icon(
                                 imageVector = Icons.Default.Bedtime,
                                 contentDescription = "Sleep Timer",
-                                tint = primaryInk.copy(alpha = 0.85f),
+                                tint = primaryInk.copy(alpha = 0.92f),
                                 modifier = Modifier.size(17.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                HapticUtils.performClickHaptic(context)
+                                onOpenQueueSheet()
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QueueMusic,
+                                contentDescription = "Up Next Queue",
+                                tint = primaryInk.copy(alpha = 0.92f),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -527,14 +529,19 @@ fun NowPlayingNeonWaveform(
 }
 
 /**
- * Ensures extracted Neon Studio gradient stops remain luminous pastel tones
- * so the consistent dark obsidian icon & typography ink always passes contrast effortlessly.
+ * Shapes extracted Neon Studio gradient stops into rich, moody-pastel studio tones
+ * so pure white controls, waveforms, and typography always remain crisp and effortless to read.
  */
-private fun Color.ensureNeonPastelStage(minLuminance: Float = 0.46f): Color {
+private fun Color.ensureNeonPastelStage(minLuminance: Float = 0.14f, maxLuminance: Float = 0.36f): Color {
     var current = this
     var steps = 0
+    while (current.luminance() > maxLuminance && steps < 8) {
+        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF14121E), 0.22f)
+        steps++
+    }
+    steps = 0
     while (current.luminance() < minLuminance && steps < 6) {
-        current = androidx.compose.ui.graphics.lerp(current, Color.White, 0.20f)
+        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF4A4460), 0.20f)
         steps++
     }
     return current

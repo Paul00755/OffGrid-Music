@@ -293,7 +293,14 @@ fun NowPlayingMinimalGlass(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onFavoriteToggle, modifier = Modifier.size(36.dp)) {
-                    Icon(if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = "Favorite", tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary, modifier = Modifier.size(20.dp))
+                    com.example.ui.components.AnimatedFavoriteIcon(
+                        isFavorite = song.isFavorite,
+                        activeTint = BentoAccentPinkText,
+                        inactiveTint = BentoTextSecondary,
+                        size = 20.dp,
+                        contentDescription = "Favorite",
+                        animationKey = song.id
+                    )
                 }
                 IconButton(onClick = onOpenSleepTimer, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Bedtime, contentDescription = "Sleep Timer", tint = BentoTextSecondary, modifier = Modifier.size(20.dp))

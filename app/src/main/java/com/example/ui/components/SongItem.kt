@@ -107,11 +107,13 @@ fun SongItem(
                 .size(36.dp)
                 .testTag("song_favorite_${song.id}")
         ) {
-            Icon(
-                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            AnimatedFavoriteIcon(
+                isFavorite = song.isFavorite,
+                activeTint = BentoAccentPinkText,
+                inactiveTint = BentoTextSecondary,
+                size = 18.dp,
                 contentDescription = "Favorite",
-                tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
-                modifier = Modifier.size(18.dp)
+                animationKey = song.id
             )
         }
 

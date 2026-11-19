@@ -135,11 +135,13 @@ fun MiniPlayer(
                         },
                         modifier = Modifier.size(34.dp)
                     ) {
-                        Icon(
-                            imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        AnimatedFavoriteIcon(
+                            isFavorite = song.isFavorite,
+                            activeTint = BentoAccentPinkText,
+                            inactiveTint = BentoTextSecondary,
+                            size = 20.dp,
                             contentDescription = "Favorite",
-                            tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
-                            modifier = Modifier.size(20.dp)
+                            animationKey = song.id
                         )
                     }
                     Spacer(modifier = Modifier.width(4.dp))

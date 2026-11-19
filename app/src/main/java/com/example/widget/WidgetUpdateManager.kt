@@ -610,7 +610,12 @@ object WidgetUpdateManager {
     /**
      * 0ms synchronous partial widget update for the Favorite heart button across all 4 widget variants.
      */
-    fun setFavoriteStateImmediate(context: Context, songId: Long, isFavorite: Boolean) {
+    fun setFavoriteStateImmediate(
+        context: Context,
+        songId: Long,
+        isFavorite: Boolean,
+        animFrame: WidgetBitmapRenderer.FavoriteAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+    ) {
         if (songId <= 0L) return
         cachedFavSongId = songId
         cachedIsFavorite = isFavorite
@@ -619,15 +624,27 @@ object WidgetUpdateManager {
             val appWidgetManager = AppWidgetManager.getInstance(appContext)
             val density = WidgetBitmapRenderer.getRenderDensity(appContext)
             val accent = cachedLastAccentColor
+            val isLight = cachedIsLightTheme
             val favBmp30 = WidgetBitmapRenderer.renderFavoriteChipButton(
                 sizePx = (30 * density).toInt(),
                 isFavorite = isFavorite,
-                accentColor = accent
+                accentColor = accent,
+                isLightSurface = false,
+                animFrame = animFrame
+            )
+            val favBmp30Themed = WidgetBitmapRenderer.renderFavoriteChipButton(
+                sizePx = (30 * density).toInt(),
+                isFavorite = isFavorite,
+                accentColor = accent,
+                isLightSurface = isLight,
+                animFrame = animFrame
             )
             val favBmp28 = WidgetBitmapRenderer.renderFavoriteChipButton(
                 sizePx = (28 * density).toInt(),
                 isFavorite = isFavorite,
-                accentColor = accent
+                accentColor = accent,
+                isLightSurface = isLight,
+                animFrame = animFrame
             )
 
             val fullIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, FullArtworkMusicWidgetProvider::class.java))
@@ -640,7 +657,7 @@ object WidgetUpdateManager {
             val smallIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, SmallMusicWidgetProvider::class.java))
             for (id in smallIds) {
                 val views = RemoteViews(appContext.packageName, R.layout.widget_small)
-                views.setImageViewBitmap(R.id.widget_small_btn_favorite, favBmp30)
+                views.setImageViewBitmap(R.id.widget_small_btn_favorite, favBmp30Themed)
                 appWidgetManager.partiallyUpdateAppWidget(id, views)
             }
 
@@ -663,7 +680,9 @@ object WidgetUpdateManager {
                 val favBmp26 = WidgetBitmapRenderer.renderFavoriteChipButton(
                     sizePx = (26 * density).toInt(),
                     isFavorite = isFavorite,
-                    accentColor = accent
+                    accentColor = accent,
+                    isLightSurface = isLight,
+                    animFrame = animFrame
                 )
                 for (id in lyricsIds) {
                     val views = RemoteViews(appContext.packageName, R.layout.widget_lyrics)
@@ -907,13 +926,18 @@ object WidgetUpdateManager {
             else -> true
         }
 
-        // 1. Update widget heart icon in 0ms synchronously on the caller thread!
-        setFavoriteStateImmediate(appContext, songId, optimisticNewFav)
+        // 1. Show brief transient burst / breaking-heart frame synchronously on caller thread
+        val transientFrame = if (optimisticNewFav) {
+            WidgetBitmapRenderer.FavoriteAnimFrame.BURST
+        } else {
+            WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN
+        }
+        setFavoriteStateImmediate(appContext, songId, optimisticNewFav, animFrame = transientFrame)
         if (pm != null) {
             pm.syncFavoriteStateInMemory(songId, optimisticNewFav)
         }
 
-        // 2. Persist in Room DB and verify full widget state asynchronously
+        // 2. Persist in Room DB, allow the brief burst/broken frame to display, then settle cleanly
         widgetScope.launch {
             updateMutex.withLock {
                 try {
@@ -934,12 +958,12 @@ object WidgetUpdateManager {
                     cachedFavSongId = songId
                     cachedIsFavorite = newFav
 
-                    if (newFav != optimisticNewFav) {
-                        setFavoriteStateImmediate(appContext, songId, newFav)
-                    }
                     if (pm != null) {
                         pm.syncFavoriteStateInMemory(songId, newFav)
                     }
+
+                    kotlinx.coroutines.delay(240L)
+                    setFavoriteStateImmediate(appContext, songId, newFav, animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL)
 
                     val authState = getAuthoritativeState(appContext, pm?.playbackState?.value)
                     performFullWidgetUpdateInternal(appContext, authState)

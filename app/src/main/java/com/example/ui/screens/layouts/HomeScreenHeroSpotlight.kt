@@ -88,6 +88,8 @@ fun HomeScreenHeroSpotlight(
     customAvatarUri: String? = null,
     onOpenAccount: () -> Unit = {},
     onOpenAuth: () -> Unit = {},
+    waveformStyle: String = "SNAKE",
+    onSeekTo: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -140,23 +142,10 @@ fun HomeScreenHeroSpotlight(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = BentoPrimary.copy(alpha = 0.18f)
-                            ) {
-                                Text(
-                                    text = if (allSongs.isEmpty()) "OffGrid Music" else "✦ SOUNDSTAGE",
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = BentoTextPrimary.copy(alpha = 0.88f),
-                                    letterSpacing = 1.1.sp,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
+                        Column(verticalArrangement = Arrangement.Center) {
+                            val resolvedName = effectiveDisplayName.trim().ifEmpty { "Music Lover" }
                             Text(
-                                text = if (userAccount != null) "Welcome, $effectiveDisplayName" else greeting,
+                                text = "Welcome, $resolvedName",
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BentoTextPrimary,
@@ -327,7 +316,9 @@ fun HomeScreenHeroSpotlight(
                 getDurationPlayedBetween = getDurationPlayedBetween,
                 getTrackCountBetween = getTrackCountBetween,
                 getUniqueTrackCountBetween = getUniqueTrackCountBetween,
-                feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT
+                feedStyle = HomeFeedVisualStyle.HERO_SPOTLIGHT,
+                waveformStyle = waveformStyle,
+                onSeekTo = onSeekTo
             )
         }
     }

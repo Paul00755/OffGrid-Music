@@ -461,6 +461,7 @@ class MainActivity : ComponentActivity() {
 
                             val selectedPlaylist by viewModel.selectedPlaylist.collectAsStateWithLifecycle()
                             val selectedSmartPlaylist by viewModel.selectedSmartPlaylist.collectAsStateWithLifecycle()
+                            val homeWaveformStyle by viewModel.waveformStyle.collectAsStateWithLifecycle()
                             if (selectedTab == NavTab.HOME &&
                                 selectedPlaylist == null &&
                                 selectedSmartPlaylist == null &&
@@ -471,11 +472,11 @@ class MainActivity : ComponentActivity() {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(400.dp)
+                                        .height(340.dp)
                                         .background(
                                             androidx.compose.ui.graphics.Brush.verticalGradient(
-                                                0.0f to BentoPrimary.copy(alpha = 0.22f),
-                                                0.45f to BentoAccentPinkText.copy(alpha = 0.08f),
+                                                0.0f to BentoPrimary.copy(alpha = 0.16f),
+                                                0.45f to BentoAccentPinkText.copy(alpha = 0.05f),
                                                 1.0f to Color.Transparent
                                             )
                                         )
@@ -733,7 +734,9 @@ class MainActivity : ComponentActivity() {
                                                 onScreenEntered = {
                                                     viewModel.onScreenEnteredForAutoScan("HOME")
                                                     viewModel.checkForUpdates(isManual = false)
-                                                }
+                                                },
+                                                waveformStyle = homeWaveformStyle,
+                                                onSeekTo = { pos -> viewModel.seekTo(pos) }
                                              )
                                             NavTab.LIBRARY -> LibraryScreen(
                                                 allSongs = allSongs,

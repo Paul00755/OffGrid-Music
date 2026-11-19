@@ -708,14 +708,21 @@ object WidgetBitmapRenderer {
         return bmp
     }
 
+    enum class FavoriteAnimFrame {
+        NORMAL,
+        BURST,
+        BROKEN
+    }
+
     @Synchronized
     fun renderFavoriteChipButton(
         sizePx: Int,
         isFavorite: Boolean,
         accentColor: Int,
-        isLightSurface: Boolean = false
+        isLightSurface: Boolean = false,
+        animFrame: FavoriteAnimFrame = FavoriteAnimFrame.NORMAL
     ): Bitmap {
-        val key = "fav_chip_${sizePx}_${isFavorite}_${accentColor}_${isLightSurface}"
+        val key = "fav_chip_${sizePx}_${isFavorite}_${accentColor}_${isLightSurface}_${animFrame.name}"
         buttonBitmapCache[key]?.let { if (!it.isRecycled) return it }
 
         val bitmap = Bitmap.createBitmap(sizePx.coerceAtLeast(1), sizePx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
@@ -734,29 +741,93 @@ object WidgetBitmapRenderer {
         }
         canvas.drawCircle(center, center, radius, paint)
 
-        val heartScale = sizePx * 0.42f
-        val path = Path()
+        val scaleMult = if (animFrame == FavoriteAnimFrame.BURST) 1.12f else 1.0f
+        val heartScale = sizePx * 0.42f * scaleMult
         val x = center
         val y = center + (heartScale * 0.08f)
         val w = heartScale * 0.62f
         val h = heartScale * 0.52f
 
-        path.moveTo(x, y + h * 0.62f)
-        path.cubicTo(x - w * 1.25f, y - h * 0.22f, x - w * 0.72f, y - h * 1.12f, x, y - h * 0.38f)
-        path.cubicTo(x + w * 0.72f, y - h * 1.12f, x + w * 1.25f, y - h * 0.22f, x, y + h * 0.62f)
-        path.close()
+        val path = Path().apply {
+            moveTo(x, y + h * 0.62f)
+            cubicTo(x - w * 1.25f, y - h * 0.22f, x - w * 0.72f, y - h * 1.12f, x, y - h * 0.38f)
+            cubicTo(x + w * 0.72f, y - h * 1.12f, x + w * 1.25f, y - h * 0.22f, x, y + h * 0.62f)
+            close()
+        }
 
-        if (isFavorite) {
-            paint.style = Paint.Style.FILL
-            paint.color = accentColor
-            canvas.drawPath(path, paint)
-        } else {
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = (sizePx * 0.068f).coerceAtLeast(1.8f)
-            paint.strokeJoin = Paint.Join.ROUND
-            paint.strokeCap = Paint.Cap.ROUND
-            paint.color = if (isLightSurface) Color.parseColor("#334155") else Color.WHITE
-            canvas.drawPath(path, paint)
+        when (animFrame) {
+            FavoriteAnimFrame.BROKEN -> {
+                // Split heart into two tilting halves with a jagged crack for unfavorite animation
+                val leftClip = Path().apply {
+                    moveTo(0f, 0f)
+                    lineTo(x, 0f)
+                    lineTo(x, y - h * 0.36f)
+                    lineTo(x - w * 0.16f, y - h * 0.04f)
+                    lineTo(x + w * 0.14f, y + h * 0.24f)
+                    lineTo(x - w * 0.08f, y + h * 0.52f)
+                    lineTo(x, sizePx.toFloat())
+                    lineTo(0f, sizePx.toFloat())
+                    close()
+                }
+                val rightClip = Path().apply {
+                    moveTo(x, 0f)
+                    lineTo(sizePx.toFloat(), 0f)
+                    lineTo(sizePx.toFloat(), sizePx.toFloat())
+                    lineTo(x, sizePx.toFloat())
+                    lineTo(x - w * 0.08f, y + h * 0.52f)
+                    lineTo(x + w * 0.14f, y + h * 0.24f)
+                    lineTo(x - w * 0.16f, y - h * 0.04f)
+                    lineTo(x, y - h * 0.36f)
+                    close()
+                }
+                val splitDx = sizePx * 0.06f
+                val splitDy = sizePx * 0.03f
+                paint.style = Paint.Style.FILL
+                paint.color = accentColor
+
+                canvas.save()
+                canvas.translate(-splitDx, splitDy)
+                canvas.rotate(-14f, x, y + h * 0.2f)
+                canvas.clipPath(leftClip)
+                canvas.drawPath(path, paint)
+                canvas.restore()
+
+                canvas.save()
+                canvas.translate(splitDx, splitDy)
+                canvas.rotate(14f, x, y + h * 0.2f)
+                canvas.clipPath(rightClip)
+                canvas.drawPath(path, paint)
+                canvas.restore()
+            }
+            FavoriteAnimFrame.BURST -> {
+                // 6 minimal radial pastel burst dots around the popping heart
+                paint.style = Paint.Style.FILL
+                paint.color = Color.argb(210, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+                val orbitR = radius * 0.76f
+                val dotR = (sizePx * 0.042f).coerceAtLeast(1.4f)
+                for (i in 0 until 6) {
+                    val rad = Math.toRadians(i * 60.0 - 90.0)
+                    val dx = center + (kotlin.math.cos(rad) * orbitR).toFloat()
+                    val dy = center + (kotlin.math.sin(rad) * orbitR).toFloat()
+                    canvas.drawCircle(dx, dy, dotR, paint)
+                }
+                paint.color = accentColor
+                canvas.drawPath(path, paint)
+            }
+            FavoriteAnimFrame.NORMAL -> {
+                if (isFavorite) {
+                    paint.style = Paint.Style.FILL
+                    paint.color = accentColor
+                    canvas.drawPath(path, paint)
+                } else {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = (sizePx * 0.068f).coerceAtLeast(1.8f)
+                    paint.strokeJoin = Paint.Join.ROUND
+                    paint.strokeCap = Paint.Cap.ROUND
+                    paint.color = if (isLightSurface) Color.parseColor("#334155") else Color.WHITE
+                    canvas.drawPath(path, paint)
+                }
+            }
         }
 
         buttonBitmapCache[key] = bitmap

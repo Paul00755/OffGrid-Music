@@ -63,8 +63,9 @@ class EmptyHomeScreenRobolectricTest {
             }
         }
 
-        // Verify that empty state elements are present and rendered cleanly
-        composeTestRule.onNodeWithText("OffGrid Music", useUnmergedTree = true).assertExists()
+        // Verify that empty state elements are present and rendered cleanly without SOUNDSTAGE badge
+        composeTestRule.onNodeWithText("Welcome, Music Lover", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("✦ SOUNDSTAGE", useUnmergedTree = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Quick Actions", useUnmergedTree = true).assertExists()
     }
 

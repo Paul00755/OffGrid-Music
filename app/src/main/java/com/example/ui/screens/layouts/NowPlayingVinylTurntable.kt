@@ -481,11 +481,13 @@ fun NowPlayingVinylTurntable(
                             modifier = Modifier.size(38.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                com.example.ui.components.AnimatedFavoriteIcon(
+                                    isFavorite = song.isFavorite,
+                                    activeTint = BentoAccentPinkText,
+                                    inactiveTint = BentoTextSecondary,
+                                    size = 19.dp,
                                     contentDescription = "Favorite",
-                                    tint = if (song.isFavorite) BentoAccentPinkText else BentoTextSecondary,
-                                    modifier = Modifier.size(19.dp)
+                                    animationKey = song.id
                                 )
                             }
                         }

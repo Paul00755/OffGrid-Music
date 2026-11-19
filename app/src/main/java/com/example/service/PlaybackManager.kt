@@ -644,8 +644,10 @@ class PlaybackManager(
             ): com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.SessionResult> {
                 when (customCommand.customAction) {
                     "ACTION_TOGGLE_FAVORITE" -> {
+                        val wasFav = _playbackState.value.currentSong?.isFavorite == true
                         onFavoriteToggleFromNotification?.invoke()
-                        updateNotificationLayout()
+                        val targetFav = !wasFav
+                        flashNotificationFavoriteAnimation(targetFav)
                     }
                     "ACTION_TOGGLE_SHUFFLE" -> {
                         toggleShuffle()
@@ -660,6 +662,43 @@ class PlaybackManager(
         .build()
 
     private var lastCustomLayoutFav: Boolean? = null
+    private var notificationFavAnimJob: kotlinx.coroutines.Job? = null
+
+    private fun buildNotificationCustomLayout(favIconRes: Int, isFavLabel: Boolean): List<androidx.media3.session.CommandButton> {
+        val favoriteButton = androidx.media3.session.CommandButton.Builder()
+            .setDisplayName(if (isFavLabel) "Unfavorite" else "Favorite")
+            .setIconResId(favIconRes)
+            .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_FAVORITE", android.os.Bundle.EMPTY))
+            .build()
+
+        val shuffleButton = androidx.media3.session.CommandButton.Builder()
+            .setDisplayName("Shuffle")
+            .setIconResId(com.example.R.drawable.ic_shuffle)
+            .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_SHUFFLE", android.os.Bundle.EMPTY))
+            .build()
+
+        return listOf(favoriteButton, shuffleButton)
+    }
+
+    private fun flashNotificationFavoriteAnimation(targetFav: Boolean) {
+        try {
+            notificationFavAnimJob?.cancel()
+            val transientIcon = if (targetFav) {
+                com.example.R.drawable.ic_favorite_burst
+            } else {
+                com.example.R.drawable.ic_favorite_broken
+            }
+            lastCustomLayoutFav = null
+            mediaSession.setCustomLayout(buildNotificationCustomLayout(transientIcon, targetFav))
+            notificationFavAnimJob = scope.launch {
+                kotlinx.coroutines.delay(260L)
+                updateNotificationLayout()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            updateNotificationLayout()
+        }
+    }
 
     fun updateNotificationLayout() {
         try {
@@ -667,19 +706,8 @@ class PlaybackManager(
             val isFav = currentSong?.isFavorite == true
             if (lastCustomLayoutFav != isFav) {
                 lastCustomLayoutFav = isFav
-                val favoriteButton = androidx.media3.session.CommandButton.Builder()
-                    .setDisplayName(if (isFav) "Unfavorite" else "Favorite")
-                    .setIconResId(if (isFav) com.example.R.drawable.ic_favorite else com.example.R.drawable.ic_favorite_border)
-                    .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_FAVORITE", android.os.Bundle.EMPTY))
-                    .build()
-
-                val shuffleButton = androidx.media3.session.CommandButton.Builder()
-                    .setDisplayName("Shuffle")
-                    .setIconResId(com.example.R.drawable.ic_shuffle)
-                    .setSessionCommand(androidx.media3.session.SessionCommand("ACTION_TOGGLE_SHUFFLE", android.os.Bundle.EMPTY))
-                    .build()
-
-                mediaSession.setCustomLayout(listOf(favoriteButton, shuffleButton))
+                val iconRes = if (isFav) com.example.R.drawable.ic_favorite else com.example.R.drawable.ic_favorite_border
+                mediaSession.setCustomLayout(buildNotificationCustomLayout(iconRes, isFav))
             }
             com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         } catch (e: Exception) {
