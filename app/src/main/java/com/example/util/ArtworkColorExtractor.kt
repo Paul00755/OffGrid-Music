@@ -17,6 +17,7 @@ object ArtworkColorExtractor {
     private const val PREFS_NAME = "artwork_palette_cache_v4"
     private val colorCache = object : android.util.LruCache<String, Color>(500) {}
     private val dualGradientCache = object : android.util.LruCache<String, Pair<Color, Color>>(250) {}
+    private val bottomStageColorCache = object : android.util.LruCache<String, Color>(250) {}
     private val failedCache = object : android.util.LruCache<String, Boolean>(250) {}
     private val diskColorMemoryMirror = ConcurrentHashMap<String, Int>()
     @Volatile
@@ -26,6 +27,7 @@ object ArtworkColorExtractor {
     fun clearCache() {
         colorCache.evictAll()
         dualGradientCache.evictAll()
+        bottomStageColorCache.evictAll()
         failedCache.evictAll()
         diskColorMemoryMirror.clear()
     }
@@ -270,6 +272,128 @@ object ArtworkColorExtractor {
                         if (pair != null) {
                             saveCachedDualGradient(context, cacheKey, pair)
                             return@withContext pair
+                        }
+                    }
+                }
+                null
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * Synchronous 0ms cache lookup for the full-bleed bottom-edge atmospheric stage color.
+     */
+    fun getCachedBottomStageColorSync(context: Context, song: Song?): Color? {
+        if (song == null) return null
+        val thumbImgBmp = com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path)
+        val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+        val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+        val resolvedArtKey = manualCover ?: cachedMemUri ?: song.artworkUri ?: ""
+        val cacheKey = "bstage_v1_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        synchronized(this) {
+            bottomStageColorCache.get(cacheKey)?.let { return it }
+        }
+        ensureDiskMirrorLoaded(context)
+        diskColorMemoryMirror[cacheKey]?.let { argb ->
+            val color = Color(argb)
+            synchronized(this) { bottomStageColorCache.put(cacheKey, color) }
+            return color
+        }
+        return null
+    }
+
+    private fun saveCachedBottomStageColor(context: Context, cacheKey: String, color: Color) {
+        val argb = color.toArgb()
+        synchronized(this) {
+            bottomStageColorCache.put(cacheKey, color)
+        }
+        val prev = diskColorMemoryMirror.put(cacheKey, argb)
+        if (prev != argb) {
+            try {
+                context.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(cacheKey, argb)
+                    .apply()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * Extracts the authentic atmospheric stage color from the lower third of a song's album cover
+     * so full-bleed artwork dissolves seamlessly into the lower controls canvas without muddy
+     * hue shifts or harsh cutoffs.
+     */
+    suspend fun extractBottomStageColorForSong(context: Context, song: Song?): Color? {
+        if (song == null) return null
+        val thumbImgBmp = com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path)
+        val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+        val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+        val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
+        val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
+        val cacheKey = "bstage_v1_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        synchronized(this) {
+            bottomStageColorCache.get(cacheKey)?.let { return it }
+        }
+        ensureDiskMirrorLoaded(context)
+        diskColorMemoryMirror[cacheKey]?.let { argb ->
+            val color = Color(argb)
+            synchronized(this) { bottomStageColorCache.put(cacheKey, color) }
+            return color
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                if (thumbImgBmp != null) {
+                    val androidBmp: Bitmap? = try { thumbImgBmp.asAndroidBitmap() } catch (_: Throwable) { null }
+                    if (androidBmp != null && !androidBmp.isRecycled) {
+                        val color = findBottomStageColor(androidBmp)
+                        if (color != null) {
+                            saveCachedBottomStageColor(context, cacheKey, color)
+                            return@withContext color
+                        }
+                    }
+                }
+                val cachedBmp = ArtworkManager.getCachedNotificationBitmap(song.id, song.path)
+                if (cachedBmp != null && !cachedBmp.isRecycled) {
+                    val color = findBottomStageColor(cachedBmp)
+                    if (color != null) {
+                        saveCachedBottomStageColor(context, cacheKey, color)
+                        return@withContext color
+                    }
+                }
+                val candidateUris = listOfNotNull(manualCover, cachedMemUri, cachedDisk, song.artworkUri).distinct()
+                for (uriCandidate in candidateUris) {
+                    if (uriCandidate.isNotBlank()) {
+                        val bmp = loadThumbnailBitmap(context, uriCandidate)
+                        if (bmp != null) {
+                            val color = findBottomStageColor(bmp)
+                            bmp.recycle()
+                            if (color != null) {
+                                saveCachedBottomStageColor(context, cacheKey, color)
+                                return@withContext color
+                            }
+                        }
+                    }
+                }
+                val rawBytes = ArtworkManager.getNotificationArtworkBytes(
+                    context,
+                    song.id,
+                    song.path,
+                    song.albumId,
+                    song.artworkUri
+                )
+                if (rawBytes != null && rawBytes.isNotEmpty()) {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val bmp = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+                    if (bmp != null) {
+                        val color = findBottomStageColor(bmp)
+                        bmp.recycle()
+                        if (color != null) {
+                            saveCachedBottomStageColor(context, cacheKey, color)
+                            return@withContext color
                         }
                     }
                 }
@@ -578,6 +702,130 @@ object ArtworkColorExtractor {
             softTopColor to bottomColor
         } catch (_: Throwable) {
             findProminentColor(bitmap)?.let { it to it }
+        } finally {
+            if (scaled !== bitmap && !scaled.isRecycled) {
+                scaled.recycle()
+            }
+        }
+    }
+
+    /**
+     * Samples the lower 36% of the album artwork (including deep atmospheric shadow tones like
+     * twilight indigo, slate navy, plum, forest, and burgundy) without artificial hue-shifting
+     * so full-bleed covers dissolve seamlessly into a clean velvety dark lower stage.
+     */
+    internal fun findBottomStageColor(bitmap: Bitmap): Color? {
+        val rawWidth = bitmap.width
+        val rawHeight = bitmap.height
+        if (rawWidth <= 1 || rawHeight <= 1 || bitmap.isRecycled) return null
+
+        val scaled = if (rawWidth > 64 || rawHeight > 64) {
+            try { Bitmap.createScaledBitmap(bitmap, 48, 48, true) } catch (_: Throwable) { bitmap }
+        } else bitmap
+
+        return try {
+            val w = scaled.width
+            val h = scaled.height
+            val pixels = IntArray(w * h)
+            scaled.getPixels(pixels, 0, w, 0, 0, w, h)
+
+            val startY = (h * 0.64f).toInt().coerceIn(0, h - 1)
+            val numBuckets = 24
+            val bucketWeight = FloatArray(numBuckets)
+            val bucketSumR = DoubleArray(numBuckets)
+            val bucketSumG = DoubleArray(numBuckets)
+            val bucketSumB = DoubleArray(numBuckets)
+            var sumAllR = 0L
+            var sumAllG = 0L
+            var sumAllB = 0L
+            var allCount = 0
+            val hsv = FloatArray(3)
+
+            for (y in startY until h) {
+                val rowOffset = y * w
+                // Give slightly higher weight to rows closest to the actual bottom seam
+                val rowProximity = 0.7f + 0.6f * ((y - startY).toFloat() / (h - startY).coerceAtLeast(1).toFloat())
+                for (x in 0 until w) {
+                    val pixel = pixels[rowOffset + x]
+                    val a = android.graphics.Color.alpha(pixel)
+                    if (a < 180) continue
+                    val r = android.graphics.Color.red(pixel)
+                    val g = android.graphics.Color.green(pixel)
+                    val b = android.graphics.Color.blue(pixel)
+                    sumAllR += r
+                    sumAllG += g
+                    sumAllB += b
+                    allCount++
+
+                    android.graphics.Color.colorToHSV(pixel, hsv)
+                    val hue = hsv[0]
+                    val sat = hsv[1]
+                    val value = hsv[2]
+                    if (value < 0.05f || value > 0.92f || sat < 0.09f) continue
+
+                    val bucketIdx = ((hue / 15f).toInt()).coerceIn(0, numBuckets - 1)
+                    // Favor rich atmospheric dark-to-mid shadow tones over warm skin-tone highlights
+                    val shadowAffinity = if (value in 0.10f..0.55f) 1.35f else 0.75f
+                    val coolClarityBonus = if (hue in 185f..295f) 1.25f else 1.0f
+                    val muddyPenalty = if (hue in 14f..48f && sat < 0.36f) 0.55f else 1.0f
+                    val weight = rowProximity * shadowAffinity * coolClarityBonus * muddyPenalty * (0.45f + sat)
+
+                    bucketWeight[bucketIdx] += weight
+                    bucketSumR[bucketIdx] += r * weight
+                    bucketSumG[bucketIdx] += g * weight
+                    bucketSumB[bucketIdx] += b * weight
+                }
+            }
+
+            var winningIdx = -1
+            var bestSmoothed = 0f
+            for (i in 0 until numBuckets) {
+                val prev = (i - 1 + numBuckets) % numBuckets
+                val next = (i + 1) % numBuckets
+                val smoothed = bucketWeight[i] + bucketWeight[prev] * 0.5f + bucketWeight[next] * 0.5f
+                if (smoothed > bestSmoothed) {
+                    bestSmoothed = smoothed
+                    winningIdx = i
+                }
+            }
+
+            val baseR: Int
+            val baseG: Int
+            val baseB: Int
+            if (winningIdx >= 0 && bucketWeight[winningIdx] > 0f) {
+                val prev = (winningIdx - 1 + numBuckets) % numBuckets
+                val next = (winningIdx + 1) % numBuckets
+                val totalW = bucketWeight[winningIdx].toDouble() +
+                    bucketWeight[prev].toDouble() * 0.45 +
+                    bucketWeight[next].toDouble() * 0.45
+                baseR = ((bucketSumR[winningIdx] + bucketSumR[prev] * 0.45 + bucketSumR[next] * 0.45) / totalW).toInt().coerceIn(0, 255)
+                baseG = ((bucketSumG[winningIdx] + bucketSumG[prev] * 0.45 + bucketSumG[next] * 0.45) / totalW).toInt().coerceIn(0, 255)
+                baseB = ((bucketSumB[winningIdx] + bucketSumB[prev] * 0.45 + bucketSumB[next] * 0.45) / totalW).toInt().coerceIn(0, 255)
+            } else if (allCount > 0) {
+                baseR = (sumAllR / allCount).toInt().coerceIn(0, 255)
+                baseG = (sumAllG / allCount).toInt().coerceIn(0, 255)
+                baseB = (sumAllB / allCount).toInt().coerceIn(0, 255)
+            } else {
+                return null
+            }
+
+            val outHsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(android.graphics.Color.rgb(baseR, baseG, baseB), outHsv)
+            // Neutral or muddy desaturated shadows refine cleanly into sleek twilight slate-indigo
+            if (outHsv[1] < 0.14f || (outHsv[0] in 15f..46f && outHsv[1] < 0.28f)) {
+                outHsv[0] = 222f
+                outHsv[1] = 0.36f
+            } else {
+                // Gently pull pink/magenta dark shadows slightly cooler toward plum-indigo so they stay velvety, never brown
+                if (outHsv[0] in 305f..352f && outHsv[2] < 0.45f) {
+                    outHsv[0] = (outHsv[0] - 28f).coerceAtLeast(245f)
+                }
+                outHsv[1] = outHsv[1].coerceIn(0.28f, 0.44f)
+            }
+            outHsv[2] = 0.25f
+            Color(android.graphics.Color.HSVToColor(outHsv))
+        } catch (_: Throwable) {
+            null
         } finally {
             if (scaled !== bitmap && !scaled.isRecycled) {
                 scaled.recycle()

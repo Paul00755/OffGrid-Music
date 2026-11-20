@@ -1252,15 +1252,26 @@ fun NowPlayingScreen(
                     )
                 }
                 com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> {
-                    // Full-Bleed Immersive Modern Bento View: velvety atmospheric tinted dark stage
-                    // smoothly blending from full-bleed artwork (never harsh pure black, even in AMOLED)
+                    // Full-Bleed Immersive Modern Bento View:
+                    // Samples the authentic lower edge of the album cover so full-bleed artwork dissolves
+                    // seamlessly into a velvety atmospheric stage with zero cutoff seam or muddy hue shift.
+                    val cachedBottomStage = remember(song.id, song.artworkUri, song.path) {
+                        com.example.util.ArtworkColorExtractor.getCachedBottomStageColorSync(context, song)
+                    }
+                    val extractedBottomStage by produceState<Color?>(
+                        initialValue = cachedBottomStage,
+                        keys = arrayOf(song.id, song.artworkUri, song.path)
+                    ) {
+                        val extracted = com.example.util.ArtworkColorExtractor.extractBottomStageColorForSong(context, song)
+                        if (extracted != null) value = extracted
+                    }
+
                     fun Color.toVelvetStageTone(targetValue: Float, minSat: Float, maxSat: Float): Color {
                         val hsv = FloatArray(3)
                         android.graphics.Color.colorToHSV(this.toArgb(), hsv)
-                        if (hsv[1] < 0.12f) {
-                            // Neutral/grayscale artwork falls back to refined deep slate-indigo
-                            hsv[0] = 224f
-                            hsv[1] = 0.30f
+                        if (hsv[1] < 0.14f || (hsv[0] in 15f..46f && hsv[1] < 0.28f)) {
+                            hsv[0] = 222f
+                            hsv[1] = 0.36f
                         } else {
                             hsv[1] = hsv[1].coerceIn(minSat, maxSat)
                         }
@@ -1268,20 +1279,19 @@ fun NowPlayingScreen(
                         return Color(android.graphics.Color.HSVToColor(hsv))
                     }
 
-                    val rawBottomStageBase = remember(ambientThemeColor, bottomArtworkColor, useRichDarkPalette) {
-                        val blendSeed = androidx.compose.ui.graphics.lerp(bottomArtworkColor, ambientThemeColor, 0.35f)
-                        blendSeed.toVelvetStageTone(
-                            targetValue = if (useRichDarkPalette) 0.22f else 0.25f,
-                            minSat = if (useRichDarkPalette) 0.28f else 0.24f,
-                            maxSat = if (useRichDarkPalette) 0.46f else 0.40f
+                    val rawBottomStageBase = remember(extractedBottomStage, ambientThemeColor) {
+                        val stageSeed = extractedBottomStage ?: ambientThemeColor
+                        stageSeed.toVelvetStageTone(
+                            targetValue = 0.25f,
+                            minSat = 0.28f,
+                            maxSat = 0.44f
                         )
                     }
-                    val rawBottomStageEnd = remember(bottomArtworkColor, ambientThemeColor, useRichDarkPalette) {
-                        val endSeed = androidx.compose.ui.graphics.lerp(bottomArtworkColor, ambientThemeColor, 0.20f)
-                        endSeed.toVelvetStageTone(
-                            targetValue = if (useRichDarkPalette) 0.16f else 0.19f,
-                            minSat = if (useRichDarkPalette) 0.30f else 0.26f,
-                            maxSat = if (useRichDarkPalette) 0.48f else 0.42f
+                    val rawBottomStageEnd = remember(rawBottomStageBase) {
+                        rawBottomStageBase.toVelvetStageTone(
+                            targetValue = 0.21f,
+                            minSat = 0.28f,
+                            maxSat = 0.44f
                         )
                     }
                     val bottomScrimColor by animateColorAsState(
@@ -1296,16 +1306,19 @@ fun NowPlayingScreen(
                     )
                     val bentoInk = Color.White
                     val bentoSubInk = Color.White.copy(alpha = 0.74f)
-                    val pillBgColor = Color.White.copy(alpha = 0.14f)
-                    val topOverlayPillBg = Color(0xFF1A1E2B).copy(alpha = 0.38f)
+                    val pillBgColor = Color.White.copy(alpha = 0.13f)
+                    val topOverlayPillBg = Color(0xFF222634).copy(alpha = 0.42f)
 
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(
+                                // Hold exact bottomScrimColor past the artwork box boundary (0.72f)
+                                // so there is NEVER a horizontal color step or seam below the cover art
                                 Brush.verticalGradient(
-                                    0.0f to bottomScrimColor,
-                                    1.0f to bottomGradientEnd
+                                    0.00f to bottomScrimColor,
+                                    0.72f to bottomScrimColor,
+                                    1.00f to bottomGradientEnd
                                 )
                             )
                     ) {
@@ -1313,7 +1326,7 @@ fun NowPlayingScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .fillMaxHeight(0.66f)
+                                .fillMaxHeight(0.67f)
                                 .align(Alignment.TopCenter)
                         ) {
                             com.example.ui.components.AlbumArtGestureBox(
@@ -1332,17 +1345,21 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            // Tall, velvety feathered fade from lower artwork into atmospheric stage canvas
+                            // Smooth cubic ease-in atmospheric dissolve reaching 100% solid bottomScrimColor
+                            // before the artwork box terminates so the lower image edge is completely invisible
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
                                         Brush.verticalGradient(
-                                            0.0f to Color.Transparent,
-                                            0.40f to Color.Transparent,
-                                            0.62f to bottomScrimColor.copy(alpha = 0.44f),
-                                            0.82f to bottomScrimColor.copy(alpha = 0.86f),
-                                            1.0f to bottomScrimColor
+                                            0.00f to Color.Transparent,
+                                            0.36f to Color.Transparent,
+                                            0.50f to bottomScrimColor.copy(alpha = 0.12f),
+                                            0.62f to bottomScrimColor.copy(alpha = 0.34f),
+                                            0.74f to bottomScrimColor.copy(alpha = 0.64f),
+                                            0.84f to bottomScrimColor.copy(alpha = 0.90f),
+                                            0.92f to bottomScrimColor,
+                                            1.00f to bottomScrimColor
                                         )
                                     )
                             )
@@ -1363,14 +1380,14 @@ fun NowPlayingScreen(
                                 onClick = onDismiss,
                                 shape = CircleShape,
                                 color = topOverlayPillBg,
-                                modifier = Modifier.size(38.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.KeyboardArrowDown,
                                         contentDescription = "Collapse",
                                         tint = bentoInk,
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(21.dp)
                                     )
                                 }
                             }
@@ -1461,7 +1478,7 @@ fun NowPlayingScreen(
                                 ) {
                                     Text(
                                         text = song.displayTitle,
-                                        fontSize = 22.sp,
+                                        fontSize = 21.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = bentoInk,
                                         maxLines = 1,
@@ -1470,7 +1487,7 @@ fun NowPlayingScreen(
                                     Spacer(modifier = Modifier.height(3.dp))
                                     Text(
                                         text = song.displayArtist,
-                                        fontSize = 14.5.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = bentoSubInk,
                                         maxLines = 1,
@@ -1499,14 +1516,14 @@ fun NowPlayingScreen(
                                         },
                                         shape = CircleShape,
                                         color = pillBgColor,
-                                        modifier = Modifier.size(42.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Default.MoreVert,
                                                 contentDescription = "Options",
                                                 tint = bentoInk,
-                                                modifier = Modifier.size(20.dp)
+                                                modifier = Modifier.size(19.dp)
                                             )
                                         }
                                     }
@@ -1519,14 +1536,14 @@ fun NowPlayingScreen(
                                         },
                                         shape = CircleShape,
                                         color = if (song.isFavorite) BentoAccentPinkText.copy(alpha = 0.24f) else pillBgColor,
-                                        modifier = Modifier.size(42.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             com.example.ui.components.AnimatedFavoriteIcon(
                                                 isFavorite = song.isFavorite,
                                                 activeTint = BentoAccentPinkText,
                                                 inactiveTint = bentoInk,
-                                                size = 20.dp,
+                                                size = 19.dp,
                                                 contentDescription = "Favorite",
                                                 animationKey = song.id
                                             )
@@ -1562,23 +1579,23 @@ fun NowPlayingScreen(
                                         playbackPositionFlow,
                                         livePositionMs,
                                         effectiveDurationMs,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         color = bentoSubInk
                                     )
                                     Text(
                                         text = formattedDuration,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = bentoSubInk
                                     )
                                 }
                             }
 
-                            // Large Clean Borderless Transport Controls (Rewind, Play/Pause, Fast-Forward)
+                            // Refined, Sleeker Borderless Transport Controls matching reference proportions
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
+                                    .padding(vertical = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1587,13 +1604,13 @@ fun NowPlayingScreen(
                                         HapticUtils.performClickHaptic(context)
                                         onSkipPrevious()
                                     },
-                                    modifier = Modifier.size(56.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.FastRewind,
                                         contentDescription = "Previous",
                                         tint = bentoInk,
-                                        modifier = Modifier.size(40.dp)
+                                        modifier = Modifier.size(30.dp)
                                     )
                                 }
 
@@ -1602,13 +1619,13 @@ fun NowPlayingScreen(
                                         HapticUtils.performClickHaptic(context)
                                         onTogglePlayPause()
                                     },
-                                    modifier = Modifier.size(68.dp)
+                                    modifier = Modifier.size(58.dp)
                                 ) {
                                     Icon(
                                         imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                         contentDescription = "Play/Pause",
                                         tint = bentoInk,
-                                        modifier = Modifier.size(50.dp)
+                                        modifier = Modifier.size(38.dp)
                                     )
                                 }
 
@@ -1617,13 +1634,13 @@ fun NowPlayingScreen(
                                         HapticUtils.performClickHaptic(context)
                                         onSkipNext()
                                     },
-                                    modifier = Modifier.size(56.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.FastForward,
                                         contentDescription = "Next",
                                         tint = bentoInk,
-                                        modifier = Modifier.size(40.dp)
+                                        modifier = Modifier.size(30.dp)
                                     )
                                 }
                             }
@@ -1651,17 +1668,17 @@ fun NowPlayingScreen(
                                         .padding(horizontal = 12.dp, vertical = 4.dp)
                                         .testTag("audio_output_route_button"),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Icon(
                                         imageVector = audioRouteInfo.icon,
                                         contentDescription = "Audio Output Device",
                                         tint = bentoSubInk,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(14.dp)
                                     )
                                     Text(
                                         text = audioRouteInfo.name,
-                                        fontSize = 12.5.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = bentoSubInk,
                                         maxLines = 1,
@@ -1678,23 +1695,23 @@ fun NowPlayingScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Left: Queue + Shuffle
+                                // Left: Queue + Shuffle (Shuffle stays small when off, larger only when turned on)
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     IconButton(
                                         onClick = {
                                             HapticUtils.performClickHaptic(context)
                                             showQueueSheet = true
                                         },
-                                        modifier = Modifier.size(40.dp)
+                                        modifier = Modifier.size(38.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.FormatListBulleted,
                                             contentDescription = "Up Next Queue",
-                                            tint = bentoInk.copy(alpha = 0.90f),
-                                            modifier = Modifier.size(23.dp)
+                                            tint = bentoInk.copy(alpha = 0.88f),
+                                            modifier = Modifier.size(19.dp)
                                         )
                                     }
 
@@ -1704,13 +1721,13 @@ fun NowPlayingScreen(
                                             HapticUtils.performClickHaptic(context)
                                             onToggleShuffle()
                                         },
-                                        modifier = Modifier.size(40.dp)
+                                        modifier = Modifier.size(38.dp)
                                     ) {
                                         Icon(
                                             imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
                                             tint = if (isShuffleActive) bentoInk else bentoInk.copy(alpha = 0.56f),
-                                            modifier = Modifier.size(if (isShuffleActive) 24.dp else 21.dp)
+                                            modifier = Modifier.size(if (isShuffleActive) 23.dp else 18.dp)
                                         )
                                     }
                                 }
@@ -1726,22 +1743,22 @@ fun NowPlayingScreen(
                                             showAudioOutputSheet = true
                                         },
                                         shape = RoundedCornerShape(
-                                            topStart = 24.dp,
-                                            bottomStart = 24.dp,
-                                            topEnd = 6.dp,
-                                            bottomEnd = 6.dp
+                                            topStart = 22.dp,
+                                            bottomStart = 22.dp,
+                                            topEnd = 5.dp,
+                                            bottomEnd = 5.dp
                                         ),
                                         color = pillBgColor,
                                         modifier = Modifier
-                                            .width(58.dp)
-                                            .height(42.dp)
+                                            .width(54.dp)
+                                            .height(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Default.SpeakerGroup,
                                                 contentDescription = "Switch Audio Output",
-                                                tint = bentoInk.copy(alpha = 0.94f),
-                                                modifier = Modifier.size(20.dp)
+                                                tint = bentoInk.copy(alpha = 0.92f),
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
                                     }
@@ -1752,22 +1769,22 @@ fun NowPlayingScreen(
                                             showTimerDialog = true
                                         },
                                         shape = RoundedCornerShape(
-                                            topStart = 6.dp,
-                                            bottomStart = 6.dp,
-                                            topEnd = 24.dp,
-                                            bottomEnd = 24.dp
+                                            topStart = 5.dp,
+                                            bottomStart = 5.dp,
+                                            topEnd = 22.dp,
+                                            bottomEnd = 22.dp
                                         ),
-                                        color = if (sleepTimerState.isActive) Color.White.copy(alpha = 0.26f) else pillBgColor,
+                                        color = if (sleepTimerState.isActive) Color.White.copy(alpha = 0.24f) else pillBgColor,
                                         modifier = Modifier
-                                            .width(58.dp)
-                                            .height(42.dp)
+                                            .width(54.dp)
+                                            .height(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Default.Timer,
                                                 contentDescription = "Sleep Timer",
-                                                tint = bentoInk.copy(alpha = if (sleepTimerState.isActive) 1.0f else 0.94f),
-                                                modifier = Modifier.size(20.dp)
+                                                tint = bentoInk.copy(alpha = if (sleepTimerState.isActive) 1.0f else 0.92f),
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
                                     }
@@ -1776,7 +1793,7 @@ fun NowPlayingScreen(
                                 // Right: Repeat + Lyrics Badge
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     val isRepeatActive = playbackState.repeatMode != Player.REPEAT_MODE_OFF
                                     IconButton(
@@ -1790,7 +1807,7 @@ fun NowPlayingScreen(
                                             imageVector = if (playbackState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                                             contentDescription = "Repeat",
                                             tint = if (isRepeatActive) bentoInk else bentoInk.copy(alpha = 0.58f),
-                                            modifier = Modifier.size(19.dp)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
 
@@ -1799,13 +1816,13 @@ fun NowPlayingScreen(
                                             HapticUtils.performClickHaptic(context)
                                             showLyricsView = !showLyricsView
                                         },
-                                        modifier = Modifier.size(40.dp)
+                                        modifier = Modifier.size(38.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ChatBubbleOutline,
                                             contentDescription = "Lyrics",
-                                            tint = if (showLyricsView) BentoPrimary else bentoInk.copy(alpha = 0.88f),
-                                            modifier = Modifier.size(22.dp)
+                                            tint = if (showLyricsView) bentoInk else bentoInk.copy(alpha = 0.88f),
+                                            modifier = Modifier.size(19.dp)
                                         )
                                     }
                                 }
