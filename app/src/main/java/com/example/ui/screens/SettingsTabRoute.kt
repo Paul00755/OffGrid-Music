@@ -130,6 +130,8 @@ fun SettingsTabRoute(
         onSetShowAdvancedSongInfo = { viewModel.setShowAdvancedSongInfo(it) },
         isDynamicArtworkTheme = isDynamicArtworkTheme,
         onSetDynamicArtworkTheme = { viewModel.setDynamicArtworkTheme(it) },
+        useDarkColors = viewModel.useDarkColors.collectAsState().value,
+        onSetUseDarkColors = { viewModel.setUseDarkColors(it) },
         isGradientEffect = viewModel.isGradientEffect.collectAsState().value,
         onSetGradientEffect = { viewModel.setGradientEffect(it) },
         isGlassEffect = viewModel.isGlassEffect.collectAsState().value,

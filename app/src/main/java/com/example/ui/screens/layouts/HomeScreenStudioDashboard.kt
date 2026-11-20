@@ -95,13 +95,22 @@ fun HomeScreenStudioDashboard(
     val listState = rememberLazyListState()
     val currentSong = playbackState.currentSong ?: recentlyPlayed.firstOrNull() ?: allSongs.firstOrNull()
 
+    val glassConfig = LocalGlassThemeConfig.current
+    val useRichDarkPalette = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
+    val fallbackPrimary = BentoPrimary
+    val fallbackSecondary = BentoSecondary
+    val cachedDual = remember(currentSong?.id, currentSong?.artworkUri, glassConfig.isDynamicArtworkEnabled) {
+        if (glassConfig.isDynamicArtworkEnabled && currentSong != null) {
+            com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, currentSong)
+        } else null
+    }
     val dualPalette by produceState(
-        initialValue = Pair(BentoPrimary, BentoSecondary),
-        key1 = currentSong?.id,
-        key2 = currentSong?.artworkUri,
-        key3 = currentSong?.path
+        initialValue = cachedDual ?: Pair(fallbackPrimary, fallbackSecondary),
+        keys = arrayOf(currentSong?.id, currentSong?.artworkUri, glassConfig.isDynamicArtworkEnabled, fallbackPrimary)
     ) {
-        if (currentSong != null) {
+        if (!glassConfig.isDynamicArtworkEnabled) {
+            value = Pair(fallbackPrimary, fallbackSecondary)
+        } else if (currentSong != null) {
             val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, currentSong)
             if (extracted != null) {
                 value = extracted
@@ -110,13 +119,21 @@ fun HomeScreenStudioDashboard(
     }
 
     val topAmbientColor by androidx.compose.animation.animateColorAsState(
-        targetValue = dualPalette.first,
-        animationSpec = tween(durationMillis = 550),
+        targetValue = if (glassConfig.isDynamicArtworkEnabled) {
+            dualPalette.first.toAdaptiveThemeAccent(useDarkColors = useRichDarkPalette)
+        } else {
+            fallbackPrimary
+        },
+        animationSpec = tween(durationMillis = 420),
         label = "studio_deck_top_ambient"
     )
     val bottomAmbientColor by androidx.compose.animation.animateColorAsState(
-        targetValue = dualPalette.second,
-        animationSpec = tween(durationMillis = 550),
+        targetValue = if (glassConfig.isDynamicArtworkEnabled) {
+            dualPalette.second.toAdaptiveCompanionHue(useDarkColors = useRichDarkPalette)
+        } else {
+            fallbackSecondary
+        },
+        animationSpec = tween(durationMillis = 420),
         label = "studio_deck_bottom_ambient"
     )
 
@@ -129,8 +146,8 @@ fun HomeScreenStudioDashboard(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            topAmbientColor.copy(alpha = 0.20f),
-                            bottomAmbientColor.copy(alpha = 0.08f),
+                            topAmbientColor.copy(alpha = if (useRichDarkPalette) 0.28f else 0.20f),
+                            bottomAmbientColor.copy(alpha = if (useRichDarkPalette) 0.12f else 0.08f),
                             Color.Transparent
                         )
                     )
@@ -140,6 +157,8 @@ fun HomeScreenStudioDashboard(
         LazyColumn(
             state = listState,
             modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = 840.dp)
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),

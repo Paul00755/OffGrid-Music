@@ -91,39 +91,67 @@ fun NowPlayingNeonWaveform(
     val baseBg = BentoBackground
     val primaryThemeColor = BentoPrimary
     val isDarkTheme = baseBg.luminance() < 0.5f
+    val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
 
-    val fallbackTop = primaryThemeColor.toPastelAccent()
-    val fallbackBottom = glassConfig.secondaryTintColor.toPastelCompanionHue()
+    val fallbackTop = primaryThemeColor.toAdaptiveThemeAccent(
+        useDarkColors = useRichDark,
+        preserveExactDark = glassConfig.isCustomDarkAccent
+    )
+    val fallbackBottom = glassConfig.secondaryTintColor.toAdaptiveCompanionHue(
+        useDarkColors = useRichDark,
+        preserveExactDark = glassConfig.isCustomDarkAccent
+    )
 
-    var gradientPair by remember(song.id, song.artworkUri) {
-        mutableStateOf(fallbackTop to fallbackBottom)
+    val initialCachedPair = remember(song.id, song.artworkUri, glassConfig.isDynamicArtworkEnabled) {
+        if (glassConfig.isDynamicArtworkEnabled) {
+            ArtworkColorExtractor.getCachedDualGradientForSongSync(context, song)
+        } else {
+            null
+        }
     }
-    LaunchedEffect(song.id, song.artworkUri) {
-        val extracted = ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
-        if (extracted != null) {
-            gradientPair = extracted
+    var extractedPair by remember(song.id, song.artworkUri, glassConfig.isDynamicArtworkEnabled) {
+        mutableStateOf(initialCachedPair)
+    }
+    LaunchedEffect(song.id, song.artworkUri, glassConfig.isDynamicArtworkEnabled) {
+        if (glassConfig.isDynamicArtworkEnabled) {
+            val extracted = ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
+            if (extracted != null) {
+                extractedPair = extracted
+            }
+        } else {
+            extractedPair = null
         }
     }
 
-    val targetTopBg = remember(gradientPair.first) { gradientPair.first.ensureNeonPastelStage() }
-    val targetBottomBg = remember(gradientPair.second) { gradientPair.second.ensureNeonPastelStage() }
+    val activePair = if (glassConfig.isDynamicArtworkEnabled && extractedPair != null) {
+        extractedPair!!
+    } else {
+        fallbackTop to fallbackBottom
+    }
+
+    val targetTopBg = remember(activePair.first, useRichDark) {
+        if (useRichDark) activePair.first.ensureNeonDarkStage() else activePair.first.ensureNeonPastelStage()
+    }
+    val targetBottomBg = remember(activePair.second, useRichDark) {
+        if (useRichDark) activePair.second.ensureNeonDarkStage() else activePair.second.ensureNeonPastelStage()
+    }
     val targetMidBg = remember(targetTopBg, targetBottomBg) {
         androidx.compose.ui.graphics.lerp(targetTopBg, targetBottomBg, 0.48f)
     }
 
     val topBgColor by animateColorAsState(
         targetValue = targetTopBg,
-        animationSpec = tween(550),
+        animationSpec = tween(460),
         label = "neon_top_gradient"
     )
     val midBgColor by animateColorAsState(
         targetValue = targetMidBg,
-        animationSpec = tween(550),
+        animationSpec = tween(460),
         label = "neon_mid_gradient"
     )
     val bottomBgColor by animateColorAsState(
         targetValue = targetBottomBg,
-        animationSpec = tween(550),
+        animationSpec = tween(460),
         label = "neon_bottom_gradient"
     )
 
@@ -158,11 +186,13 @@ fun NowPlayingNeonWaveform(
                     0.50f to midBgColor,
                     1.0f to bottomBgColor
                 )
-            )
+            ),
+        contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .widthIn(max = 560.dp)
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 10.dp),
@@ -542,6 +572,21 @@ private fun Color.ensureNeonPastelStage(minLuminance: Float = 0.14f, maxLuminanc
     steps = 0
     while (current.luminance() < minLuminance && steps < 6) {
         current = androidx.compose.ui.graphics.lerp(current, Color(0xFF4A4460), 0.20f)
+        steps++
+    }
+    return current
+}
+
+private fun Color.ensureNeonDarkStage(): Color {
+    var current = this.toRichDarkAccent(preserveExactIfAlreadyDark = true)
+    var steps = 0
+    while (current.luminance() > 0.16f && steps < 8) {
+        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF07070B), 0.26f)
+        steps++
+    }
+    steps = 0
+    while (current.luminance() < 0.045f && steps < 5) {
+        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF221F2D), 0.20f)
         steps++
     }
     return current

@@ -152,6 +152,49 @@ object ArtworkColorExtractor {
         }
     }
 
+    fun getCachedDualGradientForSongSync(context: Context, song: Song?): Pair<Color, Color>? {
+        if (song == null) return null
+        val thumbImgBmp = com.example.ui.components.ArtworkResolutionCache.getThumbnailBitmap(song.id, song.path)
+        val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
+        val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
+        val resolvedArtKey = manualCover ?: cachedMemUri ?: song.artworkUri ?: ""
+        val cacheKey = "dual_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        synchronized(this) {
+            dualGradientCache.get(cacheKey)?.let { return it }
+        }
+        ensureDiskMirrorLoaded(context)
+        val topArgb = diskColorMemoryMirror["${cacheKey}_top"]
+        val botArgb = diskColorMemoryMirror["${cacheKey}_bot"]
+        if (topArgb != null && botArgb != null) {
+            val pair = Color(topArgb) to Color(botArgb)
+            synchronized(this) {
+                dualGradientCache.put(cacheKey, pair)
+            }
+            return pair
+        }
+        return null
+    }
+
+    private fun saveCachedDualGradient(context: Context, cacheKey: String, pair: Pair<Color, Color>) {
+        val topArgb = pair.first.toArgb()
+        val botArgb = pair.second.toArgb()
+        synchronized(this) {
+            dualGradientCache.put(cacheKey, pair)
+        }
+        val prevTop = diskColorMemoryMirror.put("${cacheKey}_top", topArgb)
+        val prevBot = diskColorMemoryMirror.put("${cacheKey}_bot", botArgb)
+        if (prevTop != topArgb || prevBot != botArgb) {
+            try {
+                context.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt("${cacheKey}_top", topArgb)
+                    .putInt("${cacheKey}_bot", botArgb)
+                    .apply()
+            } catch (_: Throwable) {}
+        }
+    }
+
     /**
      * Extracts a lush top-to-bottom dual-tone ambient gradient pair from a song's album artwork.
      * Samples the upper region for the top gradient color and lower region / complementary accent
@@ -168,6 +211,14 @@ object ArtworkColorExtractor {
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
+        ensureDiskMirrorLoaded(context)
+        val diskTop = diskColorMemoryMirror["${cacheKey}_top"]
+        val diskBot = diskColorMemoryMirror["${cacheKey}_bot"]
+        if (diskTop != null && diskBot != null) {
+            val pair = Color(diskTop) to Color(diskBot)
+            synchronized(this) { dualGradientCache.put(cacheKey, pair) }
+            return pair
+        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -176,7 +227,7 @@ object ArtworkColorExtractor {
                     if (androidBmp != null && !androidBmp.isRecycled) {
                         val pair = findDualGradientColors(androidBmp)
                         if (pair != null) {
-                            synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                            saveCachedDualGradient(context, cacheKey, pair)
                             return@withContext pair
                         }
                     }
@@ -185,7 +236,7 @@ object ArtworkColorExtractor {
                 if (cachedBmp != null && !cachedBmp.isRecycled) {
                     val pair = findDualGradientColors(cachedBmp)
                     if (pair != null) {
-                        synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                        saveCachedDualGradient(context, cacheKey, pair)
                         return@withContext pair
                     }
                 }
@@ -197,7 +248,7 @@ object ArtworkColorExtractor {
                             val pair = findDualGradientColors(bmp)
                             bmp.recycle()
                             if (pair != null) {
-                                synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                                saveCachedDualGradient(context, cacheKey, pair)
                                 return@withContext pair
                             }
                         }
@@ -217,7 +268,7 @@ object ArtworkColorExtractor {
                         val pair = findDualGradientColors(bmp)
                         bmp.recycle()
                         if (pair != null) {
-                            synchronized(this@ArtworkColorExtractor) { dualGradientCache.put(cacheKey, pair) }
+                            saveCachedDualGradient(context, cacheKey, pair)
                             return@withContext pair
                         }
                     }
@@ -339,6 +390,16 @@ object ArtworkColorExtractor {
             }
         }
 
+        return findProminentColorInSlice(pixels, width, height, 0, height)
+    }
+
+    private fun findProminentColorInSlice(
+        pixels: IntArray,
+        width: Int,
+        totalHeight: Int,
+        startRow: Int,
+        endRow: Int
+    ): Color? {
         val numBuckets = 24 // 15 degrees per bucket
         val bucketCount = IntArray(numBuckets)
         val bucketWeight = FloatArray(numBuckets)
@@ -351,61 +412,62 @@ object ArtworkColorExtractor {
         var fallbackB = 0L
         var fallbackCount = 0
 
-        val bottomWatermarkCutoffY = (height * 0.84f).toInt()
+        val bottomWatermarkCutoffY = (totalHeight * 0.84f).toInt()
+        val safeStart = startRow.coerceIn(0, totalHeight)
+        val safeEnd = endRow.coerceIn(safeStart, totalHeight)
 
-        for (i in pixels.indices) {
-            val colorInt = pixels[i]
-            val alpha = (colorInt ushr 24) and 0xFF
-            if (alpha < 128) continue
-
-            val r = (colorInt ushr 16) and 0xFF
-            val g = (colorInt ushr 8) and 0xFF
-            val b = colorInt and 0xFF
-
-            fallbackR += r
-            fallbackG += g
-            fallbackB += b
-            fallbackCount++
-
-            val maxC = maxOf(r, g, b)
-            val minC = minOf(r, g, b)
-            val delta = maxC - minC
-
-            val value = maxC / 255f
-            val saturation = if (maxC == 0) 0f else delta.toFloat() / maxC.toFloat()
-
-            // Exclude dark shadow pixels (value < 0.24f) where small RGB differences create huge fake HSV saturation,
-            // and exclude neutral grays/whites while keeping pale/pastel colors (saturation >= 0.06f when value >= 0.45f).
-            if (value < 0.24f) continue
-            val minSatThreshold = if (value >= 0.45f) 0.06f else 0.14f
-            if (saturation < minSatThreshold) continue
-            if (value > 0.97f && saturation < 0.08f) continue
-
-            var hue = when {
-                delta == 0 -> 0f
-                maxC == r -> 60f * (((g - b).toFloat() / delta.toFloat()) % 6f)
-                maxC == g -> 60f * (((b - r).toFloat() / delta.toFloat()) + 2f)
-                else -> 60f * (((r - g).toFloat() / delta.toFloat()) + 4f)
-            }
-            if (hue < 0f) hue += 360f
-
-            val y = i / width
+        for (y in safeStart until safeEnd) {
+            val rowOffset = y * width
             val spatialWeight = if (y < bottomWatermarkCutoffY) 1.25f else 0.55f
-            val brightnessWeight = when {
-                value in 0.45f..0.95f -> 1.65f
-                value > 0.95f -> 1.05f
-                else -> 0.55f
-            }
-            // Linear saturation factor so dominant pale/pastel regions (like pale pink covers) are not crushed by saturation^2
-            val satWeight = 0.38f + saturation * 0.62f
-            val weight = satWeight * brightnessWeight * spatialWeight
+            for (x in 0 until width) {
+                val colorInt = pixels[rowOffset + x]
+                val alpha = (colorInt ushr 24) and 0xFF
+                if (alpha < 128) continue
 
-            val bucketIdx = ((hue / 15f).toInt()) % numBuckets
-            bucketCount[bucketIdx]++
-            bucketWeight[bucketIdx] += weight
-            bucketSumR[bucketIdx] += r * weight.toDouble()
-            bucketSumG[bucketIdx] += g * weight.toDouble()
-            bucketSumB[bucketIdx] += b * weight.toDouble()
+                val r = (colorInt ushr 16) and 0xFF
+                val g = (colorInt ushr 8) and 0xFF
+                val b = colorInt and 0xFF
+
+                fallbackR += r
+                fallbackG += g
+                fallbackB += b
+                fallbackCount++
+
+                val maxC = maxOf(r, g, b)
+                val minC = minOf(r, g, b)
+                val delta = maxC - minC
+
+                val value = maxC / 255f
+                val saturation = if (maxC == 0) 0f else delta.toFloat() / maxC.toFloat()
+
+                if (value < 0.24f) continue
+                val minSatThreshold = if (value >= 0.45f) 0.06f else 0.14f
+                if (saturation < minSatThreshold) continue
+                if (value > 0.97f && saturation < 0.08f) continue
+
+                var hue = when {
+                    delta == 0 -> 0f
+                    maxC == r -> 60f * (((g - b).toFloat() / delta.toFloat()) % 6f)
+                    maxC == g -> 60f * (((b - r).toFloat() / delta.toFloat()) + 2f)
+                    else -> 60f * (((r - g).toFloat() / delta.toFloat()) + 4f)
+                }
+                if (hue < 0f) hue += 360f
+
+                val brightnessWeight = when {
+                    value in 0.45f..0.95f -> 1.65f
+                    value > 0.95f -> 1.05f
+                    else -> 0.55f
+                }
+                val satWeight = 0.38f + saturation * 0.62f
+                val weight = satWeight * brightnessWeight * spatialWeight
+
+                val bucketIdx = ((hue / 15f).toInt()) % numBuckets
+                bucketCount[bucketIdx]++
+                bucketWeight[bucketIdx] += weight
+                bucketSumR[bucketIdx] += r * weight.toDouble()
+                bucketSumG[bucketIdx] += g * weight.toDouble()
+                bucketSumB[bucketIdx] += b * weight.toDouble()
+            }
         }
 
         // Circular neighbor smoothing across 0°/360° so Pink/Rose/Red hues spanning 345°..15° stay unified
@@ -470,17 +532,16 @@ object ArtworkColorExtractor {
         return try {
             val w = scaled.width
             val h = scaled.height
+            val pixels = IntArray(w * h)
+            scaled.getPixels(pixels, 0, w, 0, 0, w, h)
             val halfH = (h / 2).coerceAtLeast(1)
-            val topCrop = Bitmap.createBitmap(scaled, 0, 0, w, halfH)
-            val bottomCrop = Bitmap.createBitmap(scaled, 0, h - halfH, w, halfH)
 
-            // Sample upper region for the top gradient color and lower region for the bottom color
-            // (matching the reference Neon Studio two-tone pastel gradient from top sky to bottom glow).
-            val rawTopColor = findProminentColor(topCrop) ?: findProminentColor(scaled) ?: return null
-            val rawBottomColor = findProminentColor(bottomCrop) ?: findProminentColor(scaled) ?: rawTopColor
-
-            topCrop.recycle()
-            bottomCrop.recycle()
+            // Sample upper and lower halves directly from the single pixel buffer (zero extra Bitmap allocations)
+            val rawTopColor = findProminentColorInSlice(pixels, w, h, 0, halfH)
+                ?: findProminentColorInSlice(pixels, w, h, 0, h)
+                ?: return null
+            val rawBottomColor = findProminentColorInSlice(pixels, w, h, h - halfH, h)
+                ?: rawTopColor
 
             val topHsv = FloatArray(3)
             val botHsv = FloatArray(3)
@@ -500,7 +561,6 @@ object ArtworkColorExtractor {
             val isBotMuddyYellowGreen = botHsv[0] in 58f..102f
 
             val bottomColor = if (hueDiff < 26f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
-                // Derive a distinct, silky pastel companion hue so top and bottom always form a lush two-tone gradient
                 val hueShift = if (topHsv[0] in 12f..95f) -28f else 34f
                 botHsv[0] = (topHsv[0] + hueShift + 360f) % 360f
                 botHsv[1] = (topHsv[1] * 1.08f).coerceIn(0.38f, 0.62f)

@@ -118,6 +118,8 @@ fun NowPlayingVinylTurntable(
         }
         Column(
             modifier = Modifier
+                .align(Alignment.Center)
+                .widthIn(max = 560.dp)
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()

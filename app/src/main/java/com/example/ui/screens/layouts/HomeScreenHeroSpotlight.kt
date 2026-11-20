@@ -105,6 +105,8 @@ fun HomeScreenHeroSpotlight(
         LazyColumn(
             state = listState,
             modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = 840.dp)
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(top = 14.dp, bottom = 120.dp),

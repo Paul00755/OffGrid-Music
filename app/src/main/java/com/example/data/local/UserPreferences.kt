@@ -132,6 +132,7 @@ class UserPreferencesRepository(private val context: Context) {
         val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
         val DYNAMIC_ARTWORK_THEME = booleanPreferencesKey("dynamic_artwork_theme")
+        val USE_DARK_COLORS = booleanPreferencesKey("use_dark_colors")
         val GRADIENT_GLASS_EFFECT = booleanPreferencesKey("gradient_glass_effect")
         val GRADIENT_EFFECT = booleanPreferencesKey("gradient_effect")
         val GLASS_EFFECT = booleanPreferencesKey("glass_effect")
@@ -439,6 +440,7 @@ class UserPreferencesRepository(private val context: Context) {
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0),
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true),
+            useDarkColors = prefs[PreferenceKeys.USE_DARK_COLORS] ?: readBoolCached("use_dark_colors", false),
             amoledMode = false,
             cornerRadiusDp = prefs[PreferenceKeys.CORNER_RADIUS_DP] ?: readIntCached("corner_radius_dp", 16),
             fontSizeScale = prefs[PreferenceKeys.FONT_SIZE_SCALE] ?: readStringCached("font_size_scale", "MEDIUM"),
@@ -531,6 +533,7 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
+                prefs[PreferenceKeys.USE_DARK_COLORS] = cloud.useDarkColors
                 prefs[PreferenceKeys.AMOLED_MODE] = false
                 prefs[PreferenceKeys.CORNER_RADIUS_DP] = cloud.cornerRadiusDp
                 prefs[PreferenceKeys.FONT_SIZE_SCALE] = cloud.fontSizeScale
@@ -1017,6 +1020,20 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
     }
     fun getDynamicArtworkThemeSync(): Boolean = readBoolCached("dynamic_artwork_theme", true)
+
+    val useDarkColors: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.USE_DARK_COLORS] ?: readBoolCached("use_dark_colors", false)
+    }
+    fun getUseDarkColorsSync(): Boolean = readBoolCached("use_dark_colors", false)
+
+    suspend fun setUseDarkColors(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("use_dark_colors", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.USE_DARK_COLORS] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
 
     val isGradientEffect: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GRADIENT_EFFECT]
@@ -2588,6 +2605,7 @@ class UserPreferencesRepository(private val context: Context) {
                 .putString("pref_accent_color_preset", "ORANGE")
                 .putInt("pref_custom_accent_color", 0)
                 .putBoolean("pref_dynamic_artwork_theme", true)
+                .putBoolean("pref_use_dark_colors", false)
                 .putBoolean("pref_gradient_effect", true)
                 .putBoolean("pref_glass_effect", true)
                 .putBoolean("pref_gradient_glass_effect", true)
@@ -2678,6 +2696,7 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = "ORANGE"
             prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = 0
             prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = true
+            prefs[PreferenceKeys.USE_DARK_COLORS] = false
             prefs[PreferenceKeys.GRADIENT_EFFECT] = true
             prefs[PreferenceKeys.GLASS_EFFECT] = true
             prefs[PreferenceKeys.GRADIENT_GLASS_EFFECT] = true

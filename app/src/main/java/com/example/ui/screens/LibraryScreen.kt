@@ -424,7 +424,9 @@ fun LibraryScreen(
         contentAlignment = Alignment.TopCenter
     ) {
         Column(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .widthIn(max = 840.dp)
+                .fillMaxSize()
         ) {
             Column(
                 modifier = Modifier

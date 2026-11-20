@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.Player
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -45,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -598,46 +601,79 @@ fun NowPlayingScreen(
     val currentLayout = com.example.ui.theme.NowPlayingLayout.fromId(nowPlayingLayout)
     val currentLyricsLayout = com.example.ui.theme.LyricsLayout.fromId(lyricsLayout)
 
+    val initialCachedDual = remember(song.id, song.artworkUri, song.path) {
+        com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, song)
+    }
     val dualArtworkPalette by produceState<Pair<Color, Color>?>(
-        initialValue = null,
-        key1 = song.id,
-        key2 = song.artworkUri,
-        key3 = song.path
+        initialValue = initialCachedDual,
+        keys = arrayOf(song.id, song.artworkUri, song.path, glassConfig.isDynamicArtworkEnabled)
     ) {
-        value = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
+        if (glassConfig.isDynamicArtworkEnabled) {
+            val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, song)
+            if (extracted != null) value = extracted
+        } else {
+            value = null
+        }
     }
 
     val parentColorScheme = MaterialTheme.colorScheme
     val isDarkNowPlaying = parentColorScheme.background.luminance() < 0.5f
-    val rawTopArtwork = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
-    val rawBottomArtwork = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
-    val ambientThemeColor = androidx.compose.ui.graphics.lerp(rawTopArtwork, parentColorScheme.primary, 0.42f).toPastelAccent()
+    val useRichDarkPalette = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
+    val rawTopTarget = if (glassConfig.isDynamicArtworkEnabled) {
+        val rawTopArtwork = dualArtworkPalette?.first ?: dynamicArtworkColor ?: glassConfig.tintColor
+        androidx.compose.ui.graphics.lerp(rawTopArtwork, parentColorScheme.primary, 0.30f)
+            .toAdaptiveThemeAccent(useDarkColors = useRichDarkPalette)
+    } else {
+        parentColorScheme.primary
+    }
+    val rawBottomTarget = if (glassConfig.isDynamicArtworkEnabled) {
+        val rawBottomArtwork = dualArtworkPalette?.second ?: dynamicArtworkColor ?: glassConfig.secondaryTintColor
+        androidx.compose.ui.graphics.lerp(rawBottomArtwork, glassConfig.secondaryTintColor, 0.28f)
+            .toAdaptiveCompanionHue(useDarkColors = useRichDarkPalette)
+    } else {
+        glassConfig.secondaryTintColor
+    }
+    val ambientThemeColor by animateColorAsState(
+        targetValue = rawTopTarget,
+        animationSpec = tween(durationMillis = 400),
+        label = "np_ambient_primary"
+    )
     val topArtworkColor = ambientThemeColor
-    val bottomArtworkColor = androidx.compose.ui.graphics.lerp(rawBottomArtwork, glassConfig.secondaryTintColor, 0.35f).toPastelCompanionHue()
+    val bottomArtworkColor by animateColorAsState(
+        targetValue = rawBottomTarget,
+        animationSpec = tween(durationMillis = 400),
+        label = "np_ambient_secondary"
+    )
 
-    val nowPlayingColorScheme = remember(parentColorScheme, ambientThemeColor, bottomArtworkColor, isDarkNowPlaying) {
+    val nowPlayingColorScheme = remember(
+        parentColorScheme,
+        ambientThemeColor,
+        bottomArtworkColor,
+        isDarkNowPlaying,
+        useRichDarkPalette
+    ) {
         if (isDarkNowPlaying) {
             val highContrastOnAccent = if (ambientThemeColor.luminance() > 0.40f) Color(0xFF10121A) else Color.White
             val harmonizedSurface = androidx.compose.ui.graphics.lerp(
                 parentColorScheme.surface,
                 ambientThemeColor,
-                0.10f
+                if (useRichDarkPalette) 0.14f else 0.10f
             )
             val harmonizedSurfaceVariant = androidx.compose.ui.graphics.lerp(
                 parentColorScheme.surfaceVariant,
                 bottomArtworkColor,
-                0.16f
+                if (useRichDarkPalette) 0.20f else 0.16f
             )
             val harmonizedOutline = androidx.compose.ui.graphics.lerp(
                 parentColorScheme.outline,
                 ambientThemeColor,
-                0.32f
+                if (useRichDarkPalette) 0.44f else 0.32f
             )
             parentColorScheme.copy(
                 primary = ambientThemeColor,
                 onPrimary = highContrastOnAccent,
-                primaryContainer = ambientThemeColor.copy(alpha = 0.24f),
-                onPrimaryContainer = ambientThemeColor,
+                primaryContainer = ambientThemeColor.copy(alpha = if (useRichDarkPalette) 0.34f else 0.24f),
+                onPrimaryContainer = if (useRichDarkPalette) Color(0xFFF8FAFC) else ambientThemeColor,
                 secondary = bottomArtworkColor,
                 surface = harmonizedSurface,
                 surfaceVariant = harmonizedSurfaceVariant,
@@ -645,6 +681,28 @@ fun NowPlayingScreen(
                 onBackground = Color(0xFFF8FAFC),
                 onSurface = Color(0xFFF8FAFC),
                 onSurfaceVariant = Color(0xFFD0D5E6)
+            )
+        } else if (useRichDarkPalette) {
+            val primaryInk = Color(0xFF141622)
+            val secondaryInk = Color(0xFF42465A)
+            val harmonizedBg = androidx.compose.ui.graphics.lerp(Color(0xFFF5F4F8), ambientThemeColor, 0.08f)
+            val harmonizedSurface = androidx.compose.ui.graphics.lerp(Color(0xFFFFFFFF), ambientThemeColor, 0.03f)
+            val harmonizedSurfaceVariant = androidx.compose.ui.graphics.lerp(Color(0xFFECEAF2), bottomArtworkColor, 0.12f)
+            val harmonizedOutline = androidx.compose.ui.graphics.lerp(Color(0xFFD5D2DF), ambientThemeColor, 0.28f)
+            parentColorScheme.copy(
+                primary = ambientThemeColor,
+                onPrimary = Color.White,
+                primaryContainer = ambientThemeColor.copy(alpha = 0.22f),
+                onPrimaryContainer = primaryInk,
+                secondary = bottomArtworkColor,
+                onSecondary = Color.White,
+                background = harmonizedBg,
+                onBackground = primaryInk,
+                surface = harmonizedSurface,
+                onSurface = primaryInk,
+                surfaceVariant = harmonizedSurfaceVariant,
+                onSurfaceVariant = secondaryInk,
+                outline = harmonizedOutline
             )
         } else {
             val primaryInk = Color(0xFF141622)
@@ -1194,24 +1252,52 @@ fun NowPlayingScreen(
                     )
                 }
                 com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> {
-                    // Full-Bleed Immersive Modern Bento View harmonized with the active pastel & theme palette
-                    val bottomScrimColor = remember(currentBg, ambientThemeColor, bottomArtworkColor, isDarkNowPlaying) {
-                        if (isDarkNowPlaying) {
-                            androidx.compose.ui.graphics.lerp(currentBg, ambientThemeColor, 0.22f)
+                    // Full-Bleed Immersive Modern Bento View: velvety atmospheric tinted dark stage
+                    // smoothly blending from full-bleed artwork (never harsh pure black, even in AMOLED)
+                    fun Color.toVelvetStageTone(targetValue: Float, minSat: Float, maxSat: Float): Color {
+                        val hsv = FloatArray(3)
+                        android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+                        if (hsv[1] < 0.12f) {
+                            // Neutral/grayscale artwork falls back to refined deep slate-indigo
+                            hsv[0] = 224f
+                            hsv[1] = 0.30f
                         } else {
-                            ambientThemeColor.toPastelBackground(saturationTarget = 0.22f, valueTarget = 0.95f)
+                            hsv[1] = hsv[1].coerceIn(minSat, maxSat)
                         }
+                        hsv[2] = targetValue
+                        return Color(android.graphics.Color.HSVToColor(hsv))
                     }
-                    val bottomGradientEnd = remember(currentBg, bottomArtworkColor, isDarkNowPlaying) {
-                        if (isDarkNowPlaying) {
-                            androidx.compose.ui.graphics.lerp(currentBg, bottomArtworkColor, 0.16f)
-                        } else {
-                            bottomArtworkColor.toPastelBackground(saturationTarget = 0.26f, valueTarget = 0.92f)
-                        }
+
+                    val rawBottomStageBase = remember(ambientThemeColor, bottomArtworkColor, useRichDarkPalette) {
+                        val blendSeed = androidx.compose.ui.graphics.lerp(bottomArtworkColor, ambientThemeColor, 0.35f)
+                        blendSeed.toVelvetStageTone(
+                            targetValue = if (useRichDarkPalette) 0.22f else 0.25f,
+                            minSat = if (useRichDarkPalette) 0.28f else 0.24f,
+                            maxSat = if (useRichDarkPalette) 0.46f else 0.40f
+                        )
                     }
-                    val bentoInk = BentoTextPrimary
-                    val bentoSubInk = BentoTextSecondary
-                    val pillBgColor = if (isDarkNowPlaying) Color.White.copy(alpha = 0.14f) else BentoCardSurface.copy(alpha = 0.85f)
+                    val rawBottomStageEnd = remember(bottomArtworkColor, ambientThemeColor, useRichDarkPalette) {
+                        val endSeed = androidx.compose.ui.graphics.lerp(bottomArtworkColor, ambientThemeColor, 0.20f)
+                        endSeed.toVelvetStageTone(
+                            targetValue = if (useRichDarkPalette) 0.16f else 0.19f,
+                            minSat = if (useRichDarkPalette) 0.30f else 0.26f,
+                            maxSat = if (useRichDarkPalette) 0.48f else 0.42f
+                        )
+                    }
+                    val bottomScrimColor by animateColorAsState(
+                        targetValue = rawBottomStageBase,
+                        animationSpec = tween(durationMillis = 420),
+                        label = "bento_stage_top"
+                    )
+                    val bottomGradientEnd by animateColorAsState(
+                        targetValue = rawBottomStageEnd,
+                        animationSpec = tween(durationMillis = 420),
+                        label = "bento_stage_bottom"
+                    )
+                    val bentoInk = Color.White
+                    val bentoSubInk = Color.White.copy(alpha = 0.74f)
+                    val pillBgColor = Color.White.copy(alpha = 0.14f)
+                    val topOverlayPillBg = Color(0xFF1A1E2B).copy(alpha = 0.38f)
 
                     Box(
                         modifier = Modifier
@@ -1246,24 +1332,26 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            // Smooth gradient fade from lower artwork into harmonized lower controls
+                            // Tall, velvety feathered fade from lower artwork into atmospheric stage canvas
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(
                                         Brush.verticalGradient(
                                             0.0f to Color.Transparent,
-                                            0.52f to Color.Transparent,
-                                            0.78f to bottomScrimColor.copy(alpha = 0.78f),
+                                            0.40f to Color.Transparent,
+                                            0.62f to bottomScrimColor.copy(alpha = 0.44f),
+                                            0.82f to bottomScrimColor.copy(alpha = 0.86f),
                                             1.0f to bottomScrimColor
                                         )
                                     )
                             )
                         }
 
-                        // Subtle Top Collapse Button Over Full-Bleed Artwork
+                        // Subtle Frosted Top Collapse Button Over Full-Bleed Artwork (legible on light & dark covers)
                         Row(
                             modifier = Modifier
+                                .widthIn(max = 560.dp)
                                 .fillMaxWidth()
                                 .statusBarsPadding()
                                 .padding(horizontal = 18.dp, vertical = 10.dp)
@@ -1274,7 +1362,7 @@ fun NowPlayingScreen(
                             Surface(
                                 onClick = onDismiss,
                                 shape = CircleShape,
-                                color = pillBgColor,
+                                color = topOverlayPillBg,
                                 modifier = Modifier.size(38.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -1299,7 +1387,7 @@ fun NowPlayingScreen(
                                     Surface(
                                         onClick = { showRepeatSongDialog = true },
                                         shape = RoundedCornerShape(50),
-                                        color = pillBgColor
+                                        color = topOverlayPillBg
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -1309,7 +1397,7 @@ fun NowPlayingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.RepeatOne,
                                                 contentDescription = null,
-                                                tint = BentoPrimary,
+                                                tint = bentoInk,
                                                 modifier = Modifier.size(13.dp)
                                             )
                                             Text(
@@ -1325,7 +1413,7 @@ fun NowPlayingScreen(
                                     Surface(
                                         onClick = { showTimerDialog = true },
                                         shape = RoundedCornerShape(50),
-                                        color = pillBgColor
+                                        color = topOverlayPillBg
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -1335,7 +1423,7 @@ fun NowPlayingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Timer,
                                                 contentDescription = null,
-                                                tint = BentoPrimary,
+                                                tint = bentoInk,
                                                 modifier = Modifier.size(13.dp)
                                             )
                                             Text(
@@ -1350,9 +1438,10 @@ fun NowPlayingScreen(
                             }
                         }
 
-                        // 2. Lower Seamless Controls Overlay harmonized with the extracted theme colors
+                        // 2. Lower Seamless Controls Overlay harmonized with the atmospheric velvet stage
                         Column(
                             modifier = Modifier
+                                .widthIn(max = 560.dp)
                                 .fillMaxWidth()
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding()
@@ -1454,7 +1543,7 @@ fun NowPlayingScreen(
                                     durationMs = playbackState.durationMs,
                                     isPlaying = playbackState.isPlaying,
                                     style = waveformStyle,
-                                    accentColor = bentoInk,
+                                    accentColor = Color.White,
                                     onSeekTo = onSeekTo,
                                     playbackPositionFlow = playbackPositionFlow,
                                     modifier = Modifier
@@ -1542,7 +1631,7 @@ fun NowPlayingScreen(
                             if (showVolumeBar) {
                                 com.example.ui.components.NowPlayingVolumeBar(
                                     inkColor = bentoInk,
-                                    accentColor = BentoPrimary,
+                                    accentColor = Color.White,
                                     modifier = Modifier.padding(horizontal = 2.dp)
                                 )
                             }
@@ -1604,7 +1693,7 @@ fun NowPlayingScreen(
                                         Icon(
                                             imageVector = Icons.Default.FormatListBulleted,
                                             contentDescription = "Up Next Queue",
-                                            tint = bentoInk.copy(alpha = 0.88f),
+                                            tint = bentoInk.copy(alpha = 0.90f),
                                             modifier = Modifier.size(23.dp)
                                         )
                                     }
@@ -1620,8 +1709,8 @@ fun NowPlayingScreen(
                                         Icon(
                                             imageVector = if (isShuffleActive) Icons.Default.Shuffle else Icons.Outlined.Shuffle,
                                             contentDescription = if (isShuffleActive) "Shuffle on" else "Shuffle off",
-                                            tint = if (isShuffleActive) BentoPrimary else bentoInk.copy(alpha = 0.80f),
-                                            modifier = Modifier.size(if (isShuffleActive) 25.dp else 21.dp)
+                                            tint = if (isShuffleActive) bentoInk else bentoInk.copy(alpha = 0.56f),
+                                            modifier = Modifier.size(if (isShuffleActive) 24.dp else 21.dp)
                                         )
                                     }
                                 }
@@ -1651,7 +1740,7 @@ fun NowPlayingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.SpeakerGroup,
                                                 contentDescription = "Switch Audio Output",
-                                                tint = bentoInk.copy(alpha = 0.92f),
+                                                tint = bentoInk.copy(alpha = 0.94f),
                                                 modifier = Modifier.size(20.dp)
                                             )
                                         }
@@ -1668,7 +1757,7 @@ fun NowPlayingScreen(
                                             topEnd = 24.dp,
                                             bottomEnd = 24.dp
                                         ),
-                                        color = if (sleepTimerState.isActive) BentoPrimary.copy(alpha = 0.30f) else pillBgColor,
+                                        color = if (sleepTimerState.isActive) Color.White.copy(alpha = 0.26f) else pillBgColor,
                                         modifier = Modifier
                                             .width(58.dp)
                                             .height(42.dp)
@@ -1677,7 +1766,7 @@ fun NowPlayingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Timer,
                                                 contentDescription = "Sleep Timer",
-                                                tint = if (sleepTimerState.isActive) BentoPrimary else bentoInk.copy(alpha = 0.92f),
+                                                tint = bentoInk.copy(alpha = if (sleepTimerState.isActive) 1.0f else 0.94f),
                                                 modifier = Modifier.size(20.dp)
                                             )
                                         }
@@ -1700,7 +1789,7 @@ fun NowPlayingScreen(
                                         Icon(
                                             imageVector = if (playbackState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
                                             contentDescription = "Repeat",
-                                            tint = if (isRepeatActive) BentoPrimary else bentoInk.copy(alpha = 0.65f),
+                                            tint = if (isRepeatActive) bentoInk else bentoInk.copy(alpha = 0.58f),
                                             modifier = Modifier.size(19.dp)
                                         )
                                     }

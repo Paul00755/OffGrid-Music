@@ -1086,9 +1086,11 @@ fun HomeScreen(
             }
             com.example.ui.theme.HomeScreenLayout.BENTO_DYNAMIC -> {
                 val bentoListState = androidx.compose.foundation.lazy.rememberLazyListState()
+                Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(
                     state = bentoListState,
-                    modifier = modifier
+                    modifier = Modifier
+                        .widthIn(max = 840.dp)
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
                     contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
@@ -1410,6 +1412,7 @@ fun HomeScreen(
             }
         }
     }
+    }
 }
 }
 }
@@ -1479,15 +1482,22 @@ private fun StatsPeriodCard(
 
     BentoCard(
         modifier = Modifier
-            .width(146.dp)
+            .widthIn(min = 156.dp, max = 204.dp)
             .clip(RoundedCornerShape(16.dp))
             .clickable { onClick() },
         backgroundColor = BentoCardSurface
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-            Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-            Text(text = if (trackCount < 0 || uniqueCount < 0) "Loading stats" else "$trackCount plays • $uniqueCount tracks", fontSize = 11.sp, color = BentoTextSecondary)
+            Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, maxLines = 1, softWrap = false)
+            Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary, maxLines = 1, softWrap = false)
+            Text(
+                text = if (trackCount < 0 || uniqueCount < 0) "Loading stats" else "$trackCount plays • $uniqueCount tracks",
+                fontSize = 11.sp,
+                color = BentoTextSecondary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

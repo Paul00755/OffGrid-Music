@@ -112,19 +112,14 @@ class MainActivity : ComponentActivity() {
             val accentColorPreset by viewModel.accentColorPreset.collectAsStateWithLifecycle()
             val customAccentColor by viewModel.customAccentColor.collectAsStateWithLifecycle()
             val isDynamicArtworkTheme by viewModel.isDynamicArtworkTheme.collectAsStateWithLifecycle()
+            val useDarkColors by viewModel.useDarkColors.collectAsStateWithLifecycle()
             val isGradientEffect by viewModel.isGradientEffect.collectAsStateWithLifecycle()
             val isGlassEffect by viewModel.isGlassEffect.collectAsStateWithLifecycle()
             val isGradientGlassEffect by viewModel.isGradientGlassEffect.collectAsStateWithLifecycle()
             val dynamicArtworkColor by viewModel.dynamicArtworkColor.collectAsStateWithLifecycle()
 
-            val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsStateWithLifecycle()
-            val homeScreenLayout by viewModel.homeScreenLayout.collectAsStateWithLifecycle()
-            val shouldUseArtworkAccent = isDynamicArtworkTheme ||
-                nowPlayingLayout.equals("NEON_WAVEFORM", ignoreCase = true) ||
-                homeScreenLayout.equals("STUDIO_DASHBOARD", ignoreCase = true)
-
             val effectiveAccentColor: Color? = when {
-                shouldUseArtworkAccent && dynamicArtworkColor != null -> dynamicArtworkColor
+                isDynamicArtworkTheme && dynamicArtworkColor != null -> dynamicArtworkColor
                 customAccentColor != 0 -> Color(customAccentColor)
                 else -> null
             }
@@ -181,7 +176,9 @@ class MainActivity : ComponentActivity() {
                     isGradientGlassEffect = isGradientGlassEffect,
                     isGradientEffect = isGradientEffect,
                     isGlassEffect = isGlassEffect,
-                    dynamicArtworkColor = dynamicArtworkColor
+                    dynamicArtworkColor = if (isDynamicArtworkTheme) dynamicArtworkColor else null,
+                    useDarkColors = useDarkColors,
+                    isDynamicArtworkEnabled = isDynamicArtworkTheme
                 ) {
                     val showSplash by viewModel.showSplash.collectAsStateWithLifecycle()
                     val isOnboardingCompleted by viewModel.isOnboardingCompleted.collectAsStateWithLifecycle()

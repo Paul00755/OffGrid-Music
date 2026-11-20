@@ -62,12 +62,8 @@ fun SettingsSectionHeader(
         Box(
             modifier = Modifier
                 .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(accentColor.copy(alpha = 0.10f))
-                .border(
-                    BorderStroke(1.dp, accentColor.copy(alpha = 0.20f)),
-                    RoundedCornerShape(12.dp)
-                ),
+                .clip(CircleShape)
+                .background(accentColor.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -119,49 +115,29 @@ fun SettingsSectionHeader(
 fun SettingsCardContainer(
     modifier: Modifier = Modifier,
     accentGlow: Color = BentoPrimary,
-    shapeRadius: Dp = 18.dp,
+    shapeRadius: Dp = 20.dp,
     padding: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = remember(shapeRadius) { RoundedCornerShape(shapeRadius) }
     val borderColor = BentoBorder
-    val borderBrush = remember(accentGlow, borderColor) {
-        Brush.verticalGradient(
-            listOf(
-                accentGlow.copy(alpha = 0.22f),
-                borderColor.copy(alpha = 0.28f),
-                accentGlow.copy(alpha = 0.08f)
-            )
-        )
-    }
-    val backgroundBrush = remember(accentGlow) {
-        Brush.verticalGradient(
-            listOf(
-                accentGlow.copy(alpha = 0.035f),
-                Color.Transparent
-            ),
-            startY = 0f,
-            endY = 220f
-        )
+    val subtleBorder = remember(borderColor) {
+        BorderStroke(0.6.dp, borderColor.copy(alpha = 0.16f))
     }
 
     Surface(
         shape = shape,
-        color = BentoCardSurface,
-        border = BorderStroke(1.dp, borderBrush),
+        color = BentoCardSurface.copy(alpha = 0.86f),
+        border = subtleBorder,
         modifier = modifier.fillMaxWidth()
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(backgroundBrush)
-        ) {
-            Column(
-                modifier = Modifier.padding(padding),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                content = content
-            )
-        }
+                .padding(padding),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = content
+        )
     }
 }
 
@@ -202,14 +178,9 @@ fun SettingsToggleRow(
         ) {
             if (icon != null) {
                 val iconBg by animateColorAsState(
-                    targetValue = if (checked) accentColor.copy(alpha = 0.12f) else BentoCardPurple.copy(alpha = 0.5f),
+                    targetValue = if (checked) accentColor.copy(alpha = 0.14f) else BentoCardPurple.copy(alpha = 0.45f),
                     animationSpec = tween(200),
                     label = "icon_bg"
-                )
-                val iconBorder by animateColorAsState(
-                    targetValue = if (checked) accentColor.copy(alpha = 0.28f) else BentoBorder.copy(alpha = 0.25f),
-                    animationSpec = tween(200),
-                    label = "icon_border"
                 )
                 val iconTint by animateColorAsState(
                     targetValue = if (checked) accentColor else BentoTextSecondary,
@@ -220,9 +191,8 @@ fun SettingsToggleRow(
                 Box(
                     modifier = Modifier
                         .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(iconBg)
-                        .border(BorderStroke(1.dp, iconBorder), RoundedCornerShape(10.dp)),
+                        .clip(CircleShape)
+                        .background(iconBg),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -301,9 +271,8 @@ fun SettingsSliderRow(
                     Box(
                         modifier = Modifier
                             .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(accentColor.copy(alpha = 0.10f))
-                            .border(BorderStroke(1.dp, accentColor.copy(alpha = 0.22f)), RoundedCornerShape(10.dp)),
+                            .clip(CircleShape)
+                            .background(accentColor.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -479,9 +448,8 @@ fun SettingsActionRow(
                 Box(
                     modifier = Modifier
                         .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(accentColor.copy(alpha = 0.10f))
-                        .border(BorderStroke(1.dp, accentColor.copy(alpha = 0.22f)), RoundedCornerShape(10.dp)),
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

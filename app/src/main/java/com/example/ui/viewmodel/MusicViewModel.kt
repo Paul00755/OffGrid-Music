@@ -611,9 +611,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAccentColorPresetSync())
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomAccentColorSync())
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDynamicArtworkThemeSync())
+    val useDarkColors: StateFlow<Boolean> = preferences.useDarkColors.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getUseDarkColorsSync())
     val isGradientEffect: StateFlow<Boolean> = preferences.isGradientEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGradientEffectSync())
     val isGlassEffect: StateFlow<Boolean> = preferences.isGlassEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGlassEffectSync())
     val isGradientGlassEffect: StateFlow<Boolean> = preferences.isGradientGlassEffect.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGradientGlassEffectSync())
+
+    fun setUseDarkColors(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setUseDarkColors(enabled)
+        }
+    }
 
     fun setGradientEffect(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
@@ -937,14 +944,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 shouldExtractFlow
             ) { (targetSong, _), shouldExtract ->
                 Pair(targetSong, shouldExtract)
-            }.collect { (song, shouldExtract) ->
-                if (shouldExtract && song != null) {
-                    val extracted = com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(getApplication(), song)
-                    _dynamicArtworkColor.value = extracted
+            }.distinctUntilChanged().collect { (song, shouldExtract) ->
+                val newColor = if (shouldExtract && song != null) {
+                    com.example.util.ArtworkColorExtractor.extractPrimaryColorForSong(getApplication(), song)
                 } else {
-                    _dynamicArtworkColor.value = null
+                    null
                 }
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+                if (_dynamicArtworkColor.value != newColor) {
+                    _dynamicArtworkColor.value = newColor
+                    com.example.widget.WidgetUpdateManager.updateAllWidgets(getApplication(), playbackState.value)
+                }
             }
         }
         audioRouteManager.onDeviceSelected = { resolvedDev ->

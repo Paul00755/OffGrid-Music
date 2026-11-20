@@ -157,29 +157,53 @@ fun LazyListScope.renderHomeFeedSections(
 
                         when (feedStyle) {
                             HomeFeedVisualStyle.HERO_SPOTLIGHT -> {
-                                val heroDualColors by produceState(
-                                    initialValue = Pair(BentoPrimary, BentoSecondary),
-                                    key1 = continueSong.id,
-                                    key2 = continueSong.artworkUri,
-                                    key3 = continueSong.path
+                                val glassConfig = LocalGlassThemeConfig.current
+                                val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
+                                val initialHeroDual = remember(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled) {
+                                    if (glassConfig.isDynamicArtworkEnabled) {
+                                        com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, continueSong)
+                                    } else {
+                                        null
+                                    }
+                                }
+                                val extractedHeroDual by produceState<Pair<Color, Color>?>(
+                                    initialValue = initialHeroDual,
+                                    keys = arrayOf(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled)
                                 ) {
-                                    val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
-                                    if (extracted != null) {
-                                        value = extracted
+                                    if (glassConfig.isDynamicArtworkEnabled) {
+                                        val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
+                                        if (extracted != null) value = extracted
+                                    } else {
+                                        value = null
                                     }
                                 }
                                 val isDarkSurface = BentoBackground.luminance() < 0.5f
-                                val pastelAccentTop = heroDualColors.first.toPastelAccent()
-                                val pastelAccentBot = heroDualColors.second.toPastelCompanionHue()
-                                val pillAccent = if (isDarkSurface) pastelAccentTop else BentoPrimary
+                                val currentHeroDual = extractedHeroDual
+                                val resolvedTopAccent = if (glassConfig.isDynamicArtworkEnabled && currentHeroDual != null) {
+                                    currentHeroDual.first.toAdaptiveThemeAccent(useDarkColors = useRichDark)
+                                } else {
+                                    BentoPrimary
+                                }
+                                val resolvedBotAccent = if (glassConfig.isDynamicArtworkEnabled && currentHeroDual != null) {
+                                    currentHeroDual.second.toAdaptiveCompanionHue(useDarkColors = useRichDark)
+                                } else {
+                                    BentoSecondary
+                                }
+                                val pillAccent = resolvedTopAccent
                                 val pillOnAccent = if (pillAccent.luminance() > 0.42f) Color(0xFF0A0B10) else Color.White
-                                val heroTitleColor = if (isDarkSurface) Color.White else BentoTextPrimary
-                                val heroArtistColor = if (isDarkSurface) pastelAccentTop else BentoPrimary
-                                val heroAlbumColor = if (isDarkSurface) Color.White.copy(alpha = 0.74f) else BentoTextSecondary
-                                val glassIconBg = if (isDarkSurface) Color.White.copy(alpha = 0.14f) else BentoCardSurface.copy(alpha = 0.80f)
-                                val glassIconBorder = if (isDarkSurface) Color.White.copy(alpha = 0.18f) else BentoBorder.copy(alpha = 0.55f)
-                                val shuffleBg = if (isDarkSurface) Color(0xFF14151C).copy(alpha = 0.82f) else BentoCardSurface.copy(alpha = 0.86f)
-                                val shuffleBorder = if (isDarkSurface) Color.White.copy(alpha = 0.24f) else BentoBorder.copy(alpha = 0.65f)
+                                // Keep Hero Spotlight Continue Listening on a rich tinted dark-glass canvas in both dark & light themes
+                                // so the pure-white waveform and blurred album art remain ultra-crisp regardless of system theme
+                                val heroTitleColor = Color.White
+                                val heroArtistColor = if (pillAccent.luminance() < 0.38f) {
+                                    androidx.compose.ui.graphics.lerp(pillAccent, Color.White, 0.44f)
+                                } else {
+                                    pillAccent
+                                }
+                                val heroAlbumColor = Color.White.copy(alpha = 0.76f)
+                                val glassIconBg = Color.White.copy(alpha = 0.15f)
+                                val glassIconBorder = Color.White.copy(alpha = 0.22f)
+                                val shuffleBg = Color(0xFF14151C).copy(alpha = 0.72f)
+                                val shuffleBorder = pillAccent.copy(alpha = 0.40f)
 
                                 val liveHeroPos = if (isCurrentActive) {
                                     playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = playbackState.positionMs)?.value
@@ -190,14 +214,14 @@ fun LazyListScope.renderHomeFeedSections(
 
                                 Surface(
                                     shape = RoundedCornerShape(28.dp),
-                                    color = if (isDarkSurface) Color(0xFF0A0A0F) else BentoCardSurface,
+                                    color = Color(0xFF0E1018),
                                     border = BorderStroke(
                                         width = 1.2.dp,
                                         brush = Brush.linearGradient(
                                             listOf(
-                                                pillAccent.copy(alpha = 0.68f),
-                                                pastelAccentBot.copy(alpha = 0.36f),
-                                                pillAccent.copy(alpha = 0.52f)
+                                                pillAccent.copy(alpha = 0.74f),
+                                                resolvedBotAccent.copy(alpha = 0.42f),
+                                                pillAccent.copy(alpha = 0.58f)
                                             )
                                         )
                                     ),
@@ -205,7 +229,13 @@ fun LazyListScope.renderHomeFeedSections(
                                         .fillMaxWidth()
                                         .clickable { onOpenNowPlaying() }
                                 ) {
-                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                                        val isCompactCard = maxWidth < 340.dp
+                                        val cardPadH = if (isCompactCard) 14.dp else 18.dp
+                                        val cardPadV = if (isCompactCard) 14.dp else 18.dp
+                                        val artSize = if (isCompactCard) 70.dp else 84.dp
+                                        val titleFontSize = if (isCompactCard) 17.sp else 19.sp
+
                                         // Ambient blurred album artwork backdrop
                                         AlbumArtView(
                                             song = continueSong,
@@ -215,44 +245,48 @@ fun LazyListScope.renderHomeFeedSections(
                                             cornerRadius = 0,
                                             forceHighResOnline = true
                                         )
-                                        // Atmospheric dark-OLED or frosted-pastel scrim for crisp legibility
+                                        // Rich atmospheric tinted scrim (consistent high-contrast stage for pure white waveform in both dark & light themes)
                                         Box(
                                             modifier = Modifier
                                                 .matchParentSize()
                                                 .background(
-                                                    if (isDarkSurface) {
-                                                        Brush.verticalGradient(
-                                                            0.0f to Color(0xFF0A0B0F).copy(alpha = 0.56f),
-                                                            0.48f to Color(0xFF06070B).copy(alpha = 0.78f),
-                                                            1.0f to Color(0xFF030407).copy(alpha = 0.92f)
-                                                        )
-                                                    } else {
-                                                        Brush.verticalGradient(
-                                                            0.0f to BentoCardSurface.copy(alpha = 0.74f),
-                                                            0.55f to BentoCardSurface.copy(alpha = 0.86f),
-                                                            1.0f to BentoCardSurface.copy(alpha = 0.94f)
-                                                        )
-                                                    }
+                                                    Brush.verticalGradient(
+                                                        0.0f to androidx.compose.ui.graphics.lerp(
+                                                            Color(0xFF121521),
+                                                            pillAccent,
+                                                            if (useRichDark || !isDarkSurface) 0.30f else 0.18f
+                                                        ).copy(alpha = if (isDarkSurface) 0.66f else 0.74f),
+                                                        0.48f to androidx.compose.ui.graphics.lerp(
+                                                            Color(0xFF0B0E18),
+                                                            resolvedBotAccent,
+                                                            if (useRichDark || !isDarkSurface) 0.18f else 0.10f
+                                                        ).copy(alpha = if (isDarkSurface) 0.82f else 0.86f),
+                                                        1.0f to androidx.compose.ui.graphics.lerp(
+                                                            Color(0xFF060810),
+                                                            pillAccent,
+                                                            if (!isDarkSurface) 0.14f else 0.06f
+                                                        ).copy(alpha = 0.94f)
+                                                    )
                                                 )
                                         )
 
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(horizontal = 18.dp, vertical = 18.dp),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                                .padding(horizontal = cardPadH, vertical = cardPadV),
+                                            verticalArrangement = Arrangement.spacedBy(if (isCompactCard) 12.dp else 16.dp)
                                         ) {
                                             // Top Row: Circular Album Art + Track Metadata + (More 3-Dots & Animated Favorite)
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 verticalAlignment = Alignment.Top,
-                                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(if (isCompactCard) 10.dp else 14.dp)
                                             ) {
                                                 Surface(
                                                     shape = CircleShape,
                                                     color = Color.Transparent,
-                                                    border = BorderStroke(2.dp, pillAccent.copy(alpha = 0.82f)),
-                                                    modifier = Modifier.size(84.dp)
+                                                    border = BorderStroke(2.dp, pillAccent.copy(alpha = 0.85f)),
+                                                    modifier = Modifier.size(artSize)
                                                 ) {
                                                     AlbumArtView(
                                                         song = continueSong,
@@ -283,7 +317,7 @@ fun LazyListScope.renderHomeFeedSections(
                                                         ) {
                                                             Text(
                                                                 text = continueSong.displayTitle,
-                                                                fontSize = 19.sp,
+                                                                fontSize = titleFontSize,
                                                                 fontWeight = FontWeight.ExtraBold,
                                                                 color = heroTitleColor,
                                                                 maxLines = 1,
@@ -373,7 +407,7 @@ fun LazyListScope.renderHomeFeedSections(
                                                 durationMs = duration.coerceAtLeast(1L),
                                                 isPlaying = isCurrentActive && playbackState.isPlaying,
                                                 style = waveformStyle,
-                                                accentColor = pillAccent,
+                                                accentColor = Color.White,
                                                 onSeekTo = { targetMs ->
                                                     if (isCurrentActive) {
                                                         onSeekTo(targetMs)
@@ -424,9 +458,11 @@ fun LazyListScope.renderHomeFeedSections(
                                                         Spacer(modifier = Modifier.width(8.dp))
                                                         Text(
                                                             text = if (isCurrentActive && playbackState.isPlaying) "Pause" else "Play",
-                                                            fontSize = 15.sp,
+                                                            fontSize = if (isCompactCard) 13.5.sp else 15.sp,
                                                             fontWeight = FontWeight.ExtraBold,
-                                                            color = pillOnAccent
+                                                            color = pillOnAccent,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
                                                 }
@@ -447,7 +483,9 @@ fun LazyListScope.renderHomeFeedSections(
                                                         .testTag("hero_continue_shuffle_mix")
                                                 ) {
                                                     Row(
-                                                        modifier = Modifier.fillMaxSize(),
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(horizontal = 8.dp),
                                                         horizontalArrangement = Arrangement.Center,
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
@@ -457,12 +495,14 @@ fun LazyListScope.renderHomeFeedSections(
                                                             tint = heroTitleColor,
                                                             modifier = Modifier.size(18.dp)
                                                         )
-                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Spacer(modifier = Modifier.width(6.dp))
                                                         Text(
                                                             text = "Shuffle Mix",
-                                                            fontSize = 14.5.sp,
+                                                            fontSize = if (isCompactCard) 13.sp else 14.5.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = heroTitleColor
+                                                            color = heroTitleColor,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
                                                 }
@@ -599,26 +639,45 @@ fun LazyListScope.renderHomeFeedSections(
                                 }
                             }
                             HomeFeedVisualStyle.STUDIO_DECK -> {
-                                val dualColors by produceState(
-                                    initialValue = Pair(BentoPrimary, BentoSecondary),
-                                    key1 = continueSong.id,
-                                    key2 = continueSong.artworkUri,
-                                    key3 = continueSong.path
-                                ) {
-                                    val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
-                                    if (extracted != null) {
-                                        value = extracted
+                                val glassConfig = LocalGlassThemeConfig.current
+                                val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
+                                val initialStudioDual = remember(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled) {
+                                    if (glassConfig.isDynamicArtworkEnabled) {
+                                        com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, continueSong)
+                                    } else {
+                                        null
                                     }
                                 }
-                                val cardTopColor = dualColors.first.toPastelAccent().copy(alpha = 0.22f)
-                                val cardBottomColor = dualColors.second.toPastelCompanionHue().copy(alpha = 0.14f)
-                                val cardAccentColor = dualColors.first.toPastelAccent()
+                                val extractedStudioDual by produceState<Pair<Color, Color>?>(
+                                    initialValue = initialStudioDual,
+                                    keys = arrayOf(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled)
+                                ) {
+                                    if (glassConfig.isDynamicArtworkEnabled) {
+                                        val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
+                                        if (extracted != null) value = extracted
+                                    } else {
+                                        value = null
+                                    }
+                                }
+                                val currentStudioDual = extractedStudioDual
+                                val cardAccentColor = if (glassConfig.isDynamicArtworkEnabled && currentStudioDual != null) {
+                                    currentStudioDual.first.toAdaptiveThemeAccent(useDarkColors = useRichDark)
+                                } else {
+                                    BentoPrimary
+                                }
+                                val cardSecondaryColor = if (glassConfig.isDynamicArtworkEnabled && currentStudioDual != null) {
+                                    currentStudioDual.second.toAdaptiveCompanionHue(useDarkColors = useRichDark)
+                                } else {
+                                    BentoSecondary
+                                }
+                                val cardTopColor = cardAccentColor.copy(alpha = if (useRichDark) 0.30f else 0.22f)
+                                val cardBottomColor = cardSecondaryColor.copy(alpha = if (useRichDark) 0.18f else 0.14f)
 
                                 Surface(
                                     onClick = onOpenNowPlaying,
                                     shape = RoundedCornerShape(16.dp),
                                     color = BentoCardSurface,
-                                    border = BorderStroke(1.dp, cardAccentColor.copy(alpha = 0.42f)),
+                                    border = BorderStroke(1.dp, cardAccentColor.copy(alpha = 0.45f)),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(
@@ -2711,7 +2770,7 @@ fun HomeStatsPeriodCard(
                 shape = RoundedCornerShape(24.dp),
                 color = BentoCardSurface,
                 border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
-                modifier = Modifier.width(158.dp)
+                modifier = Modifier.widthIn(min = 168.dp, max = 216.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -2741,9 +2800,12 @@ fun HomeStatsPeriodCard(
                                 color = BentoTextPrimary,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.8.sp,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -2763,7 +2825,9 @@ fun HomeStatsPeriodCard(
                         text = formattedTime,
                         fontSize = 23.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = BentoTextPrimary
+                        color = BentoTextPrimary,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Surface(
                         shape = RoundedCornerShape(50),
@@ -2775,8 +2839,9 @@ fun HomeStatsPeriodCard(
                             fontWeight = FontWeight.SemiBold,
                             color = BentoTextSecondary,
                             maxLines = 1,
+                            softWrap = false,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
                         )
                     }
                 }
@@ -2785,7 +2850,7 @@ fun HomeStatsPeriodCard(
         HomeFeedVisualStyle.MINIMAL_STREAM -> {
             Row(
                 modifier = Modifier
-                    .width(142.dp)
+                    .widthIn(min = 152.dp, max = 200.dp)
                     .clickable(onClick = onClick)
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -2798,9 +2863,9 @@ fun HomeStatsPeriodCard(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(text = period.label.uppercase(), fontSize = 10.sp, color = BentoTextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text(text = formattedTime, fontSize = 21.sp, fontWeight = FontWeight.Light, color = BentoTextPrimary)
-                    Text(text = subText, fontSize = 10.5.sp, color = BentoPrimary)
+                    Text(text = period.label.uppercase(), fontSize = 10.sp, color = BentoTextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1)
+                    Text(text = formattedTime, fontSize = 21.sp, fontWeight = FontWeight.Light, color = BentoTextPrimary, maxLines = 1)
+                    Text(text = subText, fontSize = 10.5.sp, color = BentoPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -2810,7 +2875,7 @@ fun HomeStatsPeriodCard(
                 shape = RoundedCornerShape(16.dp),
                 color = BentoCardSurface.copy(alpha = 0.88f),
                 border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
-                modifier = Modifier.width(150.dp)
+                modifier = Modifier.widthIn(min = 160.dp, max = 208.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(13.dp),
@@ -2821,26 +2886,27 @@ fun HomeStatsPeriodCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = period.label.uppercase(), fontSize = 10.sp, color = BentoPrimary, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                        Text(text = period.label.uppercase(), fontSize = 10.sp, color = BentoPrimary, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp, maxLines = 1)
+                        Spacer(modifier = Modifier.width(8.dp))
                         Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(BentoPrimary))
                     }
-                    Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                    Text(text = subText, fontSize = 11.sp, color = BentoTextSecondary, maxLines = 1)
+                    Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary, maxLines = 1)
+                    Text(text = subText, fontSize = 11.sp, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
         HomeFeedVisualStyle.BENTO_DEFAULT -> {
             BentoCard(
                 modifier = Modifier
-                    .width(146.dp)
+                    .widthIn(min = 156.dp, max = 204.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .clickable(onClick = onClick),
                 backgroundColor = BentoCardSurface
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-                    Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary)
-                    Text(text = subText, fontSize = 11.sp, color = BentoTextSecondary)
+                    Text(text = period.label.uppercase(), fontSize = 10.5.sp, color = BentoPrimary, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, maxLines = 1)
+                    Text(text = formattedTime, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BentoTextPrimary, maxLines = 1)
+                    Text(text = subText, fontSize = 11.sp, color = BentoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

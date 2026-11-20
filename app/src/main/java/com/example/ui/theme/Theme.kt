@@ -1,5 +1,7 @@
 package com.example.ui.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -9,6 +11,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -17,7 +20,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-
 import androidx.compose.ui.graphics.toArgb
 
 /**
@@ -34,7 +36,10 @@ data class GlassThemeConfig(
     val isDark: Boolean = false,
     val solidBackground: Color = Color(0xFFFBF7F4),
     val solidSurface: Color = Color(0xFFFFFCFA),
-    val solidSurfaceVariant: Color = Color(0xFFF4ECE6)
+    val solidSurfaceVariant: Color = Color(0xFFF4ECE6),
+    val useDarkColors: Boolean = false,
+    val isDynamicArtworkEnabled: Boolean = false,
+    val isCustomDarkAccent: Boolean = false
 )
 
 val LocalGlassThemeConfig = staticCompositionLocalOf { GlassThemeConfig() }
@@ -112,8 +117,73 @@ fun Color.toReadableLightAccent(): Color {
 }
 
 /**
- * Full-screen production-grade ambient Pastel & Frosted Glass gradient backdrop.
- * Uses soft pastel colors for the gradient effect while respecting Dark, AMOLED, and Light modes.
+ * Returns true when a user-configured RGB or preset accent is intentionally a dark color
+ * (e.g., Dark Red, Dark Purple, Midnight Blue, Forest Green) so the theme engine preserves
+ * its rich dark tone instead of washing it out into a pale pastel.
+ */
+fun Color.isExplicitDarkColor(): Boolean {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    return hsv[2] < 0.62f
+}
+
+/**
+ * Shapes any color (including bright artwork or preset colors when "Use dark colors" is ON)
+ * into a rich, saturated dark jewel accent. When [preserveExactIfAlreadyDark] is true and
+ * the input is already an explicit dark user color, keeps the user's chosen RGB shade intact
+ * with only a gentle visibility floor so buttons and icons stay clear on OLED black.
+ */
+fun Color.toRichDarkAccent(preserveExactIfAlreadyDark: Boolean = false): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (preserveExactIfAlreadyDark && hsv[2] < 0.62f) {
+        hsv[2] = hsv[2].coerceAtLeast(0.24f)
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
+    hsv[1] = hsv[1].coerceIn(0.58f, 0.90f)
+    hsv[2] = hsv[2].coerceIn(0.36f, 0.54f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+/**
+ * Companion hue for rich dark color themes & gradients.
+ */
+fun Color.toRichDarkCompanionHue(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    val shift = if (hsv[0] in 15f..95f) -26f else 32f
+    hsv[0] = (hsv[0] + shift + 360f) % 360f
+    hsv[1] = hsv[1].coerceIn(0.48f, 0.82f)
+    hsv[2] = hsv[2].coerceIn(0.26f, 0.44f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+fun Color.toAdaptiveThemeAccent(
+    useDarkColors: Boolean,
+    preserveExactDark: Boolean = false
+): Color {
+    return if (useDarkColors || (preserveExactDark && isExplicitDarkColor())) {
+        toRichDarkAccent(preserveExactIfAlreadyDark = preserveExactDark)
+    } else {
+        toPastelAccent()
+    }
+}
+
+fun Color.toAdaptiveCompanionHue(
+    useDarkColors: Boolean,
+    preserveExactDark: Boolean = false
+): Color {
+    return if (useDarkColors || (preserveExactDark && isExplicitDarkColor())) {
+        toRichDarkCompanionHue()
+    } else {
+        toPastelCompanionHue()
+    }
+}
+
+/**
+ * Full-screen production-grade ambient Gradient backdrop.
+ * Honors "Use dark colors" (deep rich dark tones) vs Palette Lite (soft pastel tones),
+ * while respecting Dark, AMOLED, and Light modes with zero overdraw when effects are off.
  */
 @Composable
 fun GlassGradientBackdrop(
@@ -127,52 +197,93 @@ fun GlassGradientBackdrop(
     val secondaryTint = secondaryOverride ?: glassConfig.secondaryTintColor
     val isDark = glassConfig.isDark
     val gradientActive = glassConfig.gradientEnabled
+    val glassActive = glassConfig.glassEnabled
+    val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
+    val preserveExactDark = glassConfig.isCustomDarkAccent
 
-    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark, gradientActive) {
-        val pastelTop = primaryTint.toPastelAccent()
-        val pastelMid = secondaryTint.toPastelCompanionHue()
-        if (isDark) {
-            val topAlpha = if (gradientActive) 0.20f else 0.09f
-            val midAlpha = if (gradientActive) 0.10f else 0.04f
-            val lowAlpha = if (gradientActive) 0.08f else 0.03f
-            Brush.verticalGradient(
-                0.0f to pastelTop.copy(alpha = topAlpha),
-                0.38f to pastelMid.copy(alpha = midAlpha),
-                0.72f to Color.Transparent,
-                1.0f to pastelTop.copy(alpha = lowAlpha)
-            )
+    if (!gradientActive && !glassActive) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(baseBg)
+        )
+        return
+    }
+
+    val verticalWash = remember(baseBg, primaryTint, secondaryTint, isDark, gradientActive, useRichDark, preserveExactDark) {
+        if (useRichDark) {
+            val richTop = primaryTint.toRichDarkAccent(preserveExactIfAlreadyDark = preserveExactDark)
+            val richMid = secondaryTint.toRichDarkCompanionHue()
+            if (isDark) {
+                val topAlpha = if (gradientActive) 0.40f else 0.16f
+                val midAlpha = if (gradientActive) 0.22f else 0.08f
+                val lowAlpha = if (gradientActive) 0.16f else 0.06f
+                Brush.verticalGradient(
+                    0.0f to richTop.copy(alpha = topAlpha),
+                    0.40f to richMid.copy(alpha = midAlpha),
+                    0.76f to Color.Transparent,
+                    1.0f to richTop.copy(alpha = lowAlpha)
+                )
+            } else {
+                val topAlpha = if (gradientActive) 0.24f else 0.12f
+                val midAlpha = if (gradientActive) 0.13f else 0.06f
+                val lowAlpha = if (gradientActive) 0.10f else 0.05f
+                Brush.verticalGradient(
+                    0.0f to lerp(baseBg, richTop, topAlpha),
+                    0.44f to lerp(baseBg, richMid, midAlpha),
+                    0.80f to baseBg,
+                    1.0f to lerp(baseBg, richTop, lowAlpha)
+                )
+            }
         } else {
-            val topGlow = primaryTint.toPastelBackground(
-                saturationTarget = if (gradientActive) 0.24f else 0.18f,
-                valueTarget = 0.94f
-            )
-            val midGlow = secondaryTint.toPastelBackground(
-                saturationTarget = if (gradientActive) 0.18f else 0.14f,
-                valueTarget = 0.96f
-            )
-            val lowerGlow = primaryTint.toPastelBackground(
-                saturationTarget = if (gradientActive) 0.14f else 0.10f,
-                valueTarget = 0.975f
-            )
-            Brush.verticalGradient(
-                0.0f to topGlow,
-                0.44f to midGlow,
-                0.78f to baseBg,
-                1.0f to lowerGlow
-            )
+            val pastelTop = primaryTint.toPastelAccent()
+            val pastelMid = secondaryTint.toPastelCompanionHue()
+            if (isDark) {
+                val topAlpha = if (gradientActive) 0.20f else 0.09f
+                val midAlpha = if (gradientActive) 0.10f else 0.04f
+                val lowAlpha = if (gradientActive) 0.08f else 0.03f
+                Brush.verticalGradient(
+                    0.0f to pastelTop.copy(alpha = topAlpha),
+                    0.38f to pastelMid.copy(alpha = midAlpha),
+                    0.72f to Color.Transparent,
+                    1.0f to pastelTop.copy(alpha = lowAlpha)
+                )
+            } else {
+                val topGlow = primaryTint.toPastelBackground(
+                    saturationTarget = if (gradientActive) 0.24f else 0.18f,
+                    valueTarget = 0.94f
+                )
+                val midGlow = secondaryTint.toPastelBackground(
+                    saturationTarget = if (gradientActive) 0.18f else 0.14f,
+                    valueTarget = 0.96f
+                )
+                val lowerGlow = primaryTint.toPastelBackground(
+                    saturationTarget = if (gradientActive) 0.14f else 0.10f,
+                    valueTarget = 0.975f
+                )
+                Brush.verticalGradient(
+                    0.0f to topGlow,
+                    0.44f to midGlow,
+                    0.78f to baseBg,
+                    1.0f to lowerGlow
+                )
+            }
         }
     }
 
-    val diagonalAurora = remember(primaryTint, secondaryTint, isDark, gradientActive) {
-        val alphaScale = if (gradientActive) 1.0f else 0.55f
-        val topPastel = primaryTint.toPastelAccent()
-        val secPastel = secondaryTint.toPastelCompanionHue()
+    val diagonalAurora = remember(primaryTint, secondaryTint, isDark, gradientActive, useRichDark, preserveExactDark) {
+        val alphaScale = if (gradientActive) 1.0f else 0.50f
+        val topTone = primaryTint.toAdaptiveThemeAccent(useDarkColors = useRichDark, preserveExactDark = preserveExactDark)
+        val secTone = secondaryTint.toAdaptiveCompanionHue(useDarkColors = useRichDark, preserveExactDark = preserveExactDark)
+        val topMult = if (useRichDark) (if (isDark) 0.22f else 0.14f) else (if (isDark) 0.13f else 0.15f)
+        val midMult = if (useRichDark) (if (isDark) 0.14f else 0.10f) else (if (isDark) 0.09f else 0.12f)
+        val lowMult = if (useRichDark) (if (isDark) 0.11f else 0.08f) else (if (isDark) 0.07f else 0.09f)
         Brush.linearGradient(
             colors = listOf(
-                topPastel.copy(alpha = (if (isDark) 0.13f else 0.15f) * alphaScale),
+                topTone.copy(alpha = topMult * alphaScale),
                 Color.Transparent,
-                secPastel.copy(alpha = (if (isDark) 0.09f else 0.12f) * alphaScale),
-                topPastel.copy(alpha = (if (isDark) 0.07f else 0.09f) * alphaScale)
+                secTone.copy(alpha = midMult * alphaScale),
+                topTone.copy(alpha = lowMult * alphaScale)
             ),
             start = Offset(0f, 0f),
             end = Offset(1400f, 2400f)
@@ -382,6 +493,8 @@ fun MyApplicationTheme(
     isGradientEffect: Boolean = isGradientGlassEffect,
     isGlassEffect: Boolean = isGradientGlassEffect,
     dynamicArtworkColor: Color? = null,
+    useDarkColors: Boolean = false,
+    isDynamicArtworkEnabled: Boolean = (dynamicArtworkColor != null),
     content: @Composable () -> Unit
 ) {
     val isSystemInDark = isSystemInDarkTheme()
@@ -402,7 +515,8 @@ fun MyApplicationTheme(
     // AMOLED is the single mode that selects true-black surfaces.
     val isExtraDark = isDark && effectiveMode == "AMOLED"
 
-    val primaryColor = accentColor ?: when (accentColorPreset.uppercase()) {
+    val presetUpper = accentColorPreset.uppercase()
+    val primaryColor = accentColor ?: when (presetUpper) {
         "PINK" -> if (isDark) Color(0xFFFF4081) else Color(0xFFD81B60)
         "GREEN" -> if (isDark) Color(0xFF00E676) else Color(0xFF2E7D32)
         "ORANGE" -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
@@ -413,6 +527,12 @@ fun MyApplicationTheme(
         "INDIGO" -> Color(0xFF7C4DFF)
         "PURPLE" -> if (isDark) Color(0xFFBB86FC) else Color(0xFF7B1FA2)
         "CYAN" -> if (isDark) Color(0xFF00E5FF) else Color(0xFF0097A7)
+        "DARK_RED" -> Color(0xFF8B1A1A)
+        "DARK_PURPLE" -> Color(0xFF4A148C)
+        "DARK_BLUE" -> Color(0xFF1A3A7A)
+        "DARK_GREEN" -> Color(0xFF1B5E20)
+        "DARK_TEAL" -> Color(0xFF004D40)
+        "DARK_AMBER" -> Color(0xFF7F3300)
         else -> if (isDark) Color(0xFFFF9100) else Color(0xFFE65100)
     }
 
@@ -706,30 +826,70 @@ fun MyApplicationTheme(
         }
     }
 
-    val rawTintSeed = if (dynamicArtworkColor != null) {
-        lerp(primaryColor, dynamicArtworkColor, 0.72f)
+    // Determine whether the user explicitly picked a dark preset / dark RGB color, or enabled global "Use dark colors".
+    val isCustomDarkAccent = !isDynamicArtworkEnabled && (
+        presetUpper.startsWith("DARK_") || (accentColor != null && accentColor.isExplicitDarkColor())
+    )
+    val effectiveUseDarkPalette = useDarkColors || isCustomDarkAccent
+
+    val rawTintSeed = if (isDynamicArtworkEnabled && dynamicArtworkColor != null) {
+        dynamicArtworkColor
     } else {
-        lerp(primaryColor, activeTheme.previewPrimary, 0.35f)
-    }
-    val glassTintColor = rawTintSeed.toPastelAccent()
-    val glassSecondaryTint = if (dynamicArtworkColor != null) {
-        dynamicArtworkColor.toPastelCompanionHue()
-    } else {
-        rawTintSeed.toPastelCompanionHue()
+        primaryColor
     }
 
-    // Harmonize surfaces, variants, and outlines with soft pastel accents while respecting Dark, AMOLED, and Light modes.
-    val harmonizedColorScheme = remember(baseColorScheme, glassTintColor, glassSecondaryTint, isDark, isExtraDark) {
+    val targetGlassTintColor = remember(rawTintSeed, effectiveUseDarkPalette, isCustomDarkAccent) {
+        rawTintSeed.toAdaptiveThemeAccent(
+            useDarkColors = effectiveUseDarkPalette,
+            preserveExactDark = isCustomDarkAccent
+        )
+    }
+    val targetGlassSecondaryTint = remember(rawTintSeed, effectiveUseDarkPalette, isCustomDarkAccent) {
+        rawTintSeed.toAdaptiveCompanionHue(
+            useDarkColors = effectiveUseDarkPalette,
+            preserveExactDark = isCustomDarkAccent
+        )
+    }
+
+    val glassTintColor by animateColorAsState(
+        targetValue = targetGlassTintColor,
+        animationSpec = tween(durationMillis = 360),
+        label = "theme_primary_tint"
+    )
+    val glassSecondaryTint by animateColorAsState(
+        targetValue = targetGlassSecondaryTint,
+        animationSpec = tween(durationMillis = 360),
+        label = "theme_secondary_tint"
+    )
+
+    // Harmonize surfaces, variants, and outlines with either rich dark colors or palette lite pastel accents.
+    val harmonizedColorScheme = remember(
+        baseColorScheme,
+        glassTintColor,
+        glassSecondaryTint,
+        isDark,
+        isExtraDark,
+        effectiveUseDarkPalette
+    ) {
         if (isDark) {
-            val surfaceBlend = if (isExtraDark) 0.015f else 0.03f
-            val variantBlend = if (isExtraDark) 0.035f else 0.06f
-            val outlineBlend = 0.30f
-            val onPastelPrimary = if (glassTintColor.luminance() > 0.40f) Color(0xFF08090D) else Color.White
+            val surfaceBlend = if (isExtraDark) {
+                if (effectiveUseDarkPalette) 0.04f else 0.015f
+            } else {
+                if (effectiveUseDarkPalette) 0.08f else 0.03f
+            }
+            val variantBlend = if (isExtraDark) {
+                if (effectiveUseDarkPalette) 0.08f else 0.035f
+            } else {
+                if (effectiveUseDarkPalette) 0.14f else 0.06f
+            }
+            val outlineBlend = if (effectiveUseDarkPalette) 0.48f else 0.30f
+            val onAccent = if (glassTintColor.luminance() > 0.40f) Color(0xFF08090D) else Color.White
+            val onContainer = if (effectiveUseDarkPalette) Color(0xFFF8FAFC) else glassTintColor
             baseColorScheme.copy(
                 primary = glassTintColor,
-                onPrimary = onPastelPrimary,
-                primaryContainer = glassTintColor.copy(alpha = 0.22f),
-                onPrimaryContainer = glassTintColor,
+                onPrimary = onAccent,
+                primaryContainer = glassTintColor.copy(alpha = if (effectiveUseDarkPalette) 0.36f else 0.22f),
+                onPrimaryContainer = onContainer,
                 secondary = glassSecondaryTint,
                 surface = lerp(baseColorScheme.surface, glassTintColor, surfaceBlend),
                 surfaceVariant = lerp(baseColorScheme.surfaceVariant, glassSecondaryTint, variantBlend),
@@ -737,6 +897,31 @@ fun MyApplicationTheme(
                 onBackground = Color(0xFFF8FAFC),
                 onSurface = Color(0xFFF8FAFC),
                 onSurfaceVariant = Color(0xFFD0D5E6)
+            )
+        } else if (effectiveUseDarkPalette) {
+            val primaryInk = Color(0xFF141622)
+            val secondaryInk = Color(0xFF42465A)
+            val tintedBg = lerp(Color(0xFFF5F4F8), glassTintColor, 0.06f)
+            val tintedSurface = lerp(Color(0xFFFFFFFF), glassTintColor, 0.03f)
+            val tintedVariant = lerp(Color(0xFFECEAF2), glassSecondaryTint, 0.11f)
+            val tintedOutline = lerp(Color(0xFFD5D2DF), glassTintColor, 0.26f)
+
+            baseColorScheme.copy(
+                primary = glassTintColor,
+                onPrimary = Color.White,
+                primaryContainer = glassTintColor.copy(alpha = 0.20f),
+                onPrimaryContainer = primaryInk,
+                secondary = glassSecondaryTint,
+                onSecondary = Color.White,
+                secondaryContainer = glassSecondaryTint.copy(alpha = 0.18f),
+                onSecondaryContainer = primaryInk,
+                background = tintedBg,
+                onBackground = primaryInk,
+                surface = tintedSurface,
+                onSurface = primaryInk,
+                surfaceVariant = tintedVariant,
+                onSurfaceVariant = secondaryInk,
+                outline = tintedOutline
             )
         } else {
             val pastelBg = glassTintColor.toPastelBackground(saturationTarget = 0.15f, valueTarget = 0.965f)
@@ -777,7 +962,10 @@ fun MyApplicationTheme(
         isDark,
         harmonizedColorScheme.background,
         harmonizedColorScheme.surface,
-        harmonizedColorScheme.surfaceVariant
+        harmonizedColorScheme.surfaceVariant,
+        useDarkColors,
+        isDynamicArtworkEnabled,
+        isCustomDarkAccent
     ) {
         GlassThemeConfig(
             enabled = anyEffectEnabled,
@@ -788,7 +976,10 @@ fun MyApplicationTheme(
             isDark = isDark,
             solidBackground = harmonizedColorScheme.background,
             solidSurface = harmonizedColorScheme.surface,
-            solidSurfaceVariant = harmonizedColorScheme.surfaceVariant
+            solidSurfaceVariant = harmonizedColorScheme.surfaceVariant,
+            useDarkColors = useDarkColors,
+            isDynamicArtworkEnabled = isDynamicArtworkEnabled,
+            isCustomDarkAccent = isCustomDarkAccent
         )
     }
 

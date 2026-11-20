@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -483,7 +485,13 @@ val PRESET_ACCENT_COLORS = listOf(
     "BLUE" to Color(0xFF2979FF),
     "RED" to Color(0xFFFF5252),
     "TEAL" to Color(0xFF1DE9B6),
-    "INDIGO" to Color(0xFF7C4DFF)
+    "INDIGO" to Color(0xFF7C4DFF),
+    "DARK_RED" to Color(0xFF8B1A1A),
+    "DARK_PURPLE" to Color(0xFF4A148C),
+    "DARK_BLUE" to Color(0xFF1A3A7A),
+    "DARK_GREEN" to Color(0xFF1B5E20),
+    "DARK_TEAL" to Color(0xFF004D40),
+    "DARK_AMBER" to Color(0xFF7F3300)
 )
 
 @Composable
@@ -512,6 +520,8 @@ fun SettingsScreen(
     onSetShowAdvancedSongInfo: (Boolean) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
+    useDarkColors: Boolean = false,
+    onSetUseDarkColors: (Boolean) -> Unit = {},
     isGradientEffect: Boolean = true,
     onSetGradientEffect: (Boolean) -> Unit = {},
     isGlassEffect: Boolean = true,
@@ -1237,6 +1247,7 @@ fun SettingsScreen(
                     )
 
                     // Big Circular Color Preview Swatch with ambient glow
+                    val previewContentTint = if (pickedColor.luminance() > 0.45f) Color.Black.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.90f)
                     Box(
                         modifier = Modifier
                             .size(76.dp)
@@ -1248,7 +1259,7 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.Default.Palette,
                             contentDescription = null,
-                            tint = Color.Black.copy(alpha = 0.5f),
+                            tint = previewContentTint,
                             modifier = Modifier.size(30.dp)
                         )
                     }
@@ -1257,13 +1268,13 @@ fun SettingsScreen(
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = BentoCardPurple,
-                        border = BorderStroke(1.dp, pickedColor.copy(alpha = 0.5f))
+                        border = BorderStroke(1.dp, pickedColor.copy(alpha = 0.65f))
                     ) {
                         Text(
                             text = String.format("#%02X%02X%02X", (redVal * 255).toInt(), (greenVal * 255).toInt(), (blueVal * 255).toInt()),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = pickedColor,
+                            color = if (pickedColor.luminance() < 0.14f) BentoTextPrimary else pickedColor,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                         )
                     }
@@ -1371,7 +1382,10 @@ fun SettingsScreen(
                                 onSetDynamicArtworkTheme(false)
                                 showColorPickerDialog = false
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = pickedColor, contentColor = Color.White),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = pickedColor,
+                                contentColor = if (pickedColor.luminance() > 0.45f) Color(0xFF0A0B10) else Color.White
+                            ),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("Apply")
@@ -1383,6 +1397,7 @@ fun SettingsScreen(
     }
 
     val searchTokens = remember(searchQuery) { tokenizeSettingsQuery(searchQuery) }
+    val isHubSpacing = selectedSection == SettingsSection.ALL && searchTokens.isEmpty() && !showAllInOneList
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -1391,10 +1406,12 @@ fun SettingsScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxHeight()
+                .fillMaxWidth()
+                .widthIn(max = 720.dp)
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 12.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(top = 10.dp, bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isHubSpacing) 4.dp else 14.dp)
         ) {
             val isSearching = searchTokens.isNotEmpty()
 
@@ -1485,6 +1502,10 @@ fun SettingsScreen(
                 searchTokens,
                 "dynamic artwork", "dynamic artwork theming", "artwork theme", "atmospheric", "adaptive color"
             )
+            val matchUiDarkColors = matchesSettingsTokens(
+                searchTokens,
+                "use dark colors", "dark colors", "dark color", "palette lite", "pastel", "rich dark", "deep colors"
+            )
             val matchUiGradientEffect = matchesSettingsTokens(
                 searchTokens,
                 "gradient", "gradient effect", "ambient gradient", "aurora", "color wash", "background gradient"
@@ -1524,8 +1545,8 @@ fun SettingsScreen(
                 "mini player", "mini player customization", "floating pill", "docked", "previous track button", "next track button", "favorite button"
             )
             val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
-                matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiGradientGlass ||
-                matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiVolumeBar ||
+                matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiDarkColors ||
+                matchUiGradientGlass || matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiVolumeBar ||
                 matchUiAdvancedSongInfo || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
 
             // Section 3: Home Feed granular matcher
@@ -1696,221 +1717,223 @@ fun SettingsScreen(
             val showCloudSync = if (isSearching) cloudSyncMatches else (!isTopLevelHub && (selectedSection == SettingsSection.ALL || selectedSection == SettingsSection.CLOUD_SYNC))
 
             if (isTopLevelHub || showAllInOneList || isSearching) {
-                // User Account Tile / Card in Settings
+                // Clean, borderless User Account header row
                 if (!isSearching || matchAccountTile) {
-                item(key = "settings_account_tile") {
-                val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
-                Surface(
-                    onClick = {
-                        if (userAccount != null) onOpenAccount() else onOpenAuth()
-                    },
-                    shape = RoundedCornerShape(20.dp),
-                    color = BentoCardSurface,
-                    border = BorderStroke(1.dp, BentoBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = BentoPrimary.copy(alpha = 0.16f),
-                            border = BorderStroke(1.5.dp, BentoPrimary.copy(alpha = 0.4f)),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            if (!avatarPhoto.isNullOrBlank()) {
-                                coil.compose.AsyncImage(
-                                    model = avatarPhoto,
-                                    contentDescription = "Profile Photo",
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                )
-                            } else if (userAccount != null) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = (effectiveDisplayName.firstOrNull() ?: 'U').uppercase(),
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = BentoPrimary
-                                    )
-                                }
-                            } else {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.AccountCircle,
-                                        contentDescription = "Profile Photo",
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(30.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (userAccount != null) effectiveDisplayName else "Account & Profile",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (userAccount != null) BentoPrimary.copy(alpha = 0.15f) else Color(0xFF00E676).copy(alpha = 0.15f)
+                    item(key = "settings_account_tile") {
+                        val avatarPhoto = customAvatarUri ?: userAccount?.photoUrl
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        if (userAccount != null) onOpenAccount() else onOpenAuth()
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(CircleShape)
+                                        .background(BentoPrimary.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center
                                 ) {
+                                    if (!avatarPhoto.isNullOrBlank()) {
+                                        coil.compose.AsyncImage(
+                                            model = avatarPhoto,
+                                            contentDescription = "Profile Photo",
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                        )
+                                    } else if (userAccount != null) {
+                                        Text(
+                                            text = (effectiveDisplayName.firstOrNull() ?: 'U').uppercase(),
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoPrimary
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.AccountCircle,
+                                            contentDescription = "Profile Photo",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(30.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(14.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = if (userAccount != null) effectiveDisplayName else "Account & Profile",
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = if (userAccount != null) BentoPrimary.copy(alpha = 0.14f) else Color(0xFF00E676).copy(alpha = 0.14f)
+                                        ) {
+                                            Text(
+                                                text = if (userAccount != null) userAccount.friendlyProviderName else "Offline Mode",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (userAccount != null) BentoPrimary else Color(0xFF00E676),
+                                                maxLines = 1,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = if (userAccount != null) userAccount.friendlyProviderName else "Offline Mode",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (userAccount != null) BentoPrimary else Color(0xFF00E676),
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        text = userAccount?.email ?: "Tap to sign in or create an account",
+                                        fontSize = 12.5.sp,
+                                        color = BentoTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
+
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = BentoTextSubtle.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = userAccount?.email ?: "Tap to sign in or create an account",
-                                fontSize = 12.sp,
-                                color = BentoTextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                            HorizontalDivider(
+                                thickness = 0.6.dp,
+                                color = BentoBorder.copy(alpha = 0.22f),
+                                modifier = Modifier.padding(top = 2.dp)
                             )
                         }
-
-                        Icon(
-                            imageVector = Icons.Default.ChevronRight,
-                            contentDescription = null,
-                            tint = BentoTextSubtle
-                        )
                     }
                 }
-            }
-            }
 
-            // 1. Sleek Top Search Bar with Back Action
-            item(key = "settings_hero_dashboard") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
-                        onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            handleBack()
-                        },
-                        modifier = Modifier.size(46.dp)
+                // 1. Minimal Borderless Top Search Bar with Clean Back Icon
+                item(key = "settings_hero_dashboard") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        IconButton(
+                            onClick = {
+                                HapticUtils.performClickHaptic(context)
+                                handleBack()
+                            },
+                            modifier = Modifier.size(44.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
                                 tint = BentoTextPrimary,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
-                    }
 
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(
-                            1.dp,
-                            if (searchQuery.isNotBlank()) BentoPrimary.copy(alpha = 0.5f) else BentoBorder.copy(alpha = 0.35f)
-                        ),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color = BentoCardSurface.copy(alpha = 0.72f),
+                            border = if (searchQuery.isNotBlank()) {
+                                BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.45f))
+                            } else {
+                                null
+                            },
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = if (searchQuery.isNotBlank()) BentoPrimary else BentoTextSubtle,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            TextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                placeholder = {
-                                    Text(
-                                        "Search equalizer, sleep timer, cache, themes...",
-                                        fontSize = 12.5.sp,
-                                        color = BentoTextSubtle,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                },
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    focusedTextColor = BentoTextPrimary,
-                                    unfocusedTextColor = BentoTextPrimary,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(
-                                    onClick = { searchQuery = "" },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 1.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = if (searchQuery.isNotBlank()) BentoPrimary else BentoTextSubtle,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                TextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    placeholder = {
+                                        Text(
+                                            "Search equalizer, sleep timer, cache, themes...",
+                                            fontSize = 13.sp,
+                                            color = BentoTextSubtle,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    singleLine = true,
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        focusedTextColor = BentoTextPrimary,
+                                        unfocusedTextColor = BentoTextPrimary,
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { searchQuery = "" },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = BentoTextSecondary, modifier = Modifier.size(16.dp))
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        if (isSearching && anyMatches) {
+            if (isSearching && anyMatches) {
                 item(key = "settings_search_results_badge") {
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = BentoPrimary.copy(alpha = 0.08f),
-                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.25f)),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BentoPrimary.copy(alpha = 0.08f))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Found in $matchedSectionsCount ${if (matchedSectionsCount == 1) "category" else "categories"} for \"$searchQuery\"",
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = BentoTextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            TextButton(
-                                onClick = { searchQuery = "" },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text("Clear", fontSize = 12.sp, color = BentoPrimary)
-                            }
+                            Icon(Icons.Default.Search, contentDescription = null, tint = BentoPrimary, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Found in $matchedSectionsCount ${if (matchedSectionsCount == 1) "category" else "categories"} for \"$searchQuery\"",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = BentoTextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        TextButton(
+                            onClick = { searchQuery = "" },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("Clear", fontSize = 12.sp, color = BentoPrimary)
                         }
                     }
                 }
@@ -1921,13 +1944,13 @@ fun SettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 4.dp),
+                            .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
                             text = "CATEGORIES",
-                            fontSize = 11.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextSecondary,
                             letterSpacing = 1.2.sp
@@ -1940,45 +1963,40 @@ fun SettingsScreen(
                     }
                 }
 
-                items(
+                itemsIndexed(
                     items = SETTINGS_CATEGORY_CARD_ITEMS,
-                    key = { it.section.name },
-                    contentType = { "settings_category_card" }
-                ) { catItem ->
+                    key = { _, item -> item.section.name },
+                    contentType = { _, _ -> "settings_category_card" }
+                ) { index, catItem ->
                     val sec = catItem.section
                     val title = catItem.title
                     val subtitle = catItem.subtitle
                     val icon = catItem.icon
                     val accent = androidx.compose.ui.graphics.lerp(catItem.accentColor, BentoPrimary, 0.52f)
-                    Surface(
-                        onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            navigateToSection(sec)
-                        },
-                        shape = RoundedCornerShape(16.dp),
-                        color = BentoCardSurface,
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.35f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable {
+                                    HapticUtils.performClickHaptic(context)
+                                    navigateToSection(sec)
+                                }
+                                .padding(horizontal = 6.dp, vertical = 13.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(42.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(accent.copy(alpha = 0.14f))
-                                    .border(BorderStroke(1.dp, accent.copy(alpha = 0.30f)), RoundedCornerShape(12.dp)),
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(accent.copy(alpha = 0.14f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = icon,
                                     contentDescription = null,
                                     tint = accent,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
 
@@ -1987,16 +2005,18 @@ fun SettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = title,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BentoTextPrimary
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoTextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = subtitle,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     color = BentoTextSecondary,
-                                    lineHeight = 15.sp,
+                                    lineHeight = 16.sp,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -2007,43 +2027,48 @@ fun SettingsScreen(
                             Icon(
                                 imageVector = Icons.Default.ChevronRight,
                                 contentDescription = null,
-                                tint = BentoTextSubtle,
-                                modifier = Modifier.size(20.dp)
+                                tint = BentoTextSubtle.copy(alpha = 0.75f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        if (index < SETTINGS_CATEGORY_CARD_ITEMS.lastIndex) {
+                            HorizontalDivider(
+                                thickness = 0.6.dp,
+                                color = BentoBorder.copy(alpha = 0.20f),
+                                modifier = Modifier.padding(start = 60.dp, end = 6.dp)
                             )
                         }
                     }
                 }
 
                 item(key = "settings_hub_view_all_footer") {
-                    Surface(
-                        onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            showAllInOneList = true
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        color = BentoCardSurface.copy(alpha = 0.6f),
-                        border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.25f)),
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable {
+                                HapticUtils.performClickHaptic(context)
+                                showAllInOneList = true
+                            }
+                            .padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.List,
-                                contentDescription = null,
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Browse All Settings Continuously",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BentoPrimary
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.List,
+                            contentDescription = null,
+                            tint = BentoPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Browse All Settings Continuously",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BentoPrimary
+                        )
                     }
                 }
             } else if (!isSearching && selectedSection != SettingsSection.ALL) {
@@ -3144,7 +3169,7 @@ fun SettingsScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = "Selected",
-                                                tint = Color.Black,
+                                                tint = if (color.luminance() > 0.45f) Color.Black else Color.White,
                                                 modifier = Modifier.size(20.dp)
                                             )
                                         }
@@ -3164,6 +3189,20 @@ fun SettingsScreen(
                                 onCheckedChange = onSetDynamicArtworkTheme,
                                 icon = Icons.Default.AutoAwesome,
                                 accentColor = BentoPrimary
+                            )
+                            if (!isSearching || broadUiMatch) SettingsDivider()
+                        }
+
+                        // 5a. Use dark colors (Dynamic Theming & Gradient Look)
+                        if (!isSearching || matchUiDarkColors || broadUiMatch) {
+                            SettingsToggleRow(
+                                title = "Use dark colors",
+                                subtitle = "Turn off to keep using palette lite colors",
+                                checked = useDarkColors,
+                                onCheckedChange = onSetUseDarkColors,
+                                icon = Icons.Default.DarkMode,
+                                accentColor = BentoPrimary,
+                                modifier = Modifier.testTag("settings_use_dark_colors_toggle")
                             )
                             if (!isSearching || broadUiMatch) SettingsDivider()
                         }
