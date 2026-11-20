@@ -245,6 +245,7 @@ fun SettingsTabRoute(
         onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
         onStartSongCountTimer = { viewModel.startSleepTimerSongs(it) },
         onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
+        onAddSleepTimerSongs = { viewModel.addSleepTimerSongs(it) },
         onSetSleepTimerFinishLastSong = { viewModel.setSleepTimerFinishLastSong(it) },
         onCancelSleepTimer = { viewModel.cancelSleepTimer() },
         onScanLibrary = { viewModel.scanLibrary() },

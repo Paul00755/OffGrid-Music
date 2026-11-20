@@ -639,6 +639,7 @@ fun SettingsScreen(
     onStartSleepTimer: (minutes: Int, finishLastSong: Boolean) -> Unit = { _, _ -> },
     onStartSongCountTimer: (songs: Int) -> Unit = {},
     onAddSleepTimerMinutes: (minutes: Int) -> Unit = {},
+    onAddSleepTimerSongs: (songs: Int) -> Unit = {},
     onSetSleepTimerFinishLastSong: (Boolean) -> Unit = {},
     onCancelSleepTimer: () -> Unit = {},
     onScanLibrary: () -> Unit = {},
@@ -834,6 +835,7 @@ fun SettingsScreen(
     // Custom Track Count Sleep Timer Dialog
     if (showCustomTrackDialog) {
         var trackInput by remember { mutableStateOf("5") }
+        var trackError by remember { mutableStateOf<String?>(null) }
         Dialog(onDismissRequest = { showCustomTrackDialog = false }) {
             Surface(
                 shape = RoundedCornerShape(26.dp),
@@ -875,7 +877,7 @@ fun SettingsScreen(
                             color = BentoTextPrimary
                         )
                         Text(
-                            text = "Stop playback automatically after playing a specific count of complete songs.",
+                            text = "Stop playback automatically after playing a specific count of complete songs (max 50 tracks).",
                             fontSize = 12.sp,
                             color = BentoTextSecondary,
                             textAlign = TextAlign.Center,
@@ -885,10 +887,10 @@ fun SettingsScreen(
 
                     // Quick Track Count Presets
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        listOf(1, 3, 5, 10, 20).forEach { count ->
+                        listOf(1, 5, 10, 25, 50).forEach { count ->
                             val isSelected = trackInput == count.toString()
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -899,6 +901,7 @@ fun SettingsScreen(
                                     .clickable {
                                         HapticUtils.performClickHaptic(context)
                                         trackInput = count.toString()
+                                        trackError = null
                                     }
                             ) {
                                 Text(
@@ -915,8 +918,13 @@ fun SettingsScreen(
 
                     OutlinedTextField(
                         value = trackInput,
-                        onValueChange = { trackInput = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Or enter custom track count") },
+                        onValueChange = {
+                            trackInput = it.filter { ch -> ch.isDigit() }.take(3)
+                            trackError = null
+                        },
+                        label = { Text("Or enter custom track count (1–50)") },
+                        isError = trackError != null,
+                        supportingText = trackError?.let { err -> { Text(err, color = BentoAccentPinkText) } },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
@@ -942,10 +950,17 @@ fun SettingsScreen(
                         }
                         Button(
                             onClick = {
-                                val count = trackInput.toIntOrNull() ?: 5
-                                if (count > 0) {
-                                    onStartSongCountTimer(count)
-                                    showCustomTrackDialog = false
+                                val count = trackInput.toIntOrNull() ?: 0
+                                when {
+                                    count <= 0 -> trackError = "Track count must be > 0"
+                                    count > com.example.service.SleepTimerManager.MAX_TRACK_COUNT -> {
+                                        trackError = "Maximum is ${com.example.service.SleepTimerManager.MAX_TRACK_COUNT} tracks"
+                                    }
+                                    else -> {
+                                        trackError = null
+                                        onStartSongCountTimer(count)
+                                        showCustomTrackDialog = false
+                                    }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9100), contentColor = Color.White),
@@ -963,6 +978,7 @@ fun SettingsScreen(
     // Custom Minutes Sleep Timer Dialog
     if (showCustomMinutesDialog) {
         var minInput by remember { mutableStateOf("30") }
+        var minError by remember { mutableStateOf<String?>(null) }
         Dialog(onDismissRequest = { showCustomMinutesDialog = false }) {
             Surface(
                 shape = RoundedCornerShape(26.dp),
@@ -1004,7 +1020,7 @@ fun SettingsScreen(
                             color = BentoTextPrimary
                         )
                         Text(
-                            text = "Turn off music automatically after the specified duration.",
+                            text = "Turn off music automatically after the specified duration (max 3 hours / 180 mins).",
                             fontSize = 12.sp,
                             color = BentoTextSecondary,
                             textAlign = TextAlign.Center,
@@ -1017,7 +1033,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(listOf(10, 15, 30, 45, 60, 90), key = { it }, contentType = { "min_chip" }) { mins ->
+                        items(listOf(10, 15, 30, 45, 60, 90, 120, 180), key = { it }, contentType = { "min_chip" }) { mins ->
                             val isSelected = minInput == mins.toString()
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -1026,10 +1042,11 @@ fun SettingsScreen(
                                 modifier = Modifier.clickable {
                                     HapticUtils.performClickHaptic(context)
                                     minInput = mins.toString()
+                                    minError = null
                                 }
                             ) {
                                 Text(
-                                    text = "${mins}m",
+                                    text = if (mins >= 60 && mins % 60 == 0) "${mins / 60}h" else "${mins}m",
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) BentoOnPrimary else BentoTextPrimary,
@@ -1042,8 +1059,13 @@ fun SettingsScreen(
 
                     OutlinedTextField(
                         value = minInput,
-                        onValueChange = { minInput = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Or enter custom minutes") },
+                        onValueChange = {
+                            minInput = it.filter { ch -> ch.isDigit() }.take(3)
+                            minError = null
+                        },
+                        label = { Text("Or enter custom minutes (1–180)") },
+                        isError = minError != null,
+                        supportingText = minError?.let { err -> { Text(err, color = BentoAccentPinkText) } },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
@@ -1111,10 +1133,17 @@ fun SettingsScreen(
                         }
                         Button(
                             onClick = {
-                                val mins = minInput.toIntOrNull() ?: 30
-                                if (mins > 0) {
-                                    onStartSleepTimer(mins, finishLastSongSettings)
-                                    showCustomMinutesDialog = false
+                                val mins = minInput.toIntOrNull() ?: 0
+                                when {
+                                    mins <= 0 -> minError = "Duration must be > 0 mins"
+                                    mins > com.example.service.SleepTimerManager.MAX_TIME_MINUTES -> {
+                                        minError = "Maximum duration is 3 hours (${com.example.service.SleepTimerManager.MAX_TIME_MINUTES} mins)"
+                                    }
+                                    else -> {
+                                        minError = null
+                                        onStartSleepTimer(mins, finishLastSongSettings)
+                                        showCustomMinutesDialog = false
+                                    }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary, contentColor = BentoOnPrimary),
@@ -3444,34 +3473,108 @@ fun SettingsScreen(
                             }
                         }
 
-                        // Active timer extension buttons
+                        // Active timer extension buttons (TIME mode — bounded by 180 mins pending)
                         if (sleepTimerState.isActive && sleepTimerState.mode == "TIME") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Extend Time:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSubtle)
-                                listOf(5 to "+5m", 15 to "+15m", 30 to "+30m").forEach { (extraMins, label) ->
-                                    Surface(
-                                        onClick = {
-                                            HapticUtils.performClickHaptic(context)
-                                            onAddSleepTimerMinutes(extraMins)
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color(0xFFFF9100).copy(alpha = 0.2f),
-                                        modifier = Modifier.height(30.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(horizontal = 12.dp),
-                                            contentAlignment = Alignment.Center
+                            val atMaxPendingTime = sleepTimerState.remainingSeconds >= com.example.service.SleepTimerManager.MAX_TIME_SECONDS
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Extend Time:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSubtle)
+                                    Text(
+                                        text = if (atMaxPendingTime) "Max 3h pending reached" else "Max 3h (180m) pending",
+                                        fontSize = 10.5.sp,
+                                        color = if (atMaxPendingTime) BentoAccentPinkText else BentoTextSecondary
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    listOf(5 to "+5m", 10 to "+10m", 15 to "+15m", 30 to "+30m").forEach { (extraMins, label) ->
+                                        val canAdd = com.example.service.SleepTimerManager.canAddMinutes(sleepTimerState, extraMins)
+                                        Surface(
+                                            onClick = {
+                                                if (canAdd) {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onAddSleepTimerMinutes(extraMins)
+                                                }
+                                            },
+                                            enabled = canAdd,
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (canAdd) Color(0xFFFF9100).copy(alpha = 0.2f) else BentoBorder.copy(alpha = 0.18f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(32.dp)
                                         ) {
-                                            Text(
-                                                text = label,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFFFF9100)
-                                            )
+                                            Box(
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (canAdd) Color(0xFFFF9100) else BentoTextSecondary.copy(alpha = 0.45f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Active timer extension buttons (SONGS mode — bounded by 50 tracks pending)
+                        if (sleepTimerState.isActive && sleepTimerState.mode == "SONGS") {
+                            val atMaxPendingSongs = sleepTimerState.remainingSongs >= com.example.service.SleepTimerManager.MAX_TRACK_COUNT
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Extend Tracks:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSubtle)
+                                    Text(
+                                        text = if (atMaxPendingSongs) "Max 50 pending reached" else "Max 50 tracks pending",
+                                        fontSize = 10.5.sp,
+                                        color = if (atMaxPendingSongs) BentoAccentPinkText else BentoTextSecondary
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    listOf(1 to "+1 track", 2 to "+2 tracks", 5 to "+5 tracks").forEach { (extraSongs, label) ->
+                                        val canAdd = com.example.service.SleepTimerManager.canAddSongs(sleepTimerState, extraSongs)
+                                        Surface(
+                                            onClick = {
+                                                if (canAdd) {
+                                                    HapticUtils.performClickHaptic(context)
+                                                    onAddSleepTimerSongs(extraSongs)
+                                                }
+                                            },
+                                            enabled = canAdd,
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (canAdd) Color(0xFFFF9100).copy(alpha = 0.2f) else BentoBorder.copy(alpha = 0.18f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(32.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (canAdd) Color(0xFFFF9100) else BentoTextSecondary.copy(alpha = 0.45f)
+                                                )
+                                            }
                                         }
                                     }
                                 }

@@ -91,6 +91,7 @@ fun NowPlayingScreen(
     onStartSleepTimer: (Int, Boolean) -> Unit = { _, _ -> },
     onStartSongCountTimer: (Int) -> Unit = {},
     onAddSleepTimerMinutes: (Int) -> Unit = {},
+    onAddSleepTimerSongs: (Int) -> Unit = {},
     onCancelSleepTimer: () -> Unit = {},
     onCustomLrcSelected: (String) -> Unit,
     onReorderQueue: (Int, Int) -> Unit = { _, _ -> },
@@ -996,7 +997,7 @@ fun NowPlayingScreen(
 
                 // RIGHT HALF (50%): High-Visibility Lyrics Container
                 val isLandscapeDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                val landscapeLyricsBaseBg = if (isLandscapeDark) Color(0xFF09090E) else Color.White
+                val landscapeLyricsBaseBg = if (isLandscapeDark) MaterialTheme.colorScheme.background else Color.White
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -1817,9 +1818,9 @@ fun NowPlayingScreen(
         exit = slideOutVertically { it }
     ) {
         val isCurrentDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        val baseLyricsColor = if (isCurrentDark) Color(0xFF09090E) else Color.White
+        val baseLyricsColor = if (isCurrentDark) MaterialTheme.colorScheme.background else Color.White
         val lyricsBg = if (nowPlayingGlassConfig.glassEnabled) {
-            baseLyricsColor.copy(alpha = if (isCurrentDark) 0.78f else 0.85f)
+            baseLyricsColor.copy(alpha = if (isCurrentDark) 0.80f else 0.86f)
         } else {
             baseLyricsColor
         }
@@ -1835,19 +1836,19 @@ fun NowPlayingScreen(
         ) {
             val useRichArtworkWash = currentLayout == com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM || nowPlayingGlassConfig.gradientEnabled
             if (useRichArtworkWash) {
-                val topAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.48f else 1f
-                val midAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.36f else 1f
-                val botAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.44f else 1f
+                val topAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.44f else 1f
+                val midAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.34f else 1f
+                val botAlpha = if (nowPlayingGlassConfig.glassEnabled) 0.40f else 1f
                 Brush.verticalGradient(
-                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, topArtworkColor, if (isCurrentDark) 0.46f else 0.28f).copy(alpha = topAlpha),
-                    0.50f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.38f else 0.22f).copy(alpha = midAlpha),
-                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.48f else 0.26f).copy(alpha = botAlpha)
+                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, topArtworkColor, if (isCurrentDark) 0.30f else 0.24f).copy(alpha = topAlpha),
+                    0.48f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.16f else 0.18f).copy(alpha = midAlpha),
+                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.24f else 0.22f).copy(alpha = botAlpha)
                 )
             } else {
                 Brush.verticalGradient(
-                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.28f else 0.16f),
-                    0.55f to baseLyricsColor,
-                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.22f else 0.12f)
+                    0.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, ambientThemeColor, if (isCurrentDark) 0.22f else 0.14f),
+                    0.45f to baseLyricsColor,
+                    1.0f to androidx.compose.ui.graphics.lerp(baseLyricsColor, bottomArtworkColor, if (isCurrentDark) 0.16f else 0.10f)
                 )
             }
         }
@@ -2008,6 +2009,9 @@ fun NowPlayingScreen(
                 onAddMinutes = { extraMins ->
                     onAddSleepTimerMinutes(extraMins)
                 },
+                onAddSongs = { extraSongs ->
+                    onAddSleepTimerSongs(extraSongs)
+                },
                 onCancelTimer = {
                     onCancelSleepTimer()
                     showTimerDialog = false
@@ -2166,12 +2170,14 @@ private fun LyricsPanelContent(
 
     val glassConfig = LocalGlassThemeConfig.current
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val panelBaseBg = if (isDarkTheme) Color(0xFF09090E) else Color.White
+    val classicSurfaceBg = if (isDarkTheme) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f) else Color(0xFFF1F5F9)
+    val classicBorderColor = if (isDarkTheme) Color.White.copy(alpha = 0.14f) else Color(0xFFE2E8F0)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (glassConfig.enabled) Color.Transparent else panelBaseBg)
+            .background(Color.Transparent)
+            .testTag("lyrics_panel_classic_default")
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
@@ -2221,24 +2227,26 @@ private fun LyricsPanelContent(
                     val hasLyrics = syncedLines.isNotEmpty() || !currentLyrics?.plainLyrics.isNullOrBlank()
 
                     // Top Bar Search Lyrics Icon Button
-                    IconButton(
+                    Surface(
                         onClick = {
                             com.example.util.HapticUtils.performClickHaptic(context)
                             onOpenSearchLyrics()
                         },
+                        shape = CircleShape,
+                        color = classicSurfaceBg,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, classicBorderColor),
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(if (isDarkTheme) BentoCardPurple else Color(0xFFF1F5F9))
-                            .border(androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFE2E8F0)), CircleShape)
+                            .size(36.dp)
                             .testTag("lyrics_top_bar_search_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search lyrics",
-                            tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B),
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search lyrics",
+                                tint = if (isDarkTheme) Color.White else Color(0xFF1E293B),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
 
                     // Offset button (on tab bar - text represent)
@@ -2265,22 +2273,25 @@ private fun LyricsPanelContent(
                     }
 
                     if (isTranscribeTranslateEnabled) {
-                        IconButton(
+                        Surface(
                             onClick = {
+                                com.example.util.HapticUtils.performClickHaptic(context)
                                 transcribeDialogInitialMode = if (hasLyrics) AudioTranscribeMode.TRANSLATE else AudioTranscribeMode.TRANSCRIBE
                                 showTranscribeDialog = true
                             },
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(BentoPrimary.copy(alpha = 0.16f))
+                            shape = CircleShape,
+                            color = BentoPrimary.copy(alpha = 0.16f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.4f)),
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(
-                                imageVector = if (hasLyrics) Icons.Default.Translate else Icons.Default.GraphicEq,
-                                contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (♪)",
-                                tint = BentoPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (hasLyrics) Icons.Default.Translate else Icons.Default.GraphicEq,
+                                    contentDescription = if (hasLyrics) "Translate lyrics (💬)" else "Transcribe song audio (♪)",
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
 
@@ -2293,20 +2304,26 @@ private fun LyricsPanelContent(
                     }
 
                     if (!isLandscape) {
-                        IconButton(
-                            onClick = onCloseLyrics,
+                        Surface(
+                            onClick = {
+                                com.example.util.HapticUtils.performClickHaptic(context)
+                                onCloseLyrics()
+                            },
+                            shape = CircleShape,
+                            color = classicSurfaceBg,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, classicBorderColor),
                             modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(if (isDarkTheme) BentoCardPurple else Color(0xFFF1F5F9))
-                                .border(androidx.compose.foundation.BorderStroke(1.dp, if (isDarkTheme) Color.Transparent else Color(0xFFE2E8F0)), CircleShape)
+                                .size(36.dp)
+                                .testTag("lyrics_close_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Close Lyrics",
-                                tint = if (isDarkTheme) BentoTextPrimary else Color(0xFF1E293B),
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Close Lyrics",
+                                    tint = if (isDarkTheme) Color.White else Color(0xFF1E293B),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -2643,10 +2660,10 @@ private fun LyricsPanelContent(
                                     showOffsetDialog = true
                                 },
                                 shape = CircleShape,
-                                color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color(0xFF1E1E2C) else Color(0xFFF1F5F9)),
+                                color = if (syncOffsetMs != 0L) BentoPrimary else classicSurfaceBg,
                                 border = androidx.compose.foundation.BorderStroke(
                                     width = 1.dp,
-                                    color = if (syncOffsetMs != 0L) BentoPrimary else (if (isDarkTheme) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1))
+                                    color = if (syncOffsetMs != 0L) BentoPrimary else classicBorderColor
                                 ),
                                 shadowElevation = 6.dp,
                                 modifier = Modifier
@@ -2670,12 +2687,12 @@ private fun LyricsPanelContent(
                                     onOpenSearchLyrics()
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isDarkTheme) Color(0xFF1E1E2C) else Color(0xFFF1F5F9),
+                                    containerColor = classicSurfaceBg,
                                     contentColor = if (isDarkTheme) Color.White else Color(0xFF1E293B)
                                 ),
                                 border = androidx.compose.foundation.BorderStroke(
                                     width = 1.dp,
-                                    color = if (isDarkTheme) Color.White.copy(alpha = 0.2f) else Color(0xFFCBD5E1)
+                                    color = classicBorderColor
                                 ),
                                 shape = RoundedCornerShape(20.dp),
                                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),

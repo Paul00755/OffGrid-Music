@@ -1008,6 +1008,7 @@ class MainActivity : ComponentActivity() {
                                     onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
                                     onStartSongCountTimer = { songs -> viewModel.startSleepTimerSongs(songs) },
                                     onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
+                                    onAddSleepTimerSongs = { viewModel.addSleepTimerSongs(it) },
                                     onCancelSleepTimer = { viewModel.cancelSleepTimer() },
                                     onCustomLrcSelected = { lrcText ->
                                         playbackState.currentSong?.let { viewModel.associateCustomLrc(it, lrcText) }

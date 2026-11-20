@@ -51,6 +51,21 @@ class SleepTimerManager(
 ) {
     companion object {
         private const val TAG = "SleepTimer"
+        const val MAX_TIME_MINUTES = 180
+        const val MAX_TIME_SECONDS = MAX_TIME_MINUTES * 60L
+        const val MAX_TRACK_COUNT = 50
+
+        fun canAddMinutes(state: SleepTimerState, extraMinutes: Int): Boolean {
+            if (!state.isActive || state.mode != "TIME" || extraMinutes <= 0) return false
+            val currentPendingSec = state.remainingSeconds.coerceAtLeast(0L)
+            return currentPendingSec + (extraMinutes * 60L) <= MAX_TIME_SECONDS
+        }
+
+        fun canAddSongs(state: SleepTimerState, extraSongs: Int): Boolean {
+            if (!state.isActive || state.mode != "SONGS" || extraSongs <= 0) return false
+            val currentPendingSongs = state.remainingSongs.coerceAtLeast(0)
+            return currentPendingSongs + extraSongs <= MAX_TRACK_COUNT
+        }
     }
 
     // Use a persistent supervisor scope so background playback timer survives Activity lifecycles
@@ -70,16 +85,29 @@ class SleepTimerManager(
     private var defaultFinishLastSong: Boolean = false
 
     fun startTimerMinutes(minutes: Int, finishLastSong: Boolean = defaultFinishLastSong) {
+        val validMinutes = minutes.coerceIn(1, MAX_TIME_MINUTES)
+        startTimerSeconds(
+            durationSec = validMinutes * 60L,
+            initialMinutes = validMinutes,
+            finishLastSong = finishLastSong
+        )
+    }
+
+    private fun startTimerSeconds(
+        durationSec: Long,
+        initialMinutes: Int,
+        finishLastSong: Boolean = defaultFinishLastSong
+    ) {
         defaultFinishLastSong = finishLastSong
         cancelTimer()
-        val validMinutes = minutes.coerceAtLeast(1)
-        val durationSec = validMinutes * 60L
-        val targetEndTimeMs = android.os.SystemClock.elapsedRealtime() + durationSec * 1000L
+        val clampedSec = durationSec.coerceIn(1L, MAX_TIME_SECONDS)
+        val clampedInitialMinutes = initialMinutes.coerceIn(1, MAX_TIME_MINUTES)
+        val targetEndTimeMs = android.os.SystemClock.elapsedRealtime() + clampedSec * 1000L
 
         _state.value = SleepTimerState(
             isActive = true,
-            remainingSeconds = durationSec,
-            initialMinutes = validMinutes,
+            remainingSeconds = clampedSec,
+            initialMinutes = clampedInitialMinutes,
             mode = "TIME",
             finishLastSong = finishLastSong,
             isWaitingForCurrentTrackToEnd = false
@@ -131,7 +159,7 @@ class SleepTimerManager(
     @Synchronized
     fun startSongCount(count: Int, baselineIdentity: String?, currentSongId: Long? = null) {
         cancelTimer()
-        val validCount = count.coerceAtLeast(1)
+        val validCount = count.coerceIn(1, MAX_TRACK_COUNT)
         countedOccurrences.clear()
         val parsedSongId = currentSongId ?: when {
             baselineIdentity == null -> null
@@ -387,34 +415,45 @@ class SleepTimerManager(
         onSongFinished(finishedSongId, isQualified, sessionId)
     }
 
-    fun addMinutes(minutes: Int) {
+    fun addMinutes(minutes: Int): Boolean {
         val curr = _state.value
-        if (curr.isActive && curr.mode == "TIME") {
-            val currentSec = if (curr.remainingSeconds > 0) curr.remainingSeconds else 0L
-            val addedSec = minutes * 60L
-            val totalSec = currentSec + addedSec
-            val totalMins = ((totalSec + 59L) / 60L).toInt().coerceAtLeast(1)
-            startTimerMinutes(totalMins, curr.finishLastSong)
+        if (!canAddMinutes(curr, minutes)) {
+            android.util.Log.d(TAG, "Rejected adding ${minutes}m: pending=${curr.remainingSeconds}s exceeds max=${MAX_TIME_SECONDS}s")
+            return false
         }
+        val currentSec = curr.remainingSeconds.coerceAtLeast(0L)
+        val totalSec = (currentSec + minutes * 60L).coerceAtMost(MAX_TIME_SECONDS)
+        val totalMins = ((totalSec + 59L) / 60L).toInt().coerceIn(1, MAX_TIME_MINUTES)
+        startTimerSeconds(totalSec, totalMins, curr.finishLastSong)
+        return true
     }
 
     @Synchronized
-    fun addSongs(count: Int) {
+    fun addSongs(count: Int): Boolean {
         val curr = _state.value
-        if (curr.isTrackTimerActive && curr.mode == "SONGS") {
-            val newTotal = curr.targetTrackCount + count
-            val newRemaining = (newTotal - curr.countedTrackCount).coerceAtLeast(0)
-            val isFinal = (curr.countedTrackCount >= newTotal)
-            _state.value = curr.copy(
-                totalSongs = newTotal,
-                targetTrackCount = newTotal,
-                remainingSongs = newRemaining,
-                isFinalSleepTrack = isFinal,
-                isFinalTrack = isFinal,
-                stopPending = isFinal
-            )
-            android.util.Log.d(TAG, "Added $count songs, new target = $newTotal")
+        if (!curr.isTrackTimerActive || !canAddSongs(curr, count)) {
+            android.util.Log.d(TAG, "Rejected adding $count track(s): pending=${curr.remainingSongs} exceeds max=$MAX_TRACK_COUNT")
+            return false
         }
+        val newTotal = curr.targetTrackCount + count
+        val newRemaining = (curr.remainingSongs.coerceAtLeast(0) + count).coerceAtMost(MAX_TRACK_COUNT)
+        val isFinal = (curr.countedTrackCount >= newTotal)
+        val nextPhase = when {
+            isFinal -> TrackSleepTimerPhase.FINAL_TRACK
+            curr.elapsedSongs > 0 -> TrackSleepTimerPhase.COUNTING
+            else -> TrackSleepTimerPhase.ARMED
+        }
+        _state.value = curr.copy(
+            totalSongs = newTotal,
+            targetTrackCount = newTotal,
+            remainingSongs = newRemaining,
+            isFinalSleepTrack = isFinal,
+            isFinalTrack = isFinal,
+            stopPending = isFinal,
+            phase = nextPhase
+        )
+        android.util.Log.d(TAG, "Added $count songs, new target = $newTotal, pending = $newRemaining")
+        return true
     }
 
     fun setFinishLastSong(enabled: Boolean) {

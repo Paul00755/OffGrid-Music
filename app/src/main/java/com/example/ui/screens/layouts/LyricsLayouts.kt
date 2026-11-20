@@ -136,11 +136,14 @@ fun AlternateLyricsPanel(
     val hasPlain = !currentLyrics?.plainLyrics.isNullOrBlank()
     val hasLyrics = hasSynced || hasPlain
 
-    val glassConfig = LocalGlassThemeConfig.current
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val primaryInk = if (isDarkTheme) Color.White else Color(0xFF0F172A)
     val secondaryInk = if (isDarkTheme) Color.White.copy(alpha = 0.68f) else Color(0xFF475569)
-    val surfaceBg = if (isDarkTheme) Color(0xFF13141F) else Color(0xFFF1F5F9)
+    val surfaceBg = if (isDarkTheme) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+    } else {
+        Color(0xFFF1F5F9)
+    }
     val borderStrokeColor = if (isDarkTheme) Color.White.copy(alpha = 0.14f) else Color(0xFFCBD5E1)
 
     val offsetChipText = remember(syncOffsetMs) {
@@ -159,7 +162,7 @@ fun AlternateLyricsPanel(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (glassConfig.enabled) Color.Transparent else if (isDarkTheme) Color(0xFF09090E) else Color.White)
+            .background(Color.Transparent)
             .testTag("lyrics_panel_${lyricsLayout.id.lowercase()}")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -221,19 +224,26 @@ fun AlternateLyricsPanel(
                             }
                         }
                         if (!isLandscape) {
-                            IconButton(
-                                onClick = onCloseLyrics,
+                            Surface(
+                                onClick = {
+                                    HapticUtils.performClickHaptic(context)
+                                    onCloseLyrics()
+                                },
+                                shape = CircleShape,
+                                color = surfaceBg,
+                                border = BorderStroke(1.dp, borderStrokeColor),
                                 modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(surfaceBg)
+                                    .size(38.dp)
+                                    .testTag("lyrics_close_button")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Close Lyrics",
-                                    tint = primaryInk,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Close Lyrics",
+                                        tint = primaryInk,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -296,14 +306,26 @@ fun AlternateLyricsPanel(
                             )
                         }
                         if (!isLandscape) {
-                            IconButton(
-                                onClick = onCloseLyrics,
+                            Surface(
+                                onClick = {
+                                    HapticUtils.performClickHaptic(context)
+                                    onCloseLyrics()
+                                },
+                                shape = CircleShape,
+                                color = surfaceBg,
+                                border = BorderStroke(1.dp, borderStrokeColor),
                                 modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(surfaceBg)
+                                    .size(36.dp)
+                                    .testTag("lyrics_close_button")
                             ) {
-                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close Lyrics", tint = primaryInk, modifier = Modifier.size(20.dp))
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Close Lyrics",
+                                        tint = primaryInk,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }

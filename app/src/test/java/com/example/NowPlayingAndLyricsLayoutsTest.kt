@@ -339,6 +339,73 @@ class NowPlayingAndLyricsLayoutsTest {
             composeTestRule.onNodeWithTag("lyrics_top_bar_search_button").assertExists()
             composeTestRule.onNodeWithTag("lyrics_offset_tab_button").assertExists()
             composeTestRule.onNodeWithTag("lyrics_transcribe_translate_button").assertExists()
+            composeTestRule.onNodeWithTag("lyrics_close_button").assertExists()
         }
     }
+
+    @Test
+    fun testSleepTimerDialogEnforcesPendingTimeAndTrackExtensionLimits() {
+        val timerState = androidx.compose.runtime.mutableStateOf(
+            SleepTimerState(
+                isActive = true,
+                mode = "TIME",
+                remainingSeconds = 175L * 60L,
+                initialMinutes = 175
+            )
+        )
+
+        composeTestRule.setContent {
+            MyApplicationTheme(themeMode = "AMOLED") {
+                com.example.ui.components.SleepTimerDialog(
+                    timerState = timerState.value,
+                    onStartTimerMinutes = { _, _ -> },
+                    onStartSongCount = {},
+                    onAddMinutes = {},
+                    onAddSongs = {},
+                    onCancelTimer = {},
+                    onDismiss = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        // At 175m pending: +5m enabled, +10m/+15m/+30m disabled
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_5").assertIsEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_10").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_15").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_30").assertIsNotEnabled()
+
+        // At 180m pending: all time extension buttons disabled
+        timerState.value = SleepTimerState(
+            isActive = true,
+            mode = "TIME",
+            remainingSeconds = 180L * 60L,
+            initialMinutes = 180
+        )
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_5").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_min_10").assertIsNotEnabled()
+
+        // At 49 pending tracks (even with totalSongs = 60!): +1 enabled, +2/+5 disabled
+        timerState.value = SleepTimerState(
+            isActive = true,
+            isTrackTimerActive = true,
+            mode = "SONGS",
+            totalSongs = 60,
+            targetTrackCount = 60,
+            elapsedSongs = 12,
+            remainingSongs = 49
+        )
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("sleep_timer_add_song_1").assertIsEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_song_2").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_song_5").assertIsNotEnabled()
+
+        // At 50 pending tracks: all track extension buttons disabled
+        timerState.value = timerState.value.copy(remainingSongs = 50)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("sleep_timer_add_song_1").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("sleep_timer_add_song_2").assertIsNotEnabled()
+    }
 }
+

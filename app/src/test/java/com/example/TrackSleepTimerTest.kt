@@ -299,4 +299,96 @@ class TrackSleepTimerTest {
         assertEquals(0, sleepTimerManager.state.value.elapsedSongs)
         assertFalse(sleepTimerManager.state.value.isFinalSleepTrack)
     }
+
+    @Test
+    fun `test time-based sleep timer max limit 180 mins and pending-based addMinutes guard`() {
+        // Initial start above 180 mins clamps to 180 mins (10,800s)
+        sleepTimerManager.startTimerMinutes(300)
+        val atCapState = sleepTimerManager.state.value
+        assertTrue(atCapState.isActive)
+        assertEquals("TIME", atCapState.mode)
+        assertEquals(SleepTimerManager.MAX_TIME_MINUTES, atCapState.initialMinutes)
+        assertEquals(SleepTimerManager.MAX_TIME_SECONDS, atCapState.remainingSeconds)
+
+        // Cannot add +5m or +10m when 180 mins are still pending
+        assertFalse(SleepTimerManager.canAddMinutes(atCapState, 5))
+        assertFalse(SleepTimerManager.canAddMinutes(atCapState, 10))
+        assertFalse(sleepTimerManager.addMinutes(5))
+        assertFalse(sleepTimerManager.addMinutes(10))
+        assertEquals(SleepTimerManager.MAX_TIME_SECONDS, sleepTimerManager.state.value.remainingSeconds)
+
+        // When 175 mins are pending: +5m is allowed (reaches 180m), +10m is rejected (would reach 185m)
+        sleepTimerManager.startTimerMinutes(175)
+        val state175 = sleepTimerManager.state.value
+        assertTrue(SleepTimerManager.canAddMinutes(state175, 5))
+        assertFalse(SleepTimerManager.canAddMinutes(state175, 10))
+        assertFalse(sleepTimerManager.addMinutes(10))
+        assertTrue(sleepTimerManager.addMinutes(5))
+        assertEquals(SleepTimerManager.MAX_TIME_SECONDS, sleepTimerManager.state.value.remainingSeconds)
+
+        // Now back at 180m pending -> +5m must be rejected
+        assertFalse(sleepTimerManager.addMinutes(5))
+    }
+
+    @Test
+    fun `test track-based sleep timer max limit 50 tracks and pending-not-total addSongs guard`() {
+        // Initial start above 50 tracks clamps to 50 tracks
+        sleepTimerManager.startSongCount(80, currentSongId = sampleSongs[0].id)
+        var state = sleepTimerManager.state.value
+        assertTrue(state.isActive)
+        assertEquals(SleepTimerManager.MAX_TRACK_COUNT, state.totalSongs)
+        assertEquals(SleepTimerManager.MAX_TRACK_COUNT, state.remainingSongs)
+
+        // At 50 pending tracks, neither +1 nor +2 is allowed
+        assertFalse(SleepTimerManager.canAddSongs(state, 1))
+        assertFalse(SleepTimerManager.canAddSongs(state, 2))
+        assertFalse(sleepTimerManager.addSongs(1))
+        assertFalse(sleepTimerManager.addSongs(2))
+        assertEquals(50, sleepTimerManager.state.value.remainingSongs)
+
+        // Transition baseline Song A -> Song B (Track 1/50 -> 50 pending including Song B)
+        sleepTimerManager.onTrackTransition(
+            oldTrackId = sampleSongs[0].id,
+            isOldQualified = true,
+            oldNaturalEnd = true,
+            newTrackId = sampleSongs[1].id
+        )
+        assertEquals(50, sleepTimerManager.state.value.remainingSongs)
+        assertFalse(sleepTimerManager.addSongs(1))
+
+        // Song B -> Song C (Track 2/50 -> 49 pending): +1 allowed (reaches 50 pending, total=51), +2 rejected
+        sleepTimerManager.onTrackTransition(
+            oldTrackId = sampleSongs[1].id,
+            isOldQualified = true,
+            oldNaturalEnd = true,
+            newTrackId = sampleSongs[2].id
+        )
+        state = sleepTimerManager.state.value
+        assertEquals(49, state.remainingSongs)
+        assertTrue(SleepTimerManager.canAddSongs(state, 1))
+        assertFalse(SleepTimerManager.canAddSongs(state, 2))
+        assertFalse(sleepTimerManager.addSongs(2))
+        assertTrue(sleepTimerManager.addSongs(1))
+
+        // Verify pending is 50 while total is 51 (pending-based, NOT total-based!)
+        state = sleepTimerManager.state.value
+        assertEquals(51, state.totalSongs)
+        assertEquals(51, state.targetTrackCount)
+        assertEquals(50, state.remainingSongs)
+        assertFalse(sleepTimerManager.addSongs(1))
+
+        // Advance 2 more tracks (C -> D -> E): pending drops from 50 -> 49 -> 48
+        sleepTimerManager.onTrackTransition(sampleSongs[2].id, true, true, sampleSongs[3].id)
+        assertEquals(49, sleepTimerManager.state.value.remainingSongs)
+        sleepTimerManager.onTrackTransition(sampleSongs[3].id, true, true, sampleSongs[4].id)
+        assertEquals(48, sleepTimerManager.state.value.remainingSongs)
+
+        // With 48 pending, +2 succeeds (reaches 50 pending, total=53), +5 rejected
+        assertFalse(sleepTimerManager.addSongs(5))
+        assertTrue(sleepTimerManager.addSongs(2))
+        assertEquals(53, sleepTimerManager.state.value.totalSongs)
+        assertEquals(50, sleepTimerManager.state.value.remainingSongs)
+        assertFalse(sleepTimerManager.addSongs(1))
+    }
 }
+

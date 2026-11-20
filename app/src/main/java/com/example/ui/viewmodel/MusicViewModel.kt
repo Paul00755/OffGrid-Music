@@ -2269,7 +2269,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addSleepTimerMinutes(minutes: Int) = sleepTimerManager.addMinutes(minutes)
+    fun addSleepTimerMinutes(minutes: Int): Boolean = sleepTimerManager.addMinutes(minutes)
+
+    fun addSleepTimerSongs(count: Int): Boolean = sleepTimerManager.addSongs(count)
 
     fun setSleepTimerFinishLastSong(enabled: Boolean) {
         sleepTimerManager.setFinishLastSong(enabled)
