@@ -388,6 +388,169 @@ fun NowPlayingWaveformVisualizer(
                 )
             }
 
+            "SQUIGGLY" -> {
+                // Screenshot 6 & 7: Smooth rounded animated sine wave on played portion + crisp vertical pill thumb + flat muted track
+                val squiggleStroke = 4.2.dp.toPx()
+                val squiggleAmp = 5.4.dp.toPx()
+                val squiggleThumbW = 4.5.dp.toPx()
+                val squiggleThumbH = 22.dp.toPx()
+
+                if (activeWidth < width) {
+                    val inactiveStart = (activeWidth + squiggleThumbW * 0.5f).coerceAtMost(width)
+                    drawLine(
+                        color = inactiveTrackColor,
+                        start = Offset(inactiveStart, centerY),
+                        end = Offset(width, centerY),
+                        strokeWidth = squiggleStroke * 0.88f,
+                        cap = StrokeCap.Round
+                    )
+                }
+
+                if (activeWidth > 2f) {
+                    reusablePath.rewind()
+                    val waveEndX = (activeWidth - squiggleThumbW * 0.45f).coerceAtLeast(1f)
+                    val wavelengthPx = 28.dp.toPx().coerceAtLeast(16f)
+                    val steps = (waveEndX / 2f).toInt().coerceIn(28, 220)
+                    val dx = waveEndX / steps.toFloat()
+
+                    for (i in 0..steps) {
+                        val x = (i * dx).coerceAtMost(waveEndX)
+                        // Subtle edge taper only in the first/last 6dp so wave stays full-bodied like Material 3 squiggly seeker
+                        val startFade = (x / 6.dp.toPx()).coerceIn(0f, 1f)
+                        val endFade = ((waveEndX - x) / 6.dp.toPx()).coerceIn(0f, 1f)
+                        val edgeEnv = minOf(startFade, endFade)
+                        val angle = (x / wavelengthPx) * (2.0 * Math.PI) - activePhase.toDouble()
+                        val y = centerY + (sin(angle).toFloat() * squiggleAmp * (0.25f + 0.75f * edgeEnv))
+                        if (i == 0) reusablePath.moveTo(x, y) else reusablePath.lineTo(x, y)
+                    }
+
+                    drawPath(
+                        path = reusablePath,
+                        color = waveformColor,
+                        style = Stroke(
+                            width = squiggleStroke,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+
+                drawRoundRect(
+                    color = waveformColor,
+                    topLeft = Offset(
+                        (activeWidth - squiggleThumbW / 2f).coerceIn(0f, width - squiggleThumbW),
+                        centerY - squiggleThumbH / 2f
+                    ),
+                    size = Size(squiggleThumbW, squiggleThumbH),
+                    cornerRadius = CornerRadius(squiggleThumbW / 2f, squiggleThumbW / 2f)
+                )
+            }
+
+            "WAVY", "WAVE" -> {
+                // Screenshot 7 ("Wavy"): Smooth flowing played wave ending in a circular dot thumb + straight unplayed track with end dot
+                val waveStroke = 4.dp.toPx()
+                val waveAmp = 5.2.dp.toPx()
+                val knobRadius = 7.5.dp.toPx()
+                val gapPx = 4.dp.toPx()
+
+                val inactiveStart = (activeWidth + knobRadius + gapPx).coerceAtMost(width)
+                if (inactiveStart < width - 2.dp.toPx()) {
+                    drawLine(
+                        color = inactiveTrackColor,
+                        start = Offset(inactiveStart, centerY),
+                        end = Offset(width - 2.dp.toPx(), centerY),
+                        strokeWidth = 3.5.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    // Subtle end cap dot matching Screenshot 7
+                    drawCircle(
+                        color = waveformColor.copy(alpha = 0.85f),
+                        radius = 2.dp.toPx(),
+                        center = Offset(width - 2.dp.toPx(), centerY)
+                    )
+                }
+
+                val waveEndX = (activeWidth - knobRadius * 0.6f).coerceAtLeast(0f)
+                if (waveEndX > 2f) {
+                    reusablePath.rewind()
+                    val wavelengthPx = 36.dp.toPx().coerceAtLeast(20f)
+                    val steps = (waveEndX / 2f).toInt().coerceIn(24, 180)
+                    val dx = waveEndX / steps.toFloat()
+
+                    for (i in 0..steps) {
+                        val x = (i * dx).coerceAtMost(waveEndX)
+                        val endFade = ((waveEndX - x) / 10.dp.toPx()).coerceIn(0f, 1f)
+                        val angle = (x / wavelengthPx) * (2.0 * Math.PI) - activePhase.toDouble()
+                        val y = centerY + (sin(angle).toFloat() * waveAmp * (0.2f + 0.8f * endFade))
+                        if (i == 0) reusablePath.moveTo(x, y) else reusablePath.lineTo(x, y)
+                    }
+
+                    drawPath(
+                        path = reusablePath,
+                        color = waveformColor,
+                        style = Stroke(
+                            width = waveStroke,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+
+                drawCircle(
+                    color = waveformColor,
+                    radius = knobRadius,
+                    center = Offset(activeWidth.coerceIn(knobRadius, (width - knobRadius).coerceAtLeast(knobRadius)), centerY)
+                )
+            }
+
+            "BAR", "PILL_BAR" -> {
+                // Screenshot 7 ("Bar"): Bold thick rounded pill played bar + tall vertical pill divider + soft pill unplayed bar with end dot
+                val barHeight = 13.dp.toPx()
+                val barRadius = barHeight / 2f
+                val dividerW = 4.2.dp.toPx()
+                val dividerH = 26.dp.toPx()
+                val gapPx = 5.dp.toPx()
+                val clampedX = activeWidth.coerceIn(dividerW / 2f, (width - dividerW / 2f).coerceAtLeast(dividerW / 2f))
+
+                // Played thick rounded capsule bar
+                val playedEnd = (clampedX - dividerW / 2f - gapPx).coerceAtLeast(0f)
+                if (playedEnd > 2f) {
+                    drawRoundRect(
+                        color = waveformColor,
+                        topLeft = Offset(0f, centerY - barRadius),
+                        size = Size(playedEnd, barHeight),
+                        cornerRadius = CornerRadius(barRadius, barRadius)
+                    )
+                }
+
+                // Unplayed soft rounded capsule bar
+                val unplayedStart = (clampedX + dividerW / 2f + gapPx).coerceAtMost(width)
+                val unplayedWidth = (width - unplayedStart).coerceAtLeast(0f)
+                if (unplayedWidth > 2f) {
+                    drawRoundRect(
+                        color = inactiveTrackColor,
+                        topLeft = Offset(unplayedStart, centerY - barRadius),
+                        size = Size(unplayedWidth, barHeight),
+                        cornerRadius = CornerRadius(barRadius, barRadius)
+                    )
+                    if (unplayedWidth > 14.dp.toPx()) {
+                        drawCircle(
+                            color = waveformColor.copy(alpha = 0.85f),
+                            radius = 2.2.dp.toPx(),
+                            center = Offset(width - barRadius, centerY)
+                        )
+                    }
+                }
+
+                // Tall vertical pill thumb
+                drawRoundRect(
+                    color = waveformColor,
+                    topLeft = Offset(clampedX - dividerW / 2f, centerY - dividerH / 2f),
+                    size = Size(dividerW, dividerH),
+                    cornerRadius = CornerRadius(dividerW / 2f, dividerW / 2f)
+                )
+            }
+
             else -> { // MINIMAL
                 drawLine(
                     color = inactiveTrackColor,

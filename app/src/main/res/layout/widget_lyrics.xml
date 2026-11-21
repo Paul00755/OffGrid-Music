@@ -48,7 +48,7 @@
                     android:layout_height="wrap_content"
                     android:text="OffGrid Music"
                     android:textColor="#FFFFFF"
-                    android:textSize="13sp"
+                    android:textSize="13dp"
                     android:textStyle="bold"
                     android:singleLine="true"
                     android:ellipsize="end"
@@ -61,7 +61,7 @@
                     android:layout_marginTop="1dp"
                     android:text="Live Lyrics"
                     android:textColor="#8E96A8"
-                    android:textSize="10.5sp"
+                    android:textSize="10.5dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:includeFontPadding="false" />
@@ -203,15 +203,15 @@
                     android:id="@+id/widget_lyrics_curr_0"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingTop="3dp"
-                    android:paddingBottom="3dp"
+                    android:paddingTop="2dp"
+                    android:paddingBottom="2dp"
                     android:text="♪ Play a song to view live synced lyrics"
                     android:textColor="#FFFFFF"
-                    android:textSize="15sp"
+                    android:textSize="14dp"
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
-                    android:includeFontPadding="true" />
+                    android:includeFontPadding="false" />
 
                 <TextView
                     android:id="@+id/widget_lyrics_next_0"
@@ -370,15 +370,15 @@
                     android:id="@+id/widget_lyrics_curr_1"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingTop="3dp"
-                    android:paddingBottom="3dp"
+                    android:paddingTop="2dp"
+                    android:paddingBottom="2dp"
                     android:text="♪ Play a song to view live synced lyrics"
                     android:textColor="#FFFFFF"
-                    android:textSize="15sp"
+                    android:textSize="14dp"
                     android:textStyle="bold"
                     android:maxLines="2"
                     android:ellipsize="end"
-                    android:includeFontPadding="true" />
+                    android:includeFontPadding="false" />
 
                 <TextView
                     android:id="@+id/widget_lyrics_next_1"
@@ -466,7 +466,7 @@
                 android:layout_height="wrap_content"
                 android:text="0:00"
                 android:textColor="#8D95A5"
-                android:textSize="9.5sp"
+                android:textSize="9.5dp"
                 android:includeFontPadding="false" />
 
             <ImageView
@@ -485,7 +485,7 @@
                 android:layout_height="wrap_content"
                 android:text="0:00"
                 android:textColor="#8D95A5"
-                android:textSize="9.5sp"
+                android:textSize="9.5dp"
                 android:includeFontPadding="false" />
         </LinearLayout>
     </LinearLayout>

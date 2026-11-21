@@ -509,5 +509,42 @@ class AppUpdateSystemTest {
             "build-apk.yml must invoke send_fcm_release_notification.py",
             buildWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
         )
+        assertTrue(
+            "build-apk.yml must fetch full history for semantic tag calculation",
+            buildWorkflow.readText().contains("fetch-depth: 0")
+        )
+        assertTrue(
+            "build-apk.yml must pass -PappVersionName to Gradle",
+            buildWorkflow.readText().contains("-PappVersionName=")
+        )
+    }
+
+    @Test
+    fun testSanitizeReleaseNotesProducesPlainEmojiFreeSummary() {
+        val rawGitHubRelease = """
+            ## 🎵 OffGrid Music — v1.0.5
+
+            ### ✨ What's New
+            - fix(settings): resolved dark theme contrast on lyrics screen 🎧
+            - feat: custom named home feed presets 🚀
+            - perf: faster dynamic artwork color extraction
+            - Merge pull request #42 from Paul00755/main
+
+            ### 📥 Direct APK Downloads
+            - **[⬇️ Download OffGrid-Music.apk](https://example.com/app.apk)**
+
+            | Property | Value |
+            | :--- | :--- |
+            | **SHA-256** | `abcdef123456` |
+        """.trimIndent()
+
+        val cleaned = ReleaseInfo.sanitizeReleaseNotes(rawGitHubRelease)
+        assertTrue("Should rewrite fix: into plain language", cleaned.contains("Fixed resolved dark theme contrast on lyrics screen"))
+        assertTrue("Should rewrite feat: into plain language", cleaned.contains("Added custom named home feed presets"))
+        assertTrue("Should rewrite perf: into plain language", cleaned.contains("Improved faster dynamic artwork color extraction"))
+        assertFalse("Should omit GitHub merge noise", cleaned.contains("Merge pull request"))
+        assertFalse("Should omit SHA-256 table rows", cleaned.contains("SHA-256"))
+        assertFalse("Should omit download links", cleaned.contains("Download OffGrid-Music.apk"))
+        assertFalse("Should strip emojis", cleaned.contains("🎵") || cleaned.contains("🎧") || cleaned.contains("🚀") || cleaned.contains("✨"))
     }
 }

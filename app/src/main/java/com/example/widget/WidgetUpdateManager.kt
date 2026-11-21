@@ -141,37 +141,47 @@ object WidgetUpdateManager {
         val nearTextSizeSp: Float,
         val midTextSizeSp: Float,
         val farTextSizeSp: Float,
-        val keepSymmetricCenter: Boolean = false
+        val keepSymmetricCenter: Boolean = false,
+        val titleTextSizeDp: Float = 13f,
+        val subtitleTextSizeDp: Float = 10.5f,
+        val timeTextSizeDp: Float = 9.5f,
+        val useDpUnits: Boolean = true
     )
 
     /**
      * Computes how many previous and upcoming lyric lines should be displayed for a given
-     * widget width/height in dp, keeping the active line vertically centered in Standard (4x2)
-     * and Horizontally Shrunk (3x2/2x2) widgets while preserving Expanded (4x3) and
-     * Extra-Expanded (4x4+) layouts untouched.
+     * widget width/height in dp, dynamically respecting device system fontScale, tall scripts
+     * (e.g. Tamil/Indic/Arabic), and 2-line active lyric wrapping so lyrics NEVER clip above
+     * the progress bar on compact phones, while preserving Expanded (4x3) and Extra-Expanded
+     * (4x4+) layouts cleanly.
      */
     internal fun computeAdaptiveLyricsLayout(
         widthDp: Int,
         heightDp: Int,
         availablePrevLines: Int,
         availableNextLines: Int,
-        density: Float = 1f
+        density: Float = 1f,
+        fontScale: Float = 1f,
+        currLineText: String = "",
+        actualWidgetHeightDp: Int? = null
     ): AdaptiveLyricsLayoutSpec {
-        // Minimum vertical height for the Lyrics widget is the 2-row standard footprint (130dp).
+        // Minimum vertical height classification for standard 2-row footprint (130dp).
         val safeH = heightDp.coerceIn(130, 650)
+        val realH = (actualWidgetHeightDp ?: safeH).coerceIn(96, 650)
         val safeW = widthDp.coerceIn(140, 650)
+        val safeFontScale = fontScale.coerceIn(0.85f, 1.85f)
         val isStandardTwoRow = safeH < 180
         val isHorizontallyShrunk = safeW < 255
 
         // Height thresholds calibrated to real Android launcher cell dp reporting
-        // (including compact-grid launchers like OplusLauncher/ColorOS, OneUI, and Pixel Launcher):
-        // - 2 rows (4x2 Standard & 3x2/2x2 Horizontally Shrunk): 130..179dp (2 prev + 1 curr + 2 next = 5 lines, centered)
+        // (including compact-grid launchers like MIUI, OplusLauncher/ColorOS, OneUI, and Pixel Launcher):
+        // - 2 rows (4x2 Standard & 3x2/2x2 Horizontally Shrunk): 130..179dp (up to 2 prev + 1 curr + 2 next)
         // - 3 rows (4x3 Expanded): 180..197dp (5 prev + 1 curr + 5 next = 11 lines)
         // - 4+ rows (4x4+ Extra-Expanded): >= 198dp (6 prev + 1 curr + 6 next = 13 lines)
         val (basePrev, baseNext) = when {
-            isStandardTwoRow -> 2 to 2 // Standard 4x2 & Horizontally Shrunk: 2 prev + current + 2 next (5 lines)
-            safeH < 198 -> 5 to 5      // Expanded 4x3: 5 prev + current + 5 next (11 lines)
-            else -> 6 to 6             // Extra-Expanded 4x4+: 6 prev + current + 6 next (13 lines)
+            isStandardTwoRow -> 2 to 2
+            safeH < 198 -> 5 to 5
+            else -> 6 to 6
         }
 
         val availPrev = availablePrevLines.coerceAtLeast(0)
@@ -181,8 +191,6 @@ object WidgetUpdateManager {
         var actualNext = minOf(baseNext, availNext)
 
         if (!isStandardTwoRow) {
-            // Smart slot rebalancing for Expanded and Extra-Expanded widgets:
-            // if near the beginning or end of a song, allocate unused slots so expanded widgets stay full.
             val unusedPrev = basePrev - actualPrev
             if (unusedPrev > 0 && availNext > actualNext) {
                 actualNext = minOf(MAX_SURROUNDING_LYRIC_LINES, minOf(availNext, actualNext + unusedPrev))
@@ -193,69 +201,137 @@ object WidgetUpdateManager {
             }
         }
 
+        val isVeryCompact = realH < 152 || safeFontScale > 1.15f
         val containerPadDp = when {
+            isVeryCompact && isStandardTwoRow -> 8
             isStandardTwoRow -> 10
             safeH < 198 -> 12
             else -> 14
         }
 
-        val chromeDp = (containerPadDp * 2) + 62
-        val rawStageHeightDp = (safeH - chromeDp).coerceAtLeast(32)
+        // Header (~38dp) + progress footer (~16dp) + stage margins (~8dp) + top/bottom container padding
+        val chromeDp = (containerPadDp * 2) + 60
+        val rawStageHeightDp = (realH - chromeDp).coerceAtLeast(36)
         val stageHeightDp = when {
             safeH >= 198 -> maxOf(rawStageHeightDp, 255)
             safeH >= 180 -> maxOf(rawStageHeightDp, 185)
             else -> rawStageHeightDp
         }
 
+        // Gentle bounded accessibility scaling in dp (capped at 1.10x so XL system fonts never overflow the launcher cell)
+        val gentleFontBoost = (1f + (safeFontScale - 1f) * 0.18f).coerceIn(0.94f, 1.10f)
+
+        val widthBoostSp = if (safeW >= 340) 0.5f else 0f
+        var currSp = (when {
+            safeH >= 198 -> 16.2f + widthBoostSp
+            safeH >= 180 -> 15.8f + widthBoostSp
+            isHorizontallyShrunk -> 13.4f
+            else -> 14.2f + (widthBoostSp * 0.4f)
+        } * gentleFontBoost).coerceIn(11.6f, 17.5f)
+
+        var nearSp = (when {
+            safeH >= 198 -> (currSp - 2.6f).coerceIn(12.6f, 14.2f)
+            safeH >= 180 -> (currSp - 2.5f).coerceIn(12.2f, 13.8f)
+            isHorizontallyShrunk -> 10.6f * gentleFontBoost
+            else -> 11.4f * gentleFontBoost
+        }).coerceIn(9.4f, 14.2f)
+
+        var midSp = (when {
+            safeH >= 198 -> (currSp - 3.3f).coerceIn(11.8f, 13.4f)
+            safeH >= 180 -> (currSp - 3.2f).coerceIn(11.6f, 13.0f)
+            isHorizontallyShrunk -> 10.0f * gentleFontBoost
+            else -> 10.6f * gentleFontBoost
+        }).coerceIn(8.8f, 13.4f)
+
+        var farSp = (when {
+            safeH >= 198 -> (currSp - 4.0f).coerceIn(11.2f, 12.6f)
+            safeH >= 180 -> (currSp - 3.8f).coerceIn(11.0f, 12.4f)
+            else -> 9.8f * gentleFontBoost
+        }).coerceIn(8.4f, 12.6f)
+
+        // Detect Indic/Tamil/Arabic/CJK scripts which have taller ascenders/descenders and wider glyphs,
+        // plus estimate whether the active lyric line wraps onto 2 lines inside the actual widget width.
+        val hasTallScript = currLineText.any { it.code > 0x0590 }
+        val lineHeightFactor = if (hasTallScript) 1.50f else 1.32f
+        val avgCharWidthDp = currSp * (if (hasTallScript) 0.72f else 0.56f)
+        val innerTextWidthDp = (safeW - (containerPadDp * 2) - 8).coerceAtLeast(100)
+        val estimatedCurrVisualLines = if (currLineText.isBlank()) {
+            1
+        } else if (currLineText.length * avgCharWidthDp > innerTextWidthDp * 0.94f) {
+            2
+        } else {
+            1
+        }
+
+        // Real-world adaptive budget guard:
+        // When we have an actual lyric text, compact launcher height, or enlarged system fontScale,
+        // guarantee that ALL visible lines fit cleanly inside `stageHeightDp` with zero bottom clipping!
+        val needsDynamicFitGuard = currLineText.isNotBlank() || safeFontScale > 1.05f || (actualWidgetHeightDp != null && actualWidgetHeightDp < 130)
+        if (isStandardTwoRow && needsDynamicFitGuard) {
+            fun estimateTotalHeightDp(prevC: Int, nextC: Int, cSize: Float, nSize: Float, mSize: Float): Float {
+                val currBlock = (cSize * lineHeightFactor * estimatedCurrVisualLines) + 4f
+                val sideLines = prevC + nextC
+                val avgSideSize = if (sideLines <= 2) nSize else (nSize + mSize) * 0.5f
+                val sideBlock = sideLines * ((avgSideSize * lineHeightFactor) + 2f)
+                return currBlock + sideBlock
+            }
+
+            // Step 1: Gently scale down font sizes first to keep maximum context readable
+            if (estimateTotalHeightDp(actualPrev, actualNext, currSp, nearSp, midSp) > stageHeightDp) {
+                val est = estimateTotalHeightDp(actualPrev, actualNext, currSp, nearSp, midSp)
+                val shrink = (stageHeightDp / est).coerceIn(0.78f, 1f)
+                currSp = (currSp * shrink).coerceAtLeast(11.4f)
+                nearSp = (nearSp * shrink).coerceAtLeast(9.2f)
+                midSp = (midSp * shrink).coerceAtLeast(8.8f)
+                farSp = (farSp * shrink).coerceAtLeast(8.4f)
+            }
+
+            // Step 2: If active 2-line (especially Tamil/Indic) lyric + 4 surrounding lines STILL exceeds stage,
+            // symmetrically drop outer context lines (2 -> 1 -> 0) so the active lyric is NEVER cut off!
+            while ((actualPrev > 1 || actualNext > 1) &&
+                estimateTotalHeightDp(actualPrev, actualNext, currSp, nearSp, midSp) > stageHeightDp
+            ) {
+                if (actualPrev > 1) actualPrev--
+                if (actualNext > 1) actualNext--
+            }
+            if ((actualPrev > 0 || actualNext > 0) &&
+                estimateTotalHeightDp(actualPrev, actualNext, currSp, nearSp, midSp) > stageHeightDp
+            ) {
+                actualPrev = 0
+                actualNext = 0
+            }
+        }
+
         val visibleLineCount = if (isStandardTwoRow) {
-            5
+            (1 + actualPrev + actualNext).coerceAtLeast(1)
         } else {
             (1 + actualPrev + actualNext).coerceAtLeast(1)
         }
 
-        val widthBoostSp = if (safeW >= 340) 0.5f else 0f
-        val currSp = when {
-            safeH >= 198 -> 16.2f + widthBoostSp
-            safeH >= 180 -> 15.8f + widthBoostSp
-            isHorizontallyShrunk -> 13.6f
-            else -> 14.4f + (widthBoostSp * 0.4f)
-        }.coerceIn(13.4f, 17.5f)
-
-        val nearSp = when {
-            safeH >= 198 -> (currSp - 2.6f).coerceIn(13.0f, 14.2f)
-            safeH >= 180 -> (currSp - 2.5f).coerceIn(12.6f, 13.8f)
-            isHorizontallyShrunk -> 11.1f
-            else -> 11.6f
-        }
-        val midSp = when {
-            safeH >= 198 -> (currSp - 3.3f).coerceIn(12.2f, 13.4f)
-            safeH >= 180 -> (currSp - 3.2f).coerceIn(12.0f, 13.0f)
-            isHorizontallyShrunk -> 10.6f
-            else -> 11.0f
-        }
-        val farSp = when {
-            safeH >= 198 -> (currSp - 4.0f).coerceIn(11.6f, 12.6f)
-            safeH >= 180 -> (currSp - 3.8f).coerceIn(11.4f, 12.4f)
-            else -> 10.2f
-        }
-
-        val surroundingCount = if (isStandardTwoRow) 4 else (actualPrev + actualNext)
-        val estTextHeightDp = (currSp * 1.42f) + (surroundingCount * (midSp * 1.28f))
+        val surroundingCount = actualPrev + actualNext
+        val estTextHeightDp = (currSp * lineHeightFactor * estimatedCurrVisualLines) +
+            (surroundingCount * (midSp * lineHeightFactor))
         val slackDp = (stageHeightDp.toFloat() - estTextHeightDp).coerceAtLeast(0f)
 
         val perSlotSlackDp = slackDp / (visibleLineCount + 1).toFloat()
         val linePadVerticalDp = when {
-            safeH >= 198 -> (perSlotSlackDp * 0.55f).coerceIn(3.0f, 4.8f)
-            safeH >= 180 -> (perSlotSlackDp * 0.55f).coerceIn(2.8f, 4.4f)
+            safeH >= 198 -> (perSlotSlackDp * 0.55f).coerceIn(2.6f, 4.6f)
+            safeH >= 180 -> (perSlotSlackDp * 0.55f).coerceIn(2.4f, 4.2f)
+            slackDp < 6f -> 0.5f
             isHorizontallyShrunk -> 0.8f
             else -> 1.2f
         }
         val currPadVerticalDp = when {
-            safeH >= 198 -> (linePadVerticalDp + 2.2f).coerceIn(5.2f, 7.5f)
-            safeH >= 180 -> (linePadVerticalDp + 2.0f).coerceIn(4.8f, 6.8f)
-            isHorizontallyShrunk -> 1.6f
-            else -> 2.2f
+            safeH >= 198 -> (linePadVerticalDp + 2.2f).coerceIn(4.8f, 7.2f)
+            safeH >= 180 -> (linePadVerticalDp + 2.0f).coerceIn(4.4f, 6.4f)
+            slackDp < 6f -> 1.0f
+            isHorizontallyShrunk -> 1.4f
+            else -> 2.0f
         }
+
+        val titleSizeDp = (if (isHorizontallyShrunk || isVeryCompact) 12.2f else 13.0f) * gentleFontBoost.coerceAtMost(1.06f)
+        val subtitleSizeDp = (if (isHorizontallyShrunk || isVeryCompact) 9.8f else 10.5f) * gentleFontBoost.coerceAtMost(1.06f)
+        val timeSizeDp = (if (isVeryCompact) 9.0f else 9.5f) * gentleFontBoost.coerceAtMost(1.05f)
 
         val safeDensity = density.coerceAtLeast(0.75f)
         return AdaptiveLyricsLayoutSpec(
@@ -268,7 +344,11 @@ object WidgetUpdateManager {
             nearTextSizeSp = nearSp,
             midTextSizeSp = midSp,
             farTextSizeSp = farSp,
-            keepSymmetricCenter = isStandardTwoRow
+            keepSymmetricCenter = isStandardTwoRow,
+            titleTextSizeDp = titleSizeDp,
+            subtitleTextSizeDp = subtitleSizeDp,
+            timeTextSizeDp = timeSizeDp,
+            useDpUnits = true
         )
     }
 
@@ -1179,13 +1259,18 @@ object WidgetUpdateManager {
                         try {
                             val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 600, 650)
                             val wDp = (wPx / density).toInt()
-                            val hDp = (hPx / density).toInt().coerceAtLeast(130)
+                            val measuredHDp = (hPx / density).toInt()
+                            val hDp = measuredHDp.coerceAtLeast(130)
+                            val systemFontScale = context.resources.configuration.fontScale
                             val layoutSpec = computeAdaptiveLyricsLayout(
                                 widthDp = wDp,
                                 heightDp = hDp,
                                 availablePrevLines = window.prevLines.size,
                                 availableNextLines = window.nextLines.size,
-                                density = density
+                                density = density,
+                                fontScale = systemFontScale,
+                                currLineText = window.currLine,
+                                actualWidgetHeightDp = measuredHDp
                             )
 
                             val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
@@ -1244,13 +1329,18 @@ object WidgetUpdateManager {
                         try {
                             val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, id, 320, 145, 600, 650)
                             val wDp = (wPx / density).toInt()
-                            val hDp = (hPx / density).toInt().coerceAtLeast(130)
+                            val measuredHDp = (hPx / density).toInt()
+                            val hDp = measuredHDp.coerceAtLeast(130)
+                            val systemFontScale = context.resources.configuration.fontScale
                             val layoutSpec = computeAdaptiveLyricsLayout(
                                 widthDp = wDp,
                                 heightDp = hDp,
                                 availablePrevLines = window.prevLines.size,
                                 availableNextLines = window.nextLines.size,
-                                density = density
+                                density = density,
+                                fontScale = systemFontScale,
+                                currLineText = window.currLine,
+                                actualWidgetHeightDp = measuredHDp
                             )
 
                             val views = RemoteViews(context.packageName, R.layout.widget_lyrics)
@@ -2055,15 +2145,17 @@ object WidgetUpdateManager {
         val nextIds = if (pageIndex == 0) NEXT_VIEW_IDS_PAGE_0 else NEXT_VIEW_IDS_PAGE_1
         val currId = if (pageIndex == 0) R.id.widget_lyrics_curr_0 else R.id.widget_lyrics_curr_1
 
-        val reserveSymmetricSlots = spec.keepSymmetricCenter && window.mode == LyricsDisplayMode.SYNCED
+        val textUnit = if (spec.useDpUnits) android.util.TypedValue.COMPLEX_UNIT_DIP else android.util.TypedValue.COMPLEX_UNIT_SP
+        val maxSymmetricSlotCount = maxOf(spec.prevCount, spec.nextCount).coerceAtMost(2)
+        val reserveSymmetricSlots = spec.keepSymmetricCenter && window.mode == LyricsDisplayMode.SYNCED && maxSymmetricSlotCount > 0
 
         // Bind previous lines (index 0 = nearest prev1, index 5 = farthest prev6)
         for (i in 0 until MAX_SURROUNDING_LYRIC_LINES) {
             val viewId = prevIds[i]
             val lineText = window.prevLines.getOrNull(i).orEmpty()
             val shouldShow = i < spec.prevCount && lineText.isNotBlank()
-            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < 2
-            val sizeSp = when (i) {
+            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < maxSymmetricSlotCount
+            val sizeVal = when (i) {
                 0 -> spec.nearTextSizeSp
                 1, 2 -> spec.midTextSizeSp
                 else -> spec.farTextSizeSp
@@ -2077,12 +2169,12 @@ object WidgetUpdateManager {
                 views.setTextViewText(viewId, lineText)
                 views.setViewVisibility(viewId, View.VISIBLE)
                 views.setTextColor(viewId, color)
-                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setTextViewTextSize(viewId, textUnit, sizeVal)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
             } else if (reserveEmptySlot) {
                 views.setTextViewText(viewId, " ")
                 views.setViewVisibility(viewId, View.INVISIBLE)
-                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setTextViewTextSize(viewId, textUnit, sizeVal)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
             } else {
                 views.setTextViewText(viewId, "")
@@ -2094,7 +2186,7 @@ object WidgetUpdateManager {
         views.setTextViewText(currId, window.currLine)
         views.setViewVisibility(currId, View.VISIBLE)
         views.setTextColor(currId, currColor)
-        views.setTextViewTextSize(currId, android.util.TypedValue.COMPLEX_UNIT_SP, spec.currTextSizeSp)
+        views.setTextViewTextSize(currId, textUnit, spec.currTextSizeSp)
         views.setViewPadding(currId, 0, spec.currPadVerticalPx, 0, spec.currPadVerticalPx)
 
         // Bind upcoming lines (index 0 = nearest next1, index 5 = farthest next6)
@@ -2102,8 +2194,8 @@ object WidgetUpdateManager {
             val viewId = nextIds[i]
             val lineText = window.nextLines.getOrNull(i).orEmpty()
             val shouldShow = i < spec.nextCount && lineText.isNotBlank()
-            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < 2
-            val sizeSp = when (i) {
+            val reserveEmptySlot = !shouldShow && reserveSymmetricSlots && i < maxSymmetricSlotCount
+            val sizeVal = when (i) {
                 0 -> spec.nearTextSizeSp
                 1, 2 -> spec.midTextSizeSp
                 else -> spec.farTextSizeSp
@@ -2117,12 +2209,12 @@ object WidgetUpdateManager {
                 views.setTextViewText(viewId, lineText)
                 views.setViewVisibility(viewId, View.VISIBLE)
                 views.setTextColor(viewId, color)
-                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setTextViewTextSize(viewId, textUnit, sizeVal)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
             } else if (reserveEmptySlot) {
                 views.setTextViewText(viewId, " ")
                 views.setViewVisibility(viewId, View.INVISIBLE)
-                views.setTextViewTextSize(viewId, android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                views.setTextViewTextSize(viewId, textUnit, sizeVal)
                 views.setViewPadding(viewId, 0, spec.linePadVerticalPx, 0, spec.linePadVerticalPx)
             } else {
                 views.setTextViewText(viewId, "")
@@ -2254,13 +2346,18 @@ object WidgetUpdateManager {
             try {
                 val (wPx, hPx) = resolveWidgetDimensionsPx(context, appWidgetManager, widgetId, 320, 145, 600, 650)
                 val wDp = (wPx / density).toInt()
-                val hDp = (hPx / density).toInt().coerceAtLeast(130)
+                val measuredHDp = (hPx / density).toInt()
+                val hDp = measuredHDp.coerceAtLeast(130)
+                val systemFontScale = context.resources.configuration.fontScale
                 val layoutSpec = computeAdaptiveLyricsLayout(
                     widthDp = wDp,
                     heightDp = hDp,
                     availablePrevLines = window.prevLines.size,
                     availableNextLines = window.nextLines.size,
-                    density = density
+                    density = density,
+                    fontScale = systemFontScale,
+                    currLineText = window.currLine,
+                    actualWidgetHeightDp = measuredHDp
                 )
                 val bgBmp = WidgetBitmapRenderer.renderCardBackground(
                     context = context,
@@ -2285,6 +2382,8 @@ object WidgetUpdateManager {
                 views.setTextViewText(R.id.widget_lyrics_subtitle, subtitle)
                 views.setTextColor(R.id.widget_lyrics_title, titleColor)
                 views.setTextColor(R.id.widget_lyrics_subtitle, subtitleColor)
+                views.setTextViewTextSize(R.id.widget_lyrics_title, android.util.TypedValue.COMPLEX_UNIT_DIP, layoutSpec.titleTextSizeDp)
+                views.setTextViewTextSize(R.id.widget_lyrics_subtitle, android.util.TypedValue.COMPLEX_UNIT_DIP, layoutSpec.subtitleTextSizeDp)
 
                 views.setImageViewBitmap(R.id.widget_lyrics_btn_favorite, favBmp)
                 views.setImageViewBitmap(R.id.widget_lyrics_btn_prev, prevBmp)
@@ -2321,6 +2420,8 @@ object WidgetUpdateManager {
                 views.setTextViewText(R.id.widget_lyrics_time_total, formatTime(durationMs))
                 views.setTextColor(R.id.widget_lyrics_time_current, subtitleColor)
                 views.setTextColor(R.id.widget_lyrics_time_total, subtitleColor)
+                views.setTextViewTextSize(R.id.widget_lyrics_time_current, android.util.TypedValue.COMPLEX_UNIT_DIP, layoutSpec.timeTextSizeDp)
+                views.setTextViewTextSize(R.id.widget_lyrics_time_total, android.util.TypedValue.COMPLEX_UNIT_DIP, layoutSpec.timeTextSizeDp)
 
                 views.setOnClickPendingIntent(R.id.widget_lyrics_root, openNowPlayingIntent)
                 views.setOnClickPendingIntent(R.id.widget_lyrics_header_click, openNowPlayingIntent)

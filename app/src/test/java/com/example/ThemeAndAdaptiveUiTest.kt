@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
 import com.example.data.sync.CloudUserSettings
 import com.example.service.SleepTimerState
 import com.example.ui.screens.SettingsScreen
@@ -165,11 +167,224 @@ class ThemeAndAdaptiveUiTest {
         }
         composeTestRule.waitForIdle()
 
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(androidx.compose.ui.test.hasTestTag("settings_use_dark_colors_toggle"))
         composeTestRule.onNodeWithText("Use dark colors").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithText("Turn off to keep using palette lite colors").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("settings_use_dark_colors_toggle").performClick()
+        composeTestRule.onNodeWithText("Turn off to keep using palette lite colors").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_use_dark_colors_toggle").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
         assertTrue("Clicking 'Use dark colors' toggle should enable useDarkColors", useDarkColors)
+    }
+
+    @Test
+    fun settingsHubOmitsBrowseAllAndPlacesVolumeAutomationInPlayback() {
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                SettingsScreen(
+                    folders = emptyList(),
+                    sleepTimerState = SleepTimerState(),
+                    waveformStyle = "SNAKE",
+                    themeMode = "DARK",
+                    uiTheme = "MIDNIGHT_OBSIDIAN",
+                    homeScreenLayout = "HERO_SPOTLIGHT",
+                    nowPlayingLayout = "MINIMAL_GLASS",
+                    playlistsLayout = "BENTO_GRID",
+                    isDynamicArtworkTheme = false,
+                    fetchOnlineArtworkHighRes = false,
+                    cacheLyricsEnabled = true,
+                    cacheAlbumArtEnabled = true,
+                    cacheSongArtWorkEnabled = true,
+                    lyricsCacheSize = "0 B",
+                    albumArtCacheSize = "0 B",
+                    songArtCacheSize = "0 B",
+                    totalCacheSize = "0 B",
+                    customEqBands = listOf(0f, 0f, 0f, 0f, 0f),
+                    customBassBoost = 0,
+                    customVirtualizer = 0,
+                    customAccentColor = 0xFF8B1A1A.toInt(),
+                    accentColorPreset = "CYAN",
+                    miniPlayerShowPrevious = true,
+                    miniPlayerShowNext = true,
+                    miniPlayerShowFavorite = true,
+                    gaplessPlayback = true,
+                    pauseOnZeroVolume = false,
+                    fadeInOutMs = 1000,
+                    crossfadeDurationSec = 3,
+                    ignoreAudioDuration = 30,
+                    fadeInMs = 1000,
+                    fadeOutMs = 1000,
+                    shakeToSkip = true,
+                    keepScreenAwake = true,
+                    audioBalance = 0f,
+                    equalizerPreset = "FLAT",
+                    lyricsAutoScroll = true,
+                    reduceVolumeOnNotification = true,
+                    scrobbleThresholdType = "PERCENTAGE",
+                    scrobbleThresholdValue = 50,
+                    recentSearches = emptyList(),
+                    highRefreshRate = false,
+                    alwaysShuffleMode = false,
+                    homeSections = listOf("continue_listening", "quick_actions", "listening_stats"),
+                    initialTargetSection = null
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Browse All Settings Continuously").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("settings_hub_view_all_footer").assertDoesNotExist()
+    }
+
+    @Test
+    fun playbackAutomationLivesInPlaybackNotAudio() {
+        var section by mutableStateOf("PLAYBACK")
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                androidx.compose.runtime.key(section) {
+                    SettingsScreen(
+                        folders = emptyList(),
+                        sleepTimerState = SleepTimerState(),
+                        waveformStyle = "SNAKE",
+                        themeMode = "DARK",
+                        uiTheme = "MIDNIGHT_OBSIDIAN",
+                        homeScreenLayout = "HERO_SPOTLIGHT",
+                        nowPlayingLayout = "MINIMAL_GLASS",
+                        playlistsLayout = "BENTO_GRID",
+                        isDynamicArtworkTheme = false,
+                        fetchOnlineArtworkHighRes = false,
+                        cacheLyricsEnabled = true,
+                        cacheAlbumArtEnabled = true,
+                        cacheSongArtWorkEnabled = true,
+                        lyricsCacheSize = "0 B",
+                        albumArtCacheSize = "0 B",
+                        songArtCacheSize = "0 B",
+                        totalCacheSize = "0 B",
+                        customEqBands = listOf(0f, 0f, 0f, 0f, 0f),
+                        customBassBoost = 0,
+                        customVirtualizer = 0,
+                        customAccentColor = 0xFF8B1A1A.toInt(),
+                        accentColorPreset = "CYAN",
+                        miniPlayerShowPrevious = true,
+                        miniPlayerShowNext = true,
+                        miniPlayerShowFavorite = true,
+                        gaplessPlayback = true,
+                        pauseOnZeroVolume = false,
+                        fadeInOutMs = 1000,
+                        crossfadeDurationSec = 3,
+                        ignoreAudioDuration = 30,
+                        fadeInMs = 1000,
+                        fadeOutMs = 1000,
+                        shakeToSkip = true,
+                        keepScreenAwake = true,
+                        audioBalance = 0f,
+                        equalizerPreset = "FLAT",
+                        lyricsAutoScroll = true,
+                        reduceVolumeOnNotification = true,
+                        scrobbleThresholdType = "PERCENTAGE",
+                        scrobbleThresholdValue = 50,
+                        recentSearches = emptyList(),
+                        highRefreshRate = false,
+                        alwaysShuffleMode = false,
+                        homeSections = listOf("continue_listening", "quick_actions", "listening_stats"),
+                        initialTargetSection = section
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(androidx.compose.ui.test.hasText("Pause on Zero Volume"))
+        composeTestRule.onNodeWithText("Pause on Zero Volume").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Auto Resume on Volume Increase").assertIsDisplayed()
+
+        section = "AUDIO"
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Pause on Zero Volume").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Auto Resume on Volume Increase").assertDoesNotExist()
+    }
+
+    @Test
+    fun homeFeedSettingsSupportsCustomNamedPreset() {
+        var savedName: String? = null
+        var savedSections: List<String>? = null
+        val presets = listOf(
+            com.example.data.local.CustomHomeFeedPreset(
+                name = "Workout Flow",
+                sections = listOf("continue_listening", "quick_actions", "most_played")
+            )
+        )
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                SettingsScreen(
+                    folders = emptyList(),
+                    sleepTimerState = SleepTimerState(),
+                    waveformStyle = "SNAKE",
+                    themeMode = "DARK",
+                    uiTheme = "MIDNIGHT_OBSIDIAN",
+                    homeScreenLayout = "HERO_SPOTLIGHT",
+                    nowPlayingLayout = "MINIMAL_GLASS",
+                    playlistsLayout = "BENTO_GRID",
+                    isDynamicArtworkTheme = false,
+                    fetchOnlineArtworkHighRes = false,
+                    cacheLyricsEnabled = true,
+                    cacheAlbumArtEnabled = true,
+                    cacheSongArtWorkEnabled = true,
+                    lyricsCacheSize = "0 B",
+                    albumArtCacheSize = "0 B",
+                    songArtCacheSize = "0 B",
+                    totalCacheSize = "0 B",
+                    customEqBands = listOf(0f, 0f, 0f, 0f, 0f),
+                    customBassBoost = 0,
+                    customVirtualizer = 0,
+                    customAccentColor = 0xFF8B1A1A.toInt(),
+                    accentColorPreset = "CYAN",
+                    miniPlayerShowPrevious = true,
+                    miniPlayerShowNext = true,
+                    miniPlayerShowFavorite = true,
+                    gaplessPlayback = true,
+                    pauseOnZeroVolume = false,
+                    fadeInOutMs = 1000,
+                    crossfadeDurationSec = 3,
+                    ignoreAudioDuration = 30,
+                    fadeInMs = 1000,
+                    fadeOutMs = 1000,
+                    shakeToSkip = true,
+                    keepScreenAwake = true,
+                    audioBalance = 0f,
+                    equalizerPreset = "FLAT",
+                    lyricsAutoScroll = true,
+                    reduceVolumeOnNotification = true,
+                    scrobbleThresholdType = "PERCENTAGE",
+                    scrobbleThresholdValue = 50,
+                    recentSearches = emptyList(),
+                    highRefreshRate = false,
+                    alwaysShuffleMode = false,
+                    homeSections = listOf("continue_listening", "quick_actions", "listening_stats"),
+                    customHomeFeedPresets = presets,
+                    onSaveCustomHomeFeedPreset = { name, secs ->
+                        savedName = name
+                        savedSections = secs
+                    },
+                    initialTargetSection = "HOME"
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Workout Flow").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_feed_save_custom_preset_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("home_feed_custom_preset_name_input")
+            .performTextInput("Night Focus")
+        composeTestRule.onNodeWithTag("home_feed_save_preset_confirm_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Night Focus", savedName)
+        assertEquals(listOf("continue_listening", "quick_actions", "listening_stats"), savedSections)
     }
 }

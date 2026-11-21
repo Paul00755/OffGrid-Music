@@ -6,6 +6,21 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Semantic version bump type"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      explicit_version:
+        description: "Optional explicit semantic version (e.g. 1.1.0 or 2.0.1)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -23,7 +38,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -31,6 +46,162 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: 'gradle'
+
+      - name: Compute Semantic Version and Plain-Language Release Notes
+        id: semver
+        env:
+          INPUT_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
+          INPUT_EXPLICIT_VERSION: ${{ github.event.inputs.explicit_version }}
+        run: |
+          python3 - << 'PYEOF'
+          import os
+          import re
+          import subprocess
+          import unicodedata
+
+          def run_git(*args):
+              proc = subprocess.run(
+                  ["git", *args],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+                  check=False,
+              )
+              return proc.stdout.strip() if proc.returncode == 0 else ""
+
+          def parse_semver(text):
+              m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", text.strip())
+              if not m:
+                  return None
+              return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+          def strip_emojis(text):
+              out = []
+              for ch in text:
+                  cp = ord(ch)
+                  cat = unicodedata.category(ch)
+                  if (
+                      cat == "So"
+                      or cp in (0xFE0E, 0xFE0F, 0x200D)
+                      or 0x1F000 <= cp <= 0x1FAFF
+                      or 0x2600 <= cp <= 0x27BF
+                  ):
+                      continue
+                  out.append(ch)
+              return re.sub(r"\s{2,}", " ", "".join(out)).strip()
+
+          def to_plain_note(subject):
+              cleaned = strip_emojis(subject)
+              if not cleaned:
+                  return None
+              lower = cleaned.lower()
+              if lower.startswith("merge ") or lower.startswith("revert \"merge "):
+                  return None
+              if re.match(r"^(ci|build)\b(\([^)]*\))?!?:\s*", lower):
+                  return None
+
+              prefix_map = [
+                  (r"^fix(\([^)]*\))?!?:\s*", "Fixed "),
+                  (r"^bugfix(\([^)]*\))?!?:\s*", "Fixed "),
+                  (r"^hotfix(\([^)]*\))?!?:\s*", "Fixed "),
+                  (r"^feat(\([^)]*\))?!?:\s*", "Added "),
+                  (r"^perf(\([^)]*\))?!?:\s*", "Improved "),
+                  (r"^refactor(\([^)]*\))?!?:\s*", "Refined "),
+                  (r"^style(\([^)]*\))?!?:\s*", "Updated "),
+                  (r"^docs(\([^)]*\))?!?:\s*", "Updated documentation: "),
+                  (r"^chore(\([^)]*\))?!?:\s*", "Updated "),
+              ]
+              for pattern, replacement in prefix_map:
+                  if re.match(pattern, cleaned, flags=re.IGNORECASE):
+                      rest = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip()
+                      if not rest:
+                          return None
+                      if replacement.endswith(" ") and rest[:1].isupper() and not rest[:2].isupper():
+                          rest = rest[:1].lower() + rest[1:]
+                      cleaned = replacement + rest
+                      break
+
+              if cleaned and cleaned[0].islower():
+                  cleaned = cleaned[0].upper() + cleaned[1:]
+              return cleaned
+
+          # 1. Read floor version from version.properties (defaults to 1.0.4)
+          floor_ver = (1, 0, 4)
+          if os.path.exists("version.properties"):
+              with open("version.properties", "r", encoding="utf-8") as fh:
+                  for line in fh:
+                      if line.strip().startswith("VERSION_NAME="):
+                          parsed = parse_semver(line.split("=", 1)[1])
+                          if parsed:
+                              floor_ver = parsed
+
+          # 2. Scan existing clean semantic tags (vMAJOR.MINOR.PATCH)
+          raw_tags = run_git("tag", "--list").splitlines()
+          semver_tags = []
+          for tag in raw_tags:
+              parsed = parse_semver(tag)
+              if parsed:
+                  semver_tags.append((parsed, tag.strip()))
+
+          semver_tags.sort(key=lambda item: item[0])
+          highest_ver = floor_ver
+          prev_tag = ""
+          if semver_tags and semver_tags[-1][0] >= floor_ver:
+              highest_ver, prev_tag = semver_tags[-1]
+
+          # 3. Determine next semantic version
+          explicit = os.environ.get("INPUT_EXPLICIT_VERSION", "").strip().lstrip("vV")
+          bump_type = os.environ.get("INPUT_BUMP_TYPE", "").strip().lower()
+          latest_commit_full = run_git("log", "-1", "--pretty=%B")
+
+          explicit_parsed = parse_semver(explicit) if explicit else None
+          if explicit_parsed:
+              next_ver = explicit_parsed
+          else:
+              major, minor, patch = highest_ver
+              if bump_type == "major" or "[major]" in latest_commit_full.lower() or "breaking change" in latest_commit_full.lower():
+                  next_ver = (major + 1, 0, 0)
+              elif bump_type == "minor" or "[minor]" in latest_commit_full.lower():
+                  next_ver = (major, minor + 1, 0)
+              else:
+                  next_ver = (major, minor, patch + 1)
+
+          next_version_str = f"{next_ver[0]}.{next_ver[1]}.{next_ver[2]}"
+          version_tag = f"v{next_version_str}"
+
+          # 4. Build concise, plain-language, emoji-free change list since previous semantic tag
+          if prev_tag:
+              raw_subjects = run_git("log", f"{prev_tag}..HEAD", "--pretty=format:%s").splitlines()
+          else:
+              raw_subjects = run_git("log", "-n", "6", "--pretty=format:%s").splitlines()
+
+          notes = []
+          seen = set()
+          for subj in raw_subjects:
+              plain = to_plain_note(subj)
+              if not plain:
+                  continue
+              key = plain.lower()
+              if key in seen:
+                  continue
+              seen.add(key)
+              notes.append(f"- {plain}")
+              if len(notes) >= 6:
+                  break
+
+          if not notes:
+              notes = ["- Fixed minor bugs and improved playback stability and interface responsiveness."]
+
+          with open("plain_release_changes.md", "w", encoding="utf-8") as fh:
+              fh.write("\n".join(notes) + "\n")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"NEXT_VERSION={next_version_str}\n")
+              env_file.write(f"VERSION_TAG={version_tag}\n")
+              env_file.write(f"PREVIOUS_TAG={prev_tag}\n")
+
+          print(f"Computed semantic version: {next_version_str} (tag: {version_tag}, previous: {prev_tag or 'none'})")
+          PYEOF
 
       - name: Setup Environment and Persistent Keystore
         run: |
@@ -65,7 +236,7 @@ jobs:
       - name: Build Minified Release APK
         run: |
           ./gradlew assembleRelease \
-            -PversionNameSuffix="-build.${{ github.run_number }}" \
+            -PappVersionName="$NEXT_VERSION" \
             -PJAM_INVITE_HOST=offgrid-music.web.app \
             -Pkotlin.compiler.execution.strategy=daemon \
             -Pksp.useKSP2=true \
@@ -73,7 +244,7 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" \
             --stacktrace
 
-      - name: Prepare APK Assets (Clean & Legacy Names + Build Info)
+      - name: Prepare APK Assets (Clean & Versioned Names + Build Info)
         run: |
           COMPILED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
           if [ -z "$COMPILED_APK" ] || [ ! -f "$COMPILED_APK" ]; then
@@ -83,12 +254,12 @@ jobs:
           echo "Found compiled APK: $COMPILED_APK"
           APK_DIR=$(dirname "$COMPILED_APK")
 
-          # 1. Clean URL-safe APK name (no spaces -> GitHub never renames it, zero 404 errors!)
+          # 1. Clean URL-safe APK name (no spaces -> GitHub never renames it, zero 404 errors)
           CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
           cp "$COMPILED_APK" "$CLEAN_APK"
 
-          # 2. Versioned APK name for easy identification in historical releases
-          VERSIONED_APK="$APK_DIR/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk"
+          # 2. Versioned APK name for clear identification in release history
+          VERSIONED_APK="$APK_DIR/OffGrid-Music-${VERSION_TAG}.apk"
           cp "$COMPILED_APK" "$VERSIONED_APK"
 
           # 3. Also keep 'OffGrid Music.apk' for artifact upload compatibility
@@ -97,7 +268,7 @@ jobs:
             cp "$COMPILED_APK" "$SPACE_APK"
           fi
 
-          # 4. Compute SHA-256 and APK size for release notes
+          # 4. Compute SHA-256 and APK size for release details
           APK_SHA256=$(sha256sum "$CLEAN_APK" | awk '{print $1}')
           APK_SIZE=$(du -h "$CLEAN_APK" | awk '{print $1}')
           echo "APK_SHA256=$APK_SHA256" >> $GITHUB_ENV
@@ -112,48 +283,43 @@ jobs:
             app/build/outputs/apk/release/OffGrid Music.apk
           retention-days: 30
 
-      - name: Publish GitHub Releases (Immutable Version History + Latest Release)
+      - name: Publish GitHub Releases (Immutable Semantic Version History + Latest Release)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK_DIR="app/build/outputs/apk/release"
           CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
-          VERSIONED_APK="$APK_DIR/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk"
+          VERSIONED_APK="$APK_DIR/OffGrid-Music-${VERSION_TAG}.apk"
           SPACE_APK="$APK_DIR/OffGrid Music.apk"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          COMMIT_MSG=$(git log -1 --pretty=%s)
-          RECENT_CHANGES=$(git log -n 5 --pretty=format:"- %s" || echo "- $COMMIT_MSG")
+          PLAIN_CHANGES=$(cat plain_release_changes.md)
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          VERSION_TAG="v1.0.4-build.${{ github.run_number }}"
           echo "TAG=$VERSION_TAG" >> "$GITHUB_ENV"
 
-          # ------------------------------------------------------------------------------
-          # 1. Create a permanent versioned release on the Releases page so ALL older
-          #    versions remain listed, browsable, and downloadable forever!
-          # ------------------------------------------------------------------------------
+          # 1. Create permanent semantic versioned release (v1.0.5, v1.0.6, ..., v1.1.0, v2.0.1, ...)
           cat << EOF > release_notes_versioned.md
-          ## 🎵 OffGrid Music — v1.0.4 (Build #${{ github.run_number }})
+          ## OffGrid Music ${VERSION_TAG}
 
-          ### ✨ What's New
-          ${RECENT_CHANGES}
+          ### What's New
+          ${PLAIN_CHANGES}
 
-          ### 📥 Direct APK Downloads
-          - **[⬇️ Download OffGrid-Music.apk (Universal Direct Link)](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music.apk)**
-          - **[⬇️ Download OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk (Versioned APK)](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music-v1.0.4-build.${{ github.run_number }}.apk)**
+          ### Direct APK Downloads
+          - [Download OffGrid-Music.apk](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music.apk)
+          - [Download OffGrid-Music-${VERSION_TAG}.apk](https://github.com/${{ github.repository }}/releases/download/${VERSION_TAG}/OffGrid-Music-${VERSION_TAG}.apk)
 
           ---
 
-          ### 📋 Build & Package Details
+          ### Build & Package Details
           | Property | Value |
           | :--- | :--- |
-          | **Version** | \`1.0.4-build.${{ github.run_number }}\` (\`versionCode = 5\`) |
+          | **Version** | \`${NEXT_VERSION}\` (\`versionCode = 5\`) |
           | **Package ID** | \`com.aistudio.offgridmusic.player\` |
-          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${COMMIT_MSG} |
+          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
           | **Branch** | \`${{ github.ref_name }}\` |
           | **Built On** | ${BUILD_DATE} |
           | **APK Size** | ${APK_SIZE} |
@@ -161,9 +327,9 @@ jobs:
 
           ---
 
-          ### 🔄 Seamless Upgrade & Downgrade Support (Retains All Data)
-          - **In-Place Updates**: Signed with the repository's permanent certificate — installs directly over any existing OffGrid Music installation without conflicting package errors or creating duplicate apps.
-          - **Install Older or Newer Versions Anytime**: Because \`versionCode\` is locked across builds, you can install this build over a newer or older release at any time while keeping all your playlists, favorites, lyrics, and settings intact.
+          ### Upgrade & Downgrade Compatibility
+          - **In-Place Updates**: Signed with the repository's permanent certificate so updates install cleanly over your existing app without losing data.
+          - **Switch Versions Anytime**: Because \`versionCode\` stays consistent across releases, you can install any previous or newer version without uninstalling.
           EOF
 
           git tag -f "$VERSION_TAG" "${{ github.sha }}"
@@ -172,45 +338,40 @@ jobs:
           if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
             gh release upload "$VERSION_TAG" "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" --clobber
             gh release edit "$VERSION_TAG" \
-              --title "OffGrid Music v1.0.4 (Build #${{ github.run_number }})" \
+              --title "OffGrid Music ${VERSION_TAG}" \
               --notes-file release_notes_versioned.md \
               --target "${{ github.sha }}" \
               --latest
           else
             gh release create "$VERSION_TAG" "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" \
-              --title "OffGrid Music v1.0.4 (Build #${{ github.run_number }})" \
+              --title "OffGrid Music ${VERSION_TAG}" \
               --notes-file release_notes_versioned.md \
               --target "${{ github.sha }}" \
               --latest
           fi
 
-          # ------------------------------------------------------------------------------
-          # 2. Also maintain the rolling 'latest' tag release so both:
-          #    - /releases/latest/download/OffGrid-Music.apk
-          #    - /releases/download/latest/OffGrid-Music.apk
-          #    always work without ever returning 404 Not Found!
-          # ------------------------------------------------------------------------------
+          # 2. Maintain rolling 'latest' tag release so direct download URLs never 404
           cat << EOF > release_notes_latest.md
-          ## 🚀 OffGrid Music — Latest Automated Release (Build #${{ github.run_number }})
+          ## OffGrid Music — Latest Release (${VERSION_TAG})
 
-          ### ✨ What's New
-          ${RECENT_CHANGES}
+          ### What's New
+          ${PLAIN_CHANGES}
 
-          ### 📥 One-Click Direct Download
-          - **[⬇️ Download Latest APK (OffGrid-Music.apk)](https://github.com/${{ github.repository }}/releases/latest/download/OffGrid-Music.apk)**
+          ### Direct Download
+          - [Download Latest APK (OffGrid-Music.apk)](https://github.com/${{ github.repository }}/releases/latest/download/OffGrid-Music.apk)
 
           ---
 
-          ### 📋 Latest Build Summary
+          ### Build Summary
           | Property | Value |
           | :--- | :--- |
-          | **Version** | \`1.0.4-build.${{ github.run_number }}\` (\`versionCode = 5\`) |
-          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) — ${COMMIT_MSG} |
+          | **Version** | \`${NEXT_VERSION}\` (\`versionCode = 5\`) |
+          | **Commit** | [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
           | **Built On** | ${BUILD_DATE} |
           | **APK Size** | ${APK_SIZE} |
           | **SHA-256** | \`${APK_SHA256}\` |
 
-          > 💡 **Looking for an older version?** Visit the **[All Releases Page](https://github.com/${{ github.repository }}/releases)** to browse and download any previous build (\`v1.0.4-build.X\`). Every historical APK is signed with the same certificate and can be installed directly over your current app without losing data.
+          Looking for an older release? Browse all versions on the [Releases Page](https://github.com/${{ github.repository }}/releases).
           EOF
 
           git tag -f latest "${{ github.sha }}"
@@ -219,19 +380,19 @@ jobs:
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" --clobber
             gh release edit latest \
-              --title "OffGrid Music — Latest Channel (Build #${{ github.run_number }})" \
+              --title "OffGrid Music — Latest Channel (${VERSION_TAG})" \
               --notes-file release_notes_latest.md \
               --target "${{ github.sha }}" \
               --latest=false
           else
             gh release create latest "$CLEAN_APK" "$VERSIONED_APK" "$SPACE_APK" \
-              --title "OffGrid Music — Latest Channel (Build #${{ github.run_number }})" \
+              --title "OffGrid Music — Latest Channel (${VERSION_TAG})" \
               --notes-file release_notes_latest.md \
               --target "${{ github.sha }}" \
               --latest=false
           fi
 
-          # Explicitly ensure the newest versioned release holds the official 'Latest' badge
+          # Explicitly ensure the newest semantic release holds the official 'Latest' badge
           gh release edit "$VERSION_TAG" --latest || true
 
       - name: Broadcast FCM Update Notification to Subscribers

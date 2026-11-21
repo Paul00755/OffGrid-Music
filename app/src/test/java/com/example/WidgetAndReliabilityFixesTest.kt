@@ -3,6 +3,7 @@ package com.example
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
+import androidx.compose.ui.graphics.toArgb
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.UserPreferencesRepository
 import com.example.data.model.Song
@@ -548,5 +549,52 @@ class WidgetAndReliabilityFixesTest {
         assertEquals(6, extraExpanded4x4.nextCount)
         assertFalse(extraExpanded4x4.keepSymmetricCenter)
     }
+
+    @Test
+    fun testCompactHighFontScaleTamilLyricsWidgetAdaptsWithoutClipping() {
+        val compactTamilSpec = WidgetUpdateManager.computeAdaptiveLyricsLayout(
+            widthDp = 280,
+            heightDp = 140,
+            availablePrevLines = 6,
+            availableNextLines = 6,
+            density = 2.75f,
+            fontScale = 1.40f,
+            currLineText = "ஆனந்த யாழை மீட்டுகிறாய் அடி நெஞ்சில் வண்ணம் தீட்டுகிறாய்",
+            actualWidgetHeightDp = 136
+        )
+        assertTrue("Widget text sizing must use dp units to shield against XL system font overflow", compactTamilSpec.useDpUnits)
+        assertTrue(
+            "Compact high-fontScale 2-line Tamil widget must reduce surrounding lines so active lyric never clips (prev=${compactTamilSpec.prevCount}, next=${compactTamilSpec.nextCount})",
+            compactTamilSpec.prevCount <= 1 && compactTamilSpec.nextCount <= 1
+        )
+        assertTrue(
+            "Active Tamil lyric size must stay readable yet bounded (was ${compactTamilSpec.currTextSizeSp})",
+            compactTamilSpec.currTextSizeSp in 11.0f..15.0f
+        )
+    }
+
+    @Test
+    fun testBlueArtworkWithWarmRustShirtExtractsBlueNotBrown() {
+        val bmp = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint()
+        // 72% bright sky blue + blue city background (like Idhayaa artwork)
+        paint.color = android.graphics.Color.rgb(176, 214, 236)
+        canvas.drawRect(0f, 0f, 48f, 48f, paint)
+        // 28% rust-orange/brown shirt + skin patch in center
+        paint.color = android.graphics.Color.rgb(174, 92, 68)
+        canvas.drawRect(14f, 14f, 34f, 38f, paint)
+
+        val extracted = com.example.util.ArtworkColorExtractor.findProminentColor(bmp)
+        bmp.recycle()
+        assertNotNull(extracted)
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(extracted!!.toArgb(), hsv)
+        assertTrue(
+            "Dominant blue artwork with smaller rust-orange shirt must extract blue hue (175°..240°), got hue=${hsv[0]}",
+            hsv[0] in 175f..240f
+        )
+    }
 }
+
 

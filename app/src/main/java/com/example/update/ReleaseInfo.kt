@@ -96,43 +96,140 @@ data class ReleaseInfo(
             return fromAsset ?: fromName ?: fromBody ?: fromTag
         }
 
+        private fun stripEmojis(input: String): String {
+            val sb = StringBuilder(input.length)
+            var i = 0
+            while (i < input.length) {
+                val cp = Character.codePointAt(input, i)
+                val charCount = Character.charCount(cp)
+                val type = Character.getType(cp)
+                val isEmojiOrSymbol =
+                    type == Character.OTHER_SYMBOL.toInt() ||
+                        cp == 0xFE0E ||
+                        cp == 0xFE0F ||
+                        cp == 0x200D ||
+                        cp in 0x1F000..0x1FAFF ||
+                        cp in 0x2600..0x27BF
+                if (!isEmojiOrSymbol) {
+                    sb.appendCodePoint(cp)
+                }
+                i += charCount
+            }
+            return sb.toString()
+        }
+
+        private val CONVENTIONAL_COMMIT_REGEX = Regex(
+            "^([a-zA-Z]+)(?:\\([^)]*\\))?!?\\s*:\\s*"
+        )
+
         fun sanitizeReleaseNotes(notes: String): String {
             if (notes.isBlank()) {
-                return "• Performance improvements and bug fixes for a smoother audio playback experience."
+                return "• Fixed stability issues and improved playback reliability."
             }
 
             val lines = notes.lines()
-            val filtered = lines.filterNot { line ->
-                val trimmed = line.trim()
-                // Filter out internal CI links and automated checksum lines that clutter user-facing dialogs
-                trimmed.startsWith("SHA-256:", ignoreCase = true) ||
-                trimmed.startsWith("| **SHA-256**", ignoreCase = true) ||
-                trimmed.startsWith("### 📥 Direct APK Downloads", ignoreCase = true) ||
-                trimmed.startsWith("📦 Direct APK Download", ignoreCase = true) ||
-                trimmed.startsWith("- **[⬇️ Download", ignoreCase = true) ||
-                trimmed.startsWith("| :---", ignoreCase = true) ||
-                trimmed.startsWith("| Property |", ignoreCase = true) ||
-                trimmed.startsWith("| **Branch**", ignoreCase = true) ||
-                trimmed.startsWith("| **Commit**", ignoreCase = true)
-            }.map { line ->
-                line.replace(Regex("<[^>]*>"), "")
+            val seen = LinkedHashSet<String>()
+            val cleaned = mutableListOf<String>()
+
+            for (rawLine in lines) {
+                val trimmed = rawLine.trim()
+                if (trimmed.isBlank()) continue
+                val lower = trimmed.lowercase(Locale.US)
+
+                // Drop GitHub release boilerplate, CI metadata tables, download links, and upgrade footnotes
+                val isBoilerplate =
+                    lower.startsWith("sha-256:") ||
+                        lower.startsWith("|") ||
+                        lower.startsWith(">") ||
+                        lower.startsWith("---") ||
+                        lower.startsWith("full changelog") ||
+                        lower.contains("direct apk download") ||
+                        lower.contains("one-click direct download") ||
+                        lower.contains("direct download") ||
+                        lower.contains("download offgrid-music") ||
+                        lower.contains("download latest apk") ||
+                        lower.contains("build & package details") ||
+                        lower.contains("latest build summary") ||
+                        lower.contains("build summary") ||
+                        lower.contains("seamless upgrade") ||
+                        lower.contains("upgrade & downgrade compatibility") ||
+                        lower.contains("in-place updates") ||
+                        lower.contains("switch versions anytime") ||
+                        lower.contains("install older or newer") ||
+                        lower.contains("looking for an older") ||
+                        lower.contains("github.com/") ||
+                        lower.startsWith("## offgrid music") ||
+                        lower.startsWith("# offgrid music") ||
+                        lower.matches(Regex("^#+\\s*(?:offgrid music|what'?s new|changes|fixes|improvements|changelog).*"))
+
+                if (isBoilerplate) continue
+
+                var text = stripEmojis(trimmed)
+                    .replace(Regex("<[^>]*>"), "")
                     .replace(Regex("^#+\\s*"), "")
                     .replace("**", "")
                     .replace("__", "")
+                    .replace("`", "")
                     .replace(Regex("\\[([^\\]]+)\\]\\([^)]+\\)"), "$1")
-                    .replace(Regex("^[-*]\\s+\\[[xX ]\\]\\s*"), "• ")
-                    .replace(Regex("^[-*]\\s+"), "• ")
-                    .trimEnd()
-            }.filter { line ->
-                val trimmed = line.trim()
-                trimmed.isNotBlank() && !trimmed.startsWith("---")
+                    .replace(Regex("\\s*\\(#[0-9]+\\)\\s*$"), "")
+                    .replace(Regex("\\s*\\([0-9a-f]{7,40}\\)\\s*$"), "")
+                    .replace(Regex("^[-*•]\\s+\\[[xX ]\\]\\s*"), "")
+                    .replace(Regex("^[-*•]\\s+"), "")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+
+                if (text.isBlank()) continue
+                val textLower = text.lowercase(Locale.US)
+                if (textLower == "what's new" ||
+                    textLower == "whats new" ||
+                    textLower.startsWith("offgrid music") ||
+                    textLower.startsWith("merge pull request") ||
+                    textLower.startsWith("merge branch") ||
+                    textLower.startsWith("merge remote-tracking")
+                ) {
+                    continue
+                }
+
+                // Convert raw conventional-commit prefixes (fix:, feat:, perf:, refactor:) into natural language
+                val prefixMatch = CONVENTIONAL_COMMIT_REGEX.find(text)
+                if (prefixMatch != null) {
+                    val kind = prefixMatch.groupValues[1].lowercase(Locale.US)
+                    val rest = text.substring(prefixMatch.range.last + 1).trim()
+                    if (rest.isNotBlank()) {
+                        val verb = when (kind) {
+                            "fix", "bugfix", "hotfix" -> "Fixed"
+                            "feat", "feature", "add" -> "Added"
+                            "perf", "opt", "optimize" -> "Improved"
+                            "style", "ui", "ux" -> "Refined"
+                            "refactor", "chore", "build", "ci", "docs" -> "Updated"
+                            else -> ""
+                        }
+                        text = if (verb.isNotEmpty() && !rest.startsWith(verb, ignoreCase = true)) {
+                            val loweredFirst = rest.replaceFirstChar { it.lowercase(Locale.US) }
+                            "$verb $loweredFirst"
+                        } else {
+                            rest
+                        }
+                    }
+                }
+
+                // Sentence-case and ensure clean punctuation
+                text = text.replaceFirstChar { ch ->
+                    if (ch.isLowerCase()) ch.titlecase(Locale.US) else ch.toString()
+                }
+                if (text.length < 4) continue
+
+                val key = text.lowercase(Locale.US)
+                if (seen.add(key)) {
+                    cleaned.add("• $text")
+                }
+                if (cleaned.size >= 8) break
             }
 
-            val result = filtered.joinToString("\n").trim()
-            return if (result.isBlank()) {
-                "• Performance improvements and stability enhancements."
+            return if (cleaned.isEmpty()) {
+                "• Fixed stability issues and improved playback reliability."
             } else {
-                result
+                cleaned.joinToString("\n")
             }
         }
 

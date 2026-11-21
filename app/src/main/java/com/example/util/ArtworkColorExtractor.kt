@@ -14,7 +14,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 object ArtworkColorExtractor {
-    private const val PREFS_NAME = "artwork_palette_cache_v4"
+    private const val PREFS_NAME = "artwork_palette_cache_v5"
     private val colorCache = object : android.util.LruCache<String, Color>(500) {}
     private val dualGradientCache = object : android.util.LruCache<String, Pair<Color, Color>>(250) {}
     private val bottomStageColorCache = object : android.util.LruCache<String, Color>(250) {}
@@ -84,7 +84,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "song_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "song_v5_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         getCachedColor(context, cacheKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
@@ -160,7 +160,7 @@ object ArtworkColorExtractor {
         val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v5_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -209,7 +209,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v4_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v5_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -406,7 +406,7 @@ object ArtworkColorExtractor {
 
     suspend fun extractPrimaryColor(context: Context, artworkUriStr: String?): Color? {
         if (artworkUriStr.isNullOrBlank()) return null
-        val uriCacheKey = "uri_v4_$artworkUriStr"
+        val uriCacheKey = "uri_v5_$artworkUriStr"
         synchronized(this) {
             if (failedCache.get(uriCacheKey) == true) return null
         }
@@ -564,10 +564,15 @@ object ArtworkColorExtractor {
                 val value = maxC / 255f
                 val saturation = if (maxC == 0) 0f else delta.toFloat() / maxC.toFloat()
 
-                if (value < 0.24f) continue
-                val minSatThreshold = if (value >= 0.45f) 0.06f else 0.14f
+                if (value < 0.22f) continue
+                // Keep bright pastel blues, pinks, cyans, and lavenders even when gently saturated (e.g. sky backgrounds)
+                val minSatThreshold = when {
+                    value >= 0.58f -> 0.055f
+                    value >= 0.40f -> 0.085f
+                    else -> 0.14f
+                }
                 if (saturation < minSatThreshold) continue
-                if (value > 0.97f && saturation < 0.08f) continue
+                if (value > 0.985f && saturation < 0.055f) continue
 
                 var hue = when {
                     delta == 0 -> 0f
@@ -577,13 +582,23 @@ object ArtworkColorExtractor {
                 }
                 if (hue < 0f) hue += 360f
 
+                // Coverage-first perceptual weighting:
+                // Dominant area (e.g. bright blue sky / teal sea / pastel pink backdrop) must beat small
+                // high-saturation rust-orange shirts or human skin-tone patches.
                 val brightnessWeight = when {
-                    value in 0.45f..0.95f -> 1.65f
-                    value > 0.95f -> 1.05f
-                    else -> 0.55f
+                    value in 0.45f..0.96f -> 1.65f
+                    value > 0.96f -> 1.25f
+                    else -> 0.60f
                 }
-                val satWeight = 0.38f + saturation * 0.62f
-                val weight = satWeight * brightnessWeight * spatialWeight
+                val satWeight = 0.72f + saturation.coerceAtMost(0.75f) * 0.28f
+
+                // Gently dampen muddy brown / human skin-tone / rust-orange regions (8°..42°, mid-low value)
+                // so portraits on blue, green, or violet artwork keep the scene's true dominant hue.
+                // Covers that are genuinely warm/orange/gold overall still win cleanly by area.
+                val isMuddyBrownOrSkinTone = hue in 8f..42f && value < 0.80f && saturation in 0.18f..0.82f
+                val hueBalanceWeight = if (isMuddyBrownOrSkinTone) 0.54f else 1.0f
+
+                val weight = satWeight * brightnessWeight * spatialWeight * hueBalanceWeight
 
                 val bucketIdx = ((hue / 15f).toInt()) % numBuckets
                 bucketCount[bucketIdx]++
@@ -601,7 +616,7 @@ object ArtworkColorExtractor {
             if (bucketCount[idx] == 0) continue
             val prevIdx = (idx - 1 + numBuckets) % numBuckets
             val nextIdx = (idx + 1) % numBuckets
-            val smoothed = bucketWeight[idx] + (bucketWeight[prevIdx] * 0.55f) + (bucketWeight[nextIdx] * 0.55f)
+            val smoothed = bucketWeight[idx] + (bucketWeight[prevIdx] * 0.45f) + (bucketWeight[nextIdx] * 0.45f)
             if (smoothed > maxSmoothedWeight) {
                 maxSmoothedWeight = smoothed
                 winningIdx = idx
@@ -616,11 +631,11 @@ object ArtworkColorExtractor {
             val prevIdx = (winningIdx - 1 + numBuckets) % numBuckets
             val nextIdx = (winningIdx + 1) % numBuckets
             val totalW = bucketWeight[winningIdx].toDouble() +
-                (bucketWeight[prevIdx].toDouble() * 0.5) +
-                (bucketWeight[nextIdx].toDouble() * 0.5)
-            val sumR = bucketSumR[winningIdx] + (bucketSumR[prevIdx] * 0.5) + (bucketSumR[nextIdx] * 0.5)
-            val sumG = bucketSumG[winningIdx] + (bucketSumG[prevIdx] * 0.5) + (bucketSumG[nextIdx] * 0.5)
-            val sumB = bucketSumB[winningIdx] + (bucketSumB[prevIdx] * 0.5) + (bucketSumB[nextIdx] * 0.5)
+                (bucketWeight[prevIdx].toDouble() * 0.42) +
+                (bucketWeight[nextIdx].toDouble() * 0.42)
+            val sumR = bucketSumR[winningIdx] + (bucketSumR[prevIdx] * 0.42) + (bucketSumR[nextIdx] * 0.42)
+            val sumG = bucketSumG[winningIdx] + (bucketSumG[prevIdx] * 0.42) + (bucketSumG[nextIdx] * 0.42)
+            val sumB = bucketSumB[winningIdx] + (bucketSumB[prevIdx] * 0.42) + (bucketSumB[nextIdx] * 0.42)
             avgR = (sumR / totalW).toInt().coerceIn(0, 255)
             avgG = (sumG / totalW).toInt().coerceIn(0, 255)
             avgB = (sumB / totalW).toInt().coerceIn(0, 255)
@@ -636,8 +651,8 @@ object ArtworkColorExtractor {
         val rawColorInt = android.graphics.Color.rgb(avgR, avgG, avgB)
         android.graphics.Color.colorToHSV(rawColorInt, hsv)
 
-        // Preserve the extracted hue while shaping into a soft, luminous pastel palette
-        hsv[1] = hsv[1].coerceIn(0.28f, 0.45f)
+        // Preserve the extracted hue while shaping into a clean, luminous pastel palette
+        hsv[1] = hsv[1].coerceIn(0.28f, 0.48f)
         hsv[2] = hsv[2].coerceIn(0.90f, 0.97f)
 
         val adjustedColorInt = android.graphics.Color.HSVToColor(hsv)

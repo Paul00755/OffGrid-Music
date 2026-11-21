@@ -19,6 +19,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
 )
 
+data class CustomHomeFeedPreset(
+    val name: String,
+    val sections: List<String>
+)
+
 class UserPreferencesRepository(private val context: Context) {
 
     private val safeData: Flow<Preferences> = context.dataStore.data.catch {
@@ -213,6 +218,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // HomeScreen Customization
         val HOME_SECTIONS = stringPreferencesKey("home_sections")
+        val CUSTOM_HOME_FEED_PRESETS = stringPreferencesKey("custom_home_feed_presets")
 
         // Normalize Audio
         val NORMALIZE_AUDIO = booleanPreferencesKey("normalize_audio")
@@ -880,6 +886,88 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.HOME_SECTIONS] = serialized
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
+    }
+
+    val customHomeFeedPresets: Flow<List<CustomHomeFeedPreset>> = safeData.map { prefs ->
+        val raw = prefs[PreferenceKeys.CUSTOM_HOME_FEED_PRESETS]
+            ?: readStringCached("custom_home_feed_presets", "[]")
+        parseCustomHomeFeedPresets(raw)
+    }
+
+    fun getCustomHomeFeedPresetsSync(): List<CustomHomeFeedPreset> {
+        return parseCustomHomeFeedPresets(readStringCached("custom_home_feed_presets", "[]"))
+    }
+
+    suspend fun saveCustomHomeFeedPreset(name: String, sections: List<String>) {
+        val cleanName = name.trim().take(36)
+        if (cleanName.isBlank()) return
+        val cleanSections = sections.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        val existing = getCustomHomeFeedPresetsSync().toMutableList()
+        val existingIdx = existing.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
+        val updatedEntry = CustomHomeFeedPreset(name = cleanName, sections = cleanSections)
+        if (existingIdx >= 0) {
+            existing[existingIdx] = updatedEntry
+        } else {
+            existing.add(updatedEntry)
+        }
+        val serialized = serializeCustomHomeFeedPresets(existing)
+        val now = System.currentTimeMillis()
+        writeStringCached("custom_home_feed_presets", serialized, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_HOME_FEED_PRESETS] = serialized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun deleteCustomHomeFeedPreset(name: String) {
+        val existing = getCustomHomeFeedPresetsSync()
+            .filterNot { it.name.equals(name.trim(), ignoreCase = true) }
+        val serialized = serializeCustomHomeFeedPresets(existing)
+        val now = System.currentTimeMillis()
+        writeStringCached("custom_home_feed_presets", serialized, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.CUSTOM_HOME_FEED_PRESETS] = serialized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    private fun parseCustomHomeFeedPresets(rawJson: String): List<CustomHomeFeedPreset> {
+        if (rawJson.isBlank() || rawJson == "[]") return emptyList()
+        return try {
+            val arr = org.json.JSONArray(rawJson)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val name = obj.optString("name", "").trim()
+                    if (name.isBlank()) continue
+                    val secArr = obj.optJSONArray("sections")
+                    val sections = buildList {
+                        if (secArr != null) {
+                            for (j in 0 until secArr.length()) {
+                                val s = secArr.optString(j, "").trim()
+                                if (s.isNotBlank()) add(s)
+                            }
+                        }
+                    }
+                    add(CustomHomeFeedPreset(name = name, sections = sections))
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun serializeCustomHomeFeedPresets(presets: List<CustomHomeFeedPreset>): String {
+        val arr = org.json.JSONArray()
+        presets.forEach { preset ->
+            val obj = org.json.JSONObject()
+            obj.put("name", preset.name)
+            val secArr = org.json.JSONArray()
+            preset.sections.forEach { secArr.put(it) }
+            obj.put("sections", secArr)
+            arr.put(obj)
+        }
+        return arr.toString()
     }
 
     val highRefreshRate: Flow<Boolean> = safeData.map { prefs ->

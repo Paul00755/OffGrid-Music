@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,53 +25,91 @@ def b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
-def sanitize_release_notes(raw_notes: str, max_lines: int = 6, max_chars: int = 360) -> str:
+def strip_emojis(text: str) -> str:
+    out = []
+    for ch in text:
+        cp = ord(ch)
+        cat = unicodedata.category(ch)
+        if (
+            cat == "So"
+            or cp in (0xFE0E, 0xFE0F, 0x200D)
+            or 0x1F000 <= cp <= 0x1FAFF
+            or 0x2600 <= cp <= 0x27BF
+        ):
+            continue
+        out.append(ch)
+    return re.sub(r"\s{2,}", " ", "".join(out)).strip()
+
+
+def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 340) -> str:
+    fallback = "• Fixed minor bugs and improved playback stability and responsiveness."
     if not raw_notes or not raw_notes.strip():
-        return "• Bug fixes, stability improvements, and audio playback optimizations."
+        return fallback
+
+    prefix_rules = [
+        (r"^fix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^bugfix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^hotfix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^feat(\([^)]*\))?!?:\s*", "Added "),
+        (r"^perf(\([^)]*\))?!?:\s*", "Improved "),
+        (r"^refactor(\([^)]*\))?!?:\s*", "Refined "),
+        (r"^style(\([^)]*\))?!?:\s*", "Updated "),
+        (r"^chore(\([^)]*\))?!?:\s*", "Updated "),
+    ]
 
     cleaned_lines = []
+    seen = set()
     for line in raw_notes.splitlines():
         trimmed = line.strip()
-        if not trimmed:
-            continue
-        lower = trimmed.lower()
-        if (
-            lower.startswith("sha-256:")
-            or lower.startswith("| **sha-256**")
-            or lower.startswith("### 📥 direct apk downloads")
-            or lower.startswith("📦 direct apk download")
-            or lower.startswith("- **[⬇️ download")
-            or lower.startswith("| :---")
-            or lower.startswith("| property |")
-            or lower.startswith("| **branch**")
-            or lower.startswith("| **commit**")
-            or lower.startswith("| **version**")
-            or lower.startswith("| **package id**")
-            or lower.startswith("| **built on**")
-            or lower.startswith("| **apk size**")
-            or lower.startswith("### 📋 build & package details")
-            or lower.startswith("### 🔄 seamless upgrade")
-            or lower.startswith("- **in-place updates**")
-            or lower.startswith("- **install older or newer")
-            or trimmed.startswith("---")
-        ):
+        if not trimmed or trimmed.startswith("---") or trimmed.startswith("|"):
             continue
 
         line_clean = re.sub(r"<[^>]*>", "", trimmed)
         line_clean = re.sub(r"^#+\s*", "", line_clean)
-        line_clean = line_clean.replace("**", "").replace("__", "")
+        line_clean = line_clean.replace("**", "").replace("__", "").replace("`", "")
         line_clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line_clean)
-        line_clean = re.sub(r"^[-*]\s+\[[xX ]\]\s*", "• ", line_clean)
-        line_clean = re.sub(r"^[-*]\s+", "• ", line_clean)
-        line_clean = line_clean.strip()
-        if line_clean and line_clean.lower() not in ("what's new", "✨ what's new"):
-            cleaned_lines.append(line_clean)
+        line_clean = strip_emojis(line_clean)
+        line_clean = re.sub(r"^[-*•]\s+\[[xX ]\]\s*", "", line_clean)
+        line_clean = re.sub(r"^[-*•]\s+", "", line_clean).strip()
+
+        lower = line_clean.lower()
+        if (
+            not line_clean
+            or lower in ("what's new", "whats new", "direct apk downloads", "direct download", "build & package details", "build summary", "upgrade & downgrade compatibility", "seamless upgrade & downgrade support (retains all data)")
+            or lower.startswith("offgrid music")
+            or lower.startswith("download offgrid-music")
+            or lower.startswith("download latest apk")
+            or lower.startswith("sha-256")
+            or lower.startswith("in-place updates")
+            or lower.startswith("switch versions anytime")
+            or lower.startswith("install older or newer")
+            or lower.startswith("looking for an older")
+            or lower.startswith("merge ")
+        ):
+            continue
+
+        for pattern, replacement in prefix_rules:
+            if re.match(pattern, line_clean, flags=re.IGNORECASE):
+                rest = re.sub(pattern, "", line_clean, count=1, flags=re.IGNORECASE).strip()
+                if rest and rest[:1].isupper() and not rest[:2].isupper():
+                    rest = rest[:1].lower() + rest[1:]
+                line_clean = (replacement + rest).strip()
+                break
+
+        if line_clean and line_clean[0].islower():
+            line_clean = line_clean[0].upper() + line_clean[1:]
+
+        key = line_clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned_lines.append(f"• {line_clean}")
         if len(cleaned_lines) >= max_lines:
             break
 
     result = "\n".join(cleaned_lines).strip()
     if not result:
-        return "• Bug fixes, stability improvements, and audio playback optimizations."
+        return fallback
     if len(result) > max_chars:
         result = result[: max_chars - 1].rstrip() + "…"
     return result
@@ -211,7 +250,7 @@ def main() -> int:
         return 0
 
     if not sa_raw:
-        print("ℹ️ FIREBASE_SERVICE_ACCOUNT_JSON secret is not configured in GitHub Secrets.")
+        print("Info: FIREBASE_SERVICE_ACCOUNT_JSON secret is not configured in GitHub Secrets.")
         print("Skipping FCM broadcast; in-app GitHub release detection remains active.")
         return 0
 
@@ -235,7 +274,7 @@ def main() -> int:
     asset_names = [a.get("name", "") for a in assets if isinstance(a, dict)]
 
     if RECEIPT_ASSET_NAME in asset_names:
-        print(f"✓ Release '{tag}' already has '{RECEIPT_ASSET_NAME}'. Skipping duplicate FCM broadcast.")
+        print(f"Release '{tag}' already has '{RECEIPT_ASSET_NAME}'. Skipping duplicate FCM broadcast.")
         return 0
 
     apk_assets = [a for a in assets if isinstance(a, dict) and a.get("name", "").lower().endswith(".apk")]
@@ -298,7 +337,7 @@ def main() -> int:
             status = resp.status
             resp_data = json.loads(resp.read().decode("utf-8"))
             message_name = resp_data.get("name", "")
-            print(f"✓ FCM HTTP v1 broadcast succeeded (HTTP {status}): {message_name}")
+            print(f"FCM HTTP v1 broadcast succeeded (HTTP {status}): {message_name}")
             upload_dedup_receipt(tag, message_name)
             return 0
     except urllib.error.HTTPError as http_err:

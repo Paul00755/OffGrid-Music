@@ -694,6 +694,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.Eagerly,
         preferences.getHomeSectionsSync()
     )
+    val customHomeFeedPresets: StateFlow<List<com.example.data.local.CustomHomeFeedPreset>> =
+        preferences.customHomeFeedPresets.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            preferences.getCustomHomeFeedPresetsSync()
+        )
     val displayScale: StateFlow<String> = preferences.displayScale.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDisplayScaleSync())
 
     private val _speedDialSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -709,6 +715,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setHomeSections(sections: List<String>) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setHomeSections(sections)
+        }
+    }
+
+    fun saveCustomHomeFeedPreset(name: String, sections: List<String>) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.saveCustomHomeFeedPreset(name, sections)
+        }
+    }
+
+    fun deleteCustomHomeFeedPreset(name: String) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.deleteCustomHomeFeedPreset(name)
         }
     }
 

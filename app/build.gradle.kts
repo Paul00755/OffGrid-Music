@@ -1,6 +1,7 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 import java.io.File
 import java.util.Base64
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -26,6 +27,17 @@ if (!persistentDebugKeystoreFile.exists() || persistentDebugKeystoreFile.length(
   persistentDebugKeystoreFile.writeBytes(Base64.getDecoder().decode(b64Content))
 }
 
+val versionPropertiesFile = File(rootDir, "version.properties")
+val versionProperties = Properties().apply {
+  if (versionPropertiesFile.exists()) {
+    versionPropertiesFile.inputStream().use { load(it) }
+  }
+}
+val baseVersionName = (project.findProperty("appVersionName") as? String)
+  ?.trim()
+  ?.takeIf { it.isNotBlank() }
+  ?: versionProperties.getProperty("VERSION_NAME")?.trim()?.takeIf { it.isNotBlank() }
+  ?: "1.0.4"
 val ciVersionSuffix = (project.findProperty("versionNameSuffix") as? String)?.trim().orEmpty()
 val jamInviteHostCandidate = providers.gradleProperty("JAM_INVITE_HOST")
   .orElse(providers.environmentVariable("JAM_INVITE_HOST"))
@@ -62,7 +74,7 @@ android {
     // Keep versionCode constant across builds so Android allows both upgrading to newer builds
     // AND installing older GitHub Release APKs without INSTALL_FAILED_VERSION_DOWNGRADE
     versionCode = 5
-    versionName = "1.0.4$ciVersionSuffix"
+    versionName = "$baseVersionName$ciVersionSuffix"
     buildConfigField("String", "JAM_INVITE_HOST", "\"$jamInviteHost\"")
     buildConfigField("String", "JAM_TURN_URI", asBuildConfigString(jamTurnUri))
     buildConfigField("String", "JAM_TURN_USERNAME", asBuildConfigString(jamTurnUsername))

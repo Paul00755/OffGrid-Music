@@ -176,6 +176,7 @@ class NowPlayingAndLyricsLayoutsTest {
     @Test
     fun testSettingsScreenShowsFourthLyricsUiBoxAndBothNewToggles() {
         val selectedLyrics = AtomicReference("CLASSIC_DEFAULT")
+        val selectedWaveform = AtomicReference("SNAKE")
         val volumeBarToggled = AtomicBoolean(false)
         val advancedInfoToggled = AtomicBoolean(false)
 
@@ -184,6 +185,8 @@ class NowPlayingAndLyricsLayoutsTest {
                 SettingsScreen(
                     folders = emptyList(),
                     sleepTimerState = SleepTimerState(),
+                    waveformStyle = selectedWaveform.get(),
+                    onSetWaveformStyle = { selectedWaveform.set(it) },
                     lyricsLayout = selectedLyrics.get(),
                     onSetLyricsLayout = { selectedLyrics.set(it) },
                     showNowPlayingVolumeBar = false,
@@ -196,29 +199,51 @@ class NowPlayingAndLyricsLayoutsTest {
         }
         composeTestRule.waitForIdle()
 
-        // Verify 4th pill "Lyrics UI" exists alongside Now Playing, Home Screen, Playlists
-        composeTestRule.onNodeWithText("Lyrics UI").performScrollTo().assertIsDisplayed().performClick()
+        // Verify dedicated Layout Studio entry tile for "Lyrics UI" opens full-screen swipeable Studio
+        composeTestRule.onNodeWithTag("layout_entry_lyrics").performScrollTo().assertIsDisplayed().performClick()
         composeTestRule.waitForIdle()
 
-        // Verify Classic Default plus Fluid Glow and Studio Timeline render, and Karaoke Stage is removed
-        composeTestRule.onNodeWithText("Classic Bento").performScrollTo().assertExists()
+        composeTestRule.onNodeWithTag("ui_layout_studio_screen").assertIsDisplayed()
+        // Verify Classic Bento plus Fluid Glow and Studio Timeline exist, and Karaoke Stage is removed
+        composeTestRule.onAllNodesWithText("Classic Bento").onFirst().assertExists()
         composeTestRule.onNodeWithText("Fluid Glow").assertExists()
         composeTestRule.onNodeWithText("Karaoke Stage").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("lyrics_layout_preview_row").performScrollToNode(hasText("Studio Timeline"))
         composeTestRule.onNodeWithText("Studio Timeline").assertExists().performClick()
+        composeTestRule.waitForIdle()
+
+        // Confirm via "Set" button and verify callback committed + returned to UI & Theme
+        composeTestRule.onNodeWithTag("layout_studio_confirm_button").performClick()
         composeTestRule.waitForIdle()
         assertEquals(LyricsLayout.EDITORIAL_TIMELINE.id, selectedLyrics.get())
 
-        // Scroll directly to the two new UI toggles in UI & Themes section
+        // Open visual Waveform Style Picker Dialog and verify all 7 styles including Squiggly, Wave, Bar
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(androidx.compose.ui.test.hasTestTag("settings_waveform_picker_trigger"))
+        composeTestRule.onNodeWithTag("settings_waveform_picker_trigger").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("waveform_style_picker_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("waveform_option_sleek_line").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_snake").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_bars").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_dots").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_wavy").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_bar").assertExists()
+        composeTestRule.onNodeWithTag("waveform_option_squiggly").assertExists().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("SQUIGGLY", selectedWaveform.get())
+
+        // Scroll directly to the two UI toggles in Now Playing & Waveform group
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(androidx.compose.ui.test.hasText("Include Volume Seek bar in Now-Playing screen"))
         composeTestRule.onNodeWithText("Include Volume Seek bar in Now-Playing screen")
-            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
         composeTestRule.waitForIdle()
         assertTrue(volumeBarToggled.get())
 
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(androidx.compose.ui.test.hasText("Display advanced song information in the Now-Playing screen"))
         composeTestRule.onNodeWithText("Display advanced song information in the Now-Playing screen")
-            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
         composeTestRule.waitForIdle()
@@ -281,7 +306,7 @@ class NowPlayingAndLyricsLayoutsTest {
             composeTestRule.onNodeWithTag("now_playing_volume_seekbar", useUnmergedTree = true).assertExists()
 
             if (layoutId == NowPlayingLayout.NEON_WAVEFORM.id) {
-                for (wf in listOf("SLEEK_LINE", "SNAKE", "BARS", "DOTS")) {
+                for (wf in listOf("SLEEK_LINE", "SNAKE", "BARS", "DOTS", "SQUIGGLY", "WAVY", "BAR")) {
                     currentWaveform.value = wf
                     composeTestRule.waitForIdle()
                     composeTestRule.onNodeWithTag("neon_studio_waveform_visualizer", useUnmergedTree = true).assertExists()
