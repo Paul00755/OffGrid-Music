@@ -54,7 +54,7 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
 | **Audio Consistency** | Quiet and loud tracks force constant volume adjustments | Built-in **Normalize Audio**, **Stereo Balance**, **5-Band EQ**, **Bass Boost**, and **3D Virtualizer** |
 | **Lyrics Experience** | Plain static text or no lyrics support | **Live synced `.lrc` lyrics**, **3 Lyrics UI layouts**, tap-to-seek, timing offset sync, online search, and optional **AI Translate / Transcribe** |
 | **Per-Song Control** | Only Repeat Off / All / Infinite Repeat One | **"Repeat this song" (1–10×)** on the active track or queued songs, compatible with Crossfade, Gapless, and Sleep Timer |
-| **Visual Personalization** | One fixed dark/light layout | **10 themes**, **4 display modes**, **Dynamic Artwork colors**, **Dark Colors / Palette Lite toggle**, **Live Screen Layout Studio**, **7 waveform styles**, **Custom Named Home Feeds**, and **5 adaptive widgets** |
+| **Visual Personalization** | One fixed dark/light layout | **4 display modes (incl. Pure AMOLED)**, **Accent Palette + RGB Color Wheel**, **Dynamic Artwork colors**, **Dark Colors / Palette Lite toggle**, **Live Screen Layout Studio**, **4 Mini-Player styles**, **7 waveform styles**, **Custom Named Home Feeds**, and **5 adaptive widgets** |
 | **Cloud Backup & Restore** | Lose playlists and stats when changing phones | Optional **Google Login & Email/Password Login** with manual **Backup Now**, **Sync / Restore Now**, and scheduled **Automatic Backups** |
 | **Listening Insights** | Basic play counter at best | **Detailed Listening Stats**, **6-slide Wrapped Story**, **Calendar date/range picker**, and shareable stats cards |
 | **Shared Listening** | Strictly solo listening | **OffGrid Jam** lets 2–10 friends listen in sync and share approved local songs directly device-to-device |
@@ -70,7 +70,7 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
 - **Synced Lyrics & Optional AI Studio:** Real-time scrolling `.lrc` lyrics across **3 Lyrics UI layouts** with tap-to-seek, timing offset (`±ms`) saved locally, online lyric search, and optional Gemini AI translation/transcription (English, Tamil/Tanglish, Hindi, Malayalam) with one-tap Undo.
 - **Precision Scanner & Library Tools:** Scans **12 audio formats** (`MP3`, `FLAC`, `M4A`, `AAC`, `OGG`, `OPUS`, `WAV`, `WMA`, `AMR`, `3GP`, `M4R`, `AIFF`) with native folder include/exclude rules, short-clip duration filter (`0–180s`), ID3 tag & cover art editor, Tag Cleaner, and Duplicate Finder.
 - **Effortless Queue & Playlists:** 1:1 finger-tracked drag-and-drop queue & playlist sorting, duplicate-friendly queue with one-tap deduplication, custom playlist covers, M3U/M3U8 import & export, and rule-based Smart Playlists.
-- **Live Screen Layout Studio & Visual Personalization:** 4 Display Modes (including Pure AMOLED), 10 curated themes, refined Dynamic Artwork extraction, **Use Dark Colors / Palette Lite** toggle, 10 accent presets + custom RGB picker, Gradient & Frosted Glass effects, interactive **Screen Layout Studio** with swipeable live previews & Combo View (4 Home, 4 Now Playing, 4 Playlists, 3 Lyrics layouts), **Custom Named Home Feed Configurations**, **7 Waveform Styles**, 90/120Hz smoothness, and **5 Responsive Home Screen Widgets** (including an adaptive Live Lyrics Widget).
+- **Live Screen Layout Studio & Visual Personalization:** 4 Display Modes (including Pure AMOLED), preset Accent Swatches + interactive RGB Color Wheel & Hex Picker, refined Dynamic Artwork extraction, **Use Dark Colors / Palette Lite** toggle, independent Gradient & Frosted Glass effects, interactive **Screen Layout Studio** with exact live currently-playing previews in Settings & shadow previews in Onboarding + Combo View (4 Home, 4 Now Playing, 4 Playlists, 3 Lyrics layouts), **4 Mini Player Styles** with swipe-down dismiss & toggleable buttons, **Custom Named Home Feed Configurations**, **7 Waveform Styles**, 90/120Hz smoothness, and **5 Responsive Home Screen Widgets** (including an adaptive Live Lyrics Widget).
 - **Listening Stats & Calendar Wrapped:** Track daily plays and listening habits across presets or any custom **Calendar date or date range**, explore **6-slide Wrapped Stories**, and share high-resolution stats cards.
 - **OffGrid Jam & Local Storage Control:** Listen together in synced 2–10 person rooms, manage local database capacity tiers, and export/restore local JSON backups anytime.
 
@@ -98,7 +98,7 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
   - Resets automatically when you close and reopen the app so normal playback is always ready next time.
   - Automatically works with the track-based Sleep Timer (every repeat counts as 1 track).
 - **Album Art Gestures & Shake to Skip:** Swipe horizontally on album art to go to the next or previous song, tap to play/pause, or physically shake your device to skip tracks.
-- **Playback Queue Precision:** Insert songs at **Top Next** or **Bottom** of the queue, reorder with 1:1 finger-tracked drag-and-drop and smooth edge auto-scrolling, keep multiple occurrences of the same song, or remove duplicates with one tap.
+- **Playback Queue Precision:** Choose **Top Next** or **Bottom** insertion via clean radio pickers, reorder with 1:1 finger-tracked drag-and-drop and smooth edge auto-scrolling, keep multiple occurrences of the same song, or remove duplicates with one tap.
 - **Sonic Studio (A–B Loop, Bookmarks & DNA Radio):**
   - **A–B Loop:** Set custom start (`A`) and end (`B`) points to repeat a chorus, solo, or practice section automatically.
   - **Timestamp Bookmarks (Pins):** Save and jump directly to favorite timestamps with quick labels (*Intro, Beat Drop, Chorus, Guitar Solo, Bridge, Outro*, or custom names)—marked right on the seek waveform.
@@ -127,21 +127,21 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
 - **Rule-Based Smart Playlists:** Build auto-updating playlists using filters for **Artist, Genre, Release Year Range, Minimum Play Count, Favorites Only, and Recently Added (Days)** with custom sorting and track limits (`25`, `50`, `100`, `200`, or `500`).
 - **Favorites & Recently Played:** Dedicated quick-access views and shortcuts in both the Home feed and navigation side drawer.
 
-### 6. Themes, Live Screen Layout Studio, Waveforms & Home Screen Widgets
+### 6. Color Palette Engine, Live Screen Layout Studio, Mini Player & Widgets
 - **4 Display Modes:** *Dark, Light, Pure AMOLED Black, and Follow System*.
-- **10 Curated Themes:**
-  - *Dark & AMOLED:* **Midnight Obsidian, Pure AMOLED, Cyberpunk Synth, Nordic Frost, Emerald Forest, Sunset Amber, Crimson Velvet, Royal Amethyst**.
-  - *Light:* **Porcelain Slate, Warm Parchment**.
-- **Colors & Atmospheric Visuals:**
-  - **Refined Dynamic Artwork Theming:** Extracts true dominant and vibrant colors from the active album cover cleanly across backgrounds, accents, and Now Playing gradients.
-  - **Use Dark Colors Toggle:** Switch between rich dark tones and soft Palette Lite pastels for dynamic theming, gradients, and preset accents.
-  - **10 Accent Presets + Custom RGB Color Picker** for exact custom shades.
+- **Accent Color Palette & Atmospheric Visuals:**
+  - **Curated Accent Swatches + Custom RGB Color Wheel & Hex Picker:** Pick from refined accent swatches or dial in any exact custom shade with live hex preview.
+  - **Refined Dynamic Artwork Theming:** Extracts true dominant and vibrant colors from the active album cover cleanly across backgrounds, Home cards, accents, and Now Playing gradients.
+  - **Use Dark Colors Toggle:** Switch between rich dark tones and soft Palette Lite pastels for dynamic theming, gradients, and accent colors.
   - **App-Wide Gradient & Frosted Glass Effects:** Independent toggles for ambient color washes and translucent frosted cards/sheets across every screen.
   - **Display Scale & Smoothness:** Choose **Compact, Standard, or Comfort** UI sizing, adapt cleanly across phones and tablets, toggle **90/120Hz High Refresh Rate**, and choose **Prefer High-Res Online Artwork** or fast local covers.
-- **Dedicated Screen Layout Studio (with Live Combo View):**
-  - Swipe through realistic live-tinted previews for **4 Home Layouts** (*Hero Spotlight, Bento Mosaic, Minimal Stream, Studio Deck*), **4 Now Playing Layouts** (*Modern Bento, Vinyl Turntable, Minimalist Glass, Neon Studio*), **4 Playlists Layouts** (*Bento Grid, Magazine Hero, Compact List, Neon Deck*), and **3 Lyrics UI Layouts** (*Classic Scroll, Focused Spotlight, Immersive Full*), then verify the full combination together before applying.
+- **Dedicated Screen Layout Studio (Settings Live Previews & Onboarding Picker):**
+  - Swipe through exact-structure miniature previews for **4 Home Layouts** (*Hero Spotlight, Bento Mosaic, Minimal Stream, Studio Deck*), **4 Now Playing Layouts** (*Modern Bento, Vinyl Turntable, Minimalist Glass, Neon Studio*), **4 Playlists Layouts** (*Bento Grid, Magazine Hero, Compact List, Neon Deck*), and **3 Lyrics UI Layouts** (*Classic Bento, Fluid Glow, Studio Timeline*), plus **Combo View** to verify all 4 screens together before applying.
+  - Displays your **real currently playing song, artwork, synced lyrics, playlists, and profile greeting** inside Settings (with automatic exact-structure shadow fallback when nothing is playing), and lets new users pick their UI & Feel right during **Onboarding** (with a one-tap *"Skip for now"* option).
 - **Customizable Home Feed & Saved Presets:** Toggle and reorder **9 Home Feed Sections** (*Continue Listening, Speed Dial, Listening Stats, Most Played, Most Played Playlists, Recently Played, Recently Added, Top Artists, Top Albums*), pick from built-in presets, or **save and switch between your own Custom Named Home Feed Configurations**.
-- **Seek Waveform & Mini Player Customization:** Pick visually from **7 Waveform Styles** (*Sleek Line, Snake Sine, Symmetric, Dotted, Squiggly, Wave, Bar*) and **2 Mini Player Styles** (*Floating Pill* or *Bottom Bar*) with toggles for Previous, Next, and Favorite buttons.
+- **Seek Waveform & 4 Mini Player Styles:**
+  - Pick visually from **7 Waveform Styles** (*Sleek Line, Snake Sine, Symmetric, Dotted, Squiggly, Wave, Bar*).
+  - Choose from **4 Mini Player Styles** (*Floating Pill, Bottom Bar, Artwork Glass, Compact Slim*) with **Previous, Next, and Favorite** button toggles respected across every style, swipe left/right to skip, swipe up to open Now Playing, and optional **Swipe Down to Dismiss Queue & Stop Music**.
 - **5 Adaptive Android Home Screen Widgets:** **Full Artwork Widget, Small Widget, Medium Widget, Secondary Widget, and Live Lyrics Widget** (responsive across launcher sizes with live synced lyrics and playback controls).
 
 ### 7. Listening Statistics, Calendar Wrapped Story & Sleep Timer
@@ -166,7 +166,7 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
 - **Local Storage & Cache Control:**
   - Monitor and clear lyrics, album art, and song art caches independently or all at once.
   - Pick from **3 Local Database Capacity Tiers** (*Standard 10K, Expanded 50K, Maximum 100K* history records) with one-tap **Optimize DB**.
-- **Updates, Diagnostics & Safe Reset:** Built-in GitHub release checker with plain-language update summaries, `.TXT` / `.JSON` diagnostics log export, Keep Screen Awake option, and **Reset to Default Settings** that keeps your songs, playlists, favorites, history, and API keys untouched.
+- **Smart OTA Updates, Push Reminders & Safe Reset:** Built-in GitHub release checker with plain-language update summaries, high-priority **Firebase Cloud Messaging (FCM)** release notifications, clean **app-open update reminder notifications** whenever a newer version is available, `.TXT` / `.JSON` diagnostics log export, Keep Screen Awake option, and **Reset to Default Settings** that keeps your songs, playlists, favorites, history, and API keys untouched.
 
 ---
 

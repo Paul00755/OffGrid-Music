@@ -122,16 +122,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val updateNotificationsEnabled: StateFlow<Boolean> = preferences.updateNotificationsEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getUpdateNotificationsEnabledSync())
 
+    private val hasPostedAppOpenUpdateReminder = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun checkForUpdates(isManual: Boolean = false) {
         if (isManual) {
             forceShowUpdateDialog.value = true
         }
         viewModelScope.launch {
-            appUpdateRepository.checkForUpdates(isManual)
+            val result = appUpdateRepository.checkForUpdates(isManual)
+            if (!isManual && result is com.example.update.UpdateCheckResult.UpdateAvailable) {
+                if (hasPostedAppOpenUpdateReminder.compareAndSet(false, true)) {
+                    com.example.service.notification.OffGridFirebaseMessagingService
+                        .showAppOpenUpdateReminderNotification(getApplication(), result.release)
+                }
+            }
         }
     }
 
     fun onAppReopenedFromBackground() {
+        hasPostedAppOpenUpdateReminder.set(false)
         appUpdateRepository.onAppEnteredForegroundFromBackground()
         checkForUpdates(isManual = false)
     }
@@ -656,6 +665,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val miniPlayerShowFavorite: StateFlow<Boolean> = preferences.miniPlayerShowFavorite.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowFavoriteSync())
     val miniPlayerSwipeToSkip: StateFlow<Boolean> = preferences.miniPlayerSwipeToSkip.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerSwipeToSkipSync())
     val miniPlayerSwipeUpToOpen: StateFlow<Boolean> = preferences.miniPlayerSwipeUpToOpen.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerSwipeUpToOpenSync())
+    val miniPlayerSwipeDownToDismiss: StateFlow<Boolean> = preferences.miniPlayerSwipeDownToDismiss.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerSwipeDownToDismissSync())
     val miniPlayerShowProgress: StateFlow<Boolean> = preferences.miniPlayerShowProgress.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowProgressSync())
     val miniPlayerCircularArt: StateFlow<Boolean> = preferences.miniPlayerCircularArt.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerCircularArtSync())
     val gaplessPlayback: StateFlow<Boolean> = preferences.gaplessPlayback.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGaplessPlaybackSync())
@@ -1235,6 +1245,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setMiniPlayerSwipeUpToOpen(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerSwipeUpToOpen(enabled) }
+    }
+    fun setMiniPlayerSwipeDownToDismiss(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerSwipeDownToDismiss(enabled) }
+    }
+    fun stopAndClearQueue() {
+        playbackManager.stopAndClearQueue()
     }
     fun setMiniPlayerShowProgress(show: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowProgress(show) }
@@ -2765,7 +2781,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 current.plainLyrics ?: ""
             }
 
-            val result = geminiLyricsService.translateLyrics(inputLrc, targetLanguage, apiKey)
+            val result = geminiLyricsService.translateLyrics(
+                existingLrc = inputLrc,
+                targetLanguage = targetLanguage,
+                apiKey = apiKey,
+                onStatusUpdate = { status ->
+                    _transcribeStatusMessage.value = status
+                }
+            )
             if (result.isFailure) {
                 val ex = result.exceptionOrNull()
                 val err = if (ex is SecurityException) {
@@ -2887,7 +2910,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val result = geminiLyricsService.transcribeAudio(targetFile, song, targetLanguage, apiKey)
+            val result = geminiLyricsService.transcribeAudio(
+                audioFile = targetFile,
+                song = song,
+                targetLanguage = targetLanguage,
+                apiKey = apiKey,
+                onStatusUpdate = { status ->
+                    _transcribeStatusMessage.value = status
+                }
+            )
             if (result.isFailure) {
                 val ex = result.exceptionOrNull()
                 val err = if (ex is SecurityException) {
@@ -3085,7 +3116,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _transcribeStatusMessage.value = if (preview.mode == AudioTranscribeMode.TRANSLATE) {
                 "Re-translating & refining lyrics (${preview.targetLanguage.englishName})..."
             } else {
-                "Re-transcribing vocals with corrections..."
+                "Deep vocal re-transcription in progress..."
             }
             _transcribeErrorMessage.value = null
         }
@@ -3101,7 +3132,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     existingLrc = inputLrc,
                     targetLanguage = preview.targetLanguage,
                     apiKey = apiKey,
-                    previousAttempt = previousDraft
+                    previousAttempt = previousDraft,
+                    onStatusUpdate = { status ->
+                        _transcribeStatusMessage.value = status
+                    }
                 )
             } else {
                 val targetFile = File(preview.song.path)
@@ -3118,7 +3152,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     song = preview.song,
                     targetLanguage = preview.targetLanguage,
                     apiKey = apiKey,
-                    previousAttempt = previousDraft
+                    previousAttempt = previousDraft,
+                    onStatusUpdate = { status ->
+                        _transcribeStatusMessage.value = status
+                    }
                 )
             }
 

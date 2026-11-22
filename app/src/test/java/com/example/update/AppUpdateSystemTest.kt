@@ -481,6 +481,45 @@ class AppUpdateSystemTest {
         assertFalse("Notification must not be posted when disabled in Settings", posted)
     }
 
+    @Test
+    fun testAppOpenUpdateReminderPostsEvenAfterDismissingDialog() = runBlocking {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        val shadowNm = Shadows.shadowOf(nm)
+        val shadowApp = Shadows.shadowOf(context as Application)
+        shadowApp.grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        val release = ReleaseInfo(
+            tagName = "v1.4.8-build.22",
+            name = "OffGrid Music v1.4.8",
+            body = "• Improved playback stability",
+            publishedAt = "2026-11-22T10:00:00Z",
+            htmlUrl = "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.4.8-build.22",
+            apkDownloadUrl = "https://github.com/Paul00755/OffGrid-Music/releases/download/v1.4.8-build.22/OffGrid-Music.apk",
+            version = AppVersion.parse("v1.4.8-build.22")
+        )
+
+        // User previously tapped "Later" on the in-app dialog
+        repo.dismissRelease(release.tagName)
+
+        // Opening the app on an older version still posts the clean reminder notification
+        val posted1 = OffGridFirebaseMessagingService.showAppOpenUpdateReminderNotification(context, release)
+        assertTrue("App-open reminder must post even after tapping Later", posted1)
+        assertEquals(1, shadowNm.allNotifications.size)
+        val extras = shadowNm.allNotifications.first().extras
+        assertEquals("Update available", extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString())
+        assertEquals("v1.4.8", extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString())
+
+        // Opening the app again posts the reminder again
+        val posted2 = OffGridFirebaseMessagingService.showAppOpenUpdateReminderNotification(context, release)
+        assertTrue("Subsequent app open must also remind user on older version", posted2)
+
+        // Turning off Update Notifications in Settings suppresses reminders
+        prefs.setUpdateNotificationsEnabled(false)
+        val postedDisabled = OffGridFirebaseMessagingService.showAppOpenUpdateReminderNotification(context, release)
+        assertFalse("Reminder must respect Update Notifications toggle", postedDisabled)
+    }
+
     // =========================================================================
     // D. GitHub Actions Workflow & Script Integrity Tests
     // =========================================================================

@@ -782,6 +782,8 @@ fun SettingsScreen(
     onSetMiniPlayerSwipeToSkip: (Boolean) -> Unit = {},
     miniPlayerSwipeUpToOpen: Boolean = true,
     onSetMiniPlayerSwipeUpToOpen: (Boolean) -> Unit = {},
+    miniPlayerSwipeDownToDismiss: Boolean = false,
+    onSetMiniPlayerSwipeDownToDismiss: (Boolean) -> Unit = {},
     miniPlayerShowProgress: Boolean = true,
     onSetMiniPlayerShowProgress: (Boolean) -> Unit = {},
     miniPlayerCircularArt: Boolean = false,
@@ -942,6 +944,8 @@ fun SettingsScreen(
     var showLayoutStudio by remember { mutableStateOf(false) }
     var layoutStudioInitialTab by remember { mutableStateOf("NOW_PLAYING") }
     var showWaveformPickerDialog by remember { mutableStateOf(false) }
+    var showQueuePositionDialog by remember { mutableStateOf(false) }
+    var showPlaylistPositionDialog by remember { mutableStateOf(false) }
 
     fun handleBack() {
         if (showLayoutStudio) {
@@ -1470,6 +1474,186 @@ fun SettingsScreen(
         )
     }
 
+    if (showQueuePositionDialog) {
+        val queueOptions = listOf(
+            Triple("BOTTOM", "Bottom of Queue", "Append new tracks to the end of the Up-Next queue"),
+            Triple("TOP_NEXT", "Top Next (Play Next)", "Insert immediately after the currently playing track")
+        )
+        AlertDialog(
+            onDismissRequest = { showQueuePositionDialog = false },
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = null,
+                        tint = BentoPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Text(
+                        text = "Add to Queue Position",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextPrimary
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    queueOptions.forEach { (value, title, desc) ->
+                        val isSelected = addToQueuePosition.equals(value, ignoreCase = true)
+                        Surface(
+                            onClick = {
+                                HapticUtils.performClickHaptic(context)
+                                onSetAddToQueuePosition(value)
+                                showQueuePositionDialog = false
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) BentoPrimary.copy(alpha = 0.14f) else BentoCardPurple.copy(alpha = 0.45f),
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) BentoPrimary.copy(alpha = 0.7f) else BentoBorder.copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("queue_position_radio_${value.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = null,
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = BentoPrimary,
+                                        unselectedColor = BentoTextSecondary
+                                    )
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (isSelected) BentoPrimary else BentoTextPrimary
+                                    )
+                                    Text(
+                                        text = desc,
+                                        fontSize = 11.5.sp,
+                                        color = BentoTextSecondary,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showQueuePositionDialog = false }) {
+                    Text("Close", color = BentoPrimary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showPlaylistPositionDialog) {
+        val playlistOptions = listOf(
+            Triple("BOTTOM", "Bottom (End)", "Append newly added songs to the end of the playlist"),
+            Triple("TOP", "Top (Beginning)", "Insert newly added songs at the top of the playlist")
+        )
+        AlertDialog(
+            onDismissRequest = { showPlaylistPositionDialog = false },
+            containerColor = BentoCardSurface,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlaylistAdd,
+                        contentDescription = null,
+                        tint = BentoPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Text(
+                        text = "Add to Playlist Position",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextPrimary
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    playlistOptions.forEach { (value, title, desc) ->
+                        val isSelected = playlistAddSongPosition.equals(value, ignoreCase = true)
+                        Surface(
+                            onClick = {
+                                HapticUtils.performClickHaptic(context)
+                                onSetPlaylistAddSongPosition(value)
+                                showPlaylistPositionDialog = false
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) BentoPrimary.copy(alpha = 0.14f) else BentoCardPurple.copy(alpha = 0.45f),
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) BentoPrimary.copy(alpha = 0.7f) else BentoBorder.copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("playlist_position_radio_${value.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = null,
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = BentoPrimary,
+                                        unselectedColor = BentoTextSecondary
+                                    )
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (isSelected) BentoPrimary else BentoTextPrimary
+                                    )
+                                    Text(
+                                        text = desc,
+                                        fontSize = 11.5.sp,
+                                        color = BentoTextSecondary,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPlaylistPositionDialog = false }) {
+                    Text("Close", color = BentoPrimary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
     if (showLayoutStudio) {
         UiLayoutStudioScreen(
             initialTabId = layoutStudioInitialTab,
@@ -1490,6 +1674,7 @@ fun SettingsScreen(
             liveLyrics = livePreviewLyrics,
             livePlaylistNames = livePreviewPlaylistNames,
             liveRecentSongs = livePreviewRecentSongs,
+            liveUserDisplayName = effectiveDisplayName,
             isOnboardingShadowMode = false,
             onConfirmLayouts = { np, home, pl, lyr ->
                 if (!np.equals(nowPlayingLayout, true)) onSetNowPlayingLayout(np)
@@ -3464,6 +3649,15 @@ fun SettingsScreen(
                                         modifier = Modifier.testTag("settings_mini_player_swipe_up")
                                     )
                                     SettingsToggleRow(
+                                        title = "Swipe Down to Dismiss & Stop Music",
+                                        subtitle = "Pull downward on the mini player to clear the queue and stop playback",
+                                        checked = miniPlayerSwipeDownToDismiss,
+                                        onCheckedChange = onSetMiniPlayerSwipeDownToDismiss,
+                                        icon = Icons.Default.KeyboardArrowDown,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("settings_mini_player_swipe_down_dismiss")
+                                    )
+                                    SettingsToggleRow(
                                         title = "Show Live Progress Bar",
                                         subtitle = "Display a real-time playback progress line along the mini player edge",
                                         checked = miniPlayerShowProgress,
@@ -4034,20 +4228,51 @@ fun SettingsScreen(
                             SettingsSubGroupLabel(title = "QUEUE, PLAYLISTS & TRACKING")
                             SettingsCardContainer(accentGlow = BentoPrimary) {
                                 if (!isSearching || matchPlaybackAddToQueuePos || broadPlaybackMatch) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable {
+                                                HapticUtils.performClickHaptic(context)
+                                                showQueuePositionDialog = true
+                                            }
+                                            .padding(vertical = 4.dp)
+                                            .testTag("settings_add_to_queue_position_row"),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                            modifier = Modifier.weight(1f).padding(end = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
-                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(34.dp)
+                                                    .clip(CircleShape)
+                                                    .background(BentoPrimary.copy(alpha = 0.14f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.QueueMusic,
+                                                    contentDescription = null,
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                            Column {
                                                 Text("Add to Queue Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                                                 Text(
-                                                    text = if (addToQueuePosition == "TOP_NEXT") "Top Next: insert immediately after currently playing track" else "Bottom: append to the end of Up-Next queue",
+                                                    text = if (addToQueuePosition == "TOP_NEXT") "Top Next • Play after current track" else "Bottom • Append to end of queue",
                                                     fontSize = 11.5.sp,
                                                     color = BentoTextSecondary
                                                 )
                                             }
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
                                             Surface(
                                                 shape = CircleShape,
                                                 color = BentoPrimary.copy(alpha = 0.14f),
@@ -4058,39 +4283,66 @@ fun SettingsScreen(
                                                     fontSize = 11.5.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = BentoPrimary,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                                 )
                                             }
+                                            Icon(
+                                                imageVector = Icons.Default.ChevronRight,
+                                                contentDescription = "Choose Add to Queue Position",
+                                                tint = BentoTextSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
                                         }
-
-                                        SettingsSegmentedSelector(
-                                            options = listOf(
-                                                "BOTTOM" to "Bottom",
-                                                "TOP_NEXT" to "Top Next"
-                                            ),
-                                            selectedOption = addToQueuePosition,
-                                            onSelectOption = onSetAddToQueuePosition,
-                                            accentColor = BentoPrimary
-                                        )
                                     }
                                     if (!isSearching || broadPlaybackMatch) SettingsDivider()
                                 }
 
                                 if (!isSearching || matchPlaybackAddToPlaylistPos || broadPlaybackMatch) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable {
+                                                HapticUtils.performClickHaptic(context)
+                                                showPlaylistPositionDialog = true
+                                            }
+                                            .padding(vertical = 4.dp)
+                                            .testTag("settings_add_to_playlist_position_row"),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                            modifier = Modifier.weight(1f).padding(end = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
-                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(34.dp)
+                                                    .clip(CircleShape)
+                                                    .background(BentoPrimary.copy(alpha = 0.14f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlaylistAdd,
+                                                    contentDescription = null,
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                            Column {
                                                 Text("Add to Playlist Position", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
                                                 Text(
-                                                    text = if (playlistAddSongPosition == "TOP") "Top: insert at the beginning of custom playlist arrangement" else "Bottom: append to the end of custom playlist arrangement",
+                                                    text = if (playlistAddSongPosition == "TOP") "Top (Beginning) • Insert at top" else "Bottom (End) • Append to end",
                                                     fontSize = 11.5.sp,
                                                     color = BentoTextSecondary
                                                 )
                                             }
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
                                             Surface(
                                                 shape = CircleShape,
                                                 color = BentoPrimary.copy(alpha = 0.14f),
@@ -4101,20 +4353,16 @@ fun SettingsScreen(
                                                     fontSize = 11.5.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = BentoPrimary,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                                 )
                                             }
+                                            Icon(
+                                                imageVector = Icons.Default.ChevronRight,
+                                                contentDescription = "Choose Add to Playlist Position",
+                                                tint = BentoTextSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
                                         }
-
-                                        SettingsSegmentedSelector(
-                                            options = listOf(
-                                                "BOTTOM" to "Bottom (End)",
-                                                "TOP" to "Top (Beginning)"
-                                            ),
-                                            selectedOption = playlistAddSongPosition,
-                                            onSelectOption = onSetPlaylistAddSongPosition,
-                                            accentColor = BentoPrimary
-                                        )
                                     }
                                     if (!isSearching || broadPlaybackMatch) SettingsDivider()
                                 }

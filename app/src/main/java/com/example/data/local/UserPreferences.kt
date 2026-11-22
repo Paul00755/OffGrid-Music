@@ -177,6 +177,7 @@ class UserPreferencesRepository(private val context: Context) {
         val MINI_PLAYER_SHOW_FAVORITE = booleanPreferencesKey("mini_player_show_favorite")
         val MINI_PLAYER_SWIPE_TO_SKIP = booleanPreferencesKey("mini_player_swipe_to_skip")
         val MINI_PLAYER_SWIPE_UP_TO_OPEN = booleanPreferencesKey("mini_player_swipe_up_to_open")
+        val MINI_PLAYER_SWIPE_DOWN_TO_DISMISS = booleanPreferencesKey("mini_player_swipe_down_to_dismiss")
         val MINI_PLAYER_SHOW_PROGRESS = booleanPreferencesKey("mini_player_show_progress")
         val MINI_PLAYER_CIRCULAR_ART = booleanPreferencesKey("mini_player_circular_art")
         val GAPLESS_PLAYBACK = booleanPreferencesKey("gapless_playback")
@@ -466,6 +467,7 @@ class UserPreferencesRepository(private val context: Context) {
             miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true),
             miniPlayerSwipeToSkip = prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] ?: readBoolCached("mini_player_swipe_to_skip", true),
             miniPlayerSwipeUpToOpen = prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] ?: readBoolCached("mini_player_swipe_up_to_open", true),
+            miniPlayerSwipeDownToDismiss = prefs[PreferenceKeys.MINI_PLAYER_SWIPE_DOWN_TO_DISMISS] ?: readBoolCached("mini_player_swipe_down_to_dismiss", false),
             miniPlayerShowProgress = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] ?: readBoolCached("mini_player_show_progress", true),
             miniPlayerCircularArt = prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] ?: readBoolCached("mini_player_circular_art", false),
             waveformStyle = prefs[PreferenceKeys.WAVEFORM_STYLE] ?: readStringCached("waveform_style", "SNAKE"),
@@ -564,6 +566,7 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = cloud.miniPlayerShowFavorite
                 prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] = cloud.miniPlayerSwipeToSkip
                 prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] = cloud.miniPlayerSwipeUpToOpen
+                prefs[PreferenceKeys.MINI_PLAYER_SWIPE_DOWN_TO_DISMISS] = cloud.miniPlayerSwipeDownToDismiss
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] = cloud.miniPlayerShowProgress
                 prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] = cloud.miniPlayerCircularArt
                 prefs[PreferenceKeys.WAVEFORM_STYLE] = cloud.waveformStyle
@@ -665,6 +668,7 @@ class UserPreferencesRepository(private val context: Context) {
                         .putBoolean("pref_mini_player_show_favorite", cloud.miniPlayerShowFavorite)
                         .putBoolean("pref_mini_player_swipe_to_skip", cloud.miniPlayerSwipeToSkip)
                         .putBoolean("pref_mini_player_swipe_up_to_open", cloud.miniPlayerSwipeUpToOpen)
+                        .putBoolean("pref_mini_player_swipe_down_to_dismiss", cloud.miniPlayerSwipeDownToDismiss)
                         .putBoolean("pref_mini_player_show_progress", cloud.miniPlayerShowProgress)
                         .putBoolean("pref_mini_player_circular_art", cloud.miniPlayerCircularArt)
                         .putString("pref_waveform_style", cloud.waveformStyle)
@@ -1424,6 +1428,11 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getMiniPlayerSwipeUpToOpenSync(): Boolean = readBoolCached("mini_player_swipe_up_to_open", true)
 
+    val miniPlayerSwipeDownToDismiss: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SWIPE_DOWN_TO_DISMISS] ?: readBoolCached("mini_player_swipe_down_to_dismiss", false)
+    }
+    fun getMiniPlayerSwipeDownToDismissSync(): Boolean = readBoolCached("mini_player_swipe_down_to_dismiss", false)
+
     val miniPlayerShowProgress: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] ?: readBoolCached("mini_player_show_progress", true)
     }
@@ -1900,6 +1909,15 @@ class UserPreferencesRepository(private val context: Context) {
         writeBoolCached("mini_player_swipe_up_to_open", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setMiniPlayerSwipeDownToDismiss(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_swipe_down_to_dismiss", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SWIPE_DOWN_TO_DISMISS] = enabled
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }

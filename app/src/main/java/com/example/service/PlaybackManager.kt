@@ -1192,6 +1192,40 @@ class PlaybackManager(
         persistPlaybackStateNow()
     }
 
+    /**
+     * Stops active audio playback, clears the Up-Next queue, dismisses the mini-player,
+     * and synchronizes media notifications and launcher widgets cleanly.
+     */
+    fun stopAndClearQueue() {
+        audioFocusManager.cancelPendingResume()
+        isFadingOutToPause = false
+        isAudioFocusDucked = false
+        wasPausedByZeroVolume = false
+        cancelCrossfade(resetVolume = true)
+        fadeJob?.cancel()
+        fadeJob = null
+        try {
+            player.playWhenReady = false
+            player.stop()
+            player.clearMediaItems()
+            player.volume = transitionTargetVolume()
+        } catch (_: Exception) {}
+        currentPositionMs = 0L
+        _playbackPositionMs.value = 0L
+        _playbackState.value = _playbackState.value.copy(
+            currentSong = null,
+            queue = emptyList(),
+            queueIndex = -1,
+            isPlaying = false,
+            positionMs = 0L,
+            durationMs = 0L
+        )
+        com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
+        updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        persistPlaybackStateNow()
+    }
+
     fun removeDuplicatesFromQueue(): Int {
         val currentQueue = _playbackState.value.queue
         if (currentQueue.size <= 1) return 0

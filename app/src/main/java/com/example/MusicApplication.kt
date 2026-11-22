@@ -39,6 +39,10 @@ class MusicApplication : Application(), ImageLoaderFactory, androidx.work.Config
                     .installAppCheckProviderFactory(factory)
             }.onFailure { Log.w(TAG, "Firebase App Check provider is not configured", it) }
         }
+        com.example.service.notification.OffGridFirebaseMessagingService.ensureNotificationChannel(this)
+        runCatching {
+            com.example.update.AppUpdateRepository.getInstance(this)
+        }.onFailure { Log.w(TAG, "Deferred update repository init failed", it) }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             performStartupDiagnostics()
         }

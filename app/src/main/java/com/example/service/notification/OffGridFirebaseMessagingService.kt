@@ -156,12 +156,13 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 ?: notificationTitle?.let { extractVersion(it) }
                 ?: ""
 
-            val rawTitle = data["title"]
+            val rawTitle = data["release_name"]?.takeIf { it.isNotBlank() }
+                ?: data["title"]?.takeIf { it.isNotBlank() && !it.equals("Update available", ignoreCase = true) }
                 ?: notificationTitle
-                ?: if (rawTag.isNotBlank()) "OffGrid Music $rawTag Available" else "OffGrid Music Update Available"
+                ?: if (rawTag.isNotBlank()) "OffGrid Music $rawTag" else "OffGrid Music Update Available"
 
-            val rawBody = data["body"]
-                ?: data["release_notes"]
+            val rawBody = data["release_notes"]?.takeIf { it.isNotBlank() }
+                ?: data["body"]
                 ?: notificationBody
                 ?: "A new stable version of OffGrid Music is available."
 
@@ -236,8 +237,8 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
 
             showUpdateNotification(
                 context = appContext,
-                title = rawTitle,
-                body = sanitizedBody,
+                releaseTitle = rawTitle,
+                releaseNotes = sanitizedBody,
                 releaseTag = effectiveTag,
                 releaseUrl = releaseUrl,
                 apkUrl = apkUrl
@@ -246,10 +247,53 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
             return true
         }
 
+        /**
+         * Posts the clean system update reminder notification ("Update available" / "vX.Y.Z")
+         * whenever the user opens the app while running an older version — even if they previously
+         * clicked "Later" / "Not now" on the in-app dialog. Respects user toggle & POST_NOTIFICATIONS.
+         */
+        fun showAppOpenUpdateReminderNotification(
+            context: Context,
+            release: ReleaseInfo
+        ): Boolean {
+            val appContext = context.applicationContext
+            val prefs = UserPreferencesRepository.getInstance(appContext)
+            if (!prefs.getUpdateNotificationsEnabledSync()) {
+                return false
+            }
+            val repo = AppUpdateRepository.getInstance(appContext)
+            if (!release.version.isValid || release.version.isPreRelease || !release.version.isNewerThan(repo.installedVersion)) {
+                return false
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val hasPerm = ContextCompat.checkSelfPermission(
+                    appContext,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!hasPerm) {
+                    return false
+                }
+            }
+            showUpdateNotification(
+                context = appContext,
+                releaseTitle = release.name,
+                releaseNotes = release.body,
+                releaseTag = release.tagName,
+                releaseUrl = release.htmlUrl,
+                apkUrl = release.apkDownloadUrl
+            )
+            return true
+        }
+
+        fun ensureNotificationChannel(context: Context) {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            createChannel(notificationManager)
+        }
+
         private fun showUpdateNotification(
             context: Context,
-            title: String,
-            body: String,
+            releaseTitle: String,
+            releaseNotes: String,
             releaseTag: String,
             releaseUrl: String,
             apkUrl: String?
@@ -257,13 +301,15 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             createChannel(notificationManager)
 
+            val cleanVersionTag = formatCleanVersionLabel(releaseTag)
+
             val contentIntent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra(EXTRA_OPEN_UPDATE_DIALOG, true)
                 putExtra(EXTRA_UPDATE_RELEASE_TAG, releaseTag)
                 putExtra(EXTRA_UPDATE_RELEASE_URL, releaseUrl)
-                putExtra(EXTRA_UPDATE_RELEASE_TITLE, title)
-                putExtra(EXTRA_UPDATE_RELEASE_NOTES, body)
+                putExtra(EXTRA_UPDATE_RELEASE_TITLE, releaseTitle)
+                putExtra(EXTRA_UPDATE_RELEASE_NOTES, releaseNotes)
                 if (!apkUrl.isNullOrBlank()) {
                     putExtra(EXTRA_UPDATE_APK_URL, apkUrl)
                 }
@@ -275,28 +321,31 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(releaseUrl)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            val browserPendingIntent = PendingIntent.getActivity(
-                context,
-                NOTIFICATION_ID + 1,
-                browserIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(body.lines().firstOrNull() ?: body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setContentTitle("Update available")
+                .setContentText(cleanVersionTag)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
+                .setOnlyAlertOnce(false)
+                .setWhen(System.currentTimeMillis())
+                .setShowWhen(true)
                 .setContentIntent(contentPendingIntent)
-                .addAction(R.drawable.ic_notification, "Update Now", browserPendingIntent)
                 .build()
 
             notificationManager.notify(NOTIFICATION_ID, notification)
+        }
+
+        internal fun formatCleanVersionLabel(releaseTag: String): String {
+            val trimmed = releaseTag.trim()
+            if (trimmed.isBlank()) return "New version"
+            val core = trimmed.substringBefore("-build.").trim()
+            return if (core.startsWith("v", ignoreCase = true)) {
+                "v${core.drop(1)}"
+            } else {
+                "v$core"
+            }
         }
 
         private fun createChannel(manager: NotificationManager) {
@@ -304,9 +353,9 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
                     "App Updates",
-                    NotificationManager.IMPORTANCE_DEFAULT
+                    NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Notifications for new stable OffGrid Music updates and release notes"
+                    description = "Notifications when a new OffGrid Music version is available"
                     setShowBadge(true)
                     enableVibration(true)
                 }

@@ -26,6 +26,7 @@ private data class SettingsPreviewBundle(
     val miniFav: Boolean,
     val miniSwipeSkip: Boolean,
     val miniSwipeUp: Boolean,
+    val miniSwipeDownDismiss: Boolean,
     val miniProgress: Boolean,
     val miniCircularArt: Boolean
 )
@@ -81,6 +82,7 @@ private fun rememberSettingsPreviewBundle(viewModel: MusicViewModel): SettingsPr
     val miniFav by viewModel.miniPlayerShowFavorite.collectAsState()
     val miniSwipeSkip by viewModel.miniPlayerSwipeToSkip.collectAsState()
     val miniSwipeUp by viewModel.miniPlayerSwipeUpToOpen.collectAsState()
+    val miniSwipeDownDismiss by viewModel.miniPlayerSwipeDownToDismiss.collectAsState()
     val miniProgress by viewModel.miniPlayerShowProgress.collectAsState()
     val miniCircularArt by viewModel.miniPlayerCircularArt.collectAsState()
     val playlistNames = remember(allPlaylists) { allPlaylists.map { it.name } }
@@ -97,6 +99,7 @@ private fun rememberSettingsPreviewBundle(viewModel: MusicViewModel): SettingsPr
         miniFav = miniFav,
         miniSwipeSkip = miniSwipeSkip,
         miniSwipeUp = miniSwipeUp,
+        miniSwipeDownDismiss = miniSwipeDownDismiss,
         miniProgress = miniProgress,
         miniCircularArt = miniCircularArt
     )
@@ -330,6 +333,8 @@ fun SettingsTabRoute(
         onSetMiniPlayerSwipeToSkip = viewModel::setMiniPlayerSwipeToSkip,
         miniPlayerSwipeUpToOpen = preview.miniSwipeUp,
         onSetMiniPlayerSwipeUpToOpen = viewModel::setMiniPlayerSwipeUpToOpen,
+        miniPlayerSwipeDownToDismiss = preview.miniSwipeDownDismiss,
+        onSetMiniPlayerSwipeDownToDismiss = viewModel::setMiniPlayerSwipeDownToDismiss,
         miniPlayerShowProgress = preview.miniProgress,
         onSetMiniPlayerShowProgress = viewModel::setMiniPlayerShowProgress,
         miniPlayerCircularArt = preview.miniCircularArt,

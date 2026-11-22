@@ -62,6 +62,8 @@ fun MiniPlayer(
     style: String = "FLOATING",
     swipeToSkip: Boolean = true,
     swipeUpToOpen: Boolean = true,
+    swipeDownToDismiss: Boolean = false,
+    onDismissQueueAndStop: (() -> Unit)? = null,
     showProgress: Boolean = true,
     circularArt: Boolean = false,
     progressFractionProvider: (() -> Float)? = null,
@@ -135,23 +137,43 @@ fun MiniPlayer(
         }
     } else Modifier
 
-    val verticalSwipeModifier = if (swipeUpToOpen) {
-        Modifier.pointerInput(song.id, onClick) {
+    val maxDragDownPx = with(density) { 58.dp.toPx() }
+    val dismissThresholdPx = with(density) { 46.dp.toPx() }
+    val canSwipeDown = swipeDownToDismiss && onDismissQueueAndStop != null
+
+    val verticalSwipeModifier = if (swipeUpToOpen || canSwipeDown) {
+        Modifier.pointerInput(song.id, swipeUpToOpen, canSwipeDown, onClick, onDismissQueueAndStop) {
             var accumulatedY = 0f
             detectVerticalDragGestures(
                 onDragStart = { accumulatedY = 0f },
                 onVerticalDrag = { _, dragAmount ->
-                    if (dragAmount < 0f || accumulatedY < 0f) {
-                        accumulatedY = (accumulatedY + dragAmount).coerceAtMost(0f)
-                        scope.launch {
-                            dragOffsetY.snapTo((accumulatedY * 0.35f).coerceIn(-maxDragYPx, 0f))
+                    accumulatedY += dragAmount
+                    val clampedAccum = when {
+                        swipeUpToOpen && canSwipeDown -> accumulatedY
+                        swipeUpToOpen -> accumulatedY.coerceAtMost(0f)
+                        canSwipeDown -> accumulatedY.coerceAtLeast(0f)
+                        else -> 0f
+                    }
+                    accumulatedY = clampedAccum
+                    scope.launch {
+                        val visualOffset = if (clampedAccum < 0f) {
+                            (clampedAccum * 0.35f).coerceIn(-maxDragYPx, 0f)
+                        } else {
+                            (clampedAccum * 0.55f).coerceIn(0f, maxDragDownPx)
                         }
+                        dragOffsetY.snapTo(visualOffset)
                     }
                 },
                 onDragEnd = {
-                    if (accumulatedY <= -verticalThresholdPx) {
-                        HapticUtils.performClickHaptic(context)
-                        onClick()
+                    when {
+                        swipeUpToOpen && accumulatedY <= -verticalThresholdPx -> {
+                            HapticUtils.performClickHaptic(context)
+                            onClick()
+                        }
+                        canSwipeDown && accumulatedY >= dismissThresholdPx -> {
+                            HapticUtils.performClickHaptic(context)
+                            onDismissQueueAndStop?.invoke()
+                        }
                     }
                     accumulatedY = 0f
                     scope.launch {
@@ -203,6 +225,9 @@ fun MiniPlayer(
             .graphicsLayer {
                 translationX = dragOffsetX.value
                 translationY = dragOffsetY.value
+                if (canSwipeDown && dragOffsetY.value > 0f && maxDragDownPx > 0f) {
+                    alpha = (1f - (dragOffsetY.value / maxDragDownPx) * 0.55f).coerceIn(0.45f, 1f)
+                }
             }
             .clip(cardShape)
             .then(containerBgModifier)
@@ -291,46 +316,50 @@ fun MiniPlayer(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                if (showFavorite && onFavoriteToggle != null && !isCompactMinimal) {
+                val compactButtonSize = if (isCompactMinimal) 28.dp else 34.dp
+                val compactIconSize = if (isCompactMinimal) 17.dp else 20.dp
+                val compactSpacer = if (isCompactMinimal) 2.dp else 3.dp
+
+                if (showFavorite && onFavoriteToggle != null) {
                     IconButton(
                         onClick = {
                             HapticUtils.performClickHaptic(context)
                             onFavoriteToggle()
                         },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(compactButtonSize)
                             .testTag("mini_player_favorite")
                     ) {
                         AnimatedFavoriteIcon(
                             isFavorite = song.isFavorite,
                             activeTint = BentoAccentPinkText,
                             inactiveTint = BentoTextSecondary,
-                            size = 20.dp,
+                            size = compactIconSize,
                             contentDescription = "Favorite",
                             animationKey = song.id
                         )
                     }
-                    Spacer(modifier = Modifier.width(3.dp))
+                    Spacer(modifier = Modifier.width(compactSpacer))
                 }
 
-                if (showPrevious && onSkipPrevious != null && !isCompactMinimal) {
+                if (showPrevious && onSkipPrevious != null) {
                     IconButton(
                         onClick = {
                             HapticUtils.performClickHaptic(context)
                             onSkipPrevious()
                         },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(compactButtonSize)
                             .testTag("mini_player_previous")
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipPrevious,
                             contentDescription = "Previous",
                             tint = BentoTextPrimary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(compactIconSize)
                         )
                     }
-                    Spacer(modifier = Modifier.width(3.dp))
+                    Spacer(modifier = Modifier.width(compactSpacer))
                 }
 
                 // Play/Pause Button

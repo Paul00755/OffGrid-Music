@@ -82,6 +82,13 @@
             </intent-filter>
         </service>
 
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="offgrid_app_updates" />
+
         <!-- MusicApplication supplies WorkManager's configuration; remove only its eager initializer. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

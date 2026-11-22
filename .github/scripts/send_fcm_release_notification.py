@@ -294,19 +294,24 @@ def main() -> int:
     print(f"Generating OAuth2 token for Firebase project '{project_id}'...")
     access_token = generate_access_token(sa)
 
+    clean_version = tag.split("-build.")[0].strip()
+    if clean_version and not clean_version.lower().startswith("v"):
+        clean_version = f"v{clean_version}"
+
     fcm_endpoint = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
+    # Data-only high-priority payload ensures OffGridFirebaseMessagingService.onMessageReceived()
+    # ALWAYS executes (foreground, background, or killed), so the app compares versions locally
+    # and renders the clean "Update available" / "vX.Y.Z" notification with tap-to-update dialog.
     fcm_payload = {
         "message": {
             "topic": FCM_TOPIC,
-            "notification": {
-                "title": f"OffGrid Music {tag} Available",
-                "body": clean_notes,
-            },
             "data": {
-                "version": tag,
+                "type": "app_update",
+                "version": clean_version or tag,
                 "release_tag": tag,
-                "title": release_name,
-                "body": clean_notes,
+                "title": "Update available",
+                "body": clean_version or tag,
+                "release_name": release_name,
                 "release_notes": clean_notes,
                 "release_url": release_url,
                 "url": release_url,
@@ -314,10 +319,7 @@ def main() -> int:
             },
             "android": {
                 "priority": "high",
-                "notification": {
-                    "channel_id": "offgrid_app_updates",
-                    "click_action": "android.intent.action.MAIN",
-                },
+                "ttl": "604800s",
             },
         }
     }

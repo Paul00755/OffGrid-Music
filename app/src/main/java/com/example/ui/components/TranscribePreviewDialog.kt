@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Visibility
@@ -365,10 +366,14 @@ fun TranscribePreviewDialog(
                             contentColor = BentoPrimary
                         )
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(
+                            if (isTranslate) Icons.Default.Refresh else Icons.Default.GraphicEq,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isTranslate) "Re-translate with Corrections" else "Re-transcribe with Corrections",
+                            text = if (isTranslate) "Re-translate with Corrections" else "Re-transcribe with Vocals",
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold
                         )

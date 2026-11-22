@@ -117,6 +117,10 @@ fun OnboardingScreen(
             showAdvancedSongInfo = true,
             homeSections = listOf("CONTINUE_LISTENING", "QUICK_ACTIONS", "STATS", "RECENTLY_PLAYED", "MOST_PLAYED"),
             isOnboardingShadowMode = true,
+            onSkipOnboarding = {
+                showOnboardingLayoutStudio = false
+                currentStep++
+            },
             onConfirmLayouts = { np, home, pl, lyr ->
                 hasCustomizedLayouts = true
                 onConfirmLayouts(np, home, pl, lyr)

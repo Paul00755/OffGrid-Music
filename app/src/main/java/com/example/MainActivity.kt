@@ -531,6 +531,7 @@ class MainActivity : ComponentActivity() {
                                                 val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsStateWithLifecycle()
                                                 val miniPlayerSwipeToSkip by viewModel.miniPlayerSwipeToSkip.collectAsStateWithLifecycle()
                                                 val miniPlayerSwipeUpToOpen by viewModel.miniPlayerSwipeUpToOpen.collectAsStateWithLifecycle()
+                                                val miniPlayerSwipeDownToDismiss by viewModel.miniPlayerSwipeDownToDismiss.collectAsStateWithLifecycle()
                                                 val miniPlayerShowProgress by viewModel.miniPlayerShowProgress.collectAsStateWithLifecycle()
                                                 val miniPlayerCircularArt by viewModel.miniPlayerCircularArt.collectAsStateWithLifecycle()
 
@@ -551,6 +552,8 @@ class MainActivity : ComponentActivity() {
                                                     style = miniPlayerStyle,
                                                     swipeToSkip = miniPlayerSwipeToSkip,
                                                     swipeUpToOpen = miniPlayerSwipeUpToOpen,
+                                                    swipeDownToDismiss = miniPlayerSwipeDownToDismiss,
+                                                    onDismissQueueAndStop = { viewModel.stopAndClearQueue() },
                                                     showProgress = miniPlayerShowProgress,
                                                     circularArt = miniPlayerCircularArt
                                                 )

@@ -159,36 +159,11 @@ fun LazyListScope.renderHomeFeedSections(
                             HomeFeedVisualStyle.HERO_SPOTLIGHT -> {
                                 val glassConfig = LocalGlassThemeConfig.current
                                 val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
-                                val initialHeroDual = remember(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled) {
-                                    if (glassConfig.isDynamicArtworkEnabled) {
-                                        com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, continueSong)
-                                    } else {
-                                        null
-                                    }
-                                }
-                                val extractedHeroDual by produceState<Pair<Color, Color>?>(
-                                    initialValue = initialHeroDual,
-                                    keys = arrayOf(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled)
-                                ) {
-                                    if (glassConfig.isDynamicArtworkEnabled) {
-                                        val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
-                                        if (extracted != null) value = extracted
-                                    } else {
-                                        value = null
-                                    }
-                                }
                                 val isDarkSurface = BentoBackground.luminance() < 0.5f
-                                val currentHeroDual = extractedHeroDual
-                                val resolvedTopAccent = if (glassConfig.isDynamicArtworkEnabled && currentHeroDual != null) {
-                                    currentHeroDual.first.toAdaptiveThemeAccent(useDarkColors = useRichDark)
-                                } else {
-                                    BentoPrimary
-                                }
-                                val resolvedBotAccent = if (glassConfig.isDynamicArtworkEnabled && currentHeroDual != null) {
-                                    currentHeroDual.second.toAdaptiveCompanionHue(useDarkColors = useRichDark)
-                                } else {
-                                    BentoSecondary
-                                }
+                                // Always harmonize with the active app-wide theme palette (BentoPrimary / BentoSecondary),
+                                // which already reflects Dynamic Artwork Theming, preset swatches, or custom RGB accent.
+                                val resolvedTopAccent = BentoPrimary
+                                val resolvedBotAccent = BentoSecondary
                                 val pillAccent = resolvedTopAccent
                                 val pillOnAccent = if (pillAccent.luminance() > 0.42f) Color(0xFF0A0B10) else Color.White
                                 // Keep Hero Spotlight Continue Listening on a rich tinted dark-glass canvas in both dark & light themes
@@ -641,35 +616,8 @@ fun LazyListScope.renderHomeFeedSections(
                             HomeFeedVisualStyle.STUDIO_DECK -> {
                                 val glassConfig = LocalGlassThemeConfig.current
                                 val useRichDark = glassConfig.useDarkColors || glassConfig.isCustomDarkAccent
-                                val initialStudioDual = remember(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled) {
-                                    if (glassConfig.isDynamicArtworkEnabled) {
-                                        com.example.util.ArtworkColorExtractor.getCachedDualGradientForSongSync(context, continueSong)
-                                    } else {
-                                        null
-                                    }
-                                }
-                                val extractedStudioDual by produceState<Pair<Color, Color>?>(
-                                    initialValue = initialStudioDual,
-                                    keys = arrayOf(continueSong.id, continueSong.artworkUri, continueSong.path, glassConfig.isDynamicArtworkEnabled)
-                                ) {
-                                    if (glassConfig.isDynamicArtworkEnabled) {
-                                        val extracted = com.example.util.ArtworkColorExtractor.extractDualGradientColorsForSong(context, continueSong)
-                                        if (extracted != null) value = extracted
-                                    } else {
-                                        value = null
-                                    }
-                                }
-                                val currentStudioDual = extractedStudioDual
-                                val cardAccentColor = if (glassConfig.isDynamicArtworkEnabled && currentStudioDual != null) {
-                                    currentStudioDual.first.toAdaptiveThemeAccent(useDarkColors = useRichDark)
-                                } else {
-                                    BentoPrimary
-                                }
-                                val cardSecondaryColor = if (glassConfig.isDynamicArtworkEnabled && currentStudioDual != null) {
-                                    currentStudioDual.second.toAdaptiveCompanionHue(useDarkColors = useRichDark)
-                                } else {
-                                    BentoSecondary
-                                }
+                                val cardAccentColor = BentoPrimary
+                                val cardSecondaryColor = BentoSecondary
                                 val cardTopColor = cardAccentColor.copy(alpha = if (useRichDark) 0.30f else 0.22f)
                                 val cardBottomColor = cardSecondaryColor.copy(alpha = if (useRichDark) 0.18f else 0.14f)
 

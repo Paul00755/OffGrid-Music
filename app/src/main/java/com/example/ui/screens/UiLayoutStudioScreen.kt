@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -69,6 +70,7 @@ private data class StudioLiveContext(
     val lyricLines: List<Pair<String, String>>, // (timestamp, text)
     val playlistNames: List<String>,
     val recentSongs: List<Song>,
+    val userDisplayName: String,
     val isShadowMode: Boolean
 ) {
     val hasLiveSong: Boolean get() = !isShadowMode && song != null
@@ -103,7 +105,9 @@ fun UiLayoutStudioScreen(
     liveLyrics: Lyrics? = null,
     livePlaylistNames: List<String> = emptyList(),
     liveRecentSongs: List<Song> = emptyList(),
+    liveUserDisplayName: String = "Music Lover",
     isOnboardingShadowMode: Boolean = false,
+    onSkipOnboarding: (() -> Unit)? = null,
     onConfirmLayouts: (
         nowPlayingLayout: String,
         homeScreenLayout: String,
@@ -169,13 +173,14 @@ fun UiLayoutStudioScreen(
         }
     }
 
-    val liveCtx = remember(liveSong, liveIsPlaying, parsedLyricPreview, livePlaylistNames, liveRecentSongs, isOnboardingShadowMode) {
+    val liveCtx = remember(liveSong, liveIsPlaying, parsedLyricPreview, livePlaylistNames, liveRecentSongs, liveUserDisplayName, isOnboardingShadowMode) {
         StudioLiveContext(
             song = liveSong,
             isPlaying = liveIsPlaying,
             lyricLines = parsedLyricPreview,
             playlistNames = livePlaylistNames,
             recentSongs = liveRecentSongs,
+            userDisplayName = liveUserDisplayName.ifBlank { "Music Lover" },
             isShadowMode = isOnboardingShadowMode
         )
     }
@@ -250,7 +255,23 @@ fun UiLayoutStudioScreen(
                 )
             }
 
-            if (pendingChangeCount > 0) {
+            if (isOnboardingShadowMode && onSkipOnboarding != null) {
+                TextButton(
+                    onClick = {
+                        HapticUtils.performClickHaptic(context)
+                        onSkipOnboarding()
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("layout_studio_onboarding_skip_button")
+                ) {
+                    Text(
+                        text = "Skip for now",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = BentoTextSecondary
+                    )
+                }
+            } else if (pendingChangeCount > 0) {
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = accent.copy(alpha = 0.18f),
@@ -876,15 +897,19 @@ private fun LiveNowPlayingMockup(
     val useLive = liveCtx.hasLiveSong
     val durationLabel = formatPreviewDuration(song?.durationMs ?: 238_000L)
     val playIcon = if (useLive && liveCtx.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow
+    val isFav = useLive && song?.isFavorite == true
 
     when (layout) {
         NowPlayingLayout.MODERN_BENTO -> {
-            // Exact Modern Bento structure: full-bleed top art dissolving into bottom tinted stage
+            // Exact Modern Bento screenshot structure: full-bleed upper artwork dissolving into velvety stage,
+            // top-left frosted circle KeyboardArrowDown, bottom Title+Artist+(MoreVert)(Favorite), white waveform,
+            // 3 borderless transport (FastRewind/Play/FastForward), optional volume bar, Headphones Phone speaker,
+            // bottom bar: FormatListBulleted, Shuffle, split frosted pill [SpeakerGroup | Timer], Repeat, Lyrics
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(0.56f)
+                        .fillMaxHeight(0.57f)
                 ) {
                     MockArtworkSurface(
                         song = song,
@@ -892,24 +917,22 @@ private fun LiveNowPlayingMockup(
                         palette = palette,
                         cornerRadius = 0,
                         modifier = Modifier.fillMaxSize(),
-                        fallbackIconSize = 44.dp
+                        fallbackIconSize = 42.dp
                     )
-                    // Top-left collapse chevron pill
                     Box(
                         modifier = Modifier
                             .padding(10.dp)
                             .size(20.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.38f)),
+                            .background(Color.Black.copy(alpha = 0.36f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(13.dp))
                     }
-                    // Smooth seamless dissolve gradient into lower stage
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(0.46f)
+                            .fillMaxHeight(0.48f)
                             .align(Alignment.BottomCenter)
                             .background(Brush.verticalGradient(listOf(Color.Transparent, palette.bgBottom)))
                     )
@@ -920,7 +943,7 @@ private fun LiveNowPlayingMockup(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .padding(horizontal = 13.dp, vertical = 7.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(5.5.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -928,16 +951,16 @@ private fun LiveNowPlayingMockup(
                     ) {
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             if (useLive && song != null) {
-                                Text(song.displayTitle, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(song.displayArtist, fontSize = 9.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.displayTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.displayArtist, fontSize = 8.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             } else {
-                                ShadowBar(0.74f, 8.dp, palette.textPrimary.copy(alpha = 0.72f))
-                                ShadowBar(0.48f, 6.dp, palette.textSecondary.copy(alpha = 0.45f))
+                                ShadowBar(0.76f, 8.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                ShadowBar(0.48f, 5.5.dp, palette.textSecondary.copy(alpha = 0.45f))
                             }
                             if (showAdvancedSongInfo) {
                                 Text(
                                     text = previewFormatBadge(if (useLive) song else null),
-                                    fontSize = 7.sp,
+                                    fontSize = 6.5.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = palette.textSecondary.copy(alpha = 0.78f),
                                     maxLines = 1,
@@ -946,45 +969,44 @@ private fun LiveNowPlayingMockup(
                             }
                         }
                         Box(
-                            modifier = Modifier.size(21.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.14f)),
+                            modifier = Modifier.size(20.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center
                         ) { Icon(Icons.Default.MoreVert, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp)) }
                         Spacer(modifier = Modifier.width(5.dp))
                         Box(
-                            modifier = Modifier.size(21.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.14f)),
+                            modifier = Modifier.size(20.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                if (useLive && song?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                 null,
-                                tint = if (useLive && song?.isFavorite == true) BentoAccentPinkText else palette.textPrimary,
+                                tint = if (isFav) BentoAccentPinkText else palette.textPrimary,
                                 modifier = Modifier.size(11.dp)
                             )
                         }
                     }
 
-                    // Waveform + 0:00 / duration timestamps
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         WaveformMiniPreviewCanvas(
                             styleId = waveformStyle,
-                            accentColor = palette.textPrimary,
+                            accentColor = if (palette.isLight) palette.textPrimary else Color.White,
                             trackColor = palette.textPrimary.copy(alpha = 0.24f),
-                            modifier = Modifier.fillMaxWidth().height(16.dp)
+                            modifier = Modifier.fillMaxWidth().height(15.dp)
                         )
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("1:24", fontSize = 7.sp, color = palette.textSecondary)
-                            Text(durationLabel, fontSize = 7.sp, color = palette.textSecondary)
+                            Text("1:24", fontSize = 6.5.sp, color = palette.textSecondary)
+                            Text(durationLabel, fontSize = 6.5.sp, color = palette.textSecondary)
                         }
                     }
 
-                    // Center Transport
+                    // 3 borderless transport icons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.FastRewind, null, tint = palette.textPrimary, modifier = Modifier.size(19.dp))
-                        Icon(playIcon, null, tint = palette.textPrimary, modifier = Modifier.size(25.dp))
+                        Icon(playIcon, null, tint = palette.textPrimary, modifier = Modifier.size(26.dp))
                         Icon(Icons.Default.FastForward, null, tint = palette.textPrimary, modifier = Modifier.size(19.dp))
                     }
 
@@ -998,41 +1020,56 @@ private fun LiveNowPlayingMockup(
                         }
                     }
 
-                    // Audio Route Label
+                    // Centered Headphones Phone speaker badge
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeUp, null, tint = palette.textSecondary, modifier = Modifier.size(8.dp))
+                        Icon(Icons.Default.Headphones, null, tint = palette.textSecondary, modifier = Modifier.size(8.dp))
                         Spacer(modifier = Modifier.width(3.dp))
-                        Text("Phone speaker", fontSize = 7.5.sp, color = palette.textSecondary)
+                        Text("Phone speaker", fontSize = 7.sp, color = palette.textSecondary)
                     }
 
-                    // Exact 5-item bottom action dock
+                    // Bottom bar: FormatListBulleted, Shuffle | split frosted pill [SpeakerGroup | Timer] | Repeat, Lyrics
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
-                        Icon(Icons.Default.Shuffle, null, tint = palette.textPrimary, modifier = Modifier.size(12.dp))
-                        Surface(shape = RoundedCornerShape(999.dp), color = palette.textPrimary.copy(alpha = 0.13f)) {
-                            Row(modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Icon(Icons.Default.Speaker, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                        Icon(Icons.AutoMirrored.Filled.FormatListBulleted, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                        Icon(Icons.Default.Shuffle, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = palette.textPrimary.copy(alpha = 0.13f),
+                            border = BorderStroke(0.5.dp, palette.textPrimary.copy(alpha = 0.14f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.SpeakerGroup, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                                Box(modifier = Modifier.width(0.6.dp).height(9.dp).background(palette.textPrimary.copy(alpha = 0.25f)))
                                 Icon(Icons.Default.Timer, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
                             }
                         }
-                        Icon(Icons.Default.Repeat, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
-                        Icon(Icons.Default.Lyrics, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                        Icon(Icons.Default.Repeat, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                        Icon(Icons.Default.Lyrics, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
                     }
                 }
             }
         }
 
         NowPlayingLayout.VINYL_TURNTABLE -> {
+            // Exact Vinyl Turntable screenshot structure:
+            // Top bar: Circle KeyboardArrowDown | center pill "• VINYL TURNTABLE • 33⅓ RPM" + "Phone speaker" | circles (QueueMusic, MoreVert)
+            // Turntable Plinth card with 4 corner screws, spinning platter + tonearm + bottom-left red dot "QUARTZ LOCK"
+            // Console card: Title + "Artist • Album" + circle Favorite + waveform + timestamps
+            // Transport: Shuffle, circle SkipPrevious, accent circle Play/Pause, circle SkipNext, Repeat
+            // Bottom 3 equal labeled pill buttons: Lyrics, Output, Sleep
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 7.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
@@ -1041,229 +1078,183 @@ private fun LiveNowPlayingMockup(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
-                    Text("NOW PLAYING", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = palette.textSecondary)
-                    Icon(Icons.Default.MoreVert, null, tint = palette.textPrimary, modifier = Modifier.size(14.dp))
+                    Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder)) {
+                            Text("• VINYL TURNTABLE • 33⅓ RPM", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.accent, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                        Text("Phone speaker", fontSize = 6.sp, color = palette.textSecondary)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                        }
+                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MoreVert, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                        }
+                    }
                 }
 
-                // Rotating Vinyl Platter with Concentric Grooves + Tonearm Needle
-                Box(
-                    modifier = Modifier.size(134.dp),
-                    contentAlignment = Alignment.Center
+                // Turntable Plinth Card with corner screws, platter, tonearm, QUARTZ LOCK
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(0.7.dp, palette.cardBorder),
+                    modifier = Modifier.fillMaxWidth().height(120.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(124.dp)
-                            .clip(CircleShape)
-                            .background(Brush.radialGradient(listOf(Color(0xFF282C38), Color(0xFF0A0B10))))
-                            .border(2.dp, palette.accent.copy(alpha = 0.45f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Subtle vinyl grooves
+                    Box(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+                        // Corner screws + tonearm
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val cx = size.width / 2f
-                            val cy = size.height / 2f
-                            listOf(0.42f, 0.36f, 0.30f).forEach { rFrac ->
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.08f),
-                                    radius = size.minDimension * rFrac,
-                                    center = Offset(cx, cy),
-                                    style = Stroke(width = 0.8.dp.toPx())
-                                )
-                            }
+                            val pad = 3.dp.toPx()
+                            val screwColor = palette.textSecondary.copy(alpha = 0.45f)
+                            listOf(
+                                Offset(pad, pad),
+                                Offset(size.width - pad, pad),
+                                Offset(pad, size.height - pad),
+                                Offset(size.width - pad, size.height - pad)
+                            ).forEach { drawCircle(screwColor, radius = 1.6.dp.toPx(), center = it) }
+
+                            val pivot = Offset(size.width * 0.86f, size.height * 0.18f)
+                            val tip = Offset(size.width * 0.64f, size.height * 0.62f)
+                            drawCircle(color = Color(0xFFB8C0D0), radius = 4.dp.toPx(), center = pivot)
+                            drawLine(color = Color(0xFFD5DCE8), start = pivot, end = tip, strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
                         }
+
+                        // Spinning Vinyl Platter
                         Box(
                             modifier = Modifier
-                                .size(54.dp)
+                                .align(Alignment.Center)
+                                .size(98.dp)
                                 .clip(CircleShape)
-                                .border(1.5.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                                .background(Brush.radialGradient(listOf(Color(0xFF282C38), Color(0xFF0A0B10))))
+                                .border(1.5.dp, palette.accent.copy(alpha = 0.45f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            MockArtworkSurface(
-                                song = song,
-                                isShadow = !useLive,
-                                palette = palette,
-                                cornerRadius = 999,
-                                modifier = Modifier.fillMaxSize(),
-                                fallbackIconSize = 20.dp
-                            )
-                            Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(Color(0xFF0A0B10)))
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val cx = size.width / 2f
+                                val cy = size.height / 2f
+                                listOf(0.42f, 0.35f, 0.28f).forEach { rFrac ->
+                                    drawCircle(Color.White.copy(alpha = 0.09f), radius = size.minDimension * rFrac, center = Offset(cx, cy), style = Stroke(width = 0.7.dp.toPx()))
+                                }
+                            }
+                            Box(
+                                modifier = Modifier.size(42.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                MockArtworkSurface(song, !useLive, palette, 999, Modifier.fillMaxSize(), 16.dp)
+                                Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF0A0B10)))
+                            }
+                        }
+
+                        // Bottom-left red dot QUARTZ LOCK
+                        Row(
+                            modifier = Modifier.align(Alignment.BottomStart).padding(start = 5.dp, bottom = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color(0xFFFF4D4F)))
+                            Text("QUARTZ LOCK", fontSize = 5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
                         }
                     }
+                }
 
-                    // Tonearm pivot & stylus on top-right
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val pivot = Offset(size.width * 0.88f, size.height * 0.14f)
-                        val tip = Offset(size.width * 0.67f, size.height * 0.48f)
-                        drawCircle(color = Color(0xFFB8C0D0), radius = 4.dp.toPx(), center = pivot)
-                        drawLine(
-                            color = Color(0xFFD0D7E5),
-                            start = pivot,
-                            end = tip,
-                            strokeWidth = 2.dp.toPx(),
-                            cap = StrokeCap.Round
+                // Console Card: Title + Artist•Album + Favorite circle + waveform + timestamps
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.cardBg,
+                    border = BorderStroke(0.6.dp, palette.cardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                                if (useLive && song != null) {
+                                    Text(song.displayTitle, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${song.displayArtist} • ${song.displayAlbum}", fontSize = 7.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                } else {
+                                    ShadowBar(0.72f, 6.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                    ShadowBar(0.50f, 4.5.dp, palette.textSecondary.copy(alpha = 0.45f))
+                                }
+                            }
+                            Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                                Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textPrimary, modifier = Modifier.size(10.dp))
+                            }
+                        }
+                        WaveformMiniPreviewCanvas(
+                            styleId = waveformStyle,
+                            accentColor = palette.accent,
+                            trackColor = palette.textPrimary.copy(alpha = 0.22f),
+                            modifier = Modifier.fillMaxWidth().height(13.dp)
                         )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("1:24", fontSize = 6.sp, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
+                            Text(durationLabel, fontSize = 6.sp, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
+                        }
                     }
                 }
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    if (useLive && song != null) {
-                        Text(song.displayTitle, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(song.displayArtist, fontSize = 9.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } else {
-                        ShadowBar(0.60f, 8.dp, palette.textPrimary.copy(alpha = 0.72f))
-                        ShadowBar(0.40f, 6.dp, palette.textSecondary.copy(alpha = 0.45f))
-                    }
-                    if (showAdvancedSongInfo) {
-                        Text(previewFormatBadge(if (useLive) song else null), fontSize = 7.sp, fontFamily = FontFamily.Monospace, color = palette.accent, maxLines = 1)
-                    }
-                }
-
-                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    WaveformMiniPreviewCanvas(
-                        styleId = waveformStyle,
-                        accentColor = palette.accent,
-                        trackColor = palette.textPrimary.copy(alpha = 0.22f),
-                        modifier = Modifier.fillMaxWidth().height(16.dp)
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("1:24", fontSize = 7.sp, color = palette.textSecondary)
-                        Text(durationLabel, fontSize = 7.sp, color = palette.textSecondary)
-                    }
-                }
-
+                // Transport: Shuffle, circle SkipPrevious, accent circle Play/Pause, circle SkipNext, Repeat
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Shuffle, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
-                    Icon(Icons.Default.SkipPrevious, null, tint = palette.textPrimary, modifier = Modifier.size(18.dp))
-                    Box(
-                        modifier = Modifier.size(32.dp).clip(CircleShape).background(palette.accent),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Shuffle, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.SkipPrevious, null, tint = palette.textPrimary, modifier = Modifier.size(13.dp))
                     }
-                    Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(18.dp))
-                    Icon(Icons.Default.Repeat, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                    Box(modifier = Modifier.size(30.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                        Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(16.dp))
+                    }
+                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(13.dp))
+                    }
+                    Icon(Icons.Default.Repeat, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Speaker, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
-                    Icon(Icons.Default.Timer, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
-                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
-                    Icon(Icons.Default.Lyrics, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                // Bottom 3 equal labeled buttons: Lyrics, Output, Sleep
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    listOf(
+                        Icons.Default.Lyrics to "Lyrics",
+                        Icons.Default.SpeakerGroup to "Output",
+                        Icons.Default.Bedtime to "Sleep"
+                    ).forEach { (icon, lbl) ->
+                        Surface(
+                            shape = RoundedCornerShape(9.dp),
+                            color = palette.cardBg,
+                            border = BorderStroke(0.5.dp, palette.cardBorder),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(icon, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                                Spacer(Modifier.width(3.dp))
+                                Text(lbl, fontSize = 6.5.sp, fontWeight = FontWeight.Medium, color = palette.textPrimary)
+                            }
+                        }
+                    }
                 }
             }
         }
 
         NowPlayingLayout.MINIMAL_GLASS -> {
-            // Exact Minimal Glass structure: full ambient backdrop + floating glass art frame + frosted control sheet
-            Box(
+            // Exact Minimalist Glass screenshot structure:
+            // Top bar: KeyboardArrowDown | "MINIMAL GLASS" | SpeakerGroup + MoreVert
+            // Frosted padded outer card containing square rounded album art
+            // Centered Title + Artist
+            // Waveform + timestamps
+            // Frosted glass pill transport bar (Shuffle, SkipPrevious, accent circle Play/Pause, SkipNext, Repeat)
+            // Bottom 4 icons: Favorite, Bedtime, QueueMusic, Lyrics
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(palette.artworkTop, palette.bgBottom)))
-                    .padding(11.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                    Text("GLASS STAGE", fontSize = 7.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Color.White.copy(alpha = 0.72f))
-                    Icon(Icons.Default.MoreVert, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                }
-
-                // Centered Glass-Framed Album Cover
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 26.dp)
-                        .size(116.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .border(1.2.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(18.dp))
-                ) {
-                    MockArtworkSurface(
-                        song = song,
-                        isShadow = !useLive,
-                        palette = palette,
-                        cornerRadius = 18,
-                        modifier = Modifier.fillMaxSize(),
-                        fallbackIconSize = 36.dp
-                    )
-                }
-
-                // Frosted Glass Bottom Control Card
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.Black.copy(alpha = 0.44f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(11.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                if (useLive && song != null) {
-                                    Text(song.displayTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(song.displayArtist, fontSize = 8.5.sp, color = Color.White.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                } else {
-                                    ShadowBar(0.75f, 7.dp, Color.White.copy(alpha = 0.75f))
-                                    ShadowBar(0.45f, 5.dp, Color.White.copy(alpha = 0.42f))
-                                }
-                            }
-                            Icon(
-                                if (useLive && song?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                null,
-                                tint = palette.accent,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            WaveformMiniPreviewCanvas(
-                                styleId = waveformStyle,
-                                accentColor = Color.White,
-                                trackColor = Color.White.copy(alpha = 0.28f),
-                                modifier = Modifier.fillMaxWidth().height(15.dp)
-                            )
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("1:24", fontSize = 6.5.sp, color = Color.White.copy(alpha = 0.7f))
-                                Text(durationLabel, fontSize = 6.5.sp, color = Color.White.copy(alpha = 0.7f))
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Shuffle, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
-                            Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(17.dp))
-                            Box(
-                                modifier = Modifier.size(29.dp).clip(CircleShape).background(Color.White),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(playIcon, null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                            }
-                            Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(17.dp))
-                            Icon(Icons.Default.Lyrics, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        NowPlayingLayout.NEON_WAVEFORM -> {
-            // Exact Neon Studio layout: top handle, large rounded cover, waveform + timestamps, centered info, 5-icon transport, pill dock
-            Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 7.dp),
+                    .background(Brush.verticalGradient(listOf(palette.artworkTop.copy(alpha = 0.65f), palette.bgBottom)))
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
@@ -1272,87 +1263,178 @@ private fun LiveNowPlayingMockup(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
-                    Box(modifier = Modifier.width(24.dp).height(3.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.35f)))
-                    Icon(Icons.Default.MoreHoriz, null, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
+                    Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(14.dp))
+                    Text("MINIMAL GLASS", fontSize = 6.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = palette.textSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SpeakerGroup, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                        Icon(Icons.Default.MoreVert, null, tint = palette.textPrimary, modifier = Modifier.size(12.dp))
+                    }
                 }
 
-                // Rounded Floating Cover Card
+                // Frosted padded outer frame containing square rounded album art
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = palette.textPrimary.copy(alpha = 0.10f),
+                    border = BorderStroke(0.9.dp, palette.textPrimary.copy(alpha = 0.24f)),
+                    modifier = Modifier.size(122.dp)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize().padding(6.dp).clip(RoundedCornerShape(13.dp))) {
+                        MockArtworkSurface(song, !useLive, palette, 13, Modifier.fillMaxSize(), 34.dp)
+                    }
+                }
+
+                // Centered Title + Artist
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (useLive && song != null) {
+                        Text(song.displayTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(song.displayArtist, fontSize = 8.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        ShadowBar(0.66f, 7.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                        ShadowBar(0.42f, 5.dp, palette.textSecondary.copy(alpha = 0.45f))
+                    }
+                    if (showAdvancedSongInfo) {
+                        Text(previewFormatBadge(if (useLive) song else null), fontSize = 6.sp, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
+                    }
+                }
+
+                // Waveform + timestamps
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    WaveformMiniPreviewCanvas(
+                        styleId = waveformStyle,
+                        accentColor = palette.accent,
+                        trackColor = palette.textPrimary.copy(alpha = 0.22f),
+                        modifier = Modifier.fillMaxWidth().height(14.dp)
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("1:24", fontSize = 6.5.sp, color = palette.textSecondary)
+                        Text(durationLabel, fontSize = 6.5.sp, color = palette.textSecondary)
+                    }
+                }
+
+                // Frosted glass pill transport bar
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = palette.textPrimary.copy(alpha = 0.12f),
+                    border = BorderStroke(0.7.dp, palette.textPrimary.copy(alpha = 0.22f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Shuffle, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                        Icon(Icons.Default.SkipPrevious, null, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
+                        Box(modifier = Modifier.size(26.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(15.dp))
+                        }
+                        Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(15.dp))
+                        Icon(Icons.Default.Repeat, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                    }
+                }
+
+                // Bottom 4 icons: Favorite, Bedtime, QueueMusic, Lyrics
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textSecondary, modifier = Modifier.size(12.dp))
+                    Icon(Icons.Default.Bedtime, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                    Icon(Icons.Default.Lyrics, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                }
+            }
+        }
+
+        NowPlayingLayout.NEON_WAVEFORM -> {
+            // Exact Neon Studio screenshot structure:
+            // Full-bleed dual-tone ambient gradient with crisp white ink, left KeyboardArrowDown + center drag handle pill,
+            // large square rounded art, white waveform + timestamps, centered Title + Artist,
+            // 5-icon borderless transport (Shuffle, FastRewind, Play/Pause, FastForward, Favorite),
+            // bottom bar: MoreHoriz | frosted pill (Podcasts, Repeat, Bedtime, QueueMusic) | Lyrics
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.verticalGradient(listOf(palette.artworkTop, palette.bgBottom)))
+                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.align(Alignment.CenterStart).size(14.dp))
+                    Box(modifier = Modifier.align(Alignment.Center).width(26.dp).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.45f)))
+                }
+
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.90f)
+                        .fillMaxWidth(0.88f)
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, palette.accent.copy(alpha = 0.32f), RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
                 ) {
-                    MockArtworkSurface(
-                        song = song,
-                        isShadow = !useLive,
-                        palette = palette,
-                        cornerRadius = 16,
-                        modifier = Modifier.fillMaxSize(),
-                        fallbackIconSize = 40.dp
-                    )
+                    MockArtworkSurface(song, !useLive, palette, 16, Modifier.fillMaxSize(), 38.dp)
                 }
 
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     WaveformMiniPreviewCanvas(
                         styleId = waveformStyle,
-                        accentColor = if (palette.isLight) palette.accent else Color.White,
-                        trackColor = palette.textPrimary.copy(alpha = 0.25f),
-                        modifier = Modifier.fillMaxWidth().height(16.dp)
+                        accentColor = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.28f),
+                        modifier = Modifier.fillMaxWidth().height(15.dp)
                     )
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("1:24", fontSize = 7.sp, color = palette.textSecondary)
-                        Text(durationLabel, fontSize = 7.sp, color = palette.textSecondary)
+                        Text("1:24", fontSize = 6.5.sp, color = Color.White.copy(alpha = 0.72f))
+                        Text(durationLabel, fontSize = 6.5.sp, color = Color.White.copy(alpha = 0.72f))
                     }
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (useLive && song != null) {
-                        Text(song.displayTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(song.displayArtist, fontSize = 8.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(song.displayTitle, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(song.displayArtist, fontSize = 8.sp, color = Color.White.copy(alpha = 0.76f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     } else {
-                        ShadowBar(0.64f, 7.5.dp, palette.textPrimary.copy(alpha = 0.72f))
-                        ShadowBar(0.42f, 5.5.dp, palette.textSecondary.copy(alpha = 0.45f))
+                        ShadowBar(0.64f, 7.5.dp, Color.White.copy(alpha = 0.78f))
+                        ShadowBar(0.42f, 5.dp, Color.White.copy(alpha = 0.46f))
                     }
                     if (showAdvancedSongInfo) {
-                        Text(previewFormatBadge(if (useLive) song else null), fontSize = 6.5.sp, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
+                        Text(previewFormatBadge(if (useLive) song else null), fontSize = 6.sp, fontFamily = FontFamily.Monospace, color = Color.White.copy(alpha = 0.72f))
                     }
                 }
 
+                // 5-icon borderless transport: Shuffle, FastRewind, Play/Pause, FastForward, Favorite
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Shuffle, null, tint = palette.textSecondary, modifier = Modifier.size(13.dp))
-                    Icon(Icons.Default.SkipPrevious, null, tint = palette.textPrimary, modifier = Modifier.size(18.dp))
-                    Icon(playIcon, null, tint = palette.textPrimary, modifier = Modifier.size(22.dp))
-                    Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(18.dp))
-                    Icon(
-                        if (useLive && song?.isFavorite == true) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        null,
-                        tint = if (useLive && song?.isFavorite == true) BentoAccentPinkText else palette.textPrimary,
-                        modifier = Modifier.size(13.dp)
-                    )
+                    Icon(Icons.Default.Shuffle, null, tint = Color.White.copy(alpha = 0.75f), modifier = Modifier.size(12.dp))
+                    Icon(Icons.Default.FastRewind, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(playIcon, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.FastForward, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else Color.White, modifier = Modifier.size(12.dp))
                 }
 
+                // Bottom bar: MoreHoriz | frosted pill (Podcasts, Repeat, Bedtime, QueueMusic) | Lyrics
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.MoreHoriz, null, tint = palette.textSecondary, modifier = Modifier.size(13.dp))
-                    Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder)) {
-                        Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.Podcasts, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
-                            Icon(Icons.Default.Repeat, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
-                            Icon(Icons.Default.Timer, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
-                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                    Icon(Icons.Default.MoreHoriz, null, tint = Color.White.copy(alpha = 0.78f), modifier = Modifier.size(13.dp))
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color.White.copy(alpha = 0.14f),
+                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.22f))
+                    ) {
+                        Row(modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Podcasts, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                            Icon(Icons.Default.Repeat, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                            Icon(Icons.Default.Bedtime, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Color.White, modifier = Modifier.size(10.dp))
                         }
                     }
-                    Icon(Icons.Default.Lyrics, null, tint = palette.textSecondary, modifier = Modifier.size(13.dp))
+                    Icon(Icons.Default.Lyrics, null, tint = Color.White.copy(alpha = 0.78f), modifier = Modifier.size(12.dp))
                 }
             }
         }
@@ -1369,124 +1451,264 @@ private fun LiveHomeMockup(
 ) {
     val song = liveCtx.song
     val useLive = liveCtx.hasLiveSong
+    val playIcon = if (useLive && liveCtx.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow
+    val isFav = useLive && song?.isFavorite == true
+    val greetingName = if (!liveCtx.isShadowMode && liveCtx.userDisplayName.isNotBlank()) liveCtx.userDisplayName else "Listener"
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Top Header Bar
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Menu, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
-                }
-                Text("OffGrid Music", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1)
-            }
-            Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Settings, null, tint = palette.onAccent, modifier = Modifier.size(10.dp))
-            }
-        }
-
-        // Primary Hero Block varies by HomeScreenLayout
         when (layout) {
             HomeScreenLayout.HERO_SPOTLIGHT -> {
+                // Exact Hero Spotlight header: rounded-square Menu + "Welcome, <Name>" | right capsule (Avatar, Search, Refresh, accent circle Settings)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(modifier = Modifier.size(17.dp).clip(RoundedCornerShape(6.dp)).background(palette.cardBg).border(0.5.dp, palette.cardBorder, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Menu, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                        }
+                        if (!liveCtx.isShadowMode) {
+                            Text("Welcome, $greetingName", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } else {
+                            ShadowBar(0.42f, 6.dp, palette.textPrimary.copy(alpha = 0.72f))
+                        }
+                    }
+                    Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder)) {
+                        Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(13.dp).clip(CircleShape).background(palette.accent.copy(alpha = 0.25f)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Person, null, tint = palette.textPrimary, modifier = Modifier.size(8.dp))
+                            }
+                            Icon(Icons.Default.Search, null, tint = palette.textPrimary, modifier = Modifier.size(9.dp))
+                            Icon(Icons.Default.Refresh, null, tint = palette.textPrimary, modifier = Modifier.size(9.dp))
+                            Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Settings, null, tint = palette.onAccent, modifier = Modifier.size(8.5.dp))
+                            }
+                        }
+                    }
+                }
+
+                // Hero Continue Listening card: circular art with accent border, Title/accent Artist/Album, top-right circles MoreVert+Favorite, white waveform, Pause + Shuffle Mix pills
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = palette.cardBg,
-                    border = BorderStroke(0.8.dp, palette.cardBorder),
+                    border = BorderStroke(0.8.dp, palette.accent.copy(alpha = 0.42f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.size(34.dp).clip(CircleShape)) {
-                                MockArtworkSurface(
-                                    song = song,
-                                    isShadow = !useLive,
-                                    palette = palette,
-                                    cornerRadius = 999,
-                                    modifier = Modifier.fillMaxSize(),
-                                    fallbackIconSize = 15.dp
-                                )
+                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Box(modifier = Modifier.size(32.dp).clip(CircleShape).border(1.2.dp, palette.accent, CircleShape)) {
+                                MockArtworkSurface(song, !useLive, palette, 999, Modifier.fillMaxSize(), 14.dp)
                             }
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Continue Listening", fontSize = 8.sp, fontWeight = FontWeight.SemiBold, color = palette.accent, maxLines = 1)
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
                                 if (useLive && song != null) {
-                                    Text(song.displayTitle, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(song.displayTitle, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(song.displayArtist, fontSize = 7.sp, fontWeight = FontWeight.Medium, color = palette.accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(song.displayAlbum, fontSize = 6.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 } else {
-                                    ShadowBar(0.75f, 5.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                    ShadowBar(0.78f, 5.5.dp, palette.textPrimary.copy(alpha = 0.75f))
+                                    ShadowBar(0.54f, 4.dp, palette.accent.copy(alpha = 0.7f))
+                                    ShadowBar(0.38f, 3.5.dp, palette.textSecondary.copy(alpha = 0.42f))
                                 }
                             }
-                            Icon(Icons.Default.FavoriteBorder, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                            Box(modifier = Modifier.size(15.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.MoreVert, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                            }
+                            Box(modifier = Modifier.size(15.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+                                Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                            }
                         }
                         WaveformMiniPreviewCanvas(
                             styleId = waveformStyle,
-                            accentColor = Color.White,
-                            trackColor = Color.White.copy(alpha = 0.26f),
-                            modifier = Modifier.fillMaxWidth().height(12.dp)
+                            accentColor = if (palette.isLight) palette.accent else Color.White,
+                            trackColor = palette.textPrimary.copy(alpha = 0.22f),
+                            modifier = Modifier.fillMaxWidth().height(11.dp)
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             Box(
-                                modifier = Modifier.weight(1f).height(20.dp).clip(RoundedCornerShape(999.dp)).background(palette.accent),
+                                modifier = Modifier.weight(1f).height(19.dp).clip(RoundedCornerShape(999.dp)).background(palette.accent),
                                 contentAlignment = Alignment.Center
-                            ) { Text("Play", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.onAccent) }
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                                    Text(if (useLive && liveCtx.isPlaying) "Pause" else "Play", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = palette.onAccent)
+                                }
+                            }
                             Box(
-                                modifier = Modifier.weight(1f).height(20.dp).clip(RoundedCornerShape(999.dp))
-                                    .border(0.8.dp, palette.cardBorder, RoundedCornerShape(999.dp)),
+                                modifier = Modifier.weight(1f).height(19.dp).clip(RoundedCornerShape(999.dp)).border(0.7.dp, palette.cardBorder, RoundedCornerShape(999.dp)),
                                 contentAlignment = Alignment.Center
-                            ) { Text("Shuffle Mix", fontSize = 8.sp, color = palette.textPrimary) }
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Icon(Icons.Default.Shuffle, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                                    Text("Shuffle Mix", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // | Quick Actions: Shuffle Entire Catalog capsule + 3 pills (Library, Playlists, Favorites)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.width(2.dp).height(8.dp).clip(CircleShape).background(palette.accent))
+                        Text("Quick Actions", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                    }
+                    Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Shuffle, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                            }
+                            Text("Shuffle Entire Catalog", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, modifier = Modifier.weight(1f), maxLines = 1)
+                            Icon(Icons.Default.PlayArrow, null, tint = palette.accent, modifier = Modifier.size(10.dp))
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(
+                            Icons.Default.LibraryMusic to "Library",
+                            Icons.AutoMirrored.Filled.QueueMusic to "Playlists",
+                            Icons.Default.Favorite to "Favorites"
+                        ).forEach { (ic, lbl) ->
+                            Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f)) {
+                                Row(modifier = Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(ic, null, tint = palette.accent, modifier = Modifier.size(7.5.dp))
+                                    Spacer(Modifier.width(2.5.dp))
+                                    Text(lbl, fontSize = 6.2.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // | Listening Statistics: TODAY / YESTERDAY
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.width(2.dp).height(8.dp).clip(CircleShape).background(palette.accent))
+                        Text("Listening Statistics", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        listOf("TODAY" to "47m", "YESTERDAY" to "42m").forEach { (day, metric) ->
+                            Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                Column(modifier = Modifier.padding(6.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                    Text(day, fontSize = 5.5.sp, fontWeight = FontWeight.Bold, color = palette.textSecondary)
+                                    if (!liveCtx.isShadowMode) {
+                                        Text(metric, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                                    } else {
+                                        ShadowBar(0.5f, 7.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
 
             HomeScreenLayout.BENTO_DYNAMIC -> {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = palette.accent.copy(alpha = 0.20f),
-                        border = BorderStroke(0.8.dp, palette.accent.copy(alpha = 0.5f)),
-                        modifier = Modifier.weight(1.25f).height(64.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(modifier = Modifier.size(34.dp).clip(RoundedCornerShape(8.dp))) {
-                                MockArtworkSurface(song, !useLive, palette, 8, Modifier.fillMaxSize(), 14.dp)
+                // Exact Bento Mosaic header: circle Menu + "Welcome, <Name>" / "OffGrid Music" + 5 circles (Person, Search, Favorite, Refresh, accent Settings)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Menu, null, tint = palette.textPrimary, modifier = Modifier.size(9.dp))
+                        }
+                        Column {
+                            Text(if (!liveCtx.isShadowMode) "Welcome, $greetingName" else "OffGrid Music", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("OffGrid Music", fontSize = 5.5.sp, color = palette.textSecondary, maxLines = 1)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        listOf(Icons.Default.Person, Icons.Default.Search, Icons.Default.Favorite, Icons.Default.Refresh).forEach { ic ->
+                            Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
+                                Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.dp))
                             }
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("BENTO MIX", fontSize = 6.5.sp, fontWeight = FontWeight.Bold, color = palette.accent)
-                                Text(
-                                    text = if (useLive && song != null) song.displayTitle else "Instant Play",
-                                    fontSize = 8.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = palette.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                        }
+                        Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Settings, null, tint = palette.onAccent, modifier = Modifier.size(8.dp))
+                        }
+                    }
+                }
+
+                // Continue Listening + PLAYING pill + horizontal card
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Continue Listening", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                    Surface(shape = RoundedCornerShape(999.dp), color = palette.accent.copy(alpha = 0.2f)) {
+                        Text("PLAYING", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, color = palette.accent, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp))
+                    }
+                }
+                Surface(shape = RoundedCornerShape(12.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Box(modifier = Modifier.size(28.dp).clip(RoundedCornerShape(7.dp))) {
+                            MockArtworkSurface(song, !useLive, palette, 7, Modifier.fillMaxSize(), 13.dp)
+                        }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            if (useLive && song != null) {
+                                Text(song.displayTitle, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.displayArtist, fontSize = 6.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            } else {
+                                ShadowBar(0.75f, 5.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                ShadowBar(0.45f, 4.dp, palette.textSecondary.copy(alpha = 0.45f))
+                            }
+                        }
+                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(11.dp))
+                        }
+                    }
+                }
+
+                // 2x2 Quick Actions Bento Tiles
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        listOf(Icons.Default.Shuffle to "Shuffle All", Icons.Default.LibraryMusic to "Library").forEach { (ic, lbl) ->
+                            Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f).height(26.dp)) {
+                                Row(modifier = Modifier.padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(ic, null, tint = palette.accent, modifier = Modifier.size(10.dp))
+                                    Text(lbl, fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                                }
                             }
                         }
                     }
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, modifier = Modifier.fillMaxWidth().height(29.dp)) {
-                            Row(modifier = Modifier.padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Favorite, null, tint = palette.accent, modifier = Modifier.size(10.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Favorites", fontSize = 8.sp, color = palette.textPrimary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        listOf(Icons.AutoMirrored.Filled.QueueMusic to "Playlists", Icons.Default.Favorite to "Favorites").forEach { (ic, lbl) ->
+                            Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f).height(26.dp)) {
+                                Row(modifier = Modifier.padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(ic, null, tint = palette.accent, modifier = Modifier.size(10.dp))
+                                    Text(lbl, fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                                }
                             }
                         }
-                        Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, modifier = Modifier.fillMaxWidth().height(29.dp)) {
-                            Row(modifier = Modifier.padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Shuffle, null, tint = palette.accent, modifier = Modifier.size(10.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Shuffle All", fontSize = 8.sp, color = palette.textPrimary)
+                    }
+                }
+
+                // Recently Played horizontal art cards
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = feedSections.firstOrNull { !it.startsWith("HIDDEN:") }?.let { formatSectionLabel(it) } ?: "Recently Played",
+                        fontSize = 7.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.textPrimary
+                    )
+                    Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        repeat(3) { idx ->
+                            val recent = if (liveCtx.hasLiveRecents) liveCtx.recentSongs.getOrNull(idx) else null
+                            Surface(shape = RoundedCornerShape(9.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                Column(modifier = Modifier.padding(4.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                    Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(6.dp))) {
+                                        MockArtworkSurface(recent, recent == null, palette, 6, Modifier.fillMaxSize(), 11.dp)
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    if (recent != null) {
+                                        Text(recent.displayTitle, fontSize = 6.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    } else {
+                                        ShadowBar(0.75f, 3.5.dp, palette.textPrimary.copy(alpha = 0.65f))
+                                    }
+                                }
                             }
                         }
                     }
@@ -1494,114 +1716,151 @@ private fun LiveHomeMockup(
             }
 
             HomeScreenLayout.MINIMAL_FEED -> {
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        listOf("Library", "Playlists", "Favorites").forEach { chip ->
-                            Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder)) {
-                                Text(chip, fontSize = 7.5.sp, color = palette.textPrimary, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                // Exact Minimal Stream frameless header: Menu, "MINIMAL STREAM" + name, plain icons (AccountCircle, Search, Shuffle, Settings) + divider
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Icon(Icons.Default.Menu, null, tint = palette.textPrimary, modifier = Modifier.size(12.dp))
+                            Column {
+                                Text("MINIMAL STREAM", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = palette.accent)
+                                Text(if (!liveCtx.isShadowMode) greetingName else "OffGrid", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1)
                             }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AccountCircle, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                            Icon(Icons.Default.Search, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                            Icon(Icons.Default.Shuffle, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                            Icon(Icons.Default.Settings, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
                         }
                     }
-                    Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, modifier = Modifier.fillMaxWidth()) {
-                        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp))) {
-                                MockArtworkSurface(song, !useLive, palette, 6, Modifier.fillMaxSize(), 12.dp)
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (useLive && song != null) song.displayTitle else "Quick Stream",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = palette.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (useLive && song != null) song.displayArtist else "Clean dense list",
-                                    fontSize = 7.sp,
-                                    color = palette.textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(Icons.Default.PlayArrow, null, tint = palette.accent, modifier = Modifier.size(14.dp))
+                    HorizontalDivider(thickness = 0.5.dp, color = palette.cardBorder)
+                }
+
+                // Pill Continue bar ("STREAMING NOW", circular art, heart, accent play)
+                Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(modifier = Modifier.size(24.dp).clip(CircleShape)) {
+                            MockArtworkSurface(song, !useLive, palette, 999, Modifier.fillMaxSize(), 11.dp)
                         }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text("STREAMING NOW", fontSize = 5.sp, fontWeight = FontWeight.Bold, color = palette.accent)
+                            if (useLive && song != null) {
+                                Text(song.displayTitle, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            } else {
+                                ShadowBar(0.72f, 5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                            }
+                        }
+                        Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textSecondary, modifier = Modifier.size(10.dp))
+                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(10.dp))
+                        }
+                    }
+                }
+
+                // Clean minimal stream list rows
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    repeat(4) { idx ->
+                        val item = if (liveCtx.hasLiveRecents) liveCtx.recentSongs.getOrNull(idx) else null
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(modifier = Modifier.size(20.dp).clip(RoundedCornerShape(5.dp))) {
+                                MockArtworkSurface(item, item == null, palette, 5, Modifier.fillMaxSize(), 9.dp)
+                            }
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                                if (item != null) {
+                                    Text(item.displayTitle, fontSize = 7.5.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(item.displayArtist, fontSize = 6.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                } else {
+                                    ShadowBar(0.76f, 4.5.dp, palette.textPrimary.copy(alpha = 0.65f))
+                                    ShadowBar(0.46f, 3.5.dp, palette.textSecondary.copy(alpha = 0.4f))
+                                }
+                            }
+                            Icon(Icons.Default.MoreVert, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                        }
+                        if (idx < 3) HorizontalDivider(thickness = 0.4.dp, color = palette.cardBorder.copy(alpha = 0.6f))
                     }
                 }
             }
 
             HomeScreenLayout.STUDIO_DASHBOARD -> {
+                // Exact Studio Deck header: rounded-square Menu + dot "STUDIO DECK" + name + 4 rounded-square buttons (AccountCircle, Search, Refresh, accent GraphicEq)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.size(16.dp).clip(RoundedCornerShape(5.dp)).background(palette.cardBg).border(0.5.dp, palette.cardBorder, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Menu, null, tint = palette.textPrimary, modifier = Modifier.size(9.dp))
+                        }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(palette.accent))
+                                Text("STUDIO DECK", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.accent)
+                            }
+                            Text(if (!liveCtx.isShadowMode) greetingName else "Console", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        listOf(Icons.Default.AccountCircle, Icons.Default.Search, Icons.Default.Refresh).forEach { ic ->
+                            Box(modifier = Modifier.size(15.dp).clip(RoundedCornerShape(4.dp)).background(palette.cardBg).border(0.5.dp, palette.cardBorder, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+                                Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                            }
+                        }
+                        Box(modifier = Modifier.size(15.dp).clip(RoundedCornerShape(4.dp)).background(palette.accent), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.GraphicEq, null, tint = palette.onAccent, modifier = Modifier.size(8.5.dp))
+                        }
+                    }
+                }
+
+                // DECK A // ON AIR monospace console card
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = palette.cardBg,
-                    border = BorderStroke(0.8.dp, palette.accent.copy(alpha = 0.45f)),
+                    border = BorderStroke(0.8.dp, palette.accent.copy(alpha = 0.5f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Text("STUDIO DECK", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.accent)
-                            Text(if (useLive && song != null) song.displayTitle else "42m today", fontSize = 7.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("DECK A // ON AIR", fontSize = 6.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.accent)
+                            Box(modifier = Modifier.size(14.dp).clip(RoundedCornerShape(4.dp)).background(palette.textPrimary.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                                Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))) {
+                                MockArtworkSurface(song, !useLive, palette, 6, Modifier.fillMaxSize(), 13.dp)
+                            }
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                if (useLive && song != null) {
+                                    Text(song.displayTitle, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(song.displayArtist, fontSize = 6.5.sp, fontFamily = FontFamily.Monospace, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                } else {
+                                    ShadowBar(0.75f, 5.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                    ShadowBar(0.45f, 4.dp, palette.textSecondary.copy(alpha = 0.45f))
+                                }
+                            }
+                            Box(modifier = Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(12.dp))
+                            }
                         }
                         WaveformMiniPreviewCanvas(
                             styleId = waveformStyle,
                             accentColor = palette.accent,
-                            trackColor = palette.textPrimary.copy(alpha = 0.2f),
-                            modifier = Modifier.fillMaxWidth().height(16.dp)
+                            trackColor = palette.textPrimary.copy(alpha = 0.22f),
+                            modifier = Modifier.fillMaxWidth().height(11.dp)
                         )
                     }
                 }
-            }
-        }
 
-        // Dynamic User Home Feed Sections preview
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            feedSections.take(3).forEachIndexed { secIdx, rawId ->
-                val cleanId = rawId.removePrefix("HIDDEN:").uppercase()
-                val label = when {
-                    cleanId.contains("QUICK") -> "Quick Actions"
-                    cleanId.contains("STAT") -> "Listening Statistics"
-                    cleanId.contains("SPEED") -> "Speed Dial"
-                    cleanId.contains("RECENTLY_ADDED") -> "Recently Added"
-                    cleanId.contains("RECENT") -> "Recently Played"
-                    cleanId.contains("MOST") -> "Most Played"
-                    cleanId.contains("ALBUM") -> "Top Albums"
-                    cleanId.contains("ARTIST") -> "Top Artists"
-                    else -> "Your Mixes"
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Box(modifier = Modifier.width(2.5.dp).height(9.dp).clip(CircleShape).background(palette.accent))
-                        Text(label, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        repeat(2) { idx ->
-                            val liveRecent = if (liveCtx.hasLiveRecents) liveCtx.recentSongs.getOrNull(secIdx * 2 + idx) else null
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = palette.cardBg,
-                                border = BorderStroke(0.5.dp, palette.cardBorder),
-                                modifier = Modifier.weight(1f).height(34.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Box(modifier = Modifier.size(18.dp).clip(RoundedCornerShape(5.dp))) {
-                                        MockArtworkSurface(liveRecent, liveRecent == null, palette, 5, Modifier.fillMaxSize(), 9.dp)
-                                    }
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        if (liveRecent != null) {
-                                            Text(liveRecent.displayTitle, fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(liveRecent.displayArtist, fontSize = 6.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        } else {
-                                            ShadowBar(0.82f, 4.dp, palette.textPrimary.copy(alpha = 0.65f))
-                                            ShadowBar(0.55f, 3.dp, palette.textSecondary.copy(alpha = 0.42f))
-                                        }
-                                    }
+                // CH // LAUNCH MATRIX
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("CH // LAUNCH MATRIX", fontSize = 6.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.textSecondary)
+                    Row(modifier = Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("CH01" to "SHUFFLE", "CH02" to "LIBRARY", "CH03" to "MIXES").forEach { (ch, lbl) ->
+                            Surface(shape = RoundedCornerShape(7.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                Column(modifier = Modifier.padding(5.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                    Text(ch, fontSize = 5.5.sp, fontFamily = FontFamily.Monospace, color = palette.accent)
+                                    Text(lbl, fontSize = 6.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = palette.textPrimary)
                                 }
                             }
                         }
@@ -1610,37 +1869,76 @@ private fun LiveHomeMockup(
             }
         }
 
-        // Bottom Floating Mini Player
+        // Bottom Floating Mini Player + Floating Pill Bottom Nav (Home, Library, Playlists, Search, Jam)
         Surface(
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
             color = palette.cardBg,
             border = BorderStroke(0.6.dp, palette.cardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Box(modifier = Modifier.size(17.dp).clip(RoundedCornerShape(4.dp))) {
-                        MockArtworkSurface(song, !useLive, palette, 4, Modifier.fillMaxSize(), 9.dp)
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(modifier = Modifier.size(16.dp).clip(RoundedCornerShape(4.dp))) {
+                        MockArtworkSurface(song, !useLive, palette, 4, Modifier.fillMaxSize(), 8.dp)
                     }
                     if (useLive && song != null) {
-                        Text(song.displayTitle, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(song.displayTitle, fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     } else {
-                        ShadowBar(0.52f, 5.dp, palette.textPrimary.copy(alpha = 0.68f))
+                        ShadowBar(0.55f, 4.5.dp, palette.textPrimary.copy(alpha = 0.68f))
                     }
                 }
-                Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
-                    Icon(if (useLive && liveCtx.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = palette.onAccent, modifier = Modifier.size(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = if (isFav) BentoAccentPinkText else palette.textSecondary, modifier = Modifier.size(9.dp))
+                    Box(modifier = Modifier.size(15.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                        Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                    }
+                    Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
                 }
             }
         }
+
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = palette.cardBg,
+            border = BorderStroke(0.5.dp, palette.cardBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.5.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(shape = RoundedCornerShape(999.dp), color = palette.accent) {
+                    Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Icon(Icons.Default.Home, null, tint = palette.onAccent, modifier = Modifier.size(8.dp))
+                        Text("Home", fontSize = 5.8.sp, fontWeight = FontWeight.Bold, color = palette.onAccent)
+                    }
+                }
+                Icon(Icons.Default.LibraryMusic, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                Icon(Icons.Default.Search, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                Icon(Icons.Default.Groups, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+            }
+        }
+    }
+}
+
+private fun formatSectionLabel(rawId: String): String {
+    val cleanId = rawId.removePrefix("HIDDEN:").uppercase(Locale.US)
+    return when {
+        cleanId.contains("QUICK") -> "Quick Actions"
+        cleanId.contains("STAT") -> "Listening Statistics"
+        cleanId.contains("SPEED") -> "Speed Dial"
+        cleanId.contains("RECENTLY_ADDED") -> "Recently Added"
+        cleanId.contains("RECENT") -> "Recently Played"
+        cleanId.contains("MOST") -> "Most Played"
+        cleanId.contains("ALBUM") -> "Top Albums"
+        cleanId.contains("ARTIST") -> "Top Artists"
+        else -> "Your Mixes"
     }
 }
 
@@ -1659,44 +1957,80 @@ private fun LivePlaylistsMockup(
         }
     }
     val useLive = names.isNotEmpty()
+    val countLabel = if (useLive) names.size.toString() else "6"
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Playlists", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Add, null, tint = palette.onAccent, modifier = Modifier.size(12.dp))
-            }
-        }
-
         when (layout) {
             PlaylistsLayout.BENTO_GRID -> {
-                Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.weight(1f)) {
+                // Exact Bento Grid header: rounded-square ArrowBack + "BENTO COLLECTIONS" / "Playlists" + 3 circles (Search, Favorite, ViewList)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(modifier = Modifier.size(16.dp).clip(RoundedCornerShape(5.dp)).background(palette.cardBg).border(0.5.dp, palette.cardBorder, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = palette.textPrimary, modifier = Modifier.size(9.dp))
+                        }
+                        Column {
+                            Text("BENTO COLLECTIONS", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp, color = palette.accent)
+                            Text("Playlists", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        listOf(Icons.Default.Search, Icons.Default.Favorite, Icons.Default.ViewList).forEach { ic ->
+                            Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                            }
+                        }
+                    }
+                }
+
+                // Asymmetric action dock: New Mix accent pill + Smart pill + FileDownload orb
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(shape = RoundedCornerShape(999.dp), color = palette.accent, modifier = Modifier.weight(1.2f).height(20.dp)) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Add, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text("New Mix", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = palette.onAccent)
+                        }
+                    }
+                    Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.weight(1f).height(20.dp)) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AutoAwesome, null, tint = palette.accent, modifier = Modifier.size(9.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text("Smart", fontSize = 7.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                        }
+                    }
+                    Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(palette.cardBg).border(0.6.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.FileDownload, null, tint = palette.textPrimary, modifier = Modifier.size(10.dp))
+                    }
+                }
+
+                // 2-column Bento playlist cards
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
                     repeat(2) { r ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.weight(1f)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
                             repeat(2) { c ->
                                 val idx = r * 2 + c
                                 val songArt = liveCtx.recentSongs.getOrNull(idx)
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
                                     color = palette.cardBg,
-                                    border = BorderStroke(0.7.dp, palette.cardBorder),
+                                    border = BorderStroke(0.6.dp, palette.cardBorder),
                                     modifier = Modifier.weight(1f).fillMaxHeight()
                                 ) {
-                                    Column(modifier = Modifier.padding(7.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                    Column(modifier = Modifier.padding(6.dp), verticalArrangement = Arrangement.SpaceBetween) {
                                         Box(modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp))) {
-                                            MockArtworkSurface(songArt, liveCtx.isShadowMode || songArt == null, palette, 8, Modifier.fillMaxSize(), 18.dp)
+                                            MockArtworkSurface(songArt, liveCtx.isShadowMode || songArt == null, palette, 8, Modifier.fillMaxSize(), 16.dp)
                                         }
-                                        Spacer(Modifier.height(5.dp))
+                                        Spacer(Modifier.height(4.dp))
                                         if (useLive) {
-                                            Text(names.getOrElse(idx) { "Playlist ${idx + 1}" }, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("${14 + idx * 6} tracks", fontSize = 7.sp, color = palette.textSecondary)
+                                            Text(names.getOrElse(idx) { "Playlist ${idx + 1}" }, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("${14 + idx * 6} tracks", fontSize = 6.5.sp, color = palette.textSecondary)
                                         } else {
-                                            ShadowBar(0.78f, 5.5.dp, palette.textPrimary.copy(alpha = 0.68f))
-                                            Spacer(Modifier.height(3.dp))
-                                            ShadowBar(0.45f, 4.dp, palette.textSecondary.copy(alpha = 0.42f))
+                                            ShadowBar(0.78f, 5.dp, palette.textPrimary.copy(alpha = 0.68f))
+                                            Spacer(Modifier.height(2.5.dp))
+                                            ShadowBar(0.45f, 3.5.dp, palette.textSecondary.copy(alpha = 0.42f))
                                         }
                                     }
                                 }
@@ -1707,48 +2041,99 @@ private fun LivePlaylistsMockup(
             }
 
             PlaylistsLayout.MAGAZINE_HERO -> {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(98.dp).clip(RoundedCornerShape(14.dp))
-                ) {
+                // Exact Magazine Hero masthead: "EDITORIAL ISSUE • CURATED ANTHOLOGY" + serif "The Record" + 4 circles (Search, FileUpload, AutoAwesome, accent Add) + divider
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("EDITORIAL ISSUE • CURATED ANTHOLOGY", fontSize = 5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = palette.accent)
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("The Record", fontSize = 13.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            listOf(Icons.Default.Search, Icons.Default.FileUpload, Icons.Default.AutoAwesome).forEach { ic ->
+                                Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
+                                }
+                            }
+                            Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Add, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                            }
+                        }
+                    }
+                    HorizontalDivider(thickness = 0.6.dp, color = palette.cardBorder)
+                }
+
+                // Tall featured hero cover card
+                Box(modifier = Modifier.fillMaxWidth().height(98.dp).clip(RoundedCornerShape(14.dp))) {
                     MockArtworkSurface(liveCtx.song, !liveCtx.hasLiveSong, palette, 14, Modifier.fillMaxSize(), 26.dp)
-                    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.68f)))))
-                    Column(modifier = Modifier.align(Alignment.BottomStart).padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("FEATURED", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.8f))
+                    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)))))
+                    Column(modifier = Modifier.align(Alignment.BottomStart).padding(9.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("FEATURED ANTHOLOGY", fontSize = 6.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.82f))
                         if (useLive) {
-                            Text(names.first(), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(names.first(), fontSize = 11.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         } else {
-                            ShadowBar(0.65f, 7.dp, Color.White.copy(alpha = 0.8f))
+                            ShadowBar(0.65f, 7.dp, Color.White.copy(alpha = 0.82f))
                         }
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+
+                // Editorial numbered rows
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.weight(1f)) {
                     repeat(3) { idx ->
-                        Surface(shape = RoundedCornerShape(10.dp), color = palette.cardBg, border = BorderStroke(0.6.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                if (useLive) {
-                                    Text(names.getOrElse(idx + 1) { "Mix ${idx + 1}" }, fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                } else {
-                                    Box(modifier = Modifier.weight(1f)) { ShadowBar(0.68f, 5.5.dp, palette.textPrimary.copy(alpha = 0.65f)) }
-                                }
-                                Icon(Icons.Default.PlayArrow, null, tint = palette.accent, modifier = Modifier.size(13.dp))
+                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text("0${idx + 1}", fontSize = 8.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, color = palette.accent)
+                            if (useLive) {
+                                Text(names.getOrElse(idx + 1) { "Mix ${idx + 1}" }, fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            } else {
+                                Box(modifier = Modifier.weight(1f)) { ShadowBar(0.68f, 5.dp, palette.textPrimary.copy(alpha = 0.68f)) }
                             }
+                            Icon(Icons.Default.PlayArrow, null, tint = palette.accent, modifier = Modifier.size(12.dp))
                         }
+                        if (idx < 2) HorizontalDivider(thickness = 0.4.dp, color = palette.cardBorder.copy(alpha = 0.7f))
                     }
                 }
             }
 
             PlaylistsLayout.COMPACT_LIST -> {
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.weight(1f)) {
-                    repeat(6) { idx ->
-                        Surface(shape = RoundedCornerShape(9.dp), color = palette.cardBg, modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Box(modifier = Modifier.size(20.dp).clip(RoundedCornerShape(5.dp)).background(if (idx % 2 == 0) palette.accent.copy(alpha = 0.45f) else palette.artworkTop))
-                                if (useLive && idx < names.size) {
-                                    Text(names[idx], fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                } else {
-                                    Box(modifier = Modifier.weight(1f)) { ShadowBar(0.62f, 5.dp, palette.textPrimary.copy(alpha = 0.62f)) }
+                // Exact Compact List header: monospace "AUDIOPHILE DIRECTORY // COMPACT STREAM" + "Index (N)" + 3 circles (FileUpload, AutoAwesome, accent Add)
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("AUDIOPHILE DIRECTORY // COMPACT STREAM", fontSize = 5.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = palette.accent)
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Index ($countLabel)", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            listOf(Icons.Default.FileUpload, Icons.Default.AutoAwesome).forEach { ic ->
+                                Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.cardBorder, CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
                                 }
-                                Icon(Icons.Default.PlayArrow, null, tint = palette.textSecondary, modifier = Modifier.size(12.dp))
+                            }
+                            Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Add, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                            }
+                        }
+                    }
+                }
+
+                // Pill "Quick filter N collections..." search bar
+                Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Icon(Icons.Default.Search, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                        Text("Quick filter $countLabel collections...", fontSize = 6.5.sp, color = palette.textSecondary)
+                    }
+                }
+
+                // Dense numbered rows with MoreVert
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                    repeat(5) { idx ->
+                        Surface(shape = RoundedCornerShape(8.dp), color = palette.cardBg, border = BorderStroke(0.4.dp, palette.cardBorder), modifier = Modifier.fillMaxWidth()) {
+                            Row(modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("0${idx + 1}", fontSize = 6.5.sp, fontFamily = FontFamily.Monospace, color = palette.accent)
+                                Box(modifier = Modifier.size(18.dp).clip(RoundedCornerShape(4.dp))) {
+                                    val art = liveCtx.recentSongs.getOrNull(idx)
+                                    MockArtworkSurface(art, liveCtx.isShadowMode || art == null, palette, 4, Modifier.fillMaxSize(), 9.dp)
+                                }
+                                if (useLive && idx < names.size) {
+                                    Text(names[idx], fontSize = 8.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                } else {
+                                    Box(modifier = Modifier.weight(1f)) { ShadowBar(0.65f, 4.5.dp, palette.textPrimary.copy(alpha = 0.65f)) }
+                                }
+                                Icon(Icons.Default.MoreVert, null, tint = palette.textSecondary, modifier = Modifier.size(10.dp))
                             }
                         }
                     }
@@ -1756,26 +2141,68 @@ private fun LivePlaylistsMockup(
             }
 
             PlaylistsLayout.GLOW_CARDS -> {
-                Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.weight(1f)) {
-                    repeat(3) { idx ->
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = palette.accent.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.55f)),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
-                        ) {
-                            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    if (useLive) {
-                                        Text(names.getOrElse(idx) { "Curated Mix ${idx + 1}" }, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text("Curated Playlist", fontSize = 7.5.sp, color = palette.accent)
-                                    } else {
-                                        ShadowBar(0.68f, 6.5.dp, palette.textPrimary.copy(alpha = 0.72f))
-                                        ShadowBar(0.42f, 4.5.dp, palette.accent.copy(alpha = 0.6f))
-                                    }
+                // Exact Neon Glow Cards header: "NEON GLOW CARDS" + "Playlists (N)" + 3 circles (FileUpload, AutoAwesome, accent Add)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("NEON GLOW CARDS", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = palette.accent)
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Playlists ($countLabel)", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            listOf(Icons.Default.FileUpload, Icons.Default.AutoAwesome).forEach { ic ->
+                                Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.cardBg).border(0.5.dp, palette.accent.copy(alpha = 0.45f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(ic, null, tint = palette.textPrimary, modifier = Modifier.size(8.5.dp))
                                 }
-                                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.PlayArrow, null, tint = palette.onAccent, modifier = Modifier.size(12.dp))
+                            }
+                            Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Add, null, tint = palette.onAccent, modifier = Modifier.size(9.dp))
+                            }
+                        }
+                    }
+                }
+
+                // Exact 2-column gradient-bordered square-art cards with bottom-right floating accent Play circle + title/count/MoreVert
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+                    repeat(2) { r ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+                            repeat(2) { c ->
+                                val idx = r * 2 + c
+                                val songArt = liveCtx.recentSongs.getOrNull(idx)
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = palette.accent.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, Brush.linearGradient(listOf(palette.accent, palette.accent.copy(alpha = 0.25f)))),
+                                    modifier = Modifier.weight(1f).fillMaxHeight()
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                            Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))) {
+                                                MockArtworkSurface(songArt, liveCtx.isShadowMode || songArt == null, palette, 8, Modifier.fillMaxSize(), 16.dp)
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(4.dp)
+                                                    .size(18.dp)
+                                                    .clip(CircleShape)
+                                                    .background(palette.accent),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.PlayArrow, null, tint = palette.onAccent, modifier = Modifier.size(10.dp))
+                                            }
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                                                if (useLive) {
+                                                    Text(names.getOrElse(idx) { "Mix ${idx + 1}" }, fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("${12 + idx * 5} tracks", fontSize = 6.sp, color = palette.accent)
+                                                } else {
+                                                    ShadowBar(0.75f, 4.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                                                    ShadowBar(0.45f, 3.5.dp, palette.accent.copy(alpha = 0.58f))
+                                                }
+                                            }
+                                            Icon(Icons.Default.MoreVert, null, tint = palette.textSecondary, modifier = Modifier.size(9.dp))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1796,149 +2223,256 @@ private fun LiveLyricsMockup(
     val liveLines = liveCtx.lyricLines
     val song = liveCtx.song
     val useLiveSong = liveCtx.hasLiveSong
+    val playIcon = if (useLiveSong && liveCtx.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow
 
     when (layout) {
         LyricsLayout.CLASSIC_DEFAULT -> {
+            // Exact Classic Bento LyricsPanelContent structure:
+            // Header: "Lyrics" + "SYNCED" pill + song title | Search circle, Offset, .LRC File, KeyboardArrowDown circle
+            // Centered synced lyrics stack
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(14.dp))
-                    Text("SYNCED LYRICS", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.accent)
-                    Icon(Icons.Default.Translate, null, tint = palette.textSecondary, modifier = Modifier.size(13.dp))
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (hasLyrics) {
-                        val line0 = liveLines.getOrNull(0)?.second.orEmpty()
-                        val line1 = liveLines.getOrNull(1)?.second ?: line0
-                        val line2 = liveLines.getOrNull(2)?.second.orEmpty()
-                        val line3 = liveLines.getOrNull(3)?.second.orEmpty()
-                        if (line0.isNotBlank()) Text(line0, fontSize = 9.sp, color = palette.textSecondary.copy(alpha = 0.45f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(line1, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (line2.isNotBlank()) Text(line2, fontSize = 9.sp, color = palette.textSecondary.copy(alpha = 0.55f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (line3.isNotBlank()) Text(line3, fontSize = 8.5.sp, color = palette.textSecondary.copy(alpha = 0.35f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } else {
-                        // Exact centered lyric line shadows
-                        ShadowBar(0.68f, 6.dp, palette.textSecondary.copy(alpha = 0.35f))
-                        ShadowBar(0.86f, 10.dp, palette.textPrimary.copy(alpha = 0.85f))
-                        ShadowBar(0.72f, 6.dp, palette.textSecondary.copy(alpha = 0.42f))
-                        ShadowBar(0.56f, 5.5.dp, palette.textSecondary.copy(alpha = 0.28f))
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Lyrics", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                                Surface(shape = RoundedCornerShape(999.dp), color = palette.accent.copy(alpha = 0.22f)) {
+                                    Text("SYNCED", fontSize = 5.5.sp, fontWeight = FontWeight.Bold, color = palette.accent, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp))
+                                }
+                            }
+                            if (useLiveSong && song != null) {
+                                Text(song.displayTitle, fontSize = 7.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            } else {
+                                ShadowBar(0.55f, 4.dp, palette.textSecondary.copy(alpha = 0.45f))
+                            }
+                        }
+                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                        }
+                    }
+
+                    // Action pills row matching real LyricsPanelContent (Search, Offset, .LRC File)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(
+                            Icons.Default.Search to "Search",
+                            Icons.Default.Tune to "Offset",
+                            Icons.Default.Description to ".LRC File"
+                        ).forEach { (ic, lbl) ->
+                            Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f)) {
+                                Row(modifier = Modifier.padding(vertical = 3.5.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(ic, null, tint = palette.textSecondary, modifier = Modifier.size(8.dp))
+                                    Spacer(Modifier.width(2.5.dp))
+                                    Text(lbl, fontSize = 6.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1)
+                                }
+                            }
+                        }
                     }
                 }
-                Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.7.dp, palette.cardBorder)) {
-                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(Icons.Default.SkipPrevious, null, tint = palette.textPrimary, modifier = Modifier.size(13.dp))
-                        Icon(Icons.Default.Pause, null, tint = palette.accent, modifier = Modifier.size(14.dp))
-                        Icon(Icons.Default.SkipNext, null, tint = palette.textPrimary, modifier = Modifier.size(13.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (hasLyrics) {
+                            val line0 = liveLines.getOrNull(0)?.second.orEmpty()
+                            val line1 = liveLines.getOrNull(1)?.second ?: line0
+                            val line2 = liveLines.getOrNull(2)?.second.orEmpty()
+                            val line3 = liveLines.getOrNull(3)?.second.orEmpty()
+                            if (line0.isNotBlank()) Text(line0, fontSize = 8.5.sp, color = palette.textSecondary.copy(alpha = 0.45f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(line1, fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (line2.isNotBlank()) Text(line2, fontSize = 8.5.sp, color = palette.textSecondary.copy(alpha = 0.55f), textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (line3.isNotBlank()) Text(line3, fontSize = 8.sp, color = palette.textSecondary.copy(alpha = 0.35f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } else {
+                            ShadowBar(0.68f, 6.dp, palette.textSecondary.copy(alpha = 0.35f))
+                            ShadowBar(0.86f, 10.dp, palette.textPrimary.copy(alpha = 0.85f))
+                            ShadowBar(0.72f, 6.dp, palette.textSecondary.copy(alpha = 0.42f))
+                            ShadowBar(0.56f, 5.dp, palette.textSecondary.copy(alpha = 0.28f))
+                        }
                     }
                 }
             }
         }
 
         LyricsLayout.FLUID_GLOW -> {
+            // Exact Fluid Glow structure:
+            // Top row: rounded-square art + Title/Artist + circle Play/Pause + circle KeyboardArrowDown
+            // Second row toolbar strip: Search, Offset, Translate, .LRC
+            // Large bold left-aligned lyrics
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(modifier = Modifier.size(26.dp).clip(RoundedCornerShape(7.dp))) {
-                        MockArtworkSurface(song, !useLiveSong, palette, 7, Modifier.fillMaxSize(), 12.dp)
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp))) {
+                        MockArtworkSurface(song, !useLiveSong, palette, 6, Modifier.fillMaxSize(), 11.dp)
                     }
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
                         if (useLiveSong && song != null) {
-                            Text(song.displayTitle, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(song.displayArtist, fontSize = 7.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(song.displayTitle, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(song.displayArtist, fontSize = 6.5.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         } else {
-                            ShadowBar(0.65f, 6.dp, palette.textPrimary.copy(alpha = 0.72f))
-                            ShadowBar(0.42f, 4.5.dp, palette.textSecondary.copy(alpha = 0.45f))
+                            ShadowBar(0.68f, 5.5.dp, palette.textPrimary.copy(alpha = 0.72f))
+                            ShadowBar(0.45f, 4.dp, palette.textSecondary.copy(alpha = 0.45f))
+                        }
+                    }
+                    Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                        Icon(playIcon, null, tint = palette.onAccent, modifier = Modifier.size(10.dp))
+                    }
+                    Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                    }
+                }
+
+                // Toolbar strip: Search, Offset, Translate, .LRC
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.5.dp)) {
+                    listOf(
+                        Icons.Default.Search to "Search",
+                        Icons.Default.Tune to "Offset",
+                        Icons.Default.Translate to "Translate",
+                        Icons.Default.Description to ".LRC"
+                    ).forEach { (ic, lbl) ->
+                        Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f)) {
+                            Row(modifier = Modifier.padding(vertical = 3.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                Icon(ic, null, tint = palette.textSecondary, modifier = Modifier.size(7.dp))
+                                Spacer(Modifier.width(2.dp))
+                                Text(lbl, fontSize = 5.2.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1)
+                            }
                         }
                     }
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (hasLyrics) {
-                        val line0 = liveLines.getOrNull(0)?.second.orEmpty()
-                        val line1 = liveLines.getOrNull(1)?.second ?: line0
-                        val line2 = liveLines.getOrNull(2)?.second.orEmpty()
-                        val line3 = liveLines.getOrNull(3)?.second.orEmpty()
-                        if (line0.isNotBlank()) Text(line0, fontSize = 9.5.sp, fontWeight = FontWeight.Medium, color = palette.textSecondary.copy(alpha = 0.42f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(line1, fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary, lineHeight = 18.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        if (line2.isNotBlank()) Text(line2, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = palette.textSecondary.copy(alpha = 0.58f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (line3.isNotBlank()) Text(line3, fontSize = 9.sp, color = palette.textSecondary.copy(alpha = 0.35f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } else {
-                        // Left-aligned expressive Fluid Glow line shadows
-                        ShadowBar(0.62f, 6.dp, palette.textSecondary.copy(alpha = 0.35f))
-                        ShadowBar(0.92f, 11.dp, palette.textPrimary.copy(alpha = 0.88f))
-                        ShadowBar(0.74f, 11.dp, palette.textPrimary.copy(alpha = 0.85f))
-                        ShadowBar(0.68f, 6.5.dp, palette.textSecondary.copy(alpha = 0.45f))
-                        ShadowBar(0.50f, 5.5.dp, palette.textSecondary.copy(alpha = 0.28f))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (hasLyrics) {
+                            val line0 = liveLines.getOrNull(0)?.second.orEmpty()
+                            val line1 = liveLines.getOrNull(1)?.second ?: line0
+                            val line2 = liveLines.getOrNull(2)?.second.orEmpty()
+                            val line3 = liveLines.getOrNull(3)?.second.orEmpty()
+                            if (line0.isNotBlank()) Text(line0, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = palette.textSecondary.copy(alpha = 0.42f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(line1, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            if (line2.isNotBlank()) Text(line2, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = palette.textSecondary.copy(alpha = 0.58f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (line3.isNotBlank()) Text(line3, fontSize = 8.5.sp, color = palette.textSecondary.copy(alpha = 0.35f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } else {
+                            ShadowBar(0.62f, 6.dp, palette.textSecondary.copy(alpha = 0.35f))
+                            ShadowBar(0.92f, 11.dp, palette.textPrimary.copy(alpha = 0.88f))
+                            ShadowBar(0.74f, 11.dp, palette.textPrimary.copy(alpha = 0.85f))
+                            ShadowBar(0.68f, 6.dp, palette.textSecondary.copy(alpha = 0.45f))
+                            ShadowBar(0.50f, 5.dp, palette.textSecondary.copy(alpha = 0.28f))
+                        }
                     }
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = RoundedCornerShape(999.dp), color = palette.accent.copy(alpha = 0.2f)) {
-                        Text("0.0s", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = palette.accent, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                    }
-                    Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Pause, null, tint = palette.onAccent, modifier = Modifier.size(14.dp))
-                    }
-                    Icon(Icons.Default.Translate, null, tint = palette.textSecondary, modifier = Modifier.size(14.dp))
                 }
             }
         }
 
         LyricsLayout.EDITORIAL_TIMELINE -> {
+            // Exact Studio Timeline structure:
+            // Top row: dot "TIMELINE STUDIO" + "Title — Artist" + circle KeyboardArrowDown
+            // Second row toolbar strip: Search, Offset, Translate, .LRC
+            // Left monospace timestamp rail + vertical timeline track + glowing nodes + lyrics
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.fillMaxSize().padding(horizontal = 11.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                Text("TIMELINE", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, color = palette.accent)
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val rowCount = if (hasLyrics) liveLines.take(4).size else 4
-                    repeat(rowCount) { idx ->
-                        val active = idx == 1 || (rowCount == 1 && idx == 0)
-                        val ts = if (hasLyrics) liveLines[idx].first else listOf("01:12", "01:18", "01:25", "01:32")[idx]
-                        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = ts,
-                                fontSize = 8.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                                color = if (active) palette.accent else palette.textSecondary.copy(alpha = 0.45f)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 3.dp)
-                                    .size(if (active) 6.dp else 4.dp)
-                                    .clip(CircleShape)
-                                    .background(if (active) palette.accent else palette.textSecondary.copy(alpha = 0.35f))
-                            )
-                            if (hasLyrics) {
-                                Text(
-                                    text = liveLines[idx].second,
-                                    fontSize = if (active) 11.sp else 8.5.sp,
-                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (active) palette.textPrimary else palette.textSecondary.copy(alpha = 0.5f),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            } else {
-                                Box(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
-                                    ShadowBar(
-                                        widthFraction = if (active) 0.88f else 0.66f,
-                                        height = if (active) 8.dp else 5.5.dp,
-                                        color = if (active) palette.textPrimary.copy(alpha = 0.82f) else palette.textSecondary.copy(alpha = 0.38f)
-                                    )
-                                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(palette.accent))
+                            Text("TIMELINE STUDIO", fontSize = 6.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, letterSpacing = 0.8.sp, color = palette.accent)
+                        }
+                        if (useLiveSong && song != null) {
+                            Text("${song.displayTitle} — ${song.displayArtist}", fontSize = 7.sp, color = palette.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } else {
+                            ShadowBar(0.65f, 4.dp, palette.textSecondary.copy(alpha = 0.45f))
+                        }
+                    }
+                    Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(palette.cardBg), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.KeyboardArrowDown, null, tint = palette.textPrimary, modifier = Modifier.size(11.dp))
+                    }
+                }
+
+                // Toolbar strip
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.5.dp)) {
+                    listOf(
+                        Icons.Default.Search to "Search",
+                        Icons.Default.Tune to "Offset",
+                        Icons.Default.Translate to "Translate",
+                        Icons.Default.Description to ".LRC"
+                    ).forEach { (ic, lbl) ->
+                        Surface(shape = RoundedCornerShape(999.dp), color = palette.cardBg, border = BorderStroke(0.5.dp, palette.cardBorder), modifier = Modifier.weight(1f)) {
+                            Row(modifier = Modifier.padding(vertical = 3.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                Icon(ic, null, tint = palette.textSecondary, modifier = Modifier.size(7.dp))
+                                Spacer(Modifier.width(2.dp))
+                                Text(lbl, fontSize = 5.2.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, maxLines = 1)
                             }
                         }
                     }
                 }
-                Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(palette.textPrimary.copy(alpha = 0.16f))) {
-                    Box(modifier = Modifier.fillMaxWidth(0.54f).fillMaxHeight().background(palette.accent))
+
+                // Timeline rail + glowing nodes + lyrics
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // Continuous vertical timeline rail aligned with nodes
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 34.dp, top = 8.dp, bottom = 8.dp)
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(palette.textSecondary.copy(alpha = 0.25f))
+                    )
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        val rowCount = if (hasLyrics) liveLines.take(4).size else 4
+                        repeat(rowCount) { idx ->
+                            val active = idx == 1 || (rowCount == 1 && idx == 0)
+                            val ts = if (hasLyrics) liveLines[idx].first else listOf("01:12", "01:18", "01:25", "01:32")[idx]
+                            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Text(
+                                    text = ts,
+                                    fontSize = 7.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (active) palette.accent else palette.textSecondary.copy(alpha = 0.45f),
+                                    modifier = Modifier.width(25.dp)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .size(if (active) 7.dp else 4.5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (active) palette.accent else palette.textSecondary.copy(alpha = 0.4f))
+                                )
+                                if (hasLyrics) {
+                                    Text(
+                                        text = liveLines[idx].second,
+                                        fontSize = if (active) 10.5.sp else 8.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (active) palette.textPrimary else palette.textSecondary.copy(alpha = 0.5f),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                } else {
+                                    Box(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
+                                        ShadowBar(
+                                            widthFraction = if (active) 0.88f else 0.66f,
+                                            height = if (active) 8.dp else 5.dp,
+                                            color = if (active) palette.textPrimary.copy(alpha = 0.82f) else palette.textSecondary.copy(alpha = 0.38f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
