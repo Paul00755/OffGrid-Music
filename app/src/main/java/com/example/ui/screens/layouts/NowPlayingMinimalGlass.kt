@@ -58,6 +58,8 @@ fun NowPlayingMinimalGlass(
     showVolumeBar: Boolean = false,
     showAdvancedSongInfo: Boolean = false,
     audioTechnicalInfo: AudioTechnicalInfo? = null,
+    showRemainingTime: Boolean = false,
+    onToggleShowRemainingTime: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -216,10 +218,19 @@ fun NowPlayingMinimalGlass(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     com.example.ui.components.PlaybackPositionText(playbackPositionFlow, positionMs, duration, fontSize = 11.sp, color = BentoTextSecondary)
-                    Text(formatTime(duration), fontSize = 11.sp, color = BentoTextSecondary)
+                    com.example.ui.components.PlaybackDurationToggleText(
+                        playbackPositionFlow = playbackPositionFlow,
+                        positionMs = positionMs,
+                        durationMs = duration,
+                        showRemainingTime = showRemainingTime,
+                        onToggleShowRemainingTime = onToggleShowRemainingTime,
+                        fontSize = 11.sp,
+                        color = BentoTextSecondary
+                    )
                 }
             }
 

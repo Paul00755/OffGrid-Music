@@ -498,13 +498,14 @@ fun MyApplicationTheme(
     content: @Composable () -> Unit
 ) {
     val isSystemInDark = isSystemInDarkTheme()
-    val rawTheme = AppUiTheme.fromId(uiTheme)
-    val activeTheme = if (AppUiTheme.isThemeCompatibleWith(rawTheme, themeMode, isSystemInDark)) {
-        rawTheme
-    } else {
-        AppUiTheme.getDefaultThemeForMode(themeMode, isSystemInDark)
-    }
     val effectiveMode = themeMode.uppercase()
+    val activeTheme = when (effectiveMode) {
+        "AMOLED" -> AppUiTheme.PURE_AMOLED
+        "DARK" -> AppUiTheme.MIDNIGHT_OBSIDIAN
+        "LIGHT" -> AppUiTheme.PORCELAIN_SLATE
+        "SYSTEM" -> if (isSystemInDark) AppUiTheme.MIDNIGHT_OBSIDIAN else AppUiTheme.PORCELAIN_SLATE
+        else -> AppUiTheme.MIDNIGHT_OBSIDIAN
+    }
     val isDark = when (effectiveMode) {
         "AMOLED", "DARK" -> true
         "LIGHT" -> false
@@ -512,7 +513,7 @@ fun MyApplicationTheme(
         else -> activeTheme.isDark
     }
 
-    // AMOLED is the single mode that selects true-black surfaces.
+    // AMOLED is the single mode that selects extra-dark true pitch-black surfaces.
     val isExtraDark = isDark && effectiveMode == "AMOLED"
 
     val presetUpper = accentColorPreset.uppercase()
@@ -543,16 +544,16 @@ fun MyApplicationTheme(
             AppUiTheme.MIDNIGHT_OBSIDIAN -> darkColorScheme(
                 primary = primaryColor,
                 onPrimary = highContrastOnPrimary,
-                primaryContainer = primaryColor.copy(alpha = 0.25f),
+                primaryContainer = primaryColor.copy(alpha = 0.24f),
                 onPrimaryContainer = primaryColor,
                 secondary = Color(0xFFB8C1FF),
-                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF020306),
-                surface = if (isExtraDark) Color(0xFF050508) else Color(0xFF08090E),
-                onBackground = Color.White,
-                onSurface = Color.White,
-                surfaceVariant = if (isExtraDark) Color(0xFF0C0C12) else Color(0xFF11121A),
-                onSurfaceVariant = if (isExtraDark) Color(0xFFD2D6E6) else Color(0xFFB4B8CA),
-                outline = if (isExtraDark) Color(0xFF20222E) else Color(0xFF232534)
+                background = if (isExtraDark) Color(0xFF000000) else Color(0xFF0E111A),
+                surface = if (isExtraDark) Color(0xFF040407) else Color(0xFF161A26),
+                onBackground = Color(0xFFF6F7FB),
+                onSurface = Color(0xFFF6F7FB),
+                surfaceVariant = if (isExtraDark) Color(0xFF0A0A0F) else Color(0xFF1F2436),
+                onSurfaceVariant = if (isExtraDark) Color(0xFFD2D6E6) else Color(0xFFBAC0D4),
+                outline = if (isExtraDark) Color(0xFF1D1F2A) else Color(0xFF2E354B)
             )
             AppUiTheme.PURE_AMOLED -> darkColorScheme(
                 primary = primaryColor,
@@ -564,9 +565,9 @@ fun MyApplicationTheme(
                 surface = Color(0xFF040407),
                 onBackground = Color.White,
                 onSurface = Color.White,
-                surfaceVariant = Color(0xFF0B0B10),
+                surfaceVariant = Color(0xFF0A0A0F),
                 onSurfaceVariant = Color(0xFFD2D6E6),
-                outline = Color(0xFF20222E)
+                outline = Color(0xFF1D1F2A)
             )
             AppUiTheme.CYBERPUNK_NEON -> darkColorScheme(
                 primary = primaryColor,

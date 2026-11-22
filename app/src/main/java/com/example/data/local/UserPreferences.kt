@@ -170,10 +170,15 @@ class UserPreferencesRepository(private val context: Context) {
         val SHOW_ARTIST = booleanPreferencesKey("show_artist")
         val SHOW_ALBUM = booleanPreferencesKey("show_album")
         val SHOW_AUDIO_OUTPUT = booleanPreferencesKey("show_audio_output")
-        val MINI_PLAYER_STYLE = stringPreferencesKey("mini_player_style") // "FLOATING", "DOCKED", "MINIMAL"
+        val SHOW_REMAINING_TIME = booleanPreferencesKey("show_remaining_time")
+        val MINI_PLAYER_STYLE = stringPreferencesKey("mini_player_style") // "FLOATING", "BOTTOM_BAR", "ARTWORK_GLASS", "COMPACT_MINIMAL"
         val MINI_PLAYER_SHOW_PREVIOUS = booleanPreferencesKey("mini_player_show_previous")
         val MINI_PLAYER_SHOW_NEXT = booleanPreferencesKey("mini_player_show_next")
         val MINI_PLAYER_SHOW_FAVORITE = booleanPreferencesKey("mini_player_show_favorite")
+        val MINI_PLAYER_SWIPE_TO_SKIP = booleanPreferencesKey("mini_player_swipe_to_skip")
+        val MINI_PLAYER_SWIPE_UP_TO_OPEN = booleanPreferencesKey("mini_player_swipe_up_to_open")
+        val MINI_PLAYER_SHOW_PROGRESS = booleanPreferencesKey("mini_player_show_progress")
+        val MINI_PLAYER_CIRCULAR_ART = booleanPreferencesKey("mini_player_circular_art")
         val GAPLESS_PLAYBACK = booleanPreferencesKey("gapless_playback")
         val CROSSFADE_DURATION_SEC = intPreferencesKey("crossfade_duration_sec") // 0..12
         val LYRICS_AUTO_SCROLL = booleanPreferencesKey("lyrics_auto_scroll")
@@ -454,10 +459,15 @@ class UserPreferencesRepository(private val context: Context) {
             showArtist = prefs[PreferenceKeys.SHOW_ARTIST] ?: readBoolCached("show_artist", true),
             showAlbum = prefs[PreferenceKeys.SHOW_ALBUM] ?: readBoolCached("show_album", true),
             showAudioOutput = prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: readBoolCached("show_audio_output", true),
+            showRemainingTime = prefs[PreferenceKeys.SHOW_REMAINING_TIME] ?: readBoolCached("show_remaining_time", false),
             miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING"),
             miniPlayerShowPrevious = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: readBoolCached("mini_player_show_previous", true),
             miniPlayerShowNext = prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: readBoolCached("mini_player_show_next", true),
             miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true),
+            miniPlayerSwipeToSkip = prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] ?: readBoolCached("mini_player_swipe_to_skip", true),
+            miniPlayerSwipeUpToOpen = prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] ?: readBoolCached("mini_player_swipe_up_to_open", true),
+            miniPlayerShowProgress = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] ?: readBoolCached("mini_player_show_progress", true),
+            miniPlayerCircularArt = prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] ?: readBoolCached("mini_player_circular_art", false),
             waveformStyle = prefs[PreferenceKeys.WAVEFORM_STYLE] ?: readStringCached("waveform_style", "SNAKE"),
             lyricsFetchMode = prefs[PreferenceKeys.LYRICS_FETCH_MODE] ?: readStringCached("lyrics_fetch_mode", "WIFI_ONLY"),
             lyricsAutoScroll = prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] ?: readBoolCached("lyrics_auto_scroll", true),
@@ -547,10 +557,15 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.SHOW_ARTIST] = cloud.showArtist
                 prefs[PreferenceKeys.SHOW_ALBUM] = cloud.showAlbum
                 prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = cloud.showAudioOutput
+                prefs[PreferenceKeys.SHOW_REMAINING_TIME] = cloud.showRemainingTime
                 prefs[PreferenceKeys.MINI_PLAYER_STYLE] = cloud.miniPlayerStyle
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = cloud.miniPlayerShowPrevious
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = cloud.miniPlayerShowNext
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = cloud.miniPlayerShowFavorite
+                prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] = cloud.miniPlayerSwipeToSkip
+                prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] = cloud.miniPlayerSwipeUpToOpen
+                prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] = cloud.miniPlayerShowProgress
+                prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] = cloud.miniPlayerCircularArt
                 prefs[PreferenceKeys.WAVEFORM_STYLE] = cloud.waveformStyle
                 prefs[PreferenceKeys.LYRICS_FETCH_MODE] = cloud.lyricsFetchMode
                 prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = cloud.lyricsAutoScroll
@@ -643,10 +658,15 @@ class UserPreferencesRepository(private val context: Context) {
                         .putBoolean("pref_show_artist", cloud.showArtist)
                         .putBoolean("pref_show_album", cloud.showAlbum)
                         .putBoolean("pref_show_audio_output", cloud.showAudioOutput)
+                        .putBoolean("pref_show_remaining_time", cloud.showRemainingTime)
                         .putString("pref_mini_player_style", cloud.miniPlayerStyle)
                         .putBoolean("pref_mini_player_show_previous", cloud.miniPlayerShowPrevious)
                         .putBoolean("pref_mini_player_show_next", cloud.miniPlayerShowNext)
                         .putBoolean("pref_mini_player_show_favorite", cloud.miniPlayerShowFavorite)
+                        .putBoolean("pref_mini_player_swipe_to_skip", cloud.miniPlayerSwipeToSkip)
+                        .putBoolean("pref_mini_player_swipe_up_to_open", cloud.miniPlayerSwipeUpToOpen)
+                        .putBoolean("pref_mini_player_show_progress", cloud.miniPlayerShowProgress)
+                        .putBoolean("pref_mini_player_circular_art", cloud.miniPlayerCircularArt)
                         .putString("pref_waveform_style", cloud.waveformStyle)
                         .putString("pref_lyrics_fetch_mode", cloud.lyricsFetchMode)
                         .putBoolean("pref_lyrics_auto_scroll", cloud.lyricsAutoScroll)
@@ -1369,6 +1389,11 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getShowAudioOutputSync(): Boolean = readBoolCached("show_audio_output", true)
 
+    val showRemainingTime: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SHOW_REMAINING_TIME] ?: readBoolCached("show_remaining_time", false)
+    }
+    fun getShowRemainingTimeSync(): Boolean = readBoolCached("show_remaining_time", false)
+
     val miniPlayerStyle: Flow<String> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING")
     }
@@ -1388,6 +1413,26 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true)
     }
     fun getMiniPlayerShowFavoriteSync(): Boolean = readBoolCached("mini_player_show_favorite", true)
+
+    val miniPlayerSwipeToSkip: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] ?: readBoolCached("mini_player_swipe_to_skip", true)
+    }
+    fun getMiniPlayerSwipeToSkipSync(): Boolean = readBoolCached("mini_player_swipe_to_skip", true)
+
+    val miniPlayerSwipeUpToOpen: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] ?: readBoolCached("mini_player_swipe_up_to_open", true)
+    }
+    fun getMiniPlayerSwipeUpToOpenSync(): Boolean = readBoolCached("mini_player_swipe_up_to_open", true)
+
+    val miniPlayerShowProgress: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] ?: readBoolCached("mini_player_show_progress", true)
+    }
+    fun getMiniPlayerShowProgressSync(): Boolean = readBoolCached("mini_player_show_progress", true)
+
+    val miniPlayerCircularArt: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] ?: readBoolCached("mini_player_circular_art", false)
+    }
+    fun getMiniPlayerCircularArtSync(): Boolean = readBoolCached("mini_player_circular_art", false)
 
     val gaplessPlayback: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GAPLESS_PLAYBACK] ?: readBoolCached("gapless_playback", true)
@@ -1796,6 +1841,15 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun setShowRemainingTime(show: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_remaining_time", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_REMAINING_TIME] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
     suspend fun setMiniPlayerStyle(style: String) {
         val now = System.currentTimeMillis()
         writeStringCached("mini_player_style", style, now)
@@ -1828,6 +1882,42 @@ class UserPreferencesRepository(private val context: Context) {
         writeBoolCached("mini_player_show_favorite", show, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setMiniPlayerSwipeToSkip(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_swipe_to_skip", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SWIPE_TO_SKIP] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setMiniPlayerSwipeUpToOpen(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_swipe_up_to_open", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SWIPE_UP_TO_OPEN] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setMiniPlayerShowProgress(show: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_show_progress", show, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] = show
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setMiniPlayerCircularArt(circular: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("mini_player_circular_art", circular, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] = circular
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }

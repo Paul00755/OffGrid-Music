@@ -118,6 +118,8 @@ fun NowPlayingScreen(
     lyricsLayout: String = "CLASSIC_DEFAULT",
     showVolumeBar: Boolean = false,
     showAdvancedSongInfo: Boolean = false,
+    showRemainingTime: Boolean = false,
+    onToggleShowRemainingTime: () -> Unit = {},
     playbackPositionFlow: StateFlow<Long>? = null,
     keepScreenAwake: Boolean = false,
     gesturePlaybackEnabled: Boolean = true,
@@ -953,10 +955,20 @@ fun NowPlayingScreen(
                         Spacer(modifier = Modifier.height(2.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             com.example.ui.components.PlaybackPositionText(playbackPositionFlow, livePositionMs, effectiveDurationMs, fontSize = 11.sp, color = BentoTextSecondary)
-                            Text(text = formattedDuration, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BentoTextSecondary)
+                            com.example.ui.components.PlaybackDurationToggleText(
+                                playbackPositionFlow = playbackPositionFlow,
+                                positionMs = livePositionMs,
+                                durationMs = effectiveDurationMs,
+                                showRemainingTime = showRemainingTime,
+                                onToggleShowRemainingTime = onToggleShowRemainingTime,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoTextSecondary
+                            )
                         }
                     }
 
@@ -1192,6 +1204,8 @@ fun NowPlayingScreen(
                         showVolumeBar = showVolumeBar,
                         showAdvancedSongInfo = showAdvancedSongInfo,
                         audioTechnicalInfo = audioTechnicalInfo,
+                        showRemainingTime = showRemainingTime,
+                        onToggleShowRemainingTime = onToggleShowRemainingTime,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1220,6 +1234,8 @@ fun NowPlayingScreen(
                         showVolumeBar = showVolumeBar,
                         showAdvancedSongInfo = showAdvancedSongInfo,
                         audioTechnicalInfo = audioTechnicalInfo,
+                        showRemainingTime = showRemainingTime,
+                        onToggleShowRemainingTime = onToggleShowRemainingTime,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1248,6 +1264,8 @@ fun NowPlayingScreen(
                         showVolumeBar = showVolumeBar,
                         showAdvancedSongInfo = showAdvancedSongInfo,
                         audioTechnicalInfo = audioTechnicalInfo,
+                        showRemainingTime = showRemainingTime,
+                        onToggleShowRemainingTime = onToggleShowRemainingTime,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1582,8 +1600,12 @@ fun NowPlayingScreen(
                                         fontSize = 11.5.sp,
                                         color = bentoSubInk
                                     )
-                                    Text(
-                                        text = formattedDuration,
+                                    com.example.ui.components.PlaybackDurationToggleText(
+                                        playbackPositionFlow = playbackPositionFlow,
+                                        positionMs = livePositionMs,
+                                        durationMs = effectiveDurationMs,
+                                        showRemainingTime = showRemainingTime,
+                                        onToggleShowRemainingTime = onToggleShowRemainingTime,
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = bentoSubInk

@@ -216,7 +216,15 @@ class PlaybackManager(
             .build()
     }
 
+    private fun createGaplessMediaSourceFactory(): androidx.media3.exoplayer.source.DefaultMediaSourceFactory {
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setConstantBitrateSeekingAlwaysEnabled(false)
+        return androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context, extractorsFactory)
+    }
+
     val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
+        .setMediaSourceFactory(createGaplessMediaSourceFactory())
         .setLoadControl(createLoadControl())
         .setUsePlatformDiagnostics(false)
         .build()
@@ -249,6 +257,7 @@ class PlaybackManager(
         get() {
             return _crossfadePlayer ?: synchronized(this) {
                 _crossfadePlayer ?: ExoPlayer.Builder(context, crossfadeRenderersFactory)
+                    .setMediaSourceFactory(createGaplessMediaSourceFactory())
                     .setLoadControl(createLoadControl())
                     .setUsePlatformDiagnostics(false)
                     .build()
@@ -2640,9 +2649,10 @@ class PlaybackManager(
                     val targetVolume = transitionTargetVolume()
                     val isSameTrackRepeatBoundary = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
                     if ((isSameTrackRepeatBoundary && isNaturalTransition) ||
-                        (isNaturalTransition && effectiveGaplessPlayback && effectiveCrossfadeDurationSec <= 0 && effectiveFadeInMs <= 0 && effectiveFadeOutMs <= 0)
+                        (isNaturalTransition && effectiveGaplessPlayback && effectiveCrossfadeDurationSec <= 0)
                     ) {
                         // True gapless or same-track repeat boundary: maintain unity volume with zero dip
+                        // (fade-in/fade-out still apply to play/pause, manual track skips, or when gapless is disabled)
                         fadeJob?.cancel()
                         fadeJob = null
                         player.volume = targetVolume
@@ -3787,7 +3797,9 @@ class PlaybackManager(
                         inCrossfadeZone = shouldTriggerCrossfadeAt(currentPos, totalDur)
                         val trackEndFadeOutMs = effectiveFadeOutMs.coerceIn(0, 10000).toLong()
                         val effectiveEndFadeWindowMs = trackEndFadeOutMs
-                        inTrackEndFadeOut = crossfadeMs <= 0L && !isRepeatOne && effectiveEndFadeWindowMs > 0L &&
+                        // Never attenuate the outgoing tail when true gapless playback is active and crossfade is off
+                        inTrackEndFadeOut = !effectiveGaplessPlayback && crossfadeMs <= 0L && !isRepeatOne &&
+                            effectiveEndFadeWindowMs > 0L &&
                             reliableDur > (effectiveEndFadeWindowMs + 2000L) && currentPos >= 1500L &&
                             (reliableDur - currentPos) <= effectiveEndFadeWindowMs
 

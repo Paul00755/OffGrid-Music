@@ -6,60 +6,160 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import com.example.auth.UserAccount
 import com.example.data.model.FolderInfo
+import com.example.data.model.Lyrics
+import com.example.data.model.Song
 import com.example.data.sync.SyncStatus
 import com.example.scanner.ScanProgress
 import com.example.service.SleepTimerState
 import com.example.ui.components.NavTab
 import com.example.ui.viewmodel.MusicViewModel
 
+private data class SettingsPreviewBundle(
+    val liveSong: Song?,
+    val liveIsPlaying: Boolean,
+    val liveLyrics: Lyrics?,
+    val livePlaylistNames: List<String>,
+    val liveRecentSongs: List<Song>,
+    val miniStyle: String,
+    val miniPrev: Boolean,
+    val miniNext: Boolean,
+    val miniFav: Boolean,
+    val miniSwipeSkip: Boolean,
+    val miniSwipeUp: Boolean,
+    val miniProgress: Boolean,
+    val miniCircularArt: Boolean
+)
+
+private data class SettingsCacheAndDbBundle(
+    val cacheLyrics: Boolean,
+    val cacheAlbumArt: Boolean,
+    val cacheSongArt: Boolean,
+    val lyricsCacheSize: String,
+    val albumArtCacheSize: String,
+    val songArtCacheSize: String,
+    val totalCacheSize: String,
+    val dbTier: String,
+    val dbStats: com.example.data.local.DatabaseStorageStats?,
+    val isOptimizingDb: Boolean
+)
+
+private data class SettingsAudioAndPlaybackBundle(
+    val gapless: Boolean,
+    val normalize: Boolean,
+    val autoPlayHeadphone: Boolean,
+    val autoPlayStartup: Boolean,
+    val pauseOnZeroVol: Boolean,
+    val autoResumeVol: Boolean,
+    val fadeInOutMs: Int,
+    val fadeInMs: Int,
+    val fadeOutMs: Int,
+    val crossfadeSec: Int,
+    val shakeToSkip: Boolean,
+    val keepScreenAwake: Boolean,
+    val audioBalance: Float,
+    val eqPreset: String,
+    val customEqBands: List<Float>,
+    val customBass: Int,
+    val customVirt: Int,
+    val reduceVolNotif: Boolean,
+    val autoPauseSysAudio: Boolean,
+    val sleepTimerMode: String,
+    val highRefreshRate: Boolean,
+    val alwaysShuffle: Boolean,
+    val gesturePlayback: Boolean
+)
+
 @Composable
-fun SettingsTabRoute(
+private fun rememberSettingsPreviewBundle(viewModel: MusicViewModel): SettingsPreviewBundle {
+    val playbackState by viewModel.playbackState.collectAsState()
+    val liveLyrics by viewModel.currentLyrics.collectAsState()
+    val allPlaylists by viewModel.allPlaylists.collectAsState()
+    val recentSongs by viewModel.recentlyPlayedSongs.collectAsState()
+    val miniStyle by viewModel.miniPlayerStyle.collectAsState()
+    val miniPrev by viewModel.miniPlayerShowPrevious.collectAsState()
+    val miniNext by viewModel.miniPlayerShowNext.collectAsState()
+    val miniFav by viewModel.miniPlayerShowFavorite.collectAsState()
+    val miniSwipeSkip by viewModel.miniPlayerSwipeToSkip.collectAsState()
+    val miniSwipeUp by viewModel.miniPlayerSwipeUpToOpen.collectAsState()
+    val miniProgress by viewModel.miniPlayerShowProgress.collectAsState()
+    val miniCircularArt by viewModel.miniPlayerCircularArt.collectAsState()
+    val playlistNames = remember(allPlaylists) { allPlaylists.map { it.name } }
+    val recentTop = remember(recentSongs) { recentSongs.take(4) }
+    return SettingsPreviewBundle(
+        liveSong = playbackState.currentSong,
+        liveIsPlaying = playbackState.isPlaying,
+        liveLyrics = liveLyrics,
+        livePlaylistNames = playlistNames,
+        liveRecentSongs = recentTop,
+        miniStyle = miniStyle,
+        miniPrev = miniPrev,
+        miniNext = miniNext,
+        miniFav = miniFav,
+        miniSwipeSkip = miniSwipeSkip,
+        miniSwipeUp = miniSwipeUp,
+        miniProgress = miniProgress,
+        miniCircularArt = miniCircularArt
+    )
+}
+
+@Composable
+private fun rememberSettingsCacheAndDbBundle(viewModel: MusicViewModel): SettingsCacheAndDbBundle {
+    return SettingsCacheAndDbBundle(
+        cacheLyrics = viewModel.cacheLyricsEnabled.collectAsState().value,
+        cacheAlbumArt = viewModel.cacheAlbumArtEnabled.collectAsState().value,
+        cacheSongArt = viewModel.cacheSongArtWorkEnabled.collectAsState().value,
+        lyricsCacheSize = viewModel.lyricsCacheSize.collectAsState().value,
+        albumArtCacheSize = viewModel.albumArtCacheSize.collectAsState().value,
+        songArtCacheSize = viewModel.songArtCacheSize.collectAsState().value,
+        totalCacheSize = viewModel.totalCacheSize.collectAsState().value,
+        dbTier = viewModel.databaseStorageTier.collectAsState().value,
+        dbStats = viewModel.databaseStorageStats.collectAsState().value,
+        isOptimizingDb = viewModel.isOptimizingDatabase.collectAsState().value
+    )
+}
+
+@Composable
+private fun rememberSettingsAudioAndPlaybackBundle(viewModel: MusicViewModel): SettingsAudioAndPlaybackBundle {
+    return SettingsAudioAndPlaybackBundle(
+        gapless = viewModel.gaplessPlayback.collectAsState().value,
+        normalize = viewModel.normalizeAudio.collectAsState().value,
+        autoPlayHeadphone = viewModel.autoPlayOnHeadphoneConnection.collectAsState().value,
+        autoPlayStartup = viewModel.autoPlayOnAppStartup.collectAsState().value,
+        pauseOnZeroVol = viewModel.pauseOnZeroVolume.collectAsState().value,
+        autoResumeVol = viewModel.autoResumeOnVolumeIncrease.collectAsState().value,
+        fadeInOutMs = viewModel.fadeInOutMs.collectAsState().value,
+        fadeInMs = viewModel.fadeInMs.collectAsState().value,
+        fadeOutMs = viewModel.fadeOutMs.collectAsState().value,
+        crossfadeSec = viewModel.crossfadeDurationSec.collectAsState().value,
+        shakeToSkip = viewModel.shakeToSkip.collectAsState().value,
+        keepScreenAwake = viewModel.keepScreenAwake.collectAsState().value,
+        audioBalance = viewModel.audioBalance.collectAsState().value,
+        eqPreset = viewModel.equalizerPreset.collectAsState().value,
+        customEqBands = viewModel.customEqBands.collectAsState().value,
+        customBass = viewModel.customBassBoost.collectAsState().value,
+        customVirt = viewModel.customVirtualizer.collectAsState().value,
+        reduceVolNotif = viewModel.reduceVolumeOnNotification.collectAsState().value,
+        autoPauseSysAudio = viewModel.autoPauseSystemAudio.collectAsState().value,
+        sleepTimerMode = viewModel.sleepTimerMode.collectAsState().value,
+        highRefreshRate = viewModel.highRefreshRate.collectAsState().value,
+        alwaysShuffle = viewModel.alwaysShuffleMode.collectAsState().value,
+        gesturePlayback = viewModel.gesturePlaybackEnabled.collectAsState().value
+    )
+}
+
+@Composable
+private fun SettingsHardwareSideEffects(
     viewModel: MusicViewModel,
-    allFolders: List<FolderInfo>,
-    sleepTimerState: SleepTimerState,
-    scanProgress: ScanProgress,
-    userAccount: UserAccount?,
-    effectiveDisplayName: String,
-    customAvatarUri: String?,
-    syncStatus: SyncStatus,
-    uiTheme: String,
-    homeScreenLayout: String,
-    nowPlayingLayout: String,
-    playlistsLayout: String,
-    lyricsLayout: String,
-    isDynamicArtworkTheme: Boolean,
-    customAccentColor: Int,
-    accentColorPreset: String,
-    recentSearches: List<String>,
-    homeSections: List<String>
+    keepScreenAwake: Boolean,
+    shakeToSkip: Boolean
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
-    val reduceVolumeOnNotification by viewModel.reduceVolumeOnNotification.collectAsState()
-    val waveformStyle by viewModel.waveformStyle.collectAsState()
-    val miniPlayerShowPrevious by viewModel.miniPlayerShowPrevious.collectAsState()
-    val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsState()
-    val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsState()
-    val themeMode by viewModel.themeMode.collectAsState()
-    val gaplessPlayback by viewModel.gaplessPlayback.collectAsState()
-    val normalizeAudio by viewModel.normalizeAudio.collectAsState()
-    val pauseOnZeroVolume by viewModel.pauseOnZeroVolume.collectAsState()
-    val autoPauseSystemAudio by viewModel.autoPauseSystemAudio.collectAsState()
-    val sleepTimerMode by viewModel.sleepTimerMode.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.refreshCacheSizes()
         viewModel.refreshDatabaseStats()
     }
-    val fadeInOutMs by viewModel.fadeInOutMs.collectAsState()
-    val crossfadeDurationSec by viewModel.crossfadeDurationSec.collectAsState()
-    val shakeToSkip by viewModel.shakeToSkip.collectAsState()
-    val keepScreenAwake by viewModel.keepScreenAwake.collectAsState()
-    val audioBalance by viewModel.audioBalance.collectAsState()
-    val equalizerPreset by viewModel.equalizerPreset.collectAsState()
-    val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
-    val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
-    val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
 
     DisposableEffect(keepScreenAwake) {
         if (keepScreenAwake) {
@@ -104,170 +204,230 @@ fun SettingsTabRoute(
             sensorManager?.unregisterListener(listener)
         }
     }
+}
+
+@Composable
+fun SettingsTabRoute(
+    viewModel: MusicViewModel,
+    allFolders: List<FolderInfo>,
+    sleepTimerState: SleepTimerState,
+    scanProgress: ScanProgress,
+    userAccount: UserAccount?,
+    effectiveDisplayName: String,
+    customAvatarUri: String?,
+    syncStatus: SyncStatus,
+    uiTheme: String,
+    homeScreenLayout: String,
+    nowPlayingLayout: String,
+    playlistsLayout: String,
+    lyricsLayout: String,
+    isDynamicArtworkTheme: Boolean,
+    customAccentColor: Int,
+    accentColorPreset: String,
+    recentSearches: List<String>,
+    homeSections: List<String>
+) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    val preview = rememberSettingsPreviewBundle(viewModel)
+    val cacheDb = rememberSettingsCacheAndDbBundle(viewModel)
+    val audio = rememberSettingsAudioAndPlaybackBundle(viewModel)
+
+    SettingsHardwareSideEffects(
+        viewModel = viewModel,
+        keepScreenAwake = audio.keepScreenAwake,
+        shakeToSkip = audio.shakeToSkip
+    )
+
+    val waveformStyle by viewModel.waveformStyle.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
+    val displayScale by viewModel.displayScale.collectAsState()
+    val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
+    val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
+    val useDarkColors by viewModel.useDarkColors.collectAsState()
+    val isGradientEffect by viewModel.isGradientEffect.collectAsState()
+    val isGlassEffect by viewModel.isGlassEffect.collectAsState()
+    val isGradientGlassEffect by viewModel.isGradientGlassEffect.collectAsState()
+    val fetchOnlineArtworkHighRes by viewModel.fetchOnlineArtworkHighRes.collectAsState()
+    val lyricsAutoScroll by viewModel.lyricsAutoScroll.collectAsState()
 
     SettingsScreen(
         folders = allFolders,
         sleepTimerState = sleepTimerState,
         waveformStyle = waveformStyle,
-        onSetWaveformStyle = { viewModel.setWaveformStyle(it) },
+        onSetWaveformStyle = viewModel::setWaveformStyle,
         themeMode = themeMode,
-        onSetThemeMode = { viewModel.setThemeMode(it) },
+        onSetThemeMode = viewModel::setThemeMode,
         uiTheme = uiTheme,
-        onSetUiTheme = { viewModel.setUiTheme(it) },
-        displayScale = viewModel.displayScale.collectAsState().value,
-        onSetDisplayScale = { viewModel.setDisplayScale(it) },
+        onSetUiTheme = viewModel::setUiTheme,
+        displayScale = displayScale,
+        onSetDisplayScale = viewModel::setDisplayScale,
         homeScreenLayout = homeScreenLayout,
-        onSetHomeScreenLayout = { viewModel.setHomeScreenLayout(it) },
+        onSetHomeScreenLayout = viewModel::setHomeScreenLayout,
         nowPlayingLayout = nowPlayingLayout,
-        onSetNowPlayingLayout = { viewModel.setNowPlayingLayout(it) },
+        onSetNowPlayingLayout = viewModel::setNowPlayingLayout,
         playlistsLayout = playlistsLayout,
-        onSetPlaylistsLayout = { viewModel.setPlaylistsLayout(it) },
+        onSetPlaylistsLayout = viewModel::setPlaylistsLayout,
         lyricsLayout = lyricsLayout,
-        onSetLyricsLayout = { viewModel.setLyricsLayout(it) },
+        onSetLyricsLayout = viewModel::setLyricsLayout,
         showNowPlayingVolumeBar = showNowPlayingVolumeBar,
-        onSetShowNowPlayingVolumeBar = { viewModel.setShowNowPlayingVolumeBar(it) },
+        onSetShowNowPlayingVolumeBar = viewModel::setShowNowPlayingVolumeBar,
         showAdvancedSongInfo = showAdvancedSongInfo,
-        onSetShowAdvancedSongInfo = { viewModel.setShowAdvancedSongInfo(it) },
+        onSetShowAdvancedSongInfo = viewModel::setShowAdvancedSongInfo,
         isDynamicArtworkTheme = isDynamicArtworkTheme,
-        onSetDynamicArtworkTheme = { viewModel.setDynamicArtworkTheme(it) },
-        useDarkColors = viewModel.useDarkColors.collectAsState().value,
-        onSetUseDarkColors = { viewModel.setUseDarkColors(it) },
-        isGradientEffect = viewModel.isGradientEffect.collectAsState().value,
-        onSetGradientEffect = { viewModel.setGradientEffect(it) },
-        isGlassEffect = viewModel.isGlassEffect.collectAsState().value,
-        onSetGlassEffect = { viewModel.setGlassEffect(it) },
-        isGradientGlassEffect = viewModel.isGradientGlassEffect.collectAsState().value,
-        onSetGradientGlassEffect = { viewModel.setGradientGlassEffect(it) },
-        fetchOnlineArtworkHighRes = viewModel.fetchOnlineArtworkHighRes.collectAsState().value,
-        onSetFetchOnlineArtworkHighRes = { viewModel.setFetchOnlineArtworkHighRes(it) },
-        cacheLyricsEnabled = viewModel.cacheLyricsEnabled.collectAsState().value,
-        onSetCacheLyricsEnabled = { viewModel.setCacheLyricsEnabled(it) },
-        onClearLyricsCache = { viewModel.clearLyricsCache() },
-        cacheAlbumArtEnabled = viewModel.cacheAlbumArtEnabled.collectAsState().value,
-        onSetCacheAlbumArtEnabled = { viewModel.setCacheAlbumArtEnabled(it) },
-        onClearAlbumArtCache = { viewModel.clearAlbumArtCache() },
-        cacheSongArtWorkEnabled = viewModel.cacheSongArtWorkEnabled.collectAsState().value,
-        onSetCacheSongArtWorkEnabled = { viewModel.setCacheSongArtWorkEnabled(it) },
-        onClearSongArtCache = { viewModel.clearSongArtCache() },
-        lyricsCacheSize = viewModel.lyricsCacheSize.collectAsState().value,
-        albumArtCacheSize = viewModel.albumArtCacheSize.collectAsState().value,
-        songArtCacheSize = viewModel.songArtCacheSize.collectAsState().value,
-        totalCacheSize = viewModel.totalCacheSize.collectAsState().value,
-        onRefreshCacheSizes = { viewModel.refreshCacheSizes() },
-        onClearAllCaches = { viewModel.clearAllCaches() },
-        databaseStorageTier = viewModel.databaseStorageTier.collectAsState().value,
-        onSetDatabaseStorageTier = { viewModel.setDatabaseStorageTier(it) },
-        databaseStorageStats = viewModel.databaseStorageStats.collectAsState().value,
-        isOptimizingDatabase = viewModel.isOptimizingDatabase.collectAsState().value,
-        onOptimizeDatabase = { onComplete -> viewModel.optimizeDatabase(onComplete) },
-        onRefreshDatabaseStats = { viewModel.refreshDatabaseStats() },
-        customEqBands = viewModel.customEqBands.collectAsState().value,
-        onSetCustomEqBands = { viewModel.setCustomEqBands(it) },
-        customBassBoost = viewModel.customBassBoost.collectAsState().value,
-        onSetCustomBassBoost = { viewModel.setCustomBassBoost(it) },
-        customVirtualizer = viewModel.customVirtualizer.collectAsState().value,
-        onSetCustomVirtualizer = { viewModel.setCustomVirtualizer(it) },
+        onSetDynamicArtworkTheme = viewModel::setDynamicArtworkTheme,
+        useDarkColors = useDarkColors,
+        onSetUseDarkColors = viewModel::setUseDarkColors,
+        isGradientEffect = isGradientEffect,
+        onSetGradientEffect = viewModel::setGradientEffect,
+        isGlassEffect = isGlassEffect,
+        onSetGlassEffect = viewModel::setGlassEffect,
+        isGradientGlassEffect = isGradientGlassEffect,
+        onSetGradientGlassEffect = viewModel::setGradientGlassEffect,
+        fetchOnlineArtworkHighRes = fetchOnlineArtworkHighRes,
+        onSetFetchOnlineArtworkHighRes = viewModel::setFetchOnlineArtworkHighRes,
+        cacheLyricsEnabled = cacheDb.cacheLyrics,
+        onSetCacheLyricsEnabled = viewModel::setCacheLyricsEnabled,
+        onClearLyricsCache = viewModel::clearLyricsCache,
+        cacheAlbumArtEnabled = cacheDb.cacheAlbumArt,
+        onSetCacheAlbumArtEnabled = viewModel::setCacheAlbumArtEnabled,
+        onClearAlbumArtCache = viewModel::clearAlbumArtCache,
+        cacheSongArtWorkEnabled = cacheDb.cacheSongArt,
+        onSetCacheSongArtWorkEnabled = viewModel::setCacheSongArtWorkEnabled,
+        onClearSongArtCache = viewModel::clearSongArtCache,
+        lyricsCacheSize = cacheDb.lyricsCacheSize,
+        albumArtCacheSize = cacheDb.albumArtCacheSize,
+        songArtCacheSize = cacheDb.songArtCacheSize,
+        totalCacheSize = cacheDb.totalCacheSize,
+        onRefreshCacheSizes = viewModel::refreshCacheSizes,
+        onClearAllCaches = viewModel::clearAllCaches,
+        databaseStorageTier = cacheDb.dbTier,
+        onSetDatabaseStorageTier = viewModel::setDatabaseStorageTier,
+        databaseStorageStats = cacheDb.dbStats,
+        isOptimizingDatabase = cacheDb.isOptimizingDb,
+        onOptimizeDatabase = viewModel::optimizeDatabase,
+        onRefreshDatabaseStats = viewModel::refreshDatabaseStats,
+        customEqBands = audio.customEqBands,
+        onSetCustomEqBands = viewModel::setCustomEqBands,
+        customBassBoost = audio.customBass,
+        onSetCustomBassBoost = viewModel::setCustomBassBoost,
+        customVirtualizer = audio.customVirt,
+        onSetCustomVirtualizer = viewModel::setCustomVirtualizer,
         customAccentColor = customAccentColor,
-        onSetCustomAccentColor = { viewModel.setCustomAccentColor(it) },
+        onSetCustomAccentColor = viewModel::setCustomAccentColor,
         accentColorPreset = accentColorPreset,
-        onSetAccentColorPreset = { viewModel.setAccentColorPreset(it) },
-        miniPlayerStyle = viewModel.miniPlayerStyle.collectAsState().value,
-        onSetMiniPlayerStyle = { viewModel.setMiniPlayerStyle(it) },
-        miniPlayerShowPrevious = miniPlayerShowPrevious,
-        onSetMiniPlayerShowPrevious = { viewModel.setMiniPlayerShowPrevious(it) },
-        miniPlayerShowNext = miniPlayerShowNext,
-        onSetMiniPlayerShowNext = { viewModel.setMiniPlayerShowNext(it) },
-        miniPlayerShowFavorite = miniPlayerShowFavorite,
-        onSetMiniPlayerShowFavorite = { viewModel.setMiniPlayerShowFavorite(it) },
-        gaplessPlayback = gaplessPlayback,
-        onSetGaplessPlayback = { viewModel.setGaplessPlayback(it) },
-        normalizeAudio = normalizeAudio,
-        onSetNormalizeAudio = { viewModel.setNormalizeAudio(it) },
-        autoPlayOnHeadphoneConnection = viewModel.autoPlayOnHeadphoneConnection.collectAsState().value,
-        onSetAutoPlayOnHeadphoneConnection = { viewModel.setAutoPlayOnHeadphoneConnection(it) },
-        autoPlayOnAppStartup = viewModel.autoPlayOnAppStartup.collectAsState().value,
-        onSetAutoPlayOnAppStartup = { viewModel.setAutoPlayOnAppStartup(it) },
+        onSetAccentColorPreset = viewModel::setAccentColorPreset,
+        miniPlayerStyle = preview.miniStyle,
+        onSetMiniPlayerStyle = viewModel::setMiniPlayerStyle,
+        miniPlayerShowPrevious = preview.miniPrev,
+        onSetMiniPlayerShowPrevious = viewModel::setMiniPlayerShowPrevious,
+        miniPlayerShowNext = preview.miniNext,
+        onSetMiniPlayerShowNext = viewModel::setMiniPlayerShowNext,
+        miniPlayerShowFavorite = preview.miniFav,
+        onSetMiniPlayerShowFavorite = viewModel::setMiniPlayerShowFavorite,
+        miniPlayerSwipeToSkip = preview.miniSwipeSkip,
+        onSetMiniPlayerSwipeToSkip = viewModel::setMiniPlayerSwipeToSkip,
+        miniPlayerSwipeUpToOpen = preview.miniSwipeUp,
+        onSetMiniPlayerSwipeUpToOpen = viewModel::setMiniPlayerSwipeUpToOpen,
+        miniPlayerShowProgress = preview.miniProgress,
+        onSetMiniPlayerShowProgress = viewModel::setMiniPlayerShowProgress,
+        miniPlayerCircularArt = preview.miniCircularArt,
+        onSetMiniPlayerCircularArt = viewModel::setMiniPlayerCircularArt,
+        livePreviewSong = preview.liveSong,
+        livePreviewIsPlaying = preview.liveIsPlaying,
+        livePreviewLyrics = preview.liveLyrics,
+        livePreviewPlaylistNames = preview.livePlaylistNames,
+        livePreviewRecentSongs = preview.liveRecentSongs,
+        gaplessPlayback = audio.gapless,
+        onSetGaplessPlayback = viewModel::setGaplessPlayback,
+        normalizeAudio = audio.normalize,
+        onSetNormalizeAudio = viewModel::setNormalizeAudio,
+        autoPlayOnHeadphoneConnection = audio.autoPlayHeadphone,
+        onSetAutoPlayOnHeadphoneConnection = viewModel::setAutoPlayOnHeadphoneConnection,
+        autoPlayOnAppStartup = audio.autoPlayStartup,
+        onSetAutoPlayOnAppStartup = viewModel::setAutoPlayOnAppStartup,
         isTranscribeTranslateEnabled = viewModel.isTranscribeTranslateEnabled.collectAsState().value,
-        onSetTranscribeTranslateEnabled = { viewModel.setTranscribeTranslateEnabled(it) },
+        onSetTranscribeTranslateEnabled = viewModel::setTranscribeTranslateEnabled,
         audioTranscribeTargetLang = viewModel.audioTranscribeTargetLang.collectAsState().value,
-        onSetAudioTranscribeTargetLang = { viewModel.setAudioTranscribeTargetLang(it) },
+        onSetAudioTranscribeTargetLang = viewModel::setAudioTranscribeTargetLang,
         hasUserApiKey = viewModel.hasUserApiKey.collectAsState().value,
         maskedApiKey = viewModel.maskedApiKey.collectAsState().value,
         isKeyValidating = viewModel.isKeyValidating.collectAsState().value,
         keyValidationErrorMessage = viewModel.keyValidationErrorMessage.collectAsState().value,
-        onSaveUserApiKey = { key, cb -> viewModel.saveUserApiKey(key, cb) },
-        onDeleteUserApiKey = { viewModel.deleteUserApiKey() },
-        onClearKeyValidationError = { viewModel.clearKeyValidationError() },
-        pauseOnZeroVolume = pauseOnZeroVolume,
-        onSetPauseOnZeroVolume = { viewModel.setPauseOnZeroVolume(it) },
-        autoResumeOnVolumeIncrease = viewModel.autoResumeOnVolumeIncrease.collectAsState().value,
-        onSetAutoResumeOnVolumeIncrease = { viewModel.setAutoResumeOnVolumeIncrease(it) },
-        fadeInOutMs = fadeInOutMs,
-        onSetFadeInOutMs = { viewModel.setFadeInOutMs(it) },
-        crossfadeDurationSec = crossfadeDurationSec,
-        onSetCrossfadeDurationSec = { viewModel.setCrossfadeDurationSec(it) },
+        onSaveUserApiKey = viewModel::saveUserApiKey,
+        onDeleteUserApiKey = viewModel::deleteUserApiKey,
+        onClearKeyValidationError = viewModel::clearKeyValidationError,
+        pauseOnZeroVolume = audio.pauseOnZeroVol,
+        onSetPauseOnZeroVolume = viewModel::setPauseOnZeroVolume,
+        autoResumeOnVolumeIncrease = audio.autoResumeVol,
+        onSetAutoResumeOnVolumeIncrease = viewModel::setAutoResumeOnVolumeIncrease,
+        fadeInOutMs = audio.fadeInOutMs,
+        onSetFadeInOutMs = viewModel::setFadeInOutMs,
+        crossfadeDurationSec = audio.crossfadeSec,
+        onSetCrossfadeDurationSec = viewModel::setCrossfadeDurationSec,
         ignoreAudioDuration = viewModel.ignoreAudioDuration.collectAsState().value,
-        onSetIgnoreAudioDuration = { viewModel.setIgnoreAudioDuration(it) },
+        onSetIgnoreAudioDuration = viewModel::setIgnoreAudioDuration,
         maxSongDuration = viewModel.maxSongDuration.collectAsState().value,
         fullDeviceScan = viewModel.fullDeviceScan.collectAsState().value,
-        onSetFullDeviceScan = { viewModel.setFullDeviceScan(it) },
+        onSetFullDeviceScan = viewModel::setFullDeviceScan,
         storeIndexedSongsLocally = viewModel.storeIndexedSongsLocally.collectAsState().value,
-        onSetStoreIndexedSongsLocally = { viewModel.setStoreIndexedSongsLocally(it) },
+        onSetStoreIndexedSongsLocally = viewModel::setStoreIndexedSongsLocally,
         localSongSyncProgress = viewModel.localSongSyncProgress.collectAsState().value,
-        onSetSongDurationRange = { min, max -> viewModel.setSongDurationRange(min, max) },
-        fadeInMs = viewModel.fadeInMs.collectAsState().value,
-        onSetFadeInMs = { viewModel.setFadeInMs(it) },
-        fadeOutMs = viewModel.fadeOutMs.collectAsState().value,
-        onSetFadeOutMs = { viewModel.setFadeOutMs(it) },
-        shakeToSkip = shakeToSkip,
-        onSetShakeToSkip = { viewModel.setShakeToSkip(it) },
-        keepScreenAwake = keepScreenAwake,
-        onSetKeepScreenAwake = { viewModel.setKeepScreenAwake(it) },
-        audioBalance = audioBalance,
-        onSetAudioBalance = { viewModel.setAudioBalance(it) },
-        equalizerPreset = equalizerPreset,
-        onSetEqualizerPreset = { viewModel.setEqualizerPreset(it) },
+        onSetSongDurationRange = viewModel::setSongDurationRange,
+        fadeInMs = audio.fadeInMs,
+        onSetFadeInMs = viewModel::setFadeInMs,
+        fadeOutMs = audio.fadeOutMs,
+        onSetFadeOutMs = viewModel::setFadeOutMs,
+        shakeToSkip = audio.shakeToSkip,
+        onSetShakeToSkip = viewModel::setShakeToSkip,
+        keepScreenAwake = audio.keepScreenAwake,
+        onSetKeepScreenAwake = viewModel::setKeepScreenAwake,
+        audioBalance = audio.audioBalance,
+        onSetAudioBalance = viewModel::setAudioBalance,
+        equalizerPreset = audio.eqPreset,
+        onSetEqualizerPreset = viewModel::setEqualizerPreset,
         lyricsAutoScroll = lyricsAutoScroll,
-        onSetLyricsAutoScroll = { viewModel.setLyricsAutoScroll(it) },
-        reduceVolumeOnNotification = reduceVolumeOnNotification,
-        onSetReduceVolumeOnNotification = { viewModel.setReduceVolumeOnNotification(it) },
-        autoPauseSystemAudio = autoPauseSystemAudio,
-        onSetAutoPauseSystemAudio = { viewModel.setAutoPauseSystemAudio(it) },
-        onAddFolder = { path, name, isExcluded -> viewModel.addFolder(path, name, isExcluded) },
-        onRemoveFolder = { viewModel.removeFolder(it) },
+        onSetLyricsAutoScroll = viewModel::setLyricsAutoScroll,
+        reduceVolumeOnNotification = audio.reduceVolNotif,
+        onSetReduceVolumeOnNotification = viewModel::setReduceVolumeOnNotification,
+        autoPauseSystemAudio = audio.autoPauseSysAudio,
+        onSetAutoPauseSystemAudio = viewModel::setAutoPauseSystemAudio,
+        onAddFolder = viewModel::addFolder,
+        onRemoveFolder = viewModel::removeFolder,
         scrobbleThresholdType = viewModel.scrobbleThresholdType.collectAsState().value,
-        onSetScrobbleThresholdType = { viewModel.setScrobbleThresholdType(it) },
+        onSetScrobbleThresholdType = viewModel::setScrobbleThresholdType,
         scrobbleThresholdValue = viewModel.scrobbleThresholdValue.collectAsState().value,
-        onSetScrobbleThresholdValue = { viewModel.setScrobbleThresholdValue(it) },
+        onSetScrobbleThresholdValue = viewModel::setScrobbleThresholdValue,
         recentSearches = recentSearches,
-        onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
-        onClearRecentSearches = { viewModel.clearRecentSearches() },
-        sleepTimerMode = sleepTimerMode,
-        onSetSleepTimerMode = { viewModel.setSleepTimerMode(it) },
-        onStartSleepTimer = { mins, finishLastSong -> viewModel.startSleepTimerMinutes(mins, finishLastSong) },
-        onStartSongCountTimer = { viewModel.startSleepTimerSongs(it) },
-        onAddSleepTimerMinutes = { viewModel.addSleepTimerMinutes(it) },
-        onAddSleepTimerSongs = { viewModel.addSleepTimerSongs(it) },
-        onSetSleepTimerFinishLastSong = { viewModel.setSleepTimerFinishLastSong(it) },
-        onCancelSleepTimer = { viewModel.cancelSleepTimer() },
+        onDeleteRecentSearch = viewModel::deleteRecentSearch,
+        onClearRecentSearches = viewModel::clearRecentSearches,
+        sleepTimerMode = audio.sleepTimerMode,
+        onSetSleepTimerMode = viewModel::setSleepTimerMode,
+        onStartSleepTimer = viewModel::startSleepTimerMinutes,
+        onStartSongCountTimer = viewModel::startSleepTimerSongs,
+        onAddSleepTimerMinutes = viewModel::addSleepTimerMinutes,
+        onAddSleepTimerSongs = viewModel::addSleepTimerSongs,
+        onSetSleepTimerFinishLastSong = viewModel::setSleepTimerFinishLastSong,
+        onCancelSleepTimer = viewModel::cancelSleepTimer,
         onScanLibrary = { viewModel.scanLibrary() },
-        onQuickScanAndCleanLibrary = { viewModel.quickScanAndCleanLibrary() },
+        onQuickScanAndCleanLibrary = viewModel::quickScanAndCleanLibrary,
         onBackClick = { viewModel.selectedTab.value = NavTab.HOME },
-        highRefreshRate = viewModel.highRefreshRate.collectAsState().value,
-        onSetHighRefreshRate = { viewModel.setHighRefreshRate(it) },
-        alwaysShuffleMode = viewModel.alwaysShuffleMode.collectAsState().value,
-        onSetAlwaysShuffleMode = { viewModel.setAlwaysShuffleMode(it) },
-        gesturePlaybackEnabled = viewModel.gesturePlaybackEnabled.collectAsState().value,
-        onSetGesturePlaybackEnabled = { viewModel.setGesturePlaybackEnabled(it) },
+        highRefreshRate = audio.highRefreshRate,
+        onSetHighRefreshRate = viewModel::setHighRefreshRate,
+        alwaysShuffleMode = audio.alwaysShuffle,
+        onSetAlwaysShuffleMode = viewModel::setAlwaysShuffleMode,
+        gesturePlaybackEnabled = audio.gesturePlayback,
+        onSetGesturePlaybackEnabled = viewModel::setGesturePlaybackEnabled,
         homeSections = homeSections,
-        onSetHomeSections = { viewModel.setHomeSections(it) },
+        onSetHomeSections = viewModel::setHomeSections,
         customHomeFeedPresets = viewModel.customHomeFeedPresets.collectAsState().value,
-        onSaveCustomHomeFeedPreset = { name, sections -> viewModel.saveCustomHomeFeedPreset(name, sections) },
-        onDeleteCustomHomeFeedPreset = { name -> viewModel.deleteCustomHomeFeedPreset(name) },
+        onSaveCustomHomeFeedPreset = viewModel::saveCustomHomeFeedPreset,
+        onDeleteCustomHomeFeedPreset = viewModel::deleteCustomHomeFeedPreset,
         addToQueuePosition = viewModel.addToQueuePosition.collectAsState().value,
-        onSetAddToQueuePosition = { viewModel.setAddToQueuePosition(it) },
+        onSetAddToQueuePosition = viewModel::setAddToQueuePosition,
         playlistAddSongPosition = viewModel.playlistAddSongPosition.collectAsState().value,
-        onSetPlaylistAddSongPosition = { viewModel.setPlaylistAddSongPosition(it) },
+        onSetPlaylistAddSongPosition = viewModel::setPlaylistAddSongPosition,
         scanProgress = scanProgress,
         userAccount = userAccount,
         effectiveDisplayName = effectiveDisplayName,
@@ -278,22 +438,21 @@ fun SettingsTabRoute(
         lastBackupTimestamp = viewModel.lastBackupTimestamp.collectAsState().value,
         automaticBackupEnabled = viewModel.automaticBackupEnabled.collectAsState().value,
         backupFrequency = viewModel.backupFrequency.collectAsState().value,
-        onToggleAutomaticBackup = { viewModel.setAutomaticBackupEnabled(it) },
-        onSelectFrequency = { viewModel.setBackupFrequency(it) },
-        onTriggerSync = { viewModel.triggerCloudSync() },
-        onTriggerBackup = { viewModel.triggerBackupNow() },
-        onSignOut = { viewModel.signOut() },
-        onOpenAccount = { viewModel.openAccountScreen() },
-        onOpenAuth = { viewModel.openAuthScreen() },
+        onToggleAutomaticBackup = viewModel::setAutomaticBackupEnabled,
+        onSelectFrequency = viewModel::setBackupFrequency,
+        onTriggerSync = viewModel::triggerCloudSync,
+        onTriggerBackup = viewModel::triggerBackupNow,
+        onSignOut = viewModel::signOut,
+        onOpenAccount = viewModel::openAccountScreen,
+        onOpenAuth = viewModel::openAuthScreen,
         onSignInGoogle = { activity?.let { viewModel.signInWithGoogle(it) } ?: viewModel.openAuthScreen() },
         initialTargetSection = viewModel.settingsTargetSection.collectAsState().value,
         onTargetSectionConsumed = { viewModel.settingsTargetSection.value = null },
         updateCheckResult = viewModel.updateCheckResult.collectAsState().value,
         updateNotificationsEnabled = viewModel.updateNotificationsEnabled.collectAsState().value,
-        onSetUpdateNotificationsEnabled = { viewModel.setUpdateNotificationsEnabled(it) },
+        onSetUpdateNotificationsEnabled = viewModel::setUpdateNotificationsEnabled,
         onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
-        onOpenUpdateDialog = { viewModel.reopenOrCheckForUpdates() },
-        onResetToDefaultSettings = { viewModel.resetToDefaultSettings() }
+        onOpenUpdateDialog = viewModel::reopenOrCheckForUpdates,
+        onResetToDefaultSettings = viewModel::resetToDefaultSettings
     )
 }
-

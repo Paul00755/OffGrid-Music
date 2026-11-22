@@ -69,7 +69,12 @@ fun OnboardingScreen(
     fullDeviceScan: Boolean = false,
     selectedThemeMode: String = "DARK",
     isSystemDark: Boolean = true,
+    nowPlayingLayout: String = "MINIMAL_GLASS",
+    homeScreenLayout: String = "HERO_SPOTLIGHT",
+    playlistsLayout: String = "BENTO_GRID",
+    lyricsLayout: String = "CLASSIC_DEFAULT",
     onSelectThemeMode: (String) -> Unit = {},
+    onConfirmLayouts: (nowPlaying: String, home: String, playlists: String, lyrics: String) -> Unit = { _, _, _, _ -> },
     onSetFullDeviceScan: (Boolean) -> Unit = {},
     onSetIgnoreAudioDuration: (Int) -> Unit = {},
     onSetSongDurationRange: (minSec: Int, maxSec: Int) -> Unit = { _, _ -> },
@@ -85,6 +90,8 @@ fun OnboardingScreen(
     var currentStep by remember { mutableIntStateOf(1) }
     var localFullScan by remember(fullDeviceScan) { mutableStateOf(fullDeviceScan) }
     var isPickingForExclusion by remember { mutableStateOf(false) }
+    var showOnboardingLayoutStudio by remember { mutableStateOf(false) }
+    var hasCustomizedLayouts by remember { mutableStateOf(false) }
 
     // Confirmation dialogs when Full-Device Scan is toggled or started while folders are configured
     var showFullScanToggleConfirmDialog by remember { mutableStateOf(false) }
@@ -93,7 +100,34 @@ fun OnboardingScreen(
     val includedFolders = remember(folders) { folders.filter { !it.isExcluded } }
     val excludedFolders = remember(folders) { folders.filter { it.isExcluded } }
 
-    // Handle system Back button inside Onboarding steps (Step 3 -> Step 2 -> Step 1)
+    // Full-screen structural shadow UI Layout Studio during Onboarding Step 2
+    if (showOnboardingLayoutStudio) {
+        UiLayoutStudioScreen(
+            initialTabId = "NOW_PLAYING",
+            currentNowPlayingLayout = nowPlayingLayout,
+            currentHomeScreenLayout = homeScreenLayout,
+            currentPlaylistsLayout = playlistsLayout,
+            currentLyricsLayout = lyricsLayout,
+            waveformStyle = "SNAKE",
+            themeMode = selectedThemeMode,
+            isGradientEffect = true,
+            isGlassEffect = true,
+            useDarkColors = false,
+            showVolumeBar = false,
+            showAdvancedSongInfo = true,
+            homeSections = listOf("CONTINUE_LISTENING", "QUICK_ACTIONS", "STATS", "RECENTLY_PLAYED", "MOST_PLAYED"),
+            isOnboardingShadowMode = true,
+            onConfirmLayouts = { np, home, pl, lyr ->
+                hasCustomizedLayouts = true
+                onConfirmLayouts(np, home, pl, lyr)
+            },
+            onBack = { showOnboardingLayoutStudio = false },
+            modifier = modifier
+        )
+        return
+    }
+
+    // Handle system Back button inside Onboarding steps (Step 4 -> Step 3 -> Step 2 -> Step 1)
     BackHandler(enabled = currentStep > 1) {
         currentStep--
     }
@@ -242,9 +276,9 @@ fun OnboardingScreen(
                                 OnboardingThemeOption(
                                     id = "DARK",
                                     title = "Dark",
-                                    subtitle = "Deep obsidian surfaces",
-                                    previewBg = Color(0xFF0E1018),
-                                    previewCard = Color(0xFF1A1E2E),
+                                    subtitle = "Midnight Obsidian lite-dark",
+                                    previewBg = Color(0xFF0E111A),
+                                    previewCard = Color(0xFF1A1F30),
                                     previewAccent = Color(0xFFA78BFA),
                                     previewInk = Color.White,
                                     icon = Icons.Default.DarkMode
@@ -262,9 +296,9 @@ fun OnboardingScreen(
                                 OnboardingThemeOption(
                                     id = "AMOLED",
                                     title = "AMOLED",
-                                    subtitle = "Pure pitch-black OLED",
+                                    subtitle = "Extra-dark pitch black",
                                     previewBg = Color(0xFF000000),
-                                    previewCard = Color(0xFF0E0E12),
+                                    previewCard = Color(0xFF0A0A0F),
                                     previewAccent = Color(0xFF38BDF8),
                                     previewInk = Color.White,
                                     icon = Icons.Default.Contrast
@@ -282,14 +316,15 @@ fun OnboardingScreen(
                             )
                         }
 
-                        val pairedNowPlayingName = when (normalizedMode) {
-                            "LIGHT" -> "Neon Studio"
-                            "SYSTEM" -> if (isSystemDark) "Minimalist Glass (Dark) / Neon Studio (Light)" else "Neon Studio (Light) / Minimalist Glass (Dark)"
-                            else -> "Minimalist Glass"
+                        val activeLayoutSummary = remember(nowPlayingLayout, homeScreenLayout, playlistsLayout, lyricsLayout) {
+                            "${NowPlayingLayout.fromId(nowPlayingLayout).displayName} • ${HomeScreenLayout.fromId(homeScreenLayout).displayName}"
                         }
 
                         BentoCard(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 560.dp)
+                                .verticalScroll(rememberScrollState()),
                             backgroundColor = BentoCardDarkPurple,
                             padding = 22.dp
                         ) {
@@ -455,30 +490,78 @@ fun OnboardingScreen(
                                     }
                                 }
 
+                                // Screen Layout & Feel Studio Entry inside Onboarding
                                 Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = BentoPrimary.copy(alpha = 0.10f),
-                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.28f)),
-                                    modifier = Modifier.fillMaxWidth()
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        showOnboardingLayoutStudio = true
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = BentoPrimary.copy(alpha = 0.11f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.34f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("onboarding_customize_layouts_button")
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clip(CircleShape)
+                                                .background(BentoPrimary.copy(alpha = 0.2f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.AutoAwesomeMosaic,
+                                                contentDescription = null,
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = if (hasCustomizedLayouts) "Screen Layouts Customized" else "Choose Screen UI & Feel",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BentoTextPrimary
+                                            )
+                                            Text(
+                                                text = activeLayoutSummary,
+                                                fontSize = 11.sp,
+                                                color = BentoTextSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                         Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
+                                            imageVector = Icons.Default.ChevronRight,
+                                            contentDescription = "Open Layout Studio",
                                             tint = BentoPrimary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Text(
-                                            text = "Default Player: $pairedNowPlayingName",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = BentoTextPrimary
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
+                                }
+
+                                // Skip for now option -> advances smoothly to next onboarding step
+                                TextButton(
+                                    onClick = {
+                                        HapticUtils.performClickHaptic(context)
+                                        currentStep++
+                                    },
+                                    modifier = Modifier.testTag("onboarding_skip_ui_feel_button")
+                                ) {
+                                    Text(
+                                        text = "Skip for now — I'll do it later in Settings",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = BentoTextSecondary
+                                    )
                                 }
                             }
                         }

@@ -649,10 +649,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val showArtist: StateFlow<Boolean> = preferences.showArtist.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowArtistSync())
     val showAlbum: StateFlow<Boolean> = preferences.showAlbum.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAlbumSync())
     val showAudioOutput: StateFlow<Boolean> = preferences.showAudioOutput.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAudioOutputSync())
+    val showRemainingTime: StateFlow<Boolean> = preferences.showRemainingTime.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowRemainingTimeSync())
     val miniPlayerStyle: StateFlow<String> = preferences.miniPlayerStyle.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerStyleSync())
     val miniPlayerShowPrevious: StateFlow<Boolean> = preferences.miniPlayerShowPrevious.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowPreviousSync())
     val miniPlayerShowNext: StateFlow<Boolean> = preferences.miniPlayerShowNext.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowNextSync())
     val miniPlayerShowFavorite: StateFlow<Boolean> = preferences.miniPlayerShowFavorite.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowFavoriteSync())
+    val miniPlayerSwipeToSkip: StateFlow<Boolean> = preferences.miniPlayerSwipeToSkip.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerSwipeToSkipSync())
+    val miniPlayerSwipeUpToOpen: StateFlow<Boolean> = preferences.miniPlayerSwipeUpToOpen.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerSwipeUpToOpenSync())
+    val miniPlayerShowProgress: StateFlow<Boolean> = preferences.miniPlayerShowProgress.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerShowProgressSync())
+    val miniPlayerCircularArt: StateFlow<Boolean> = preferences.miniPlayerCircularArt.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getMiniPlayerCircularArtSync())
     val gaplessPlayback: StateFlow<Boolean> = preferences.gaplessPlayback.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGaplessPlaybackSync())
     val normalizeAudio: StateFlow<Boolean> = preferences.normalizeAudio.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNormalizeAudioSync())
     val autoPlayOnHeadphoneConnection: StateFlow<Boolean> = preferences.autoPlayOnHeadphoneConnection.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAutoPlayOnHeadphoneConnectionSync())
@@ -1204,6 +1209,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setShowAudioOutput(show: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowAudioOutput(show) }
     }
+    fun toggleShowRemainingTime() {
+        val next = !showRemainingTime.value
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowRemainingTime(next) }
+        }
+    }
+    fun setShowRemainingTime(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowRemainingTime(show) }
+    }
     fun setMiniPlayerStyle(style: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerStyle(style) }
     }
@@ -1215,6 +1229,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setMiniPlayerShowFavorite(show: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowFavorite(show) }
+    }
+    fun setMiniPlayerSwipeToSkip(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerSwipeToSkip(enabled) }
+    }
+    fun setMiniPlayerSwipeUpToOpen(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerSwipeUpToOpen(enabled) }
+    }
+    fun setMiniPlayerShowProgress(show: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerShowProgress(show) }
+    }
+    fun setMiniPlayerCircularArt(circular: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setMiniPlayerCircularArt(circular) }
     }
     fun setAddToQueuePosition(position: String) {
         playbackManager.addToQueuePosition = position

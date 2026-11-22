@@ -778,6 +778,19 @@ fun SettingsScreen(
     onSetMiniPlayerShowNext: (Boolean) -> Unit = {},
     miniPlayerShowFavorite: Boolean = true,
     onSetMiniPlayerShowFavorite: (Boolean) -> Unit = {},
+    miniPlayerSwipeToSkip: Boolean = true,
+    onSetMiniPlayerSwipeToSkip: (Boolean) -> Unit = {},
+    miniPlayerSwipeUpToOpen: Boolean = true,
+    onSetMiniPlayerSwipeUpToOpen: (Boolean) -> Unit = {},
+    miniPlayerShowProgress: Boolean = true,
+    onSetMiniPlayerShowProgress: (Boolean) -> Unit = {},
+    miniPlayerCircularArt: Boolean = false,
+    onSetMiniPlayerCircularArt: (Boolean) -> Unit = {},
+    livePreviewSong: com.example.data.model.Song? = null,
+    livePreviewIsPlaying: Boolean = false,
+    livePreviewLyrics: com.example.data.model.Lyrics? = null,
+    livePreviewPlaylistNames: List<String> = emptyList(),
+    livePreviewRecentSongs: List<com.example.data.model.Song> = emptyList(),
     gaplessPlayback: Boolean = true,
     onSetGaplessPlayback: (Boolean) -> Unit = {},
     normalizeAudio: Boolean = false,
@@ -1429,184 +1442,21 @@ fun SettingsScreen(
         )
     }
 
-    // Circle-based RGB Color Picker Dialog
+    // Interactive HSV Color Wheel + Hex + RGB Accent Color Picker Dialog
     if (showColorPickerDialog) {
-        var redVal by remember { mutableFloatStateOf(if (customAccentColor != 0) Color(customAccentColor).red else 0.0f) }
-        var greenVal by remember { mutableFloatStateOf(if (customAccentColor != 0) Color(customAccentColor).green else 0.9f) }
-        var blueVal by remember { mutableFloatStateOf(if (customAccentColor != 0) Color(customAccentColor).blue else 1.0f) }
-
-        val pickedColor = Color(redVal, greenVal, blueVal)
-
-        Dialog(onDismissRequest = { showColorPickerDialog = false }) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = BentoCardSurface,
-                border = BorderStroke(1.dp, pickedColor.copy(alpha = 0.6f)),
-                modifier = Modifier.padding(16.dp).fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(20.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Custom RGB Color Picker",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BentoTextPrimary,
-                        textAlign = TextAlign.Center
-                    )
-
-                    // Big Circular Color Preview Swatch with ambient glow
-                    val previewContentTint = if (pickedColor.luminance() > 0.45f) Color.Black.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.90f)
-                    Box(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .background(pickedColor)
-                            .border(3.dp, Color.White.copy(alpha = 0.85f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = null,
-                            tint = previewContentTint,
-                            modifier = Modifier.size(30.dp)
-                        )
-                    }
-
-                    // Hex Preview Badge
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = BentoCardPurple,
-                        border = BorderStroke(1.dp, pickedColor.copy(alpha = 0.65f))
-                    ) {
-                        Text(
-                            text = String.format("#%02X%02X%02X", (redVal * 255).toInt(), (greenVal * 255).toInt(), (blueVal * 255).toInt()),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (pickedColor.luminance() < 0.14f) BentoTextPrimary else pickedColor,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                        )
-                    }
-
-                    // Red Slider
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Red", fontSize = 13.sp, color = Color(0xFFFF5252), fontWeight = FontWeight.Bold)
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = Color(0xFFFF5252).copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = "${(redVal * 255).toInt()}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFF5252),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Slider(
-                            value = redVal,
-                            onValueChange = { redVal = it },
-                            colors = SliderDefaults.colors(thumbColor = Color(0xFFFF5252), activeTrackColor = Color(0xFFFF5252))
-                        )
-                    }
-
-                    // Green Slider
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Green", fontSize = 13.sp, color = Color(0xFF00E676), fontWeight = FontWeight.Bold)
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = Color(0xFF00E676).copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = "${(greenVal * 255).toInt()}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF00E676),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Slider(
-                            value = greenVal,
-                            onValueChange = { greenVal = it },
-                            colors = SliderDefaults.colors(thumbColor = Color(0xFF00E676), activeTrackColor = Color(0xFF00E676))
-                        )
-                    }
-
-                    // Blue Slider
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Blue", fontSize = 13.sp, color = Color(0xFF2979FF), fontWeight = FontWeight.Bold)
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = Color(0xFF2979FF).copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = "${(blueVal * 255).toInt()}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2979FF),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Slider(
-                            value = blueVal,
-                            onValueChange = { blueVal = it },
-                            colors = SliderDefaults.colors(thumbColor = Color(0xFF2979FF), activeTrackColor = Color(0xFF2979FF))
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                onSetCustomAccentColor(0)
-                                showColorPickerDialog = false
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Reset")
-                        }
-                        Button(
-                            onClick = {
-                                onSetCustomAccentColor(pickedColor.toArgb())
-                                onSetDynamicArtworkTheme(false)
-                                showColorPickerDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = pickedColor,
-                                contentColor = if (pickedColor.luminance() > 0.45f) Color(0xFF0A0B10) else Color.White
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Apply")
-                        }
-                    }
-                }
-            }
-        }
+        com.example.ui.components.RgbColorPickerDialog(
+            initialColorArgb = customAccentColor,
+            onReset = {
+                onSetCustomAccentColor(0)
+                showColorPickerDialog = false
+            },
+            onApply = { argb ->
+                onSetCustomAccentColor(argb)
+                onSetDynamicArtworkTheme(false)
+                showColorPickerDialog = false
+            },
+            onDismiss = { showColorPickerDialog = false }
+        )
     }
 
     if (showWaveformPickerDialog) {
@@ -1635,6 +1485,12 @@ fun SettingsScreen(
             showVolumeBar = showNowPlayingVolumeBar,
             showAdvancedSongInfo = showAdvancedSongInfo,
             homeSections = homeSections,
+            liveSong = livePreviewSong,
+            liveIsPlaying = livePreviewIsPlaying,
+            liveLyrics = livePreviewLyrics,
+            livePlaylistNames = livePreviewPlaylistNames,
+            liveRecentSongs = livePreviewRecentSongs,
+            isOnboardingShadowMode = false,
             onConfirmLayouts = { np, home, pl, lyr ->
                 if (!np.equals(nowPlayingLayout, true)) onSetNowPlayingLayout(np)
                 if (!home.equals(homeScreenLayout, true)) onSetHomeScreenLayout(home)
@@ -1725,11 +1581,6 @@ fun SettingsScreen(
                 matchAudioTranscribe || matchAudioBalance || matchAudioEqualizer
 
             // Section 2: UI & Themes granular matchers
-            val matchUiThemes = matchesSettingsTokens(
-                searchTokens,
-                "curated ui themes", "ui theme", "themes", "palette", "obsidian", "neon", "cyberpunk",
-                "emerald", "amber", "indigo", "aurora", "synthwave", "retro", "glassmorphism"
-            )
             val matchUiScreenLayouts = matchesSettingsTokens(
                 searchTokens,
                 "screen layout", "screen layout architecture", "layout architecture", "wireframe",
@@ -1740,7 +1591,8 @@ fun SettingsScreen(
             )
             val matchUiDisplayMode = matchesSettingsTokens(
                 searchTokens,
-                "display mode", "dark", "light", "extra dark", "pitch black", "amoled", "oled", "pure black"
+                "display mode", "theme", "themes", "dark", "light", "extra dark", "pitch black",
+                "amoled", "oled", "pure black", "obsidian", "midnight", "system"
             )
             val matchUiDisplayScale = matchesSettingsTokens(
                 searchTokens,
@@ -1748,7 +1600,7 @@ fun SettingsScreen(
             )
             val matchUiAccentColor = matchesSettingsTokens(
                 searchTokens,
-                "accent color", "custom accent", "color picker", "rgb", "custom color", "tint"
+                "accent color", "custom accent", "color picker", "rgb", "hsv", "hex", "custom color", "tint", "palette"
             )
             val matchUiDynamicArtwork = matchesSettingsTokens(
                 searchTokens,
@@ -1794,9 +1646,11 @@ fun SettingsScreen(
             )
             val matchUiMiniPlayer = matchesSettingsTokens(
                 searchTokens,
-                "mini player", "mini player customization", "floating pill", "docked", "previous track button", "next track button", "favorite button"
+                "mini player", "mini player customization", "floating pill", "docked", "bottom bar",
+                "artwork glass", "compact slim", "swipe to skip", "swipe up", "circular artwork",
+                "progress bar", "previous track button", "next track button", "favorite button"
             )
-            val anyUiItemMatches = matchUiThemes || matchUiScreenLayouts || matchUiDisplayMode ||
+            val anyUiItemMatches = matchUiScreenLayouts || matchUiDisplayMode ||
                 matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiDarkColors ||
                 matchUiGradientGlass || matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiVolumeBar ||
                 matchUiAdvancedSongInfo || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
@@ -3137,15 +2991,33 @@ fun SettingsScreen(
                 }
 
                 // Group 2B: Theme, Colors & Effects
-                val showUiColorsGroup = !isSearching || broadUiMatch || matchUiDisplayMode || matchUiThemes || matchUiAccentColor || matchUiDynamicArtwork || matchUiDarkColors || matchUiGradientGlass
+                val showUiColorsGroup = !isSearching || broadUiMatch || matchUiDisplayMode || matchUiAccentColor || matchUiDynamicArtwork || matchUiDarkColors || matchUiGradientGlass
                 if (showUiColorsGroup) {
                     item(key = "settings_ui_theme_colors_card") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SettingsSubGroupLabel(title = "THEME, COLORS & EFFECTS")
                             SettingsCardContainer(accentGlow = BentoPrimary) {
                                 if (!isSearching || matchUiDisplayMode || broadUiMatch) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                                Text("Display Mode", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                                Text(
+                                                    text = when (themeMode.uppercase()) {
+                                                        "AMOLED" -> "Pure extra-dark pitch black optimized for OLED displays"
+                                                        "LIGHT" -> "Clean high-contrast daylight slate surfaces"
+                                                        "SYSTEM" -> "Automatically follows your device appearance"
+                                                        else -> "Midnight Obsidian lite-dark slate surfaces"
+                                                    },
+                                                    fontSize = 11.5.sp,
+                                                    color = BentoTextSecondary
+                                                )
+                                            }
+                                        }
                                         SettingsSegmentedSelector(
                                             options = listOf(
                                                 "DARK" to "Dark",
@@ -3164,69 +3036,6 @@ fun SettingsScreen(
                                     if (!isSearching || broadUiMatch) SettingsDivider()
                                 }
 
-                                if (!isSearching || matchUiThemes || broadUiMatch) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f, fill = false)
-                                                    .padding(end = 8.dp)
-                                            ) {
-                                                Text("Curated Themes", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                                Text("Switch high-fidelity palettes with bespoke accent gradients", fontSize = 11.5.sp, color = BentoTextSecondary)
-                                            }
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = BentoPrimary.copy(alpha = 0.16f),
-                                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f))
-                                            ) {
-                                                Text(
-                                                    text = AppUiTheme.fromId(uiTheme).displayName,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = BentoPrimary,
-                                                    maxLines = 1,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                )
-                                            }
-                                        }
-
-                                        val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
-                                        val compatibleThemes = remember(themeMode, isSystemDark, uiTheme) {
-                                            val list = com.example.ui.theme.AppUiTheme.getCompatibleThemes(themeMode, isSystemDark)
-                                            val currentTheme = com.example.ui.theme.AppUiTheme.fromId(uiTheme)
-                                            if (list.none { it.id.equals(currentTheme.id, ignoreCase = true) }) {
-                                                listOf(currentTheme) + list
-                                            } else {
-                                                list
-                                            }
-                                        }
-
-                                        LazyRow(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
-                                        ) {
-                                            items(compatibleThemes, key = { it.id }, contentType = { "theme_preview" }) { theme ->
-                                                val isSelected = uiTheme.equals(theme.id, ignoreCase = true)
-                                                ThemePreviewCard(
-                                                    theme = theme,
-                                                    isSelected = isSelected,
-                                                    onClick = {
-                                                        HapticUtils.performClickHaptic(context)
-                                                        onSetUiTheme(theme.id)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (!isSearching || broadUiMatch) SettingsDivider()
-                                }
-
                                 if (!isSearching || matchUiAccentColor || broadUiMatch) {
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Row(
@@ -3234,33 +3043,34 @@ fun SettingsScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                                 Text("Accent Color Palette", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                                Text("Choose preset circle theme or fine-tune custom RGB color", fontSize = 11.5.sp, color = BentoTextSecondary)
+                                                Text("Choose a preset swatch or open the color wheel & hex picker", fontSize = 11.5.sp, color = BentoTextSecondary)
                                             }
                                             Surface(
                                                 onClick = {
                                                     HapticUtils.performClickHaptic(context)
                                                     showColorPickerDialog = true
                                                 },
-                                                shape = RoundedCornerShape(12.dp),
+                                                shape = CircleShape,
                                                 color = if (customAccentColor != 0) BentoPrimary.copy(alpha = 0.18f) else BentoCardPurple,
-                                                border = BorderStroke(1.dp, if (customAccentColor != 0) BentoPrimary else BentoBorder)
+                                                border = BorderStroke(1.dp, if (customAccentColor != 0) BentoPrimary else BentoBorder.copy(alpha = 0.7f)),
+                                                modifier = Modifier.testTag("settings_open_rgb_picker_button")
                                             ) {
                                                 Row(
-                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.Center
                                                 ) {
                                                     Icon(
                                                         Icons.Default.Palette,
-                                                        contentDescription = "Custom RGB",
+                                                        contentDescription = "Custom Color Wheel",
                                                         tint = if (customAccentColor != 0) Color(customAccentColor) else BentoPrimary,
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
-                                                        text = "RGB Picker",
+                                                        text = "Color Picker",
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = BentoTextPrimary
@@ -3562,19 +3372,119 @@ fun SettingsScreen(
                             SettingsSubGroupLabel(title = "MINI PLAYER")
                             SettingsCardContainer(accentGlow = BentoPrimary) {
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Mini Player Customization", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
-                                    SettingsSegmentedSelector(
-                                        options = listOf(
-                                            "FLOATING" to "Floating Pill",
-                                            "BOTTOM_BAR" to "Bottom Bar"
-                                        ),
-                                        selectedOption = miniPlayerStyle.uppercase(),
-                                        onSelectOption = {
-                                            HapticUtils.performClickHaptic(context)
-                                            onSetMiniPlayerStyle(it)
-                                        },
-                                        accentColor = BentoPrimary
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("Mini Player Style", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = BentoTextPrimary)
+                                        Text(
+                                            text = when (miniPlayerStyle.uppercase()) {
+                                                "BOTTOM_BAR" -> "Full-width docked bar anchored cleanly above navigation"
+                                                "ARTWORK_GLASS" -> "Frosted glass wash with accent glow and swipe-up handle"
+                                                "COMPACT_MINIMAL" -> "Ultra-slim floating pill for distraction-free browsing"
+                                                else -> "Rounded floating pill card with balanced controls"
+                                            },
+                                            fontSize = 11.5.sp,
+                                            color = BentoTextSecondary
+                                        )
+                                    }
+
+                                    // 2x2 Style Selector Pills
+                                    val miniStyles = listOf(
+                                        Triple("FLOATING", "Floating Pill", Icons.Default.RoundedCorner),
+                                        Triple("BOTTOM_BAR", "Bottom Bar", Icons.Default.Dock),
+                                        Triple("ARTWORK_GLASS", "Artwork Glass", Icons.Default.BlurOn),
+                                        Triple("COMPACT_MINIMAL", "Compact Slim", Icons.Default.ViewStream)
                                     )
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        miniStyles.chunked(2).forEach { pair ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                pair.forEach { (styleId, label, icon) ->
+                                                    val selected = miniPlayerStyle.equals(styleId, ignoreCase = true)
+                                                    Surface(
+                                                        onClick = {
+                                                            HapticUtils.performClickHaptic(context)
+                                                            onSetMiniPlayerStyle(styleId)
+                                                        },
+                                                        shape = RoundedCornerShape(14.dp),
+                                                        color = if (selected) BentoPrimary.copy(alpha = 0.18f) else BentoCardPurple.copy(alpha = 0.55f),
+                                                        border = BorderStroke(
+                                                            width = if (selected) 1.5.dp else 1.dp,
+                                                            color = if (selected) BentoPrimary else BentoBorder.copy(alpha = 0.45f)
+                                                        ),
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .testTag("settings_mini_player_style_${styleId.lowercase()}")
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = icon,
+                                                                contentDescription = null,
+                                                                tint = if (selected) BentoPrimary else BentoTextSecondary,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Text(
+                                                                text = label,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                                                color = if (selected) BentoPrimary else BentoTextPrimary,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    Text("Behavior & Gestures", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextSecondary)
+                                    SettingsToggleRow(
+                                        title = "Swipe Left / Right to Skip",
+                                        subtitle = "Drag horizontally on the mini player to jump to next or previous track",
+                                        checked = miniPlayerSwipeToSkip,
+                                        onCheckedChange = onSetMiniPlayerSwipeToSkip,
+                                        icon = Icons.Default.Swipe,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("settings_mini_player_swipe_skip")
+                                    )
+                                    SettingsToggleRow(
+                                        title = "Swipe Up to Open Now Playing",
+                                        subtitle = "Pull upward on the mini player to expand the full player screen",
+                                        checked = miniPlayerSwipeUpToOpen,
+                                        onCheckedChange = onSetMiniPlayerSwipeUpToOpen,
+                                        icon = Icons.Default.KeyboardArrowUp,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("settings_mini_player_swipe_up")
+                                    )
+                                    SettingsToggleRow(
+                                        title = "Show Live Progress Bar",
+                                        subtitle = "Display a real-time playback progress line along the mini player edge",
+                                        checked = miniPlayerShowProgress,
+                                        onCheckedChange = onSetMiniPlayerShowProgress,
+                                        icon = Icons.Default.LinearScale,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("settings_mini_player_progress")
+                                    )
+                                    SettingsToggleRow(
+                                        title = "Circular Album Artwork",
+                                        subtitle = "Render the mini player cover art as a vinyl-inspired circular disc",
+                                        checked = miniPlayerCircularArt,
+                                        onCheckedChange = onSetMiniPlayerCircularArt,
+                                        icon = Icons.Default.Album,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("settings_mini_player_circular_art")
+                                    )
+
+                                    SettingsDivider()
+
+                                    Text("Visible Action Buttons", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextSecondary)
                                     SettingsToggleRow(
                                         title = "Show Previous Track Button",
                                         subtitle = "Quick previous button on the persistent mini player",

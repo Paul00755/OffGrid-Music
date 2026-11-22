@@ -78,6 +78,8 @@ fun NowPlayingNeonWaveform(
     showVolumeBar: Boolean = false,
     showAdvancedSongInfo: Boolean = false,
     audioTechnicalInfo: AudioTechnicalInfo? = null,
+    showRemainingTime: Boolean = false,
+    onToggleShowRemainingTime: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -295,8 +297,12 @@ fun NowPlayingNeonWaveform(
                         fontSize = 12.sp,
                         color = secondaryInk
                     )
-                    Text(
-                        text = "-${formatTime(remainingMs)}",
+                    com.example.ui.components.PlaybackDurationToggleText(
+                        playbackPositionFlow = playbackPositionFlow,
+                        positionMs = livePositionMs,
+                        durationMs = duration,
+                        showRemainingTime = showRemainingTime,
+                        onToggleShowRemainingTime = onToggleShowRemainingTime,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = secondaryInk

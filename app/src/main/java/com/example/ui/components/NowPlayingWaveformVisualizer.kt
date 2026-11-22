@@ -2,13 +2,16 @@ package com.example.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -19,11 +22,12 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.ui.theme.BentoPrimary
 import com.example.util.SonicStudioEngine
 import kotlinx.coroutines.flow.StateFlow
@@ -618,5 +622,57 @@ fun PlaybackPositionText(
         overflow = TextOverflow.Clip
     )
 }
+
+@Composable
+fun PlaybackDurationToggleText(
+    playbackPositionFlow: StateFlow<Long>?,
+    positionMs: Long,
+    durationMs: Long,
+    showRemainingTime: Boolean,
+    onToggleShowRemainingTime: () -> Unit,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 11.sp,
+    fontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+    color: Color
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val livePositionState = if (showRemainingTime) {
+        playbackPositionFlow?.collectAsStateWithLifecycle(initialValue = positionMs)
+    } else null
+
+    val safeDurationMs = durationMs.coerceAtLeast(0L)
+    val displaySeconds by remember(showRemainingTime, livePositionState, positionMs, safeDurationMs) {
+        derivedStateOf {
+            if (showRemainingTime) {
+                val rawPos = (livePositionState?.value ?: positionMs).coerceIn(0L, safeDurationMs)
+                ((safeDurationMs - rawPos).coerceAtLeast(0L)) / 1000L
+            } else {
+                safeDurationMs / 1000L
+            }
+        }
+    }
+    val formattedText = remember(displaySeconds, showRemainingTime) {
+        val core = String.format(Locale.US, "%d:%02d", displaySeconds / 60L, displaySeconds % 60L)
+        if (showRemainingTime) "-$core" else core
+    }
+
+    Text(
+        text = formattedText,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Clip,
+        modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .clickable {
+                com.example.util.HapticUtils.performClickHaptic(context)
+                onToggleShowRemainingTime()
+            }
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .testTag("now_playing_duration_toggle")
+    )
+}
+
 
 

@@ -68,6 +68,8 @@ fun NowPlayingVinylTurntable(
     showVolumeBar: Boolean = false,
     showAdvancedSongInfo: Boolean = false,
     audioTechnicalInfo: AudioTechnicalInfo? = null,
+    showRemainingTime: Boolean = false,
+    onToggleShowRemainingTime: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -515,7 +517,8 @@ fun NowPlayingVinylTurntable(
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             com.example.ui.components.PlaybackPositionText(
                                 playbackPositionFlow,
@@ -524,7 +527,15 @@ fun NowPlayingVinylTurntable(
                                 fontSize = 11.5.sp,
                                 color = BentoPrimary
                             )
-                            Text(formatTime(duration), fontSize = 11.5.sp, color = BentoTextSecondary)
+                            com.example.ui.components.PlaybackDurationToggleText(
+                                playbackPositionFlow = playbackPositionFlow,
+                                positionMs = positionMs,
+                                durationMs = duration,
+                                showRemainingTime = showRemainingTime,
+                                onToggleShowRemainingTime = onToggleShowRemainingTime,
+                                fontSize = 11.5.sp,
+                                color = BentoTextSecondary
+                            )
                         }
                     }
                 }

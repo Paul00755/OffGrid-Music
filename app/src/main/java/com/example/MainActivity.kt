@@ -422,7 +422,17 @@ class MainActivity : ComponentActivity() {
                             fullDeviceScan = fullDeviceScanSetting,
                             selectedThemeMode = themeMode,
                             isSystemDark = isSystemDark,
+                            nowPlayingLayout = nowPlayingLayout,
+                            homeScreenLayout = homeScreenLayout,
+                            playlistsLayout = playlistsLayout,
+                            lyricsLayout = lyricsLayout,
                             onSelectThemeMode = { mode -> viewModel.setOnboardingThemeMode(mode, isSystemDark) },
+                            onConfirmLayouts = { np, home, pl, lyr ->
+                                viewModel.setNowPlayingLayout(np)
+                                viewModel.setHomeScreenLayout(home)
+                                viewModel.setPlaylistsLayout(pl)
+                                viewModel.setLyricsLayout(lyr)
+                            },
                             onSetFullDeviceScan = { viewModel.setFullDeviceScan(it) },
                             onSetIgnoreAudioDuration = { min -> viewModel.setIgnoreAudioDuration(min) },
                             onSetSongDurationRange = { min, max -> viewModel.setSongDurationRange(min, max) },
@@ -519,6 +529,10 @@ class MainActivity : ComponentActivity() {
                                                 val miniPlayerShowNext by viewModel.miniPlayerShowNext.collectAsStateWithLifecycle()
                                                 val miniPlayerShowFavorite by viewModel.miniPlayerShowFavorite.collectAsStateWithLifecycle()
                                                 val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsStateWithLifecycle()
+                                                val miniPlayerSwipeToSkip by viewModel.miniPlayerSwipeToSkip.collectAsStateWithLifecycle()
+                                                val miniPlayerSwipeUpToOpen by viewModel.miniPlayerSwipeUpToOpen.collectAsStateWithLifecycle()
+                                                val miniPlayerShowProgress by viewModel.miniPlayerShowProgress.collectAsStateWithLifecycle()
+                                                val miniPlayerCircularArt by viewModel.miniPlayerCircularArt.collectAsStateWithLifecycle()
 
                                                 MiniPlayer(
                                                     song = playbackState.currentSong,
@@ -534,7 +548,11 @@ class MainActivity : ComponentActivity() {
                                                     showFavorite = miniPlayerShowFavorite,
                                                     onSkipPrevious = { viewModel.skipToPrevious() },
                                                     onFavoriteToggle = { playbackState.currentSong?.let { viewModel.toggleFavorite(it) } },
-                                                    style = miniPlayerStyle
+                                                    style = miniPlayerStyle,
+                                                    swipeToSkip = miniPlayerSwipeToSkip,
+                                                    swipeUpToOpen = miniPlayerSwipeUpToOpen,
+                                                    showProgress = miniPlayerShowProgress,
+                                                    circularArt = miniPlayerCircularArt
                                                 )
                                             }
 
@@ -963,6 +981,7 @@ class MainActivity : ComponentActivity() {
                                 val currentLyricsOffsetMs by viewModel.currentLyricsOffsetMs.collectAsStateWithLifecycle()
                                 val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsStateWithLifecycle()
                                 val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsStateWithLifecycle()
+                                val showRemainingTime by viewModel.showRemainingTime.collectAsStateWithLifecycle()
                                 NowPlayingScreen(
                                     playbackState = playbackState,
                                     currentLyrics = currentLyrics,
@@ -990,6 +1009,8 @@ class MainActivity : ComponentActivity() {
                                     lyricsLayout = lyricsLayout,
                                     showVolumeBar = showNowPlayingVolumeBar,
                                     showAdvancedSongInfo = showAdvancedSongInfo,
+                                    showRemainingTime = showRemainingTime,
+                                    onToggleShowRemainingTime = { viewModel.toggleShowRemainingTime() },
                                     playbackPositionFlow = viewModel.playbackPositionMs,
                                     onDismiss = { viewModel.showNowPlaying.value = false },
                                     onTogglePlayPause = { viewModel.togglePlayPause() },
