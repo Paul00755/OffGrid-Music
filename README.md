@@ -129,19 +129,16 @@ Streaming apps decide what stays in your library, interrupt albums with ads, and
 
 ### 6. Themes, Live Screen Layout Studio, Waveforms & Home Screen Widgets
 - **4 Display Modes:** *Dark, Light, Pure AMOLED Black, and Follow System*.
-- **10 Curated Themes:**
-  - *Dark & AMOLED:* **Midnight Obsidian, Pure AMOLED, Cyberpunk Synth, Nordic Frost, Emerald Forest, Sunset Amber, Crimson Velvet, Royal Amethyst**.
-  - *Light:* **Porcelain Slate, Warm Parchment**.
 - **Colors & Atmospheric Visuals:**
   - **Refined Dynamic Artwork Theming:** Extracts true dominant and vibrant colors from the active album cover cleanly across backgrounds, accents, and Now Playing gradients.
   - **Use Dark Colors Toggle:** Switch between rich dark tones and soft Palette Lite pastels for dynamic theming, gradients, and preset accents.
-  - **10 Accent Presets + Custom RGB Color Picker** for exact custom shades.
+  - **Custom RGB Color Picker** for exact custom shades.
   - **App-Wide Gradient & Frosted Glass Effects:** Independent toggles for ambient color washes and translucent frosted cards/sheets across every screen.
   - **Display Scale & Smoothness:** Choose **Compact, Standard, or Comfort** UI sizing, adapt cleanly across phones and tablets, toggle **90/120Hz High Refresh Rate**, and choose **Prefer High-Res Online Artwork** or fast local covers.
 - **Dedicated Screen Layout Studio (with Live Combo View):**
   - Swipe through realistic live-tinted previews for **4 Home Layouts** (*Hero Spotlight, Bento Mosaic, Minimal Stream, Studio Deck*), **4 Now Playing Layouts** (*Modern Bento, Vinyl Turntable, Minimalist Glass, Neon Studio*), **4 Playlists Layouts** (*Bento Grid, Magazine Hero, Compact List, Neon Deck*), and **3 Lyrics UI Layouts** (*Classic Scroll, Focused Spotlight, Immersive Full*), then verify the full combination together before applying.
 - **Customizable Home Feed & Saved Presets:** Toggle and reorder **9 Home Feed Sections** (*Continue Listening, Speed Dial, Listening Stats, Most Played, Most Played Playlists, Recently Played, Recently Added, Top Artists, Top Albums*), pick from built-in presets, or **save and switch between your own Custom Named Home Feed Configurations**.
-- **Seek Waveform & Mini Player Customization:** Pick visually from **7 Waveform Styles** (*Sleek Line, Snake Sine, Symmetric, Dotted, Squiggly, Wave, Bar*) and **2 Mini Player Styles** (*Floating Pill* or *Bottom Bar*) with toggles for Previous, Next, and Favorite buttons.
+- **Seek Waveform & Mini Player Customization:** Pick visually from **7 Waveform Styles** (*Sleek Line, Snake Sine, Symmetric, Dotted, Squiggly, Wave, Bar*) and **4 Mini Player Styles** with toggles for Previous, Next, and Favorite buttons.
 - **5 Adaptive Android Home Screen Widgets:** **Full Artwork Widget, Small Widget, Medium Widget, Secondary Widget, and Live Lyrics Widget** (responsive across launcher sizes with live synced lyrics and playback controls).
 
 ### 7. Listening Statistics, Calendar Wrapped Story & Sleep Timer
