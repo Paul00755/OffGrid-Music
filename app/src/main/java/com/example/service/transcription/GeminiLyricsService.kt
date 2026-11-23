@@ -623,26 +623,32 @@ ${previousAttempt.take(8000)}
             TranscribeLanguage.TANGLISH -> """
 3. DESTINATION LANGUAGE IS TANGLISH (Romanized Tamil in English letters + English):
    - Transcribe all Tamil sung words phonetically in natural, accurate Romanized Tamil using the English alphabet (e.g., "OMG ponnu", "Uyirin uyire", "Ennai kollathey", "Vaathi coming", "Thalli pogathey").
-   - Distinguish phonetically close Tamil words clearly in Romanization so meaning is never confused (e.g., "thisai" vs "isai", "mazhai" vs "malai", "vazhi" vs "vali", "kanna" vs "kaana", "manam" vs "manam", "azhagiye").
+   - Distinguish phonetically close Tamil words clearly in Romanization so meaning is never confused (e.g., "thisai" [direction] vs "isai" [music], "mazhai" [rain] vs "malai" [mountain], "vizhi" [eye] vs "vazhi" [path] vs "vali" [pain], "kaadhal" [love] vs "kaadhil" [in the ear], "kanavu" [dream] vs "ninaivu" [memory], "kanna" vs "kaana", "azhagiye").
    - Keep all English sung words, hooks, and acronyms in standard English spelling (e.g., "OMG", "Baby", "Love", "Party").
    - Do NOT use Tamil Unicode script (தமிழ்) when Tanglish is selected."""
             TranscribeLanguage.TAMIL -> """
 3. DESTINATION LANGUAGE IS TAMIL (தமிழ்) WITH STUDIO-GRADE VOCAL PHONETIC PRECISION:
    - Write Tamil vocal words in accurate, natural Tamil script (தமிழ்).
-   - CRITICAL TAMIL VOCAL & MINIMAL-PAIR DISAMBIGUATION (PAY EXTRA ATTENTION):
-     * Word-initial consonant vs vowel onset: Singing with reverb or legato gliding often softens initial stops. Listen closely for the subtle dental/velar/labial consonant onset AND verify semantic context so near-homophones are NEVER swapped—for example:
-       - "திசை" (thisai = direction) vs "இசை" (isai = music)
+   - CRITICAL TAMIL VOCAL & MINIMAL-PAIR DISAMBIGUATION (DUAL ACOUSTIC + CONTEXT CHECK):
+     * Singing with reverb, legato gliding, or dense percussion often softens or blurs word-initial consonants vs bare vowels. For EVERY sensitive word, verify BOTH (a) the exact acoustic consonant burst/onset in the vocal track AND (b) the poetic/collocational meaning of the line so near-homophones are NEVER swapped in either direction:
+       - "திசை" (thisai = direction, soft dental 'த்' onset — e.g. "எட்டு திசை", "நாலு திசை", "திசை மாறி", "திசை தெரியாமல்", "எல்லா திசையும்") vs "இசை" (isai = music/melody, pure vowel 'இ' onset — e.g. "இனிய இசை", "இசை மழை", "இசையாய்", "மெல்லிசை")
+       - "தினம்" (daily) vs "இனம்" (kind/race)
+       - "தீ" (fire) vs "ஈ" (fly/give)
        - "தலை" (head) vs "கலை" (art) vs "அலை" (wave)
        - "தேன்" (honey) vs "ஏன்" (why)
+       - "விழி" (eye) vs "வழி" (path) vs "வலி" (pain)
        - "மழை" (rain) vs "மலை" (mountain)
-       - "வழி" (path) vs "வலி" (pain)
+       - "காதல்" (love) vs "காதில்" (in the ear)
+       - "கனவு" (dream) vs "நினைவு" (memory)
+       - "இதயம்" (heart) vs "உதயம்" (sunrise)
        - "மனம்" (mind/heart) vs "மணம்" (fragrance)
        - "கரை" (shore) vs "கறை" (stain)
        - "நிலா" (moon) vs "நிலை" (state)
        - "உயிர்" (life) vs "உயர்" (high)
+       - "பூவே" (O flower) vs "பூவை" (woman/flower-acc)
      * Vowel length precision (குறில் vs. நெடில்: அ/ஆ, இ/ஈ, உ/ஊ, எ/ஏ, ஒ/ஓ): accurately capture sung vowel duration (e.g., "கண்ணே" vs "காணே", "படம்" vs "பாடம்", "அவள்" vs "ஆவள்").
      * Strict consonant accuracy: distinguish retroflex, palatal, and alveolar sounds (ல / ள / ழ, ன / ண / ந, ர / ற) and include proper Pulli (்) on pure consonants.
-     * Sandhi & poetic coherence: separate words cleanly across sung legato joins (புணர்ச்சி) and use Tamil poetic context (எதுகை/மோனை rhyme & meaning) to confirm ambiguous syllables.
+     * Sandhi & poetic coherence: separate words cleanly across sung legato joins (புணர்ச்சி) where a trailing consonant can mask the next word's initial 'த'/'க'/'ப', and use Tamil poetic context (எதுகை/மோனை rhyme & meaning) to confirm ambiguous syllables without ever inventing words that were not sung.
      * Preserve both literary Tamil (செந்தமிழ்) and authentic spoken cinema Tamil (பேச்சுத் தமிழ், e.g., "பொண்ணு", "கண்ணு", "வாடா", "போடா", "சுத்துதே", "வாரேன்") exactly as sung by the vocalist.
    - CRITICAL TANGLISH / ENGLISH RULE: Whenever the singer sings an English word, acronym, or hook (such as "OMG", "Baby", "Love", "Sorry", "Party", "Single", "Breakup", "Queen", "King", "DJ"), KEEP it in English Latin letters (e.g., "OMG பொண்ணு", NOT "ஓஎம்ஜி பொண்ணு"). NEVER transliterate English words or acronyms into Tamil letters."""
             TranscribeLanguage.ENGLISH -> """
@@ -664,11 +670,11 @@ CRITICAL REQUIREMENTS:
    - Isolate and transcribe lead vocals, duet/chorus vocals, rapid sangathis/fast syllables, rap verses, humming hooks, and backing vocal call-and-response lines across the full track from 00:00.00 to the end${if (durationContext != null) " ($durationContext)" else ""}, even during dense Kuthu percussion, heavy bass, or loud orchestration.
    - Use the track metadata ($songContext) as helpful context for song theme, proper nouns, and canonical chorus phrasing, while ALWAYS trusting the actual vocals audible in the recording.
    - Transcribe every repeated chorus or pallavi line at each exact timestamp it is sung; never summarize with "Chorus x2" or skip repeated lines.
-2. EXACT SONG VOCAL TIMING (ZERO-DRIFT SYNCHRONIZATION):
+2. EXACT SONG VOCAL TIMING (ZERO-DRIFT VOCAL-ONSET SYNCHRONIZATION):
    - Every line MUST start with an exact LRC timestamp: [mm:ss.xx] Lyric line
-   - Anchor EVERY `[mm:ss.xx]` timestamp strictly to the **exact acoustic onset of the singer's first sung syllable** for that line (within ±50ms precision)—NOT to the start of the preceding drum beat or instrumental measure, and NOT delayed past the first word.
-   - Track true continuous elapsed time across the entire audio file (especially after long intros and BGM interludes) so timestamps NEVER drift early or late in the second half of the song.
-   - Never guess or space timestamps at uniform fixed intervals (such as every 2.00s or 4.00s); follow the vocalist's real phrasing, breath pauses, pickups, and tempo changes.
+   - Anchor EVERY `[mm:ss.xx]` timestamp strictly to the **exact acoustic onset of the singer's first voiced syllable** for that line (within ±50ms precision)—NOT to beat-1 of the percussion bar or instrumental fill if the vocalist enters on an upbeat, pickup, or delayed phrasing, and NOT delayed past the first word.
+   - Re-calibrate your continuous audio clock at every structural landmark (Intro -> Pallavi -> Interlude 1 -> Charanam 1 -> Interlude 2 -> Charanam 2 -> Outro)${if (durationContext != null) " against the true track length $durationContext" else ""} so timestamps NEVER drift early or late in the second half of the song.
+   - Never guess or space timestamps at uniform fixed intervals (such as every 2.00s or 4.00s); follow the vocalist's real phrasing, breath pauses, melisma/elongated syllables (without splitting a single Tamil word across lines), pickups, and tempo changes.
    - Split lyrics into clean, singable single-phrase lines at natural breath/musical boundaries so real-time lyric highlighting locks onto the singer smoothly.
 $languageInstruction
 4. INSTRUMENTAL BREAKS SYMBOL:
@@ -705,38 +711,66 @@ $languageInstruction
      */
     internal fun normalizeTranscribedLrc(rawResponse: String, songDurationMs: Long): String {
         val cleaned = cleanLrcTextResponse(rawResponse)
-        val lineTagRegex = Regex("""^\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]\s*(.*)$""")
+        val tagRegex = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]""")
         val maxTimeMs = if (songDurationMs > 0L) songDurationMs else Long.MAX_VALUE
-        val normalized = mutableListOf<Pair<Long, String>>()
-        var lastTimeMs = -1L
+        val expanded = mutableListOf<Pair<Long, String>>()
 
         for (rawLine in cleaned.lines()) {
             val trimmed = rawLine.trim()
             if (trimmed.isEmpty()) continue
-            val match = lineTagRegex.matchEntire(trimmed) ?: continue
-            val minutes = match.groupValues[1].toLongOrNull() ?: continue
-            val seconds = match.groupValues[2].toLongOrNull() ?: continue
-            val fracRaw = match.groupValues[3]
-            val millis = when (fracRaw.length) {
-                0 -> 0L
-                1 -> (fracRaw.toLongOrNull() ?: 0L) * 100L
-                2 -> (fracRaw.toLongOrNull() ?: 0L) * 10L
-                else -> (fracRaw.take(3).toLongOrNull() ?: 0L)
-            }
-            val text = match.groupValues[4].trim()
+            val matches = tagRegex.findAll(trimmed).toList()
+            if (matches.isEmpty()) continue
+            // Support multi-timestamp LRC lines like "[00:14.20][01:32.40] என்னைக் கொல்லாதே"
+            val firstStart = matches.first().range.first
+            if (firstStart > 2) continue
+            val text = trimmed.substring(matches.last().range.last + 1).trim()
             if (text.isEmpty()) continue
 
-            var tMs = (minutes * 60_000L + seconds * 1_000L + millis).coerceAtLeast(0L)
-            if (tMs > maxTimeMs) {
-                // Skip hallucinated lyrics far past the end of the track (>5s past duration)
-                if (tMs > maxTimeMs + 5_000L) continue
-                tMs = maxTimeMs
+            for (match in matches) {
+                val minutes = match.groupValues[1].toLongOrNull() ?: continue
+                val seconds = match.groupValues[2].toLongOrNull() ?: continue
+                val fracRaw = match.groupValues[3]
+                val millis = when (fracRaw.length) {
+                    0 -> 0L
+                    1 -> (fracRaw.toLongOrNull() ?: 0L) * 100L
+                    2 -> (fracRaw.toLongOrNull() ?: 0L) * 10L
+                    else -> (fracRaw.take(3).toLongOrNull() ?: 0L)
+                }
+                var tMs = (minutes * 60_000L + seconds * 1_000L + millis).coerceAtLeast(0L)
+                if (tMs > maxTimeMs) {
+                    // Skip hallucinated lyrics far past the end of the track (>5s past duration)
+                    if (tMs > maxTimeMs + 5_000L) continue
+                    tMs = maxTimeMs
+                }
+                expanded.add(tMs to text)
             }
+        }
+
+        if (expanded.isEmpty()) return cleaned
+
+        // Preserve chronological order if multi-timestamp expansion produced out-of-order entries,
+        // while keeping strictly sequential single-tag lines stable in their original order.
+        val ordered = if (expanded.zipWithNext().any { (a, b) -> b.first + 3_000L < a.first }) {
+            expanded.sortedBy { it.first }
+        } else {
+            expanded
+        }
+
+        val normalized = mutableListOf<Pair<Long, String>>()
+        var lastTimeMs = -1L
+        for ((rawTimeMs, text) in ordered) {
+            var tMs = rawTimeMs
             if (lastTimeMs >= 0L && tMs < lastTimeMs) {
-                tMs = lastTimeMs
+                // Repair slight timestamp jitter without causing identical-ms collision
+                val nudged = if (text == "♪") lastTimeMs else (lastTimeMs + 120L).coerceAtMost(maxTimeMs)
+                tMs = nudged
             }
-            // Collapse duplicate consecutive instrumental markers
-            if (text == "♪" && normalized.lastOrNull()?.second == "♪") {
+            // Collapse duplicate consecutive instrumental markers or exact duplicate adjacent lines
+            val prev = normalized.lastOrNull()
+            if (prev != null && text == "♪" && prev.second == "♪") {
+                continue
+            }
+            if (prev != null && prev.first == tMs && prev.second == text) {
                 continue
             }
             normalized.add(tMs to text)
@@ -821,16 +855,29 @@ $languageInstruction
         responseTimeoutMs: Long = modelResponseTimeoutMs
     ): String {
         val requestJson = JSONObject().apply {
+            put("systemInstruction", JSONObject().apply {
+                put("parts", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put(
+                            "text",
+                            "You are a precision vocal-onset LRC transcriber and Tamil/Indian phonetics specialist. " +
+                                "Focus strictly on the sung vocal track, disambiguate minimal pairs like திசை vs இசை using both acoustic consonant attack and poetic context, " +
+                                "and anchor every [mm:ss.xx] timestamp to the exact onset of the vocalist's first voiced syllable with zero cumulative drift."
+                        )
+                    })
+                })
+            })
             val contents = JSONArray().apply {
                 val contentObj = JSONObject().apply {
                     val parts = JSONArray().apply {
-                        put(JSONObject().apply { put("text", prompt) })
+                        // Audio-first ordering gives Gemini's acoustic encoder full signal context before instructions
                         put(JSONObject().apply {
                             put("inlineData", JSONObject().apply {
                                 put("mimeType", mimeType)
                                 put("data", audioBase64)
                             })
                         })
+                        put(JSONObject().apply { put("text", prompt) })
                     }
                     put("parts", parts)
                 }
@@ -838,7 +885,7 @@ $languageInstruction
             }
             put("contents", contents)
             put("generationConfig", JSONObject().apply {
-                put("temperature", if (isCorrectionPass) 0.0 else 0.05)
+                put("temperature", if (isCorrectionPass) 0.0 else 0.04)
                 put("topP", 0.85)
             })
         }

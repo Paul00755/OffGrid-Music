@@ -16,11 +16,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingFlat
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,6 +39,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,8 +53,11 @@ import com.example.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 enum class DetailedStatsPeriod(val title: String, val days: Int) {
@@ -161,6 +169,96 @@ fun ListeningStatsDetailScreen(
 
     val mostPlayedLifetimeSong = lifetimeTopSongs.firstOrNull() ?: topSongs.firstOrNull()
 
+    // Midnight boundary anchors for real Period Comparison (Today vs Yesterday, Period vs Previous Period)
+    val todayStartMs = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    val yesterdayStartMs = remember(todayStartMs) {
+        Calendar.getInstance().apply {
+            timeInMillis = todayStartMs
+            add(Calendar.DAY_OF_YEAR, -1)
+        }.timeInMillis
+    }
+
+    val comparisonWindow = remember(selectedPeriod, todayStartMs) {
+        fun midnightOffset(daysDelta: Int): Long = Calendar.getInstance().apply {
+            timeInMillis = todayStartMs
+            add(Calendar.DAY_OF_YEAR, daysDelta)
+        }.timeInMillis
+
+        when (selectedPeriod) {
+            DetailedStatsPeriod.SEVEN_DAYS -> PeriodComparisonWindow(
+                currentLabel = "Last 7 Days",
+                previousLabel = "Last Week",
+                vsLabel = "vs. Last Week",
+                currentStartMs = midnightOffset(-6),
+                previousStartMs = midnightOffset(-13),
+                previousEndMs = midnightOffset(-6)
+            )
+            DetailedStatsPeriod.THIRTY_DAYS -> PeriodComparisonWindow(
+                currentLabel = "Last 30 Days",
+                previousLabel = "Last Month",
+                vsLabel = "vs. Last Month",
+                currentStartMs = midnightOffset(-29),
+                previousStartMs = midnightOffset(-59),
+                previousEndMs = midnightOffset(-29)
+            )
+            DetailedStatsPeriod.NINETY_DAYS -> PeriodComparisonWindow(
+                currentLabel = "Last 3 Months",
+                previousLabel = "Prior 3 Months",
+                vsLabel = "vs. Prior 3 Months",
+                currentStartMs = midnightOffset(-89),
+                previousStartMs = midnightOffset(-179),
+                previousEndMs = midnightOffset(-89)
+            )
+            DetailedStatsPeriod.ALL_TIME -> PeriodComparisonWindow(
+                currentLabel = "This Month",
+                previousLabel = "Last Month",
+                vsLabel = "vs. Last Month",
+                currentStartMs = midnightOffset(-29),
+                previousStartMs = midnightOffset(-59),
+                previousEndMs = midnightOffset(-29)
+            )
+        }
+    }
+
+    val todayDurationFlow = remember(todayStartMs) { getDurationPlayedBetween(todayStartMs, Long.MAX_VALUE) }
+    val todayDurationMs by todayDurationFlow.collectAsState(initial = 0L)
+    val todayPlaysFlow = remember(todayStartMs) { getTrackCountBetween(todayStartMs, Long.MAX_VALUE) }
+    val todayPlaysCount by todayPlaysFlow.collectAsState(initial = 0)
+
+    val yesterdayDurationFlow = remember(yesterdayStartMs, todayStartMs) {
+        getDurationPlayedBetween(yesterdayStartMs, todayStartMs)
+    }
+    val yesterdayDurationMs by yesterdayDurationFlow.collectAsState(initial = 0L)
+    val yesterdayPlaysFlow = remember(yesterdayStartMs, todayStartMs) {
+        getTrackCountBetween(yesterdayStartMs, todayStartMs)
+    }
+    val yesterdayPlaysCount by yesterdayPlaysFlow.collectAsState(initial = 0)
+
+    val compareCurrentDurFlow = remember(comparisonWindow.currentStartMs) {
+        getDurationPlayedBetween(comparisonWindow.currentStartMs, Long.MAX_VALUE)
+    }
+    val compareCurrentDurMs by compareCurrentDurFlow.collectAsState(initial = 0L)
+    val compareCurrentPlaysFlow = remember(comparisonWindow.currentStartMs) {
+        getTrackCountBetween(comparisonWindow.currentStartMs, Long.MAX_VALUE)
+    }
+    val compareCurrentPlaysCount by compareCurrentPlaysFlow.collectAsState(initial = 0)
+
+    val comparePrevDurFlow = remember(comparisonWindow.previousStartMs, comparisonWindow.previousEndMs) {
+        getDurationPlayedBetween(comparisonWindow.previousStartMs, comparisonWindow.previousEndMs)
+    }
+    val comparePrevDurMs by comparePrevDurFlow.collectAsState(initial = 0L)
+    val comparePrevPlaysFlow = remember(comparisonWindow.previousStartMs, comparisonWindow.previousEndMs) {
+        getTrackCountBetween(comparisonWindow.previousStartMs, comparisonWindow.previousEndMs)
+    }
+    val comparePrevPlaysCount by comparePrevPlaysFlow.collectAsState(initial = 0)
+
     val topArtistsFlow = remember(filterStartTimeMs) { getTopArtistsSince(filterStartTimeMs, 10) }
     val topArtists by topArtistsFlow.collectAsState(initial = emptyList())
 
@@ -214,43 +312,50 @@ fun ListeningStatsDetailScreen(
     val currentStreakDays = computedStreaks.first
     val longestStreakDays = computedStreaks.second
 
-    // Compute Wrapped Data
-    val wrappedData = remember(periodLoadedWrappedData, totalDurationMs, trackCount, uniqueTrackCount, topSongs, topArtists, topAlbums, timeOfDay, dailyStats, mostPlayedLifetimeSong, currentStreakDays, longestStreakDays) {
+    // Compute Wrapped Data strictly from real recorded listening data for the active period
+    val wrappedData = remember(periodLoadedWrappedData, totalDurationMs, trackCount, uniqueTrackCount, topSongs, topArtists, topAlbums, timeOfDay, dailyStats, currentStreakDays, longestStreakDays) {
         if (periodLoadedWrappedData != null) {
             return@remember periodLoadedWrappedData!!.copy(
                 currentStreakDays = maxOf(periodLoadedWrappedData!!.currentStreakDays, currentStreakDays),
                 longestStreakDays = maxOf(periodLoadedWrappedData!!.longestStreakDays, longestStreakDays)
             )
         }
-        val effectiveTopSong = topSongs.firstOrNull() ?: mostPlayedLifetimeSong
-        val effectiveTopSongs = if (topSongs.isNotEmpty()) topSongs else (if (mostPlayedLifetimeSong != null) listOf(mostPlayedLifetimeSong) else emptyList())
+        val effectiveTopSong = topSongs.firstOrNull()
         val totalMins = totalDurationMs / (1000L * 60L)
-        val activeDays = dailyStats.count { it.durationMs > 0 }.coerceAtLeast(if (totalDurationMs > 0 || effectiveTopSong != null) 1 else 0)
+        val activeDays = dailyStats.count { it.durationMs > 0L }
 
-        val dominantVibe = timeOfDay.dominantVibe
-        val (archetype, desc) = when (dominantVibe) {
-            "Night Owl" -> Pair("Night Owl Explorer", "Your peak hours are late at night with immersive, uninterrupted listening sessions.")
-            "Early Bird" -> Pair("Dawn Melodist", "You start your mornings energized with music that sets the rhythm for your day.")
-            "Daytime Groover" -> Pair("Midday Flow Master", "Music fuels your daytime focus, keeping your productivity high and spirits upbeat.")
-            else -> Pair("Sonic Harmonizer", "You unwind in the evenings with rich soundscapes and eclectic favorites.")
+        val (archetype, desc) = if (totalDurationMs == 0L && trackCount == 0) {
+            Pair(
+                "No Listening Yet",
+                "Play your favorite tracks to unlock real listening insights for this period."
+            )
+        } else {
+            when (timeOfDay.dominantVibe) {
+                "Night Owl" -> Pair("Night Owl Explorer", "Your peak hours are late at night with immersive, uninterrupted listening sessions.")
+                "Early Bird" -> Pair("Dawn Melodist", "You start your mornings energized with music that sets the rhythm for your day.")
+                "Daytime Groover" -> Pair("Midday Flow Master", "Music fuels your daytime focus, keeping your productivity high and spirits upbeat.")
+                else -> Pair("Sonic Harmonizer", "You unwind in the evenings with rich soundscapes and eclectic favorites.")
+            }
         }
 
-        val topSongPlays = if (effectiveTopSong != null && effectiveTopSong.playCount > 0) effectiveTopSong.playCount else (if (effectiveTopSong != null) 1 else 0)
-        val topSongDuration = if (effectiveTopSong != null) topSongPlays * (if (effectiveTopSong.durationMs > 0) effectiveTopSong.durationMs else 180000L) else 0L
-        val effectiveTrackCount = trackCount.coerceAtLeast(if (effectiveTopSong != null) 1 else 0)
-        val effectiveUniqueTrackCount = uniqueTrackCount.coerceAtLeast(if (effectiveTopSong != null) 1 else 0)
+        val topSongPlays = effectiveTopSong?.playCount ?: 0
+        val topSongDuration = if (effectiveTopSong != null && topSongPlays > 0 && effectiveTopSong.durationMs > 0L) {
+            (topSongPlays.toLong() * effectiveTopSong.durationMs).coerceAtMost(totalDurationMs)
+        } else {
+            0L
+        }
 
         WrappedData(
             totalMinutes = totalMins,
-            totalTracks = effectiveTrackCount,
-            uniqueTracks = effectiveUniqueTrackCount,
+            totalTracks = trackCount,
+            uniqueTracks = uniqueTrackCount,
             activeDaysCount = activeDays,
             currentStreakDays = currentStreakDays,
             longestStreakDays = longestStreakDays,
             topSong = effectiveTopSong,
             topSongPlayCount = topSongPlays,
             topSongDurationMs = topSongDuration,
-            topSongs = effectiveTopSongs,
+            topSongs = topSongs,
             topArtists = topArtists,
             topAlbums = topAlbums,
             timeOfDay = timeOfDay,
@@ -404,13 +509,13 @@ fun ListeningStatsDetailScreen(
                 }
             }
 
-            // Dedicated Listening Streak Showcase Card (Current Streak & Highest Streak)
+            // Dedicated Listening Streak Showcase Card (Current Streak, Highest Streak & Full Scrollable History)
             item(key = "stats_listening_streak", contentType = "stats_listening_streak") {
                 AnimatedStatsSection(visible = screenEntered, delayMs = 45) {
                     ListeningStreakShowcaseCard(
                         currentStreakDays = currentStreakDays,
                         longestStreakDays = longestStreakDays,
-                        recentDays = (if (heatmapStats.isNotEmpty()) heatmapStats else dailyStats).takeLast(7)
+                        recentDays = if (heatmapStats.isNotEmpty()) heatmapStats else dailyStats
                     )
                 }
             }
@@ -456,6 +561,25 @@ fun ListeningStatsDetailScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // Real Period Comparison Card (Today vs Yesterday & Active Period vs Previous Period)
+            item(key = "stats_period_comparison", contentType = "stats_period_comparison") {
+                AnimatedStatsSection(visible = screenEntered, delayMs = 105) {
+                    ListeningComparisonShowcaseCard(
+                        todayDurationMs = todayDurationMs,
+                        todayPlays = todayPlaysCount,
+                        yesterdayDurationMs = yesterdayDurationMs,
+                        yesterdayPlays = yesterdayPlaysCount,
+                        periodCurrentLabel = comparisonWindow.currentLabel,
+                        periodPreviousLabel = comparisonWindow.previousLabel,
+                        periodVsLabel = comparisonWindow.vsLabel,
+                        periodCurrentDurationMs = compareCurrentDurMs,
+                        periodCurrentPlays = compareCurrentPlaysCount,
+                        periodPreviousDurationMs = comparePrevDurMs,
+                        periodPreviousPlays = comparePrevPlaysCount
+                    )
                 }
             }
 
@@ -550,12 +674,46 @@ fun ListeningStatsDetailScreen(
                                 backgroundColor = BentoCardSurface
                             ) {
                                 Column(modifier = Modifier.padding(14.dp)) {
-                                    Icon(
-                                        imageVector = Icons.Default.AccessTime,
-                                        contentDescription = null,
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AccessTime,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        if (selectedPeriod != DetailedStatsPeriod.ALL_TIME && (compareCurrentDurMs > 0L || comparePrevDurMs > 0L)) {
+                                            val deltaMs = compareCurrentDurMs - comparePrevDurMs
+                                            val compactBadgeColor = when {
+                                                deltaMs > 0L -> Color(0xFF22C55E)
+                                                deltaMs < 0L -> Color(0xFFEF5350)
+                                                else -> BentoTextSecondary
+                                            }
+                                            val compactBadgeText = when {
+                                                comparePrevDurMs == 0L && compareCurrentDurMs > 0L -> "New"
+                                                deltaMs == 0L -> "0%"
+                                                else -> {
+                                                    val pct = ((abs(deltaMs).toDouble() / comparePrevDurMs.toDouble()) * 100.0).roundToInt().coerceAtMost(999)
+                                                    if (deltaMs > 0L) "+$pct%" else "-$pct%"
+                                                }
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = compactBadgeColor.copy(alpha = 0.14f)
+                                            ) {
+                                                Text(
+                                                    text = compactBadgeText,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = compactBadgeColor,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = formatListeningDuration(totalDurationMs),
@@ -1751,6 +1909,313 @@ private fun ListeningActivityHeatmapCard(
     }
 }
 
+@Immutable
+private data class PeriodComparisonWindow(
+    val currentLabel: String,
+    val previousLabel: String,
+    val vsLabel: String,
+    val currentStartMs: Long,
+    val previousStartMs: Long,
+    val previousEndMs: Long
+)
+
+@Composable
+fun ListeningComparisonShowcaseCard(
+    todayDurationMs: Long,
+    todayPlays: Int,
+    yesterdayDurationMs: Long,
+    yesterdayPlays: Int,
+    periodCurrentLabel: String,
+    periodPreviousLabel: String,
+    periodVsLabel: String,
+    periodCurrentDurationMs: Long,
+    periodCurrentPlays: Int,
+    periodPreviousDurationMs: Long,
+    periodPreviousPlays: Int,
+    modifier: Modifier = Modifier
+) {
+    BentoCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("listening_comparison_card"),
+        backgroundColor = BentoCardSurface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = BentoPrimary.copy(alpha = 0.16f),
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                contentDescription = "Listening comparison",
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Listening Pace",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextPrimary
+                        )
+                        Text(
+                            text = "How much more or less you've listened",
+                            fontSize = 11.sp,
+                            color = BentoTextSecondary
+                        )
+                    }
+                }
+            }
+
+            PeriodComparisonBlock(
+                title = "Today vs. Yesterday",
+                currentLabel = "Today",
+                previousLabel = "Yesterday",
+                currentDurationMs = todayDurationMs,
+                currentPlays = todayPlays,
+                previousDurationMs = yesterdayDurationMs,
+                previousPlays = yesterdayPlays,
+                modifier = Modifier.testTag("comparison_today_vs_yesterday")
+            )
+
+            PeriodComparisonBlock(
+                title = "$periodCurrentLabel $periodVsLabel",
+                currentLabel = periodCurrentLabel,
+                previousLabel = periodPreviousLabel,
+                currentDurationMs = periodCurrentDurationMs,
+                currentPlays = periodCurrentPlays,
+                previousDurationMs = periodPreviousDurationMs,
+                previousPlays = periodPreviousPlays,
+                modifier = Modifier.testTag("comparison_period_vs_previous")
+            )
+        }
+    }
+}
+
+@Composable
+private fun PeriodComparisonBlock(
+    title: String,
+    currentLabel: String,
+    previousLabel: String,
+    currentDurationMs: Long,
+    currentPlays: Int,
+    previousDurationMs: Long,
+    previousPlays: Int,
+    modifier: Modifier = Modifier
+) {
+    val deltaMs = currentDurationMs - previousDurationMs
+    val deltaPlays = currentPlays - previousPlays
+    val positiveGreen = Color(0xFF22C55E)
+    val negativeCoral = Color(0xFFEF5350)
+
+    val isMore = deltaMs > 0L
+    val isLess = deltaMs < 0L
+    val accentColor = when {
+        isMore -> positiveGreen
+        isLess -> negativeCoral
+        else -> BentoTextSecondary
+    }
+
+    val trendIcon = when {
+        isMore -> Icons.AutoMirrored.Filled.TrendingUp
+        isLess -> Icons.AutoMirrored.Filled.TrendingDown
+        else -> Icons.AutoMirrored.Filled.TrendingFlat
+    }
+
+    val deltaSummary = remember(currentDurationMs, previousDurationMs, deltaMs) {
+        when {
+            currentDurationMs == 0L && previousDurationMs == 0L -> "No plays yet"
+            previousDurationMs == 0L && currentDurationMs > 0L -> "+${formatListeningDuration(currentDurationMs)} • New"
+            deltaMs == 0L -> "Same pace"
+            else -> {
+                val absDur = formatListeningDuration(abs(deltaMs))
+                val pct = ((abs(deltaMs).toDouble() / previousDurationMs.toDouble()) * 100.0).roundToInt()
+                val pctText = if (pct > 999) ">999%" else "$pct%"
+                if (deltaMs > 0L) "+$absDur ($pctText more)" else "-$absDur ($pctText less)"
+            }
+        }
+    }
+
+    val maxMs = maxOf(currentDurationMs, previousDurationMs, 1L)
+    val currentRatio by animateFloatAsState(
+        targetValue = if (currentDurationMs == 0L) 0f else (currentDurationMs.toFloat() / maxMs.toFloat()).coerceIn(0.06f, 1f),
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = "comparison_current_bar"
+    )
+    val previousRatio by animateFloatAsState(
+        targetValue = if (previousDurationMs == 0L) 0f else (previousDurationMs.toFloat() / maxMs.toFloat()).coerceIn(0.06f, 1f),
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = "comparison_previous_bar"
+    )
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = BentoCardDarkPurple.copy(alpha = 0.58f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isMore || isLess) accentColor.copy(alpha = 0.28f) else BentoCardBorder.copy(alpha = 0.45f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = accentColor.copy(alpha = 0.14f),
+                    border = BorderStroke(0.8.dp, accentColor.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = trendIcon,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = deltaSummary,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = accentColor,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // Current period bar
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = currentLabel,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = BentoTextPrimary
+                    )
+                    Text(
+                        text = "${formatListeningDuration(currentDurationMs)} • $currentPlays ${if (currentPlays == 1) "play" else "plays"}",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoPrimary
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(BentoCardSurface.copy(alpha = 0.85f))
+                ) {
+                    if (currentRatio > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(currentRatio)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(BentoPrimary, BentoPrimary.copy(alpha = 0.72f))
+                                    )
+                                )
+                        )
+                    }
+                }
+            }
+
+            // Previous period bar
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = previousLabel,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = BentoTextSecondary
+                    )
+                    val playsDiffLabel = when {
+                        currentPlays == 0 && previousPlays == 0 -> ""
+                        deltaPlays > 0 -> " (+$deltaPlays plays)"
+                        deltaPlays < 0 -> " ($deltaPlays plays)"
+                        else -> " (same plays)"
+                    }
+                    Text(
+                        text = "${formatListeningDuration(previousDurationMs)} • $previousPlays ${if (previousPlays == 1) "play" else "plays"}$playsDiffLabel",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = BentoTextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(7.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(BentoCardSurface.copy(alpha = 0.85f))
+                ) {
+                    if (previousRatio > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(previousRatio)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(BentoTextSecondary.copy(alpha = 0.42f))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ListeningStreakShowcaseCard(
     currentStreakDays: Int,
@@ -1760,9 +2225,70 @@ fun ListeningStreakShowcaseCard(
 ) {
     val flameColor = Color(0xFFFF7043)
     val goldColor = Color(0xFFFFCA28)
+    val missedColor = Color(0xFFEF5350)
+
+    // Trim empty days prior to user's very first recorded listening day while preserving at least 14 days for scrolling
+    val displayDays = remember(recentDays) {
+        if (recentDays.isEmpty()) return@remember emptyList()
+        val firstActiveIdx = recentDays.indexOfFirst { it.durationMs > 0L }
+        if (firstActiveIdx < 0) {
+            recentDays.takeLast(14)
+        } else {
+            val startIdx = minOf(firstActiveIdx, (recentDays.size - 14).coerceAtLeast(0))
+            recentDays.subList(startIdx, recentDays.size)
+        }
+    }
+
+    // Identify the index range of the longest streak run in displayDays for Best Run jump + gold ring highlight
+    val bestRunRange = remember(displayDays) {
+        var bestStart = -1
+        var bestEnd = -1
+        var bestLen = 0
+        var runStart = -1
+        for (i in displayDays.indices) {
+            if (displayDays[i].durationMs > 0L) {
+                if (runStart < 0) runStart = i
+                val len = i - runStart + 1
+                if (len >= bestLen) {
+                    bestLen = len
+                    bestStart = runStart
+                    bestEnd = i
+                }
+            } else {
+                runStart = -1
+            }
+        }
+        if (bestLen > 0) bestStart..bestEnd else null
+    }
+
+    val activeDaysCount = remember(displayDays) { displayDays.count { it.durationMs > 0L } }
+    val missedDaysCount = remember(displayDays) { displayDays.count { it.durationMs == 0L } }
+
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    var selectedDayStartMs by remember { mutableStateOf<Long?>(null) }
+
+    // Default scroll position to Today (rightmost end) so user can scroll backward/forward naturally
+    LaunchedEffect(displayDays.size) {
+        if (displayDays.isNotEmpty()) {
+            listState.scrollToItem(displayDays.lastIndex)
+            if (selectedDayStartMs == null || displayDays.none { it.dayStartMs == selectedDayStartMs }) {
+                selectedDayStartMs = displayDays.last().dayStartMs
+            }
+        }
+    }
+
+    val selectedDay = remember(displayDays, selectedDayStartMs) {
+        displayDays.firstOrNull { it.dayStartMs == selectedDayStartMs } ?: displayDays.lastOrNull()
+    }
+    val selectedDayIndex = remember(displayDays, selectedDay) {
+        if (selectedDay == null) -1 else displayDays.indexOfFirst { it.dayStartMs == selectedDay.dayStartMs }
+    }
 
     BentoCard(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("listening_streak_card"),
         backgroundColor = BentoCardSurface
     ) {
         Column(
@@ -1779,19 +2305,20 @@ fun ListeningStreakShowcaseCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Surface(
                         shape = CircleShape,
                         color = flameColor.copy(alpha = 0.16f),
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.LocalFireDepartment,
                                 contentDescription = "Streak",
                                 tint = flameColor,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
@@ -1803,12 +2330,20 @@ fun ListeningStreakShowcaseCard(
                             color = BentoTextPrimary
                         )
                         Text(
-                            text = if (currentStreakDays > 0) "Daily music consistency" else "Play a track today to ignite your streak",
+                            text = if (displayDays.isNotEmpty()) {
+                                "$activeDaysCount active • $missedDaysCount missed (${displayDays.size}d span)"
+                            } else {
+                                "Play a track today to ignite your streak"
+                            },
                             fontSize = 11.sp,
-                            color = BentoTextSecondary
+                            color = BentoTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -1837,186 +2372,506 @@ fun ListeningStreakShowcaseCard(
                 // Current Streak Block
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = BentoCardDarkPurple.copy(alpha = 0.65f),
-                    border = BorderStroke(1.dp, flameColor.copy(alpha = if (currentStreakDays > 0) 0.42f else 0.18f)),
+                    color = BentoCardDarkPurple.copy(alpha = 0.68f),
+                    border = BorderStroke(1.dp, flameColor.copy(alpha = if (currentStreakDays > 0) 0.45f else 0.18f)),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        flameColor.copy(alpha = if (currentStreakDays > 0) 0.10f else 0.03f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.LocalFireDepartment,
-                                contentDescription = null,
-                                tint = flameColor,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LocalFireDepartment,
+                                    contentDescription = null,
+                                    tint = flameColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "CURRENT STREAK",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = flameColor,
+                                    letterSpacing = 0.6.sp
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "$currentStreakDays",
+                                    fontSize = 26.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = if (currentStreakDays == 1) "day" else "days",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoTextSecondary,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
                             Text(
-                                text = "CURRENT STREAK",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = flameColor,
-                                letterSpacing = 0.6.sp
-                            )
-                        }
-                        Row(
-                            verticalAlignment = Alignment.Bottom,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "$currentStreakDays",
-                                fontSize = 26.sp,
-                                fontWeight = FontWeight.Black,
-                                color = BentoTextPrimary
-                            )
-                            Text(
-                                text = if (currentStreakDays == 1) "day" else "days",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                text = if (currentStreakDays > 0) "Keep listening daily!" else "Listen today to start",
+                                fontSize = 10.5.sp,
                                 color = BentoTextSecondary,
-                                modifier = Modifier.padding(bottom = 4.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Text(
-                            text = if (currentStreakDays > 0) "Keep listening daily!" else "Listen today to start",
-                            fontSize = 10.5.sp,
-                            color = BentoTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
 
                 // Highest Streak Block
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = BentoCardDarkPurple.copy(alpha = 0.65f),
-                    border = BorderStroke(1.dp, goldColor.copy(alpha = if (longestStreakDays > 0) 0.42f else 0.18f)),
+                    color = BentoCardDarkPurple.copy(alpha = 0.68f),
+                    border = BorderStroke(1.dp, goldColor.copy(alpha = if (longestStreakDays > 0) 0.45f else 0.18f)),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        goldColor.copy(alpha = if (longestStreakDays > 0) 0.10f else 0.03f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.EmojiEvents,
-                                contentDescription = null,
-                                tint = goldColor,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.EmojiEvents,
+                                    contentDescription = null,
+                                    tint = goldColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "HIGHEST STREAK",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = goldColor,
+                                    letterSpacing = 0.6.sp
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "$longestStreakDays",
+                                    fontSize = 26.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = if (longestStreakDays == 1) "day" else "days",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoTextSecondary,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
                             Text(
-                                text = "HIGHEST STREAK",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = goldColor,
-                                letterSpacing = 0.6.sp
-                            )
-                        }
-                        Row(
-                            verticalAlignment = Alignment.Bottom,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "$longestStreakDays",
-                                fontSize = 26.sp,
-                                fontWeight = FontWeight.Black,
-                                color = BentoTextPrimary
-                            )
-                            Text(
-                                text = if (longestStreakDays == 1) "day" else "days",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                text = if (longestStreakDays > 0 && currentStreakDays >= longestStreakDays) "New personal record!" else "All-time best run",
+                                fontSize = 10.5.sp,
                                 color = BentoTextSecondary,
-                                modifier = Modifier.padding(bottom = 4.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Text(
-                            text = if (longestStreakDays > 0 && currentStreakDays >= longestStreakDays) "New personal record!" else "All-time best run",
-                            fontSize = 10.5.sp,
-                            color = BentoTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
 
-            // Recent 7-Day Flame Strip
-            if (recentDays.isNotEmpty()) {
-                val dayFmt = remember { SimpleDateFormat("EEE", Locale.getDefault()) }
+            // Full Horizontally Scrollable Streak & Missed-Day Timeline
+            if (displayDays.isNotEmpty()) {
+                val weekdayFmt = remember { SimpleDateFormat("EEE", Locale.getDefault()) }
+                val dayNumFmt = remember { SimpleDateFormat("d", Locale.getDefault()) }
+                val monthShortFmt = remember { SimpleDateFormat("MMM", Locale.getDefault()) }
+                val fullDateFmt = remember { SimpleDateFormat("EEE, MMM d", Locale.getDefault()) }
+
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = BentoCardDarkPurple.copy(alpha = 0.45f),
-                    border = BorderStroke(0.8.dp, BentoCardBorder.copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(16.dp),
+                    color = BentoCardDarkPurple.copy(alpha = 0.50f),
+                    border = BorderStroke(0.8.dp, BentoCardBorder.copy(alpha = 0.50f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        recentDays.forEachIndexed { idx, dayStat ->
-                            val isActive = dayStat.durationMs > 0L
-                            val isToday = idx == recentDays.lastIndex
-                            val shortDay = remember(dayStat.dayStartMs) {
-                                dayFmt.format(Date(dayStat.dayStartMs)).take(3)
+                        // Selected Day Inspector + Quick Jump Actions
+                        if (selectedDay != null) {
+                            val isSelectedActive = selectedDay.durationMs > 0L
+                            val isSelectedToday = selectedDayIndex == displayDays.lastIndex
+                            val isSelectedYesterday = selectedDayIndex == displayDays.lastIndex - 1
+                            val formattedTitle = remember(selectedDay.dayStartMs, isSelectedToday, isSelectedYesterday) {
+                                val base = fullDateFmt.format(Date(selectedDay.dayStartMs))
+                                when {
+                                    isSelectedToday -> "Today • $base"
+                                    isSelectedYesterday -> "Yesterday • $base"
+                                    else -> base
+                                }
                             }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isActive) flameColor.copy(alpha = 0.20f)
-                                            else BentoCardSurface.copy(alpha = 0.65f)
-                                        )
-                                        .border(
-                                            width = if (isToday) 1.5.dp else 1.dp,
-                                            color = when {
-                                                isActive -> flameColor.copy(alpha = 0.75f)
-                                                isToday -> BentoPrimary.copy(alpha = 0.55f)
-                                                else -> BentoCardBorder.copy(alpha = 0.4f)
-                                            },
-                                            shape = CircleShape
-                                        ),
-                                    contentAlignment = Alignment.Center
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    if (isActive) {
-                                        Icon(
-                                            imageVector = Icons.Default.LocalFireDepartment,
-                                            contentDescription = "Active",
-                                            tint = flameColor,
-                                            modifier = Modifier.size(16.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = formattedTitle,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                    } else {
-                                        Box(
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = if (isSelectedActive) flameColor.copy(alpha = 0.16f) else missedColor.copy(alpha = 0.14f)
+                                        ) {
+                                            Text(
+                                                text = if (isSelectedActive) "STREAK" else "MISSED",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = if (isSelectedActive) flameColor else missedColor,
+                                                letterSpacing = 0.5.sp,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = if (isSelectedActive) {
+                                            "${formatListeningDuration(selectedDay.durationMs)} • ${selectedDay.trackCount} ${if (selectedDay.trackCount == 1) "play" else "plays"}"
+                                        } else {
+                                            "No listening recorded on this day"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = BentoTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                // Quick-jump chips: Best Run & Today
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (bestRunRange != null && longestStreakDays > 1) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = goldColor.copy(alpha = 0.14f),
+                                            border = BorderStroke(0.8.dp, goldColor.copy(alpha = 0.35f)),
                                             modifier = Modifier
-                                                .size(5.dp)
-                                                .clip(CircleShape)
-                                                .background(BentoTextSubtle.copy(alpha = 0.45f))
+                                                .testTag("streak_jump_best_button")
+                                                .clip(RoundedCornerShape(50))
+                                                .clickable {
+                                                    val targetIdx = bestRunRange.first
+                                                    selectedDayStartMs = displayDays[targetIdx].dayStartMs
+                                                    coroutineScope.launch {
+                                                        listState.animateScrollToItem(targetIdx)
+                                                    }
+                                                }
+                                        ) {
+                                            Text(
+                                                text = "Best",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = goldColor,
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = BentoPrimary.copy(alpha = 0.14f),
+                                        border = BorderStroke(0.8.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                        modifier = Modifier
+                                            .testTag("streak_jump_today_button")
+                                            .clip(RoundedCornerShape(50))
+                                            .clickable {
+                                                val lastIdx = displayDays.lastIndex
+                                                selectedDayStartMs = displayDays[lastIdx].dayStartMs
+                                                coroutineScope.launch {
+                                                    listState.animateScrollToItem(lastIdx)
+                                                }
+                                            }
+                                    ) {
+                                        Text(
+                                            text = "Today",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoPrimary,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
                                         )
                                     }
                                 }
-                                Text(
-                                    text = if (isToday) "Today" else shortDay,
-                                    fontSize = 9.5.sp,
-                                    fontWeight = if (isToday || isActive) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isActive) BentoTextPrimary else BentoTextSecondary
-                                )
                             }
+                        }
+
+                        // Scrollable Horizontal Streak & Missed Timeline
+                        LazyRow(
+                            state = listState,
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(0.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("streak_scrollable_timeline")
+                        ) {
+                            itemsIndexed(
+                                items = displayDays,
+                                key = { _, item -> item.dayStartMs }
+                            ) { idx, dayStat ->
+                                val isActive = dayStat.durationMs > 0L
+                                val isToday = idx == displayDays.lastIndex
+                                val isSelected = selectedDay?.dayStartMs == dayStat.dayStartMs
+                                val isInBestRun = bestRunRange != null && idx in bestRunRange
+                                val prevActive = idx > 0 && displayDays[idx - 1].durationMs > 0L
+                                val nextActive = idx < displayDays.lastIndex && displayDays[idx + 1].durationMs > 0L
+
+                                val showMonthTag = remember(dayStat.dayStartMs, idx) {
+                                    if (idx == 0) true
+                                    else {
+                                        val currM = monthShortFmt.format(Date(dayStat.dayStartMs))
+                                        val prevM = monthShortFmt.format(Date(displayDays[idx - 1].dayStartMs))
+                                        currM != prevM
+                                    }
+                                }
+                                val monthLabel = remember(dayStat.dayStartMs) {
+                                    monthShortFmt.format(Date(dayStat.dayStartMs)).uppercase(Locale.getDefault())
+                                }
+                                val shortDay = remember(dayStat.dayStartMs) {
+                                    weekdayFmt.format(Date(dayStat.dayStartMs)).take(3)
+                                }
+                                val dayNum = remember(dayStat.dayStartMs) {
+                                    dayNumFmt.format(Date(dayStat.dayStartMs))
+                                }
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (isSelected) BentoPrimary.copy(alpha = 0.12f) else Color.Transparent
+                                        )
+                                        .clickable { selectedDayStartMs = dayStat.dayStartMs }
+                                        .padding(vertical = 6.dp)
+                                        .testTag("streak_day_node_$idx")
+                                ) {
+                                    // Month indicator header when month transitions
+                                    Text(
+                                        text = if (showMonthTag) monthLabel else "",
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = BentoPrimary.copy(alpha = 0.85f),
+                                        letterSpacing = 0.5.sp,
+                                        maxLines = 1
+                                    )
+
+                                    // Connector line + Circular Day Node
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        // Left streak connector
+                                        if (idx > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.CenterStart)
+                                                    .fillMaxWidth(0.5f)
+                                                    .height(if (isActive && prevActive) 3.dp else 1.5.dp)
+                                                    .background(
+                                                        if (isActive && prevActive) flameColor.copy(alpha = 0.72f)
+                                                        else BentoCardBorder.copy(alpha = 0.30f)
+                                                    )
+                                            )
+                                        }
+                                        // Right streak connector
+                                        if (idx < displayDays.lastIndex) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.CenterEnd)
+                                                    .fillMaxWidth(0.5f)
+                                                    .height(if (isActive && nextActive) 3.dp else 1.5.dp)
+                                                    .background(
+                                                        if (isActive && nextActive) flameColor.copy(alpha = 0.72f)
+                                                        else BentoCardBorder.copy(alpha = 0.30f)
+                                                    )
+                                            )
+                                        }
+
+                                        // Day Circle
+                                        Box(
+                                            modifier = Modifier
+                                                .size(if (isSelected) 34.dp else 30.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    when {
+                                                        isActive -> flameColor.copy(alpha = if (isSelected) 0.30f else 0.20f)
+                                                        else -> missedColor.copy(alpha = if (isSelected) 0.16f else 0.08f)
+                                                    }
+                                                )
+                                                .border(
+                                                    width = when {
+                                                        isSelected -> 2.dp
+                                                        isInBestRun && isActive -> 1.5.dp
+                                                        isToday -> 1.5.dp
+                                                        else -> 1.dp
+                                                    },
+                                                    color = when {
+                                                        isSelected -> BentoPrimary
+                                                        isInBestRun && isActive -> goldColor.copy(alpha = 0.85f)
+                                                        isActive -> flameColor.copy(alpha = 0.75f)
+                                                        isToday -> BentoPrimary.copy(alpha = 0.60f)
+                                                        else -> missedColor.copy(alpha = 0.32f)
+                                                    },
+                                                    shape = CircleShape
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isActive) {
+                                                Icon(
+                                                    imageVector = Icons.Default.LocalFireDepartment,
+                                                    contentDescription = "Active streak day",
+                                                    tint = if (isInBestRun) goldColor else flameColor,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Missed day",
+                                                    tint = missedColor.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Text(
+                                        text = if (isToday) "Today" else shortDay,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = if (isToday || isSelected || isActive) FontWeight.Bold else FontWeight.Medium,
+                                        color = when {
+                                            isSelected -> BentoPrimary
+                                            isActive -> BentoTextPrimary
+                                            else -> BentoTextSecondary
+                                        },
+                                        maxLines = 1
+                                    )
+
+                                    Text(
+                                        text = dayNum,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = BentoTextSubtle,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        // Compact Legend + Scroll Hint
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocalFireDepartment,
+                                        contentDescription = null,
+                                        tint = flameColor,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(text = "Active", fontSize = 9.5.sp, color = BentoTextSecondary)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = null,
+                                        tint = missedColor.copy(alpha = 0.75f),
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Text(text = "Missed", fontSize = 9.5.sp, color = BentoTextSecondary)
+                                }
+                                if (bestRunRange != null && longestStreakDays > 1) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .clip(CircleShape)
+                                                .background(goldColor)
+                                        )
+                                        Text(text = "Best Run", fontSize = 9.5.sp, color = BentoTextSecondary)
+                                    }
+                                }
+                            }
+                            Text(
+                                text = "Swipe ↔",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoTextSubtle
+                            )
                         }
                     }
                 }

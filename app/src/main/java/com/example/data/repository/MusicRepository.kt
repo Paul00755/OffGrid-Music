@@ -490,19 +490,23 @@ class MusicRepository(
         var night = 0L
         val cal = java.util.Calendar.getInstance()
         val distinctDays = mutableSetOf<String>()
+        val perTrackDurationMs = HashMap<Long, Long>()
 
         for (rec in history) {
-            cal.timeInMillis = rec.startedAt
-            val year = cal.get(java.util.Calendar.YEAR)
-            val day = cal.get(java.util.Calendar.DAY_OF_YEAR)
-            distinctDays.add("${year}_$day")
+            if (rec.listenedDurationMs > 0L) {
+                perTrackDurationMs[rec.trackId] = (perTrackDurationMs[rec.trackId] ?: 0L) + rec.listenedDurationMs
+                cal.timeInMillis = rec.startedAt
+                val year = cal.get(java.util.Calendar.YEAR)
+                val day = cal.get(java.util.Calendar.DAY_OF_YEAR)
+                distinctDays.add("${year}_$day")
 
-            val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-            when (hour) {
-                in 5..11 -> morning += rec.listenedDurationMs
-                in 12..16 -> afternoon += rec.listenedDurationMs
-                in 17..21 -> evening += rec.listenedDurationMs
-                else -> night += rec.listenedDurationMs
+                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+                when (hour) {
+                    in 5..11 -> morning += rec.listenedDurationMs
+                    in 12..16 -> afternoon += rec.listenedDurationMs
+                    in 17..21 -> evening += rec.listenedDurationMs
+                    else -> night += rec.listenedDurationMs
+                }
             }
         }
 
@@ -575,17 +579,25 @@ class MusicRepository(
             nightDurationMs = night
         )
 
+        val hasRealListening = totalDurationMs > 0L || trackCount > 0
         val dominantVibe = timeOfDay.dominantVibe
-        val (archetype, desc) = when (dominantVibe) {
-            "Night Owl" -> Pair("Night Owl Explorer", "Your peak hours are late at night with immersive, uninterrupted listening sessions.")
-            "Early Bird" -> Pair("Dawn Melodist", "You start your mornings energized with music that sets the rhythm for your day.")
-            "Daytime Groover" -> Pair("Midday Flow Master", "Music fuels your daytime focus, keeping your productivity high and spirits upbeat.")
-            else -> Pair("Sonic Harmonizer", "You unwind in the evenings with rich soundscapes and eclectic favorites.")
+        val (archetype, desc) = if (!hasRealListening) {
+            Pair(
+                "No Listening Yet",
+                "No listening sessions were recorded during this selected timeframe."
+            )
+        } else {
+            when (dominantVibe) {
+                "Night Owl" -> Pair("Night Owl Explorer", "Your peak hours are late at night with immersive, uninterrupted listening sessions.")
+                "Early Bird" -> Pair("Dawn Melodist", "You start your mornings energized with music that sets the rhythm for your day.")
+                "Daytime Groover" -> Pair("Midday Flow Master", "Music fuels your daytime focus, keeping your productivity high and spirits upbeat.")
+                else -> Pair("Sonic Harmonizer", "You unwind in the evenings with rich soundscapes and eclectic favorites.")
+            }
         }
 
         val topSong = topSongs.firstOrNull()
         val topSongPlays = topSong?.playCount ?: 0
-        val topSongDuration = if (topSong != null) topSongPlays * (if (topSong.durationMs > 0) topSong.durationMs else 180000L) else 0L
+        val topSongDuration = if (topSong != null) perTrackDurationMs[topSong.id] ?: 0L else 0L
 
         WrappedData(
             totalMinutes = totalDurationMs / (1000L * 60L),

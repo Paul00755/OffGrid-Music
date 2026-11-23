@@ -133,17 +133,31 @@ fun WrappedStoryDialog(
         }
     }
     var selectedShareRange by remember { mutableStateOf(defaultRange) }
-    var activeWrappedData by remember(wrappedData) { mutableStateOf(wrappedData) }
+    var activeWrappedData by remember(defaultRange) {
+        mutableStateOf(if (loadWrappedData != null) null else wrappedData)
+    }
+    var isLoadingPeriodData by remember(defaultRange, loadWrappedData) {
+        mutableStateOf(loadWrappedData != null)
+    }
 
     LaunchedEffect(defaultRange, loadWrappedData) {
-        if (loadWrappedData != null && defaultRange != null) {
+        if (loadWrappedData != null) {
+            isLoadingPeriodData = true
             val (start, end) = defaultRange.getTimeRange()
             try {
-                val loaded = loadWrappedData(start, end)
-                activeWrappedData = loaded
-            } catch (_: Exception) {}
+                activeWrappedData = loadWrappedData(start, end)
+            } catch (_: Exception) {
+                activeWrappedData = wrappedData
+            } finally {
+                isLoadingPeriodData = false
+            }
+        } else {
+            activeWrappedData = wrappedData
+            isLoadingPeriodData = false
         }
     }
+
+    val resolvedData = activeWrappedData ?: wrappedData
 
     if (showSharePeriodDialog) {
         SharePeriodSelectionDialog(
@@ -162,7 +176,7 @@ fun WrappedStoryDialog(
 
     if (showShareCardDialog) {
         ShareStatsCardDialog(
-            wrappedData = activeWrappedData,
+            wrappedData = resolvedData,
             timePeriodTitle = selectedShareRange.displayLabel,
             initialRange = selectedShareRange,
             initialPeriod = selectedShareRange.period,
@@ -174,9 +188,9 @@ fun WrappedStoryDialog(
         )
     }
 
-    // Auto progress timer for stories
-    LaunchedEffect(currentSlide, isPaused, showShareCardDialog, showSharePeriodDialog) {
-        if (!isPaused && !showShareCardDialog && !showSharePeriodDialog) {
+    // Auto progress timer for stories (paused until real period data is loaded)
+    LaunchedEffect(currentSlide, isPaused, isLoadingPeriodData, showShareCardDialog, showSharePeriodDialog) {
+        if (!isPaused && !isLoadingPeriodData && !showShareCardDialog && !showSharePeriodDialog) {
             slideProgress.snapTo(0f)
             slideProgress.animateTo(
                 targetValue = 1f,
@@ -367,36 +381,55 @@ fun WrappedStoryDialog(
                         .padding(vertical = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    AnimatedContent(
-                        targetState = currentSlide,
-                        transitionSpec = {
-                            if (targetState > initialState) {
-                                (fadeIn(animationSpec = tween(300)) + slideInHorizontally { it / 2 })
-                                    .togetherWith(fadeOut(animationSpec = tween(300)) + slideOutHorizontally { -it / 2 })
-                            } else {
-                                (fadeIn(animationSpec = tween(300)) + slideInHorizontally { -it / 2 })
-                                    .togetherWith(fadeOut(animationSpec = tween(300)) + slideOutHorizontally { it / 2 })
-                            }
-                        },
-                        label = "slide_transition"
-                    ) { slide ->
-                        when (slide) {
-                            0 -> SlideMinutesAndArchetype(activeWrappedData, timePeriodTitle, palette)
-                            1 -> SlideTopTrack(activeWrappedData, onPlaySong, palette)
-                            2 -> SlideTop5Leaderboard(activeWrappedData, onPlaySong, palette)
-                            3 -> SlideTopArtistsAlbums(activeWrappedData, palette)
-                            4 -> SlideTimeOfDay(activeWrappedData, palette)
-                            5 -> SlideSummaryCard(
-                                data = activeWrappedData,
-                                timePeriodTitle = timePeriodTitle,
-                                onPlayTopQueue = onPlayTopQueue,
-                                onDismiss = onDismiss,
-                                onShareStatsCard = {
-                                    isPaused = true
-                                    showSharePeriodDialog = true
-                                },
-                                palette = palette
+                    if (isLoadingPeriodData) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                color = BentoPrimary,
+                                strokeWidth = 3.dp,
+                                modifier = Modifier.size(34.dp)
                             )
+                            Text(
+                                text = "Loading your real listening recap…",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.subInk
+                            )
+                        }
+                    } else {
+                        AnimatedContent(
+                            targetState = currentSlide,
+                            transitionSpec = {
+                                if (targetState > initialState) {
+                                    (fadeIn(animationSpec = tween(300)) + slideInHorizontally { it / 2 })
+                                        .togetherWith(fadeOut(animationSpec = tween(300)) + slideOutHorizontally { -it / 2 })
+                                } else {
+                                    (fadeIn(animationSpec = tween(300)) + slideInHorizontally { -it / 2 })
+                                        .togetherWith(fadeOut(animationSpec = tween(300)) + slideOutHorizontally { it / 2 })
+                                }
+                            },
+                            label = "slide_transition"
+                        ) { slide ->
+                            when (slide) {
+                                0 -> SlideMinutesAndArchetype(resolvedData, timePeriodTitle, palette)
+                                1 -> SlideTopTrack(resolvedData, onPlaySong, palette)
+                                2 -> SlideTop5Leaderboard(resolvedData, onPlaySong, palette)
+                                3 -> SlideTopArtistsAlbums(resolvedData, palette)
+                                4 -> SlideTimeOfDay(resolvedData, palette)
+                                5 -> SlideSummaryCard(
+                                    data = resolvedData,
+                                    timePeriodTitle = timePeriodTitle,
+                                    onPlayTopQueue = onPlayTopQueue,
+                                    onDismiss = onDismiss,
+                                    onShareStatsCard = {
+                                        isPaused = true
+                                        showSharePeriodDialog = true
+                                    },
+                                    palette = palette
+                                )
+                            }
                         }
                     }
                 }
@@ -492,21 +525,108 @@ private fun SlideMinutesAndArchetype(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "${data.totalMinutes} Minutes",
+            text = if (data.totalMinutes >= 60L) {
+                formatListeningDuration(data.totalMinutes * 60_000L)
+            } else {
+                "${data.totalMinutes} Minute${if (data.totalMinutes == 1L) "" else "s"}"
+            },
             fontSize = 36.sp,
             fontWeight = FontWeight.ExtraBold,
             color = palette.ink
         )
-        val daysCount = data.activeDaysCount.coerceAtLeast(if (data.totalTracks > 0 || data.totalMinutes > 0) 1 else 0)
-        val daysText = if (daysCount == 1) "1 active listening day" else "$daysCount active listening days"
+        val daysCount = data.activeDaysCount
+        val daysText = if (daysCount == 1) "1 active day" else "$daysCount active days"
         Text(
-            text = "Across $daysText • ${data.totalTracks} total plays",
+            text = if (data.totalMinutes >= 60L) {
+                "${data.totalMinutes} mins • $daysText • ${data.totalTracks} plays"
+            } else {
+                "Across $daysText • ${data.totalTracks} total play${if (data.totalTracks == 1) "" else "s"}"
+            },
             fontSize = 13.sp,
             color = palette.subInk,
+            textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 4.dp)
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Real-data Quick Highlights Row (Unique Tracks + Streak)
+        Row(
+            modifier = Modifier.fillMaxWidth(0.9f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = palette.cardBg,
+                border = BorderStroke(1.dp, palette.cardBorder),
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "${data.uniqueTracks}",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = BentoPrimary
+                    )
+                    Text(
+                        text = "Unique Tracks",
+                        fontSize = 10.sp,
+                        color = palette.subInk
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = palette.cardBg,
+                border = BorderStroke(1.dp, palette.cardBorder),
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "${data.currentStreakDays}d",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFFF7043)
+                    )
+                    Text(
+                        text = "Current Streak",
+                        fontSize = 10.sp,
+                        color = palette.subInk
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = palette.cardBg,
+                border = BorderStroke(1.dp, palette.cardBorder),
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "${data.longestStreakDays}d",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFFFCA28)
+                    )
+                    Text(
+                        text = "Best Streak",
+                        fontSize = 10.sp,
+                        color = palette.subInk
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Archetype Card
         Surface(
@@ -658,7 +778,11 @@ private fun SlideTopTrack(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Played ${data.topSongPlayCount} times (${formatListeningDuration(data.topSongDurationMs)})",
+                        text = if (data.topSongDurationMs > 0L) {
+                            "Played ${data.topSongPlayCount} time${if (data.topSongPlayCount == 1) "" else "s"} • ${formatListeningDuration(data.topSongDurationMs)}"
+                        } else {
+                            "Played ${data.topSongPlayCount} time${if (data.topSongPlayCount == 1) "" else "s"}"
+                        },
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = palette.ink
@@ -880,7 +1004,11 @@ private fun SlideTopArtistsAlbums(
                                 )
                             }
                             Text(
-                                text = "${artist.playCount} plays",
+                                text = if (artist.totalDurationMs > 0L) {
+                                    "${artist.playCount} plays • ${formatListeningDuration(artist.totalDurationMs)}"
+                                } else {
+                                    "${artist.playCount} plays"
+                                },
                                 fontSize = 11.sp,
                                 color = palette.subInk
                             )
@@ -1006,8 +1134,9 @@ private fun SlideTimeOfDay(
             color = BentoPrimary
         )
         Spacer(modifier = Modifier.height(4.dp))
+        val hasClockData = data.timeOfDay.totalMs > 0L
         Text(
-            text = "Dominant Vibe: ${data.timeOfDay.dominantVibe}",
+            text = if (hasClockData) "Dominant Vibe: ${data.timeOfDay.dominantVibe}" else "No listening logged yet",
             fontSize = 20.sp,
             fontWeight = FontWeight.ExtraBold,
             color = palette.ink
@@ -1092,12 +1221,23 @@ private fun TimeSlotBar(
                         color = palette.ink
                     )
                 }
-                Text(
-                    text = "$percentage%",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Black,
-                    color = color
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = durationFormatted,
+                        fontSize = 11.sp,
+                        color = palette.subInk,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "$percentage%",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Black,
+                        color = color
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -1191,8 +1331,14 @@ private fun SlideSummaryCard(
                             modifier = Modifier.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("${data.totalMinutes}m", fontSize = 16.sp, fontWeight = FontWeight.Black, color = palette.ink)
-                            Text("Minutes", fontSize = 10.sp, color = palette.subInk)
+                            Text(
+                                text = if (data.totalMinutes >= 60L) formatListeningDuration(data.totalMinutes * 60_000L) else "${data.totalMinutes}m",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                color = palette.ink,
+                                maxLines = 1
+                            )
+                            Text("Listened", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
                     Surface(
@@ -1204,7 +1350,7 @@ private fun SlideSummaryCard(
                             modifier = Modifier.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("${data.totalTracks}", fontSize = 16.sp, fontWeight = FontWeight.Black, color = palette.ink)
+                            Text("${data.totalTracks}", fontSize = 15.sp, fontWeight = FontWeight.Black, color = palette.ink)
                             Text("Plays", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
@@ -1217,7 +1363,14 @@ private fun SlideSummaryCard(
                             modifier = Modifier.padding(8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(data.timeOfDay.dominantVibe, fontSize = 13.sp, fontWeight = FontWeight.Black, color = BentoPrimary, maxLines = 1)
+                            Text(
+                                text = if (data.timeOfDay.totalMs > 0L) data.timeOfDay.dominantVibe else "—",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Black,
+                                color = BentoPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Text("Vibe", fontSize = 10.sp, color = palette.subInk)
                         }
                     }
@@ -1235,37 +1388,46 @@ private fun SlideSummaryCard(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
 
-                data.topSongs.take(4).forEachIndexed { idx, song ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${idx + 1}",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = BentoPrimary,
-                            modifier = Modifier.width(18.dp)
-                        )
-                        Text(
-                            text = song.displayTitle,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = palette.ink,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = song.displayArtist,
-                            fontSize = 11.sp,
-                            color = palette.mutedInk,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 6.dp)
-                        )
+                if (data.topSongs.isEmpty()) {
+                    Text(
+                        text = "No tracks played in this timeframe yet.",
+                        fontSize = 12.sp,
+                        color = palette.mutedInk,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                } else {
+                    data.topSongs.take(4).forEachIndexed { idx, song ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${idx + 1}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimary,
+                                modifier = Modifier.width(18.dp)
+                            )
+                            Text(
+                                text = song.displayTitle,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = song.displayArtist,
+                                fontSize = 11.sp,
+                                color = palette.mutedInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 6.dp)
+                            )
+                        }
                     }
                 }
 

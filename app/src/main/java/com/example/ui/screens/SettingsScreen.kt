@@ -791,8 +791,10 @@ fun SettingsScreen(
     livePreviewSong: com.example.data.model.Song? = null,
     livePreviewIsPlaying: Boolean = false,
     livePreviewLyrics: com.example.data.model.Lyrics? = null,
+    livePreviewPlaylists: List<com.example.data.model.Playlist> = emptyList(),
     livePreviewPlaylistNames: List<String> = emptyList(),
     livePreviewRecentSongs: List<com.example.data.model.Song> = emptyList(),
+    livePreviewHomeStats: StudioHomeLiveStats = StudioHomeLiveStats(),
     gaplessPlayback: Boolean = true,
     onSetGaplessPlayback: (Boolean) -> Unit = {},
     normalizeAudio: Boolean = false,
@@ -1672,9 +1674,11 @@ fun SettingsScreen(
             liveSong = livePreviewSong,
             liveIsPlaying = livePreviewIsPlaying,
             liveLyrics = livePreviewLyrics,
+            livePlaylists = livePreviewPlaylists,
             livePlaylistNames = livePreviewPlaylistNames,
             liveRecentSongs = livePreviewRecentSongs,
             liveUserDisplayName = effectiveDisplayName,
+            liveHomeStats = livePreviewHomeStats,
             isOnboardingShadowMode = false,
             onConfirmLayouts = { np, home, pl, lyr ->
                 if (!np.equals(nowPlayingLayout, true)) onSetNowPlayingLayout(np)

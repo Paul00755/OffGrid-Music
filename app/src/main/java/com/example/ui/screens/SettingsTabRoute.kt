@@ -7,19 +7,23 @@ import androidx.compose.ui.platform.LocalContext
 import com.example.auth.UserAccount
 import com.example.data.model.FolderInfo
 import com.example.data.model.Lyrics
+import com.example.data.model.Playlist
 import com.example.data.model.Song
 import com.example.data.sync.SyncStatus
 import com.example.scanner.ScanProgress
 import com.example.service.SleepTimerState
 import com.example.ui.components.NavTab
 import com.example.ui.viewmodel.MusicViewModel
+import java.util.Calendar
 
 private data class SettingsPreviewBundle(
     val liveSong: Song?,
     val liveIsPlaying: Boolean,
     val liveLyrics: Lyrics?,
+    val livePlaylists: List<Playlist>,
     val livePlaylistNames: List<String>,
     val liveRecentSongs: List<Song>,
+    val liveHomeStats: StudioHomeLiveStats,
     val miniStyle: String,
     val miniPrev: Boolean,
     val miniNext: Boolean,
@@ -71,10 +75,15 @@ private data class SettingsAudioAndPlaybackBundle(
 )
 
 @Composable
-private fun rememberSettingsPreviewBundle(viewModel: MusicViewModel): SettingsPreviewBundle {
+private fun rememberSettingsPreviewBundle(
+    viewModel: MusicViewModel,
+    userAccount: UserAccount?,
+    customAvatarUri: String?
+): SettingsPreviewBundle {
     val playbackState by viewModel.playbackState.collectAsState()
     val liveLyrics by viewModel.currentLyrics.collectAsState()
     val allPlaylists by viewModel.allPlaylists.collectAsState()
+    val allSongs by viewModel.allSongs.collectAsState()
     val recentSongs by viewModel.recentlyPlayedSongs.collectAsState()
     val miniStyle by viewModel.miniPlayerStyle.collectAsState()
     val miniPrev by viewModel.miniPlayerShowPrevious.collectAsState()
@@ -85,14 +94,75 @@ private fun rememberSettingsPreviewBundle(viewModel: MusicViewModel): SettingsPr
     val miniSwipeDownDismiss by viewModel.miniPlayerSwipeDownToDismiss.collectAsState()
     val miniProgress by viewModel.miniPlayerShowProgress.collectAsState()
     val miniCircularArt by viewModel.miniPlayerCircularArt.collectAsState()
+
+    val timeBounds = remember {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val todayStart = cal.timeInMillis
+        val yesterdayStart = todayStart - 24L * 60 * 60 * 1000
+        val weekStart = todayStart - 6L * 24 * 60 * 60 * 1000
+        val monthStart = todayStart - 29L * 24 * 60 * 60 * 1000
+        listOf(todayStart, yesterdayStart, weekStart, monthStart)
+    }
+    val todayStart = timeBounds[0]
+    val yesterdayStart = timeBounds[1]
+    val weekStart = timeBounds[2]
+    val monthStart = timeBounds[3]
+
+    val todayDur by remember(todayStart) { viewModel.getTotalDurationPlayedBetween(todayStart) }.collectAsState(initial = 0L)
+    val todayPlays by remember(todayStart) { viewModel.getTrackCountBetween(todayStart) }.collectAsState(initial = 0)
+    val todayUnique by remember(todayStart) { viewModel.getUniqueTrackCountBetween(todayStart) }.collectAsState(initial = 0)
+
+    val yesterdayDur by remember(yesterdayStart, todayStart) { viewModel.getTotalDurationPlayedBetween(yesterdayStart, todayStart) }.collectAsState(initial = 0L)
+    val yesterdayPlays by remember(yesterdayStart, todayStart) { viewModel.getTrackCountBetween(yesterdayStart, todayStart) }.collectAsState(initial = 0)
+    val yesterdayUnique by remember(yesterdayStart, todayStart) { viewModel.getUniqueTrackCountBetween(yesterdayStart, todayStart) }.collectAsState(initial = 0)
+
+    val weekDur by remember(weekStart) { viewModel.getTotalDurationPlayedBetween(weekStart) }.collectAsState(initial = 0L)
+    val weekPlays by remember(weekStart) { viewModel.getTrackCountBetween(weekStart) }.collectAsState(initial = 0)
+    val weekUnique by remember(weekStart) { viewModel.getUniqueTrackCountBetween(weekStart) }.collectAsState(initial = 0)
+
+    val monthDur by remember(monthStart) { viewModel.getTotalDurationPlayedBetween(monthStart) }.collectAsState(initial = 0L)
+    val monthPlays by remember(monthStart) { viewModel.getTrackCountBetween(monthStart) }.collectAsState(initial = 0)
+
+    val allTimeDur by remember { viewModel.getTotalDurationPlayedBetween(0L) }.collectAsState(initial = 0L)
+    val allTimePlays by remember { viewModel.getTrackCountBetween(0L) }.collectAsState(initial = 0)
+
     val playlistNames = remember(allPlaylists) { allPlaylists.map { it.name } }
     val recentTop = remember(recentSongs) { recentSongs.take(4) }
+    val effectiveAvatar = customAvatarUri?.takeIf { it.isNotBlank() } ?: userAccount?.photoUrl
+
+    val homeStats = StudioHomeLiveStats(
+        todayDurationMs = todayDur,
+        todayPlays = todayPlays,
+        todayUniqueTracks = todayUnique,
+        yesterdayDurationMs = yesterdayDur,
+        yesterdayPlays = yesterdayPlays,
+        yesterdayUniqueTracks = yesterdayUnique,
+        weekDurationMs = weekDur,
+        weekPlays = weekPlays,
+        weekUniqueTracks = weekUnique,
+        monthDurationMs = monthDur,
+        monthPlays = monthPlays,
+        allTimeDurationMs = allTimeDur,
+        allTimePlays = allTimePlays,
+        totalCatalogSongs = allSongs.size,
+        userEmail = userAccount?.email,
+        userAvatarUri = effectiveAvatar,
+        playbackPositionMs = playbackState.positionMs
+    )
+
     return SettingsPreviewBundle(
         liveSong = playbackState.currentSong,
         liveIsPlaying = playbackState.isPlaying,
         liveLyrics = liveLyrics,
+        livePlaylists = allPlaylists,
         livePlaylistNames = playlistNames,
         liveRecentSongs = recentTop,
+        liveHomeStats = homeStats,
         miniStyle = miniStyle,
         miniPrev = miniPrev,
         miniNext = miniNext,
@@ -233,7 +303,7 @@ fun SettingsTabRoute(
     val context = LocalContext.current
     val activity = context as? Activity
 
-    val preview = rememberSettingsPreviewBundle(viewModel)
+    val preview = rememberSettingsPreviewBundle(viewModel, userAccount, customAvatarUri)
     val cacheDb = rememberSettingsCacheAndDbBundle(viewModel)
     val audio = rememberSettingsAudioAndPlaybackBundle(viewModel)
 
@@ -342,8 +412,10 @@ fun SettingsTabRoute(
         livePreviewSong = preview.liveSong,
         livePreviewIsPlaying = preview.liveIsPlaying,
         livePreviewLyrics = preview.liveLyrics,
+        livePreviewPlaylists = preview.livePlaylists,
         livePreviewPlaylistNames = preview.livePlaylistNames,
         livePreviewRecentSongs = preview.liveRecentSongs,
+        livePreviewHomeStats = preview.liveHomeStats,
         gaplessPlayback = audio.gapless,
         onSetGaplessPlayback = viewModel::setGaplessPlayback,
         normalizeAudio = audio.normalize,
