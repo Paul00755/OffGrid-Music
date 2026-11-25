@@ -22,6 +22,11 @@ on:
         default: ""
         type: string
 
+# Cancel outdated PR builds automatically, while never canceling an active main/master release
+concurrency:
+  group: build-release-apk-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: write
 
@@ -45,7 +50,12 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+
+      - name: Setup Gradle (Build Cache & Dependency Caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+          cache-cleanup: on-success
 
       - name: Compute Semantic Version and Plain-Language Release Notes
         id: semver
@@ -53,6 +63,8 @@ jobs:
           INPUT_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
           INPUT_EXPLICIT_VERSION: ${{ github.event.inputs.explicit_version }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python3 .github/scripts/generate_release_notes.py
 
@@ -93,8 +105,13 @@ jobs:
             -PJAM_INVITE_HOST=offgrid-music.web.app \
             -Pkotlin.compiler.execution.strategy=daemon \
             -Pksp.useKSP2=true \
+            -x lintVitalRelease \
+            --build-cache \
+            --parallel \
+            --max-workers=4 \
             --no-configuration-cache \
-            -Dorg.gradle.jvmargs="-Xmx3584m -XX:MaxMetaspaceSize=1024m -Djava.awt.headless=true" \
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1536m -XX:+UseParallelGC -Djava.awt.headless=true" \
+            -Dkotlin.daemon.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Djava.awt.headless=true" \
             --stacktrace
 
       - name: Prepare APK Asset (OffGrid-Music.apk + Build Info)
@@ -125,15 +142,18 @@ jobs:
           name: OffGrid-Music-APK
           path: app/build/outputs/apk/release/OffGrid-Music.apk
           retention-days: 30
+          compression-level: 0
 
       - name: Publish GitHub Releases (Immutable Semantic Version History + Latest Release)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          APK_PATH: app/build/outputs/apk/release/OffGrid-Music.apk
+          VERSIONED_NOTES_FILE: release_notes_versioned.md
+          LATEST_NOTES_FILE: release_notes_latest.md
         run: |
-          APK_DIR="app/build/outputs/apk/release"
-          CLEAN_APK="$APK_DIR/OffGrid-Music.apk"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -142,7 +162,7 @@ jobs:
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           echo "TAG=$VERSION_TAG" >> "$GITHUB_ENV"
 
-          # 1. Create permanent semantic versioned release (v1.0.5, v1.0.6, ..., v1.1.0, v2.0.1, ...)
+          # 1. Release notes for permanent semantic versioned release
           cat << EOF > release_notes_versioned.md
           ## OffGrid Music ${VERSION_TAG}
 
@@ -171,25 +191,7 @@ jobs:
           - **Switch Versions Anytime**: Because \`versionCode\` stays consistent across releases, you can install any previous or newer version without uninstalling.
           EOF
 
-          git tag -f "$VERSION_TAG" "${{ github.sha }}"
-          git push -f origin "$VERSION_TAG" || true
-
-          if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
-            gh release upload "$VERSION_TAG" "$CLEAN_APK" --clobber
-            gh release edit "$VERSION_TAG" \
-              --title "OffGrid Music ${VERSION_TAG}" \
-              --notes-file release_notes_versioned.md \
-              --target "${{ github.sha }}" \
-              --latest
-          else
-            gh release create "$VERSION_TAG" "$CLEAN_APK" \
-              --title "OffGrid Music ${VERSION_TAG}" \
-              --notes-file release_notes_versioned.md \
-              --target "${{ github.sha }}" \
-              --latest
-          fi
-
-          # 2. Maintain rolling 'latest' tag release so direct download URLs never 404
+          # 2. Release notes for rolling 'latest' mirror channel
           cat << EOF > release_notes_latest.md
           ## OffGrid Music — Latest Release (${VERSION_TAG})
 
@@ -212,26 +214,8 @@ jobs:
           Looking for an older release? Browse all versions on the [Releases Page](https://github.com/${{ github.repository }}/releases).
           EOF
 
-          git tag -f latest "${{ github.sha }}"
-          git push -f origin latest || true
-
-          if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest "$CLEAN_APK" --clobber
-            gh release edit latest \
-              --title "OffGrid Music — Latest Channel (${VERSION_TAG})" \
-              --notes-file release_notes_latest.md \
-              --target "${{ github.sha }}" \
-              --latest=false
-          else
-            gh release create latest "$CLEAN_APK" \
-              --title "OffGrid Music — Latest Channel (${VERSION_TAG})" \
-              --notes-file release_notes_latest.md \
-              --target "${{ github.sha }}" \
-              --latest=false
-          fi
-
-          # Explicitly ensure the newest semantic release holds the official 'Latest' badge
-          gh release edit "$VERSION_TAG" --latest || true
+          # Publish via resilient 2-step API publisher (retries HTTP 5xx/network blips & avoids GitHub 500 bug)
+          python3 .github/scripts/publish_github_release.py
 
       - name: Broadcast FCM Update Notification to Subscribers
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

@@ -237,23 +237,34 @@ def generate_access_token(sa: dict) -> str:
 
 
 def fetch_github_release(tag: str) -> dict:
-    proc = subprocess.run(
-        [
-            "gh",
-            "release",
-            "view",
-            tag,
-            "--json",
-            "tagName,name,body,url,isDraft,isPrerelease,publishedAt,assets",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"Failed to query GitHub release '{tag}': {err}")
-    return json.loads(proc.stdout.decode("utf-8"))
+    delays = (3, 6, 12)
+    last_err = ""
+    for attempt in range(1, len(delays) + 2):
+        proc = subprocess.run(
+            [
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--json",
+                "tagName,name,body,url,isDraft,isPrerelease,publishedAt,assets",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return json.loads(proc.stdout.decode("utf-8"))
+        last_err = proc.stderr.decode("utf-8", errors="replace").strip()
+        if attempt <= len(delays):
+            delay = delays[attempt - 1]
+            print(
+                f"[retry {attempt}/{len(delays)}] gh release view '{tag}' failed ({last_err}); "
+                f"retrying in {delay}s...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"Failed to query GitHub release '{tag}': {last_err}")
 
 
 def upload_dedup_receipt(tag: str, message_name: str) -> None:

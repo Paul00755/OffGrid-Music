@@ -746,6 +746,53 @@ def format_categorized_markdown(items: List[Tuple[str, str]]) -> str:
     return "\n\n".join(sections)
 
 
+def fetch_latest_published_release_tag() -> str:
+    """
+    Queries GitHub Releases (when GH_TOKEN/GITHUB_TOKEN is set in CI) to find the latest
+    actually-published non-draft, non-prerelease semantic tag. This guarantees that if an
+    earlier CI run pushed a git tag and crashed before publishing its release (leaving an
+    orphan tag/draft), the next run still diffs against the last PUBLISHED release so zero
+    user-facing changes are omitted from the changelog.
+    """
+    token = (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
+    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    if not token or not repo:
+        return ""
+
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "OffGrid-Music-ReleaseNotes",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(releases, list):
+            return ""
+        published_semver: List[Tuple[Tuple[int, int, int], str]] = []
+        for rel in releases:
+            if not isinstance(rel, dict):
+                continue
+            if rel.get("draft") or rel.get("prerelease"):
+                continue
+            tag = (rel.get("tag_name") or "").strip()
+            parsed = parse_semver(tag)
+            if parsed:
+                published_semver.append((parsed, tag))
+        if published_semver:
+            published_semver.sort(key=lambda item: item[0])
+            return published_semver[-1][1]
+    except Exception as exc:
+        print(f"Note: Could not query published GitHub releases ({exc}); using git tags.", file=sys.stderr)
+    return ""
+
+
 def determine_version_and_base() -> Tuple[str, str, str, str]:
     """
     Returns (next_version_str, version_tag, prev_tag, diff_base_ref).
@@ -774,10 +821,14 @@ def determine_version_and_base() -> Tuple[str, str, str, str]:
     if semver_tags and semver_tags[-1][0] >= floor_ver:
         highest_ver, prev_tag = semver_tags[-1]
 
-    # Pick the best baseline ref that actually differs from HEAD so manual re-runs still summarize changes
+    # Prefer the latest PUBLISHED GitHub release tag as diff baseline so an orphaned tag from a
+    # previously failed CI run never hides changes from the user-facing release notes.
+    published_tag = fetch_latest_published_release_tag()
     head_sha = git_rev_parse("HEAD")
     diff_base_ref = ""
-    if prev_tag and git_ref_exists(prev_tag) and git_rev_parse(prev_tag) != head_sha:
+    if published_tag and git_ref_exists(published_tag) and git_rev_parse(published_tag) != head_sha:
+        diff_base_ref = published_tag
+    elif prev_tag and git_ref_exists(prev_tag) and git_rev_parse(prev_tag) != head_sha:
         diff_base_ref = prev_tag
     elif len(semver_tags) >= 2 and git_ref_exists(semver_tags[-2][1]):
         diff_base_ref = semver_tags[-2][1]

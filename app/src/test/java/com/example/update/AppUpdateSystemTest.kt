@@ -545,14 +545,28 @@ class AppUpdateSystemTest {
             releaseWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
         )
         val releaseNotesScript = File(rootDir, ".github/scripts/generate_release_notes.py")
+        val publishReleaseScript = File(rootDir, ".github/scripts/publish_github_release.py")
         assertTrue("generate_release_notes.py must exist", releaseNotesScript.exists())
+        assertTrue("publish_github_release.py must exist", publishReleaseScript.exists())
         assertTrue(
             "build-apk.yml must invoke generate_release_notes.py",
             buildWorkflow.readText().contains("python3 .github/scripts/generate_release_notes.py")
         )
         assertTrue(
+            "build-apk.yml must invoke resilient publish_github_release.py",
+            buildWorkflow.readText().contains("python3 .github/scripts/publish_github_release.py")
+        )
+        assertTrue(
             "build-apk.yml must invoke send_fcm_release_notification.py",
             buildWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
+        )
+        assertTrue(
+            "build-apk.yml must use gradle/actions/setup-gradle for build caching",
+            buildWorkflow.readText().contains("gradle/actions/setup-gradle@v4")
+        )
+        assertTrue(
+            "build-apk.yml must exclude lintVitalRelease for faster release builds",
+            buildWorkflow.readText().contains("-x lintVitalRelease")
         )
         assertTrue(
             "build-apk.yml must fetch full history for semantic tag calculation",
