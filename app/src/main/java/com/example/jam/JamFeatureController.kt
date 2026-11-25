@@ -366,7 +366,7 @@ class JamFeatureController(
             currentVersion = currentDisplay,
             requiredVersion = latestDisplay,
             needsLocalUpdate = true,
-            releaseUrl = release.apkDownloadUrl?.takeIf(String::isNotBlank) ?: release.htmlUrl
+            releaseUrl = com.example.update.AppUpdateRepository.LATEST_APK_DOWNLOAD_URL
         )
     }
 
@@ -1548,9 +1548,7 @@ class JamFeatureController(
                             val needsLocalUpdate = hostVer.isValid && localVer.isValid && hostVer.isNewerThan(localVer)
                             stopObserving(restorePlayback = true)
                             _page.value = JamPage.LANDING
-                            val knownReleaseUrl = (appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable)
-                                ?.release?.let { it.apkDownloadUrl?.takeIf(String::isNotBlank) ?: it.htmlUrl }
-                                ?: com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL
+                            val knownReleaseUrl = com.example.update.AppUpdateRepository.LATEST_APK_DOWNLOAD_URL
                             _uiState.value = JamUiState.VersionMismatch(
                                 message = if (needsLocalUpdate) {
                                     "Version mismatch: You have ${localVer.displayString} installed, while this Jam requires ${hostVer.displayString}. Update OffGrid Music to join."
@@ -2265,9 +2263,7 @@ class JamFeatureController(
                 if (mismatch.needsLocalUpdate) {
                     appUpdateRepository.recordObservedPeerVersion(mismatch.requiredVersion)
                 }
-                val knownReleaseUrl = (appUpdateRepository.updateState.value as? com.example.update.UpdateCheckResult.UpdateAvailable)
-                    ?.release?.let { it.apkDownloadUrl?.takeIf(String::isNotBlank) ?: it.htmlUrl }
-                    ?: com.example.update.AppUpdateRepository.GITHUB_RELEASES_URL
+                val knownReleaseUrl = com.example.update.AppUpdateRepository.LATEST_APK_DOWNLOAD_URL
                 _uiState.value = JamUiState.VersionMismatch(
                     message = mismatch.message ?: "Both users must have the same latest version of OffGrid Music installed to access Jam.",
                     currentVersion = mismatch.currentVersion,

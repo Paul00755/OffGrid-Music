@@ -562,6 +562,73 @@ class AppUpdateSystemTest {
             "build-apk.yml must pass -PappVersionName to Gradle",
             buildWorkflow.readText().contains("-PappVersionName=")
         )
+        assertFalse(
+            "build-apk.yml must not create or upload version-numbered OffGrid-Music-v*.apk files",
+            buildWorkflow.readText().contains("VERSIONED_APK") ||
+                buildWorkflow.readText().contains("OffGrid-Music-\${VERSION_TAG}.apk")
+        )
+        assertTrue(
+            "send_fcm_release_notification.py must always point to releases/latest/download/OffGrid-Music.apk",
+            fcmScript.readText().contains("releases/latest/download/OffGrid-Music.apk")
+        )
+        assertEquals(
+            "https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk",
+            AppUpdateRepository.LATEST_APK_DOWNLOAD_URL
+        )
+    }
+
+    @Test
+    fun testFcmNotificationAndReleaseParsingAlwaysRedirectToCanonicalLatestApk() {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancelAll()
+        val shadowNm = Shadows.shadowOf(nm)
+        val shadowApp = Shadows.shadowOf(context as Application)
+        shadowApp.grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        // Even if an older release JSON lists a version-numbered APK asset, apkDownloadUrl must resolve to the canonical latest APK URL
+        val releaseWithVersionedApk = ReleaseInfo.fromJson(
+            JSONObject(
+                """
+                {
+                  "tag_name": "v1.0.11",
+                  "name": "OffGrid Music v1.0.11",
+                  "body": "- Highlights",
+                  "published_at": "2026-11-25T14:00:00Z",
+                  "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.11",
+                  "draft": false,
+                  "prerelease": false,
+                  "assets": [
+                    {
+                      "name": "OffGrid-Music-v1.0.11.apk",
+                      "browser_download_url": "https://github.com/Paul00755/OffGrid-Music/releases/download/v1.0.11/OffGrid-Music-v1.0.11.apk",
+                      "size": 9800000
+                    }
+                  ]
+                }
+                """.trimIndent()
+            )
+        )
+        assertNotNull(releaseWithVersionedApk)
+        assertEquals(
+            AppUpdateRepository.LATEST_APK_DOWNLOAD_URL,
+            releaseWithVersionedApk!!.apkDownloadUrl
+        )
+
+        val payload = mapOf(
+            "version" to "v1.5.0",
+            "release_tag" to "v1.5.0",
+            "title" to "OffGrid Music v1.5.0",
+            "body" to "• Direct APK update test",
+            "release_url" to "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.5.0",
+            "apk_url" to "https://github.com/Paul00755/OffGrid-Music/releases/download/v1.5.0/OffGrid-Music-v1.5.0.apk"
+        )
+        assertTrue(OffGridFirebaseMessagingService.processIncomingUpdatePayload(context, payload))
+        val notification = shadowNm.allNotifications.last()
+        val pendingIntent = notification.contentIntent
+        assertNotNull("Update notification must have a tap PendingIntent", pendingIntent)
+        val savedIntent = Shadows.shadowOf(pendingIntent).savedIntent
+        assertEquals(android.content.Intent.ACTION_VIEW, savedIntent.action)
+        assertEquals(AppUpdateRepository.LATEST_APK_DOWNLOAD_URL, savedIntent.dataString)
     }
 
     @Test

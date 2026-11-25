@@ -40,7 +40,11 @@ class SupportAndFaqTest {
         val combinedText = OFFGRID_FAQ_ENTRIES.joinToString("\n") { "${it.question} ${it.answer}" }.lowercase()
         assertTrue(combinedText.contains("play store"))
         assertTrue(combinedText.contains("google sign-in"))
+        assertTrue(combinedText.contains("email & password"))
+        assertTrue(combinedText.contains("what data is backed up"))
         assertTrue(combinedText.contains("backed-up"))
+        assertTrue(combinedText.contains("off-grid jam"))
+        assertTrue(combinedText.contains("smart shuffle"))
         assertTrue(combinedText.contains("api key"))
         assertTrue(combinedText.contains("surge"))
     }

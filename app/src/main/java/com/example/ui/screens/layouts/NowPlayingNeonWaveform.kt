@@ -442,7 +442,7 @@ fun NowPlayingNeonWaveform(
             if (showSeekButtons) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(36.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     com.example.ui.components.SeekIntervalButton(

@@ -240,10 +240,7 @@ fun AppUpdateDialog(
 
                     Button(
                         onClick = {
-                            val targetUrl = release.apkDownloadUrl?.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
-                                ?: release.htmlUrl.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
-                                ?: "${AppUpdateRepository.GITHUB_REPO_URL}/releases/latest"
-                            onUpdateNow(targetUrl)
+                            onUpdateNow(AppUpdateRepository.LATEST_APK_DOWNLOAD_URL)
                         },
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(

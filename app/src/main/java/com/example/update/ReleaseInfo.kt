@@ -112,6 +112,7 @@ data class ReleaseInfo(
 
     companion object {
         const val DEFAULT_RELEASE_URL = "https://github.com/Paul00755/OffGrid-Music/releases"
+        const val LATEST_APK_DOWNLOAD_URL = "https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk"
 
         fun resolveVersion(
             tagName: String,
@@ -624,12 +625,13 @@ data class ReleaseInfo(
                             (assetName.endsWith(".apk", ignoreCase = true) ||
                                 contentType.equals("application/vnd.android.package-archive", ignoreCase = true))
                         ) {
-                            apkUrl = downloadUrl
-                            apkName = assetName
-                            apkSize = asset.optLong("size", 0L)
-                            if (assetName.equals("OffGrid-Music.apk", ignoreCase = true) ||
-                                assetName.contains("OffGrid", ignoreCase = true)
-                            ) {
+                            // Never redirect users to version-numbered APK links; always point to the canonical latest OffGrid-Music.apk
+                            apkUrl = LATEST_APK_DOWNLOAD_URL
+                            if (apkName == null || assetName.equals("OffGrid-Music.apk", ignoreCase = true)) {
+                                apkName = assetName
+                                apkSize = asset.optLong("size", 0L)
+                            }
+                            if (assetName.equals("OffGrid-Music.apk", ignoreCase = true)) {
                                 break
                             }
                         }

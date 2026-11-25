@@ -949,37 +949,25 @@ fun NowPlayingVinylTurntable(
             if (showSeekButtons) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = frostedSurface,
-                        border = BorderStroke(1.dp, frostedBorder)
-                    ) {
-                        SeekIntervalButton(
-                            seconds = backwardSeconds,
-                            isForward = false,
-                            onClick = onSeekBackward,
-                            tint = inkPrimary,
-                            iconSize = 25.dp,
-                            touchSize = 48.dp
-                        )
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = frostedSurface,
-                        border = BorderStroke(1.dp, frostedBorder)
-                    ) {
-                        SeekIntervalButton(
-                            seconds = forwardSeconds,
-                            isForward = true,
-                            onClick = onSeekForward,
-                            tint = inkPrimary,
-                            iconSize = 25.dp,
-                            touchSize = 48.dp
-                        )
-                    }
+                    SeekIntervalButton(
+                        seconds = backwardSeconds,
+                        isForward = false,
+                        onClick = onSeekBackward,
+                        tint = inkPrimary,
+                        iconSize = 26.dp,
+                        touchSize = 48.dp
+                    )
+                    SeekIntervalButton(
+                        seconds = forwardSeconds,
+                        isForward = true,
+                        onClick = onSeekForward,
+                        tint = inkPrimary,
+                        iconSize = 26.dp,
+                        touchSize = 48.dp
+                    )
                 }
             }
 

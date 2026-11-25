@@ -330,10 +330,8 @@ def main() -> int:
         print(f"Error: Release '{tag}' does not have an attached .apk asset yet. Aborting notification.")
         return 1
 
-    apk_download_url = (
-        apk_assets[0].get("url")
-        or f"https://github.com/{repo}/releases/download/{tag}/OffGrid-Music.apk"
-    )
+    # Always point subscribers to the canonical latest OffGrid-Music.apk direct download URL
+    apk_download_url = f"https://github.com/{repo}/releases/latest/download/OffGrid-Music.apk"
     release_name = (release.get("name") or "").strip() or f"OffGrid Music {tag}"
     release_url = (release.get("url") or "").strip() or f"https://github.com/{repo}/releases/tag/{tag}"
     raw_body = (release.get("body") or "").strip()

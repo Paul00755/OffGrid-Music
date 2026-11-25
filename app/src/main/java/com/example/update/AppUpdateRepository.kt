@@ -328,7 +328,7 @@ class AppUpdateRepository(
             body = notes.ifBlank { "• Stability improvements and new features." },
             publishedAt = "",
             htmlUrl = safeUrl,
-            apkDownloadUrl = apkUrl?.takeIf { it.isNotBlank() },
+            apkDownloadUrl = LATEST_APK_DOWNLOAD_URL,
             version = resolvedVersion
         )
 
@@ -373,6 +373,7 @@ class AppUpdateRepository(
     companion object {
         const val GITHUB_REPO_URL = "https://github.com/Paul00755/OffGrid-Music"
         const val GITHUB_RELEASES_URL = "https://github.com/Paul00755/OffGrid-Music/releases"
+        const val LATEST_APK_DOWNLOAD_URL = "https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk"
         const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Paul00755/OffGrid-Music/releases/latest"
         const val GITHUB_RELEASES_API_URL = "https://api.github.com/repos/Paul00755/OffGrid-Music/releases?per_page=10"
         const val UPDATE_TOPIC = "offgrid_updates"

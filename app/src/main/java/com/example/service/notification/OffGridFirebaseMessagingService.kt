@@ -192,7 +192,7 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 ?.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
                 ?: "${AppUpdateRepository.GITHUB_REPO_URL}/releases/tag/$effectiveTag"
 
-            val apkUrl = (data["apk_url"] ?: data["download_url"])?.takeIf { it.isNotBlank() }
+            val apkUrl = AppUpdateRepository.LATEST_APK_DOWNLOAD_URL
 
             // Synchronize repository state so Home screen / Settings immediately reflect the new release
             repo.onRemoteReleaseNotification(
@@ -303,21 +303,18 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
 
             val cleanVersionTag = formatCleanVersionLabel(releaseTag)
 
-            val contentIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(EXTRA_OPEN_UPDATE_DIALOG, true)
-                putExtra(EXTRA_UPDATE_RELEASE_TAG, releaseTag)
-                putExtra(EXTRA_UPDATE_RELEASE_URL, releaseUrl)
-                putExtra(EXTRA_UPDATE_RELEASE_TITLE, releaseTitle)
-                putExtra(EXTRA_UPDATE_RELEASE_NOTES, releaseNotes)
-                if (!apkUrl.isNullOrBlank()) {
-                    putExtra(EXTRA_UPDATE_APK_URL, apkUrl)
-                }
+            // Tapping the update notification redirects directly to the working latest OffGrid-Music.apk link
+            val directDownloadIntent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(AppUpdateRepository.LATEST_APK_DOWNLOAD_URL)
+            ).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             val contentPendingIntent = PendingIntent.getActivity(
                 context,
                 NOTIFICATION_ID,
-                contentIntent,
+                directDownloadIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 

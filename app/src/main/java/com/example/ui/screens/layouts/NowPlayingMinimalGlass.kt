@@ -298,37 +298,25 @@ fun NowPlayingMinimalGlass(
             if (showSeekButtons) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = BentoCardSurface.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
-                    ) {
-                        com.example.ui.components.SeekIntervalButton(
-                            seconds = backwardSeconds,
-                            isForward = false,
-                            onClick = onSeekBackward,
-                            tint = BentoTextPrimary,
-                            iconSize = 25.dp,
-                            touchSize = 48.dp
-                        )
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = BentoCardSurface.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
-                    ) {
-                        com.example.ui.components.SeekIntervalButton(
-                            seconds = forwardSeconds,
-                            isForward = true,
-                            onClick = onSeekForward,
-                            tint = BentoTextPrimary,
-                            iconSize = 25.dp,
-                            touchSize = 48.dp
-                        )
-                    }
+                    com.example.ui.components.SeekIntervalButton(
+                        seconds = backwardSeconds,
+                        isForward = false,
+                        onClick = onSeekBackward,
+                        tint = BentoTextPrimary,
+                        iconSize = 26.dp,
+                        touchSize = 48.dp
+                    )
+                    com.example.ui.components.SeekIntervalButton(
+                        seconds = forwardSeconds,
+                        isForward = true,
+                        onClick = onSeekForward,
+                        tint = BentoTextPrimary,
+                        iconSize = 26.dp,
+                        touchSize = 48.dp
+                    )
                 }
             }
 

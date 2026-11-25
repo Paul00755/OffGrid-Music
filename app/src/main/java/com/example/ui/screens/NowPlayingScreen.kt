@@ -1282,8 +1282,10 @@ fun NowPlayingScreen(
 
                     if (showSeekButtons) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             com.example.ui.components.SeekIntervalButton(
@@ -1889,7 +1891,7 @@ fun NowPlayingScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = if (isDenseClassicOverlay) 3.dp else 6.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                horizontalArrangement = if (showSeekButtons) Arrangement.SpaceBetween else Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 if (showSeekButtons) {
