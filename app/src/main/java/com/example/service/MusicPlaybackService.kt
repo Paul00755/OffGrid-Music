@@ -92,6 +92,7 @@ class MusicPlaybackService : MediaSessionService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var asyncArtDecodeJob: Job? = null
+    private var pausedKeepAliveJob: Job? = null
     private var notificationArtworkRequestKey: String? = null
     private var failedNotificationArtworkKey: String? = null
     private var notificationArtworkRetryAfterMs = 0L
@@ -277,6 +278,7 @@ class MusicPlaybackService : MediaSessionService() {
                 Notification.FLAG_NO_CLEAR
             mn.notification.visibility = Notification.VISIBILITY_PUBLIC
             mn.notification.deleteIntent = createDismissRestorePendingIntent()
+            mn.notification.extras.putBoolean(Notification.EXTRA_SHOW_WHEN, false)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
@@ -295,6 +297,43 @@ class MusicPlaybackService : MediaSessionService() {
                 val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 nm?.notify(mn.notificationId, mn.notification)
             } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * Periodically refreshes the ongoing foreground media notification and MediaSession state while
+     * paused so Android 13-15 Control Center / OEM media timeout listeners keep playback controls
+     * active for much longer without holding a CPU wake lock or re-decoding artwork.
+     */
+    private fun syncPausedKeepAlive(hasActiveMedia: Boolean, isPlaying: Boolean) {
+        if (!hasActiveMedia || isPlaying) {
+            pausedKeepAliveJob?.cancel()
+            pausedKeepAliveJob = null
+            return
+        }
+        if (pausedKeepAliveJob?.isActive == true) return
+        pausedKeepAliveJob = serviceScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(PAUSED_CONTROL_CENTER_KEEP_ALIVE_MS)
+                val session = activeMediaSession ?: PlaybackManager.activeInstance?.mediaSession ?: break
+                val player = session.player
+                val stillHasMedia = player.mediaItemCount > 0 ||
+                    PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
+                if (!stillHasMedia) break
+                val nowPlaying = player.isPlaying || player.playWhenReady
+                if (nowPlaying) break
+                try {
+                    safeAddSession(session)
+                    PlaybackManager.activeInstance?.refreshMediaSessionKeepAlive()
+                    val existingNotification = lastMediaNotification
+                    if (existingNotification != null) {
+                        enforcePersistentForegroundNotification(existingNotification)
+                    } else {
+                        updateNotification(session, startInForegroundRequired = true, force = true)
+                    }
+                } catch (_: Throwable) {}
+            }
+            pausedKeepAliveJob = null
         }
     }
 
@@ -429,6 +468,7 @@ class MusicPlaybackService : MediaSessionService() {
             } else {
                 releaseWakeLock()
             }
+            syncPausedKeepAlive(hasActiveMedia = hasActiveMedia, isPlaying = isPlaying)
             val managerState = PlaybackManager.activeInstance?.playbackState?.value
             val currentSong = managerState?.currentSong
             val metadata = player.currentMediaItem?.mediaMetadata
@@ -588,6 +628,8 @@ class MusicPlaybackService : MediaSessionService() {
         } catch (_: Throwable) {}
         unregisterScreenStateReceiver()
         asyncArtDecodeJob?.cancel()
+        pausedKeepAliveJob?.cancel()
+        pausedKeepAliveJob = null
         notificationArtworkRequestKey = null
         serviceScope.cancel()
         releaseWakeLock()
@@ -604,6 +646,7 @@ class MusicPlaybackService : MediaSessionService() {
     companion object {
         const val CHANNEL_ID = "media_playback_channel_v2"
         private const val ARTWORK_RETRY_INTERVAL_MS = 5 * 60 * 1_000L
+        private const val PAUSED_CONTROL_CENTER_KEEP_ALIVE_MS = 4 * 60 * 1_000L
         const val ACTION_HEADPHONE_CONNECTED = "com.example.service.ACTION_HEADPHONE_CONNECTED"
         const val ACTION_ENSURE_BACKGROUND_NOTIFICATION = "com.example.service.ACTION_ENSURE_BACKGROUND_NOTIFICATION"
         const val ACTION_NOTIFICATION_DISMISSED = "com.example.service.ACTION_NOTIFICATION_DISMISSED"

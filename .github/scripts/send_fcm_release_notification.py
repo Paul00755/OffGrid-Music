@@ -41,7 +41,7 @@ def strip_emojis(text: str) -> str:
     return re.sub(r"\s{2,}", " ", "".join(out)).strip()
 
 
-def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 340) -> str:
+def sanitize_release_notes(raw_notes: str, max_lines: int = 16, max_chars: int = 1500) -> str:
     fallback = "• Fixed minor bugs and improved playback stability and responsiveness."
     if not raw_notes or not raw_notes.strip():
         return fallback
@@ -57,13 +57,36 @@ def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 
         (r"^chore(\([^)]*\))?!?:\s*", "Updated "),
     ]
 
+    known_section_headings = {
+        "highlights",
+        "new features",
+        "features",
+        "improvements",
+        "enhancements",
+        "fixes",
+        "bug fixes",
+        "what's fixed",
+        "playback",
+        "audio",
+        "library",
+        "playlists",
+        "lyrics",
+        "jam",
+        "performance",
+        "stability",
+    }
+
     cleaned_lines = []
     seen = set()
+    bullet_count = 0
+    pending_heading = None
+
     for line in raw_notes.splitlines():
         trimmed = line.strip()
         if not trimmed or trimmed.startswith("---") or trimmed.startswith("|"):
             continue
 
+        is_heading_line = trimmed.startswith("#")
         line_clean = re.sub(r"<[^>]*>", "", trimmed)
         line_clean = re.sub(r"^#+\s*", "", line_clean)
         line_clean = line_clean.replace("**", "").replace("__", "").replace("`", "")
@@ -75,7 +98,18 @@ def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 
         lower = line_clean.lower()
         if (
             not line_clean
-            or lower in ("what's new", "whats new", "direct apk downloads", "direct download", "build & package details", "build summary", "upgrade & downgrade compatibility", "seamless upgrade & downgrade support (retains all data)")
+            or lower in (
+                "what's new",
+                "whats new",
+                "changelog",
+                "release notes",
+                "direct apk downloads",
+                "direct download",
+                "build & package details",
+                "build summary",
+                "upgrade & downgrade compatibility",
+                "seamless upgrade & downgrade support (retains all data)",
+            )
             or lower.startswith("offgrid music")
             or lower.startswith("download offgrid-music")
             or lower.startswith("download latest apk")
@@ -87,6 +121,14 @@ def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 
             or lower.startswith("merge ")
         ):
             continue
+
+        if is_heading_line or lower.rstrip(":") in known_section_headings:
+            heading_clean = line_clean.rstrip(":").strip()
+            if heading_clean and heading_clean.lower() in known_section_headings:
+                if heading_clean[0].islower():
+                    heading_clean = heading_clean[0].upper() + heading_clean[1:]
+                pending_heading = heading_clean
+                continue
 
         for pattern, replacement in prefix_rules:
             if re.match(pattern, line_clean, flags=re.IGNORECASE):
@@ -103,8 +145,14 @@ def sanitize_release_notes(raw_notes: str, max_lines: int = 5, max_chars: int = 
         if key in seen:
             continue
         seen.add(key)
+
+        if pending_heading:
+            cleaned_lines.append(f"### {pending_heading}")
+            pending_heading = None
+
         cleaned_lines.append(f"• {line_clean}")
-        if len(cleaned_lines) >= max_lines:
+        bullet_count += 1
+        if bullet_count >= max_lines:
             break
 
     result = "\n".join(cleaned_lines).strip()

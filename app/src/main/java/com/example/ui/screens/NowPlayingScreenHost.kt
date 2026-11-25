@@ -51,6 +51,9 @@ fun NowPlayingScreenHost(
         val lyricsLayout by viewModel.lyricsLayout.collectAsState()
         val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
         val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
+        val showNowPlayingSeekButtons by viewModel.showNowPlayingSeekButtons.collectAsState()
+        val nowPlayingBackwardSeconds by viewModel.nowPlayingBackwardSeconds.collectAsState()
+        val nowPlayingForwardSeconds by viewModel.nowPlayingForwardSeconds.collectAsState()
 
         NowPlayingScreen(
             playbackState = playbackState,
@@ -79,6 +82,11 @@ fun NowPlayingScreenHost(
             lyricsLayout = lyricsLayout,
             showVolumeBar = showNowPlayingVolumeBar,
             showAdvancedSongInfo = showAdvancedSongInfo,
+            showSeekButtons = showNowPlayingSeekButtons,
+            backwardSeconds = nowPlayingBackwardSeconds,
+            forwardSeconds = nowPlayingForwardSeconds,
+            onSeekBackward = { viewModel.seekBackward(nowPlayingBackwardSeconds * 1000L) },
+            onSeekForward = { viewModel.seekForward(nowPlayingForwardSeconds * 1000L) },
             playbackPositionFlow = viewModel.playbackPositionMs,
             onDismiss = onDismiss,
             onTogglePlayPause = { viewModel.togglePlayPause() },

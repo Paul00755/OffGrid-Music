@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -59,6 +60,7 @@ fun normalizeHomeSectionKey(key: String): String {
     return when (key.trim().uppercase()) {
         "HERO_SPOTLIGHT", "CONTINUE_LISTENING" -> "continue_listening"
         "SPEED_DIAL", "QUICK_ACTIONS" -> "quick_actions"
+        "SUGGESTIONS", "SUGGESTIONS_MIX", "NEW_MUSIC_MIX" -> "suggestions_mix"
         "STATS", "LISTENING_STATS" -> "listening_stats"
         "MOST_PLAYED" -> "most_played"
         "PLAYLISTS", "MOST_PLAYED_PLAYLISTS" -> "most_played_playlists"
@@ -73,6 +75,7 @@ fun normalizeHomeSectionKey(key: String): String {
 val ALL_HOME_SECTIONS = listOf(
     HomeSectionDescriptor("continue_listening", "Continue Listening", "Resume last active playback banner", Icons.Default.PlayCircle, Color(0xFFFF9100)),
     HomeSectionDescriptor("quick_actions", "Quick Actions", "Shuffle all tracks and quick navigation", Icons.Default.Shuffle, Color(0xFFFF4081)),
+    HomeSectionDescriptor("suggestions_mix", "Suggestions (New Music Mix)", "Fresh 10-song mix collage refreshed each app open", Icons.Default.AutoAwesome, Color(0xFFFF7043)),
     HomeSectionDescriptor("listening_stats", "Listening Stats & Insights", "Minutes listened, day streak & top stats", Icons.Default.Insights, Color(0xFF00E676)),
     HomeSectionDescriptor("most_played", "Most Played / Heavy Rotation", "Your most frequently played songs", Icons.Default.Whatshot, Color(0xFFFF5252)),
     HomeSectionDescriptor("most_played_playlists", "Most Played Playlists", "Your custom and smart playlists", Icons.AutoMirrored.Filled.QueueMusic, Color(0xFF7C4DFF)),
@@ -838,6 +841,22 @@ fun LazyListScope.renderHomeFeedSections(
                                 )
                             }
                         }
+                    }
+                }
+            }
+            "suggestions_mix" -> {
+                val mixSongs = if (speedDialSongs.isNotEmpty()) speedDialSongs.take(10) else allSongs.take(10)
+                if (mixSongs.isNotEmpty()) {
+                    item(key = "section_suggestions_mix", contentType = "section_suggestions_mix") {
+                        SuggestionsNewMusicMixSection(
+                            mixSongs = mixSongs,
+                            currentPlayingSongId = currentPlayingSongId,
+                            feedStyle = feedStyle,
+                            onPlayMix = { startSong ->
+                                onPlaySongQueue(startSong, mixSongs)
+                            },
+                            onRefresh = onRefreshSpeedDial
+                        )
                     }
                 }
             }
@@ -2860,3 +2879,251 @@ fun HomeStatsPeriodCard(
         }
     }
 }
+
+@Composable
+private fun SuggestionsNewMusicMixSection(
+    mixSongs: List<Song>,
+    currentPlayingSongId: Long?,
+    feedStyle: HomeFeedVisualStyle,
+    onPlayMix: (Song) -> Unit,
+    onRefresh: () -> Unit
+) {
+    val context = LocalContext.current
+    var refreshSpinCount by remember { mutableIntStateOf(0) }
+    val refreshRotation by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = refreshSpinCount * 360f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 420),
+        label = "suggestions_refresh_spin"
+    )
+    val isDarkSurface = BentoBackground.luminance() < 0.5f
+    val mixTileBg = if (isDarkSurface) {
+        BentoCardSurface.copy(alpha = 0.92f)
+    } else {
+        BentoPrimary.copy(alpha = 0.12f)
+    }
+    val mixTileBorder = if (isDarkSurface) {
+        BentoPrimary.copy(alpha = 0.24f)
+    } else {
+        BentoPrimary.copy(alpha = 0.30f)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("section_suggestions_mix_card"),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (feedStyle == HomeFeedVisualStyle.HERO_SPOTLIGHT || feedStyle == HomeFeedVisualStyle.STUDIO_DECK) {
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(18.dp)
+                            .clip(CircleShape)
+                            .background(BentoPrimary)
+                    )
+                }
+                Text(
+                    text = "Suggestions",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BentoTextPrimary,
+                    letterSpacing = (-0.25).sp
+                )
+            }
+
+            IconButton(
+                onClick = {
+                    HapticUtils.performClickHaptic(context)
+                    refreshSpinCount++
+                    onRefresh()
+                },
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .testTag("suggestions_mix_refresh_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Suggestions Mix",
+                    tint = BentoPrimary,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer { rotationZ = refreshRotation }
+                )
+            }
+        }
+
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val spacing = if (maxWidth < 360.dp) 8.dp else 10.dp
+            val topHeight = (maxWidth * 0.46f).coerceIn(146.dp, 212.dp)
+            val heroTitleFont = if (maxWidth < 360.dp) 24.sp else 28.sp
+            val heroLineHeight = if (maxWidth < 360.dp) 28.sp else 33.sp
+
+            val midTopSong = mixSongs.getOrNull(0)
+            val midBottomSong = mixSongs.getOrNull(1)
+            val rightHeroSong = mixSongs.getOrNull(2) ?: mixSongs.firstOrNull()
+            val bottomRowSongs = List(5) { idx ->
+                mixSongs.getOrNull(3 + idx) ?: mixSongs[idx % mixSongs.size]
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
+                // Top Bento Row: [New Music Mix card] + [2 stacked square tiles] + [1 large square tile]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(topHeight),
+                    horizontalArrangement = Arrangement.spacedBy(spacing)
+                ) {
+                    // Left Editorial Title Card ("New Music Mix")
+                    Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            mixSongs.firstOrNull()?.let { onPlayMix(it) }
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = mixTileBg,
+                        border = BorderStroke(1.dp, mixTileBorder),
+                        modifier = Modifier
+                            .weight(1.22f)
+                            .fillMaxHeight()
+                            .testTag("suggestions_new_music_mix_card")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(
+                                            BentoPrimary.copy(alpha = if (isDarkSurface) 0.16f else 0.12f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                                .padding(horizontal = 14.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = "New\nMusic\nMix",
+                                fontSize = heroTitleFont,
+                                lineHeight = heroLineHeight,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimary,
+                                letterSpacing = (-0.5).sp,
+                                modifier = Modifier.align(Alignment.CenterStart)
+                            )
+                            Text(
+                                text = "${mixSongs.size} songs",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BentoTextSecondary,
+                                modifier = Modifier.align(Alignment.BottomStart)
+                            )
+                        }
+                    }
+
+                    // Middle Column: 2 Stacked Artwork Tiles
+                    Column(
+                        modifier = Modifier
+                            .weight(0.62f)
+                            .fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(spacing)
+                    ) {
+                        listOf(midTopSong, midBottomSong).forEachIndexed { idx, tileSong ->
+                            if (tileSong != null) {
+                                val isActive = tileSong.id == currentPlayingSongId
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .then(
+                                            if (isActive) Modifier.border(2.dp, BentoPrimary, RoundedCornerShape(14.dp))
+                                            else Modifier.border(0.75.dp, BentoBorder.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+                                        )
+                                        .clickable {
+                                            HapticUtils.performClickHaptic(context)
+                                            onPlayMix(tileSong)
+                                        }
+                                        .testTag("suggestions_mix_tile_mid_$idx")
+                                ) {
+                                    AlbumArtView(
+                                        song = tileSong,
+                                        modifier = Modifier.fillMaxSize(),
+                                        cornerRadius = 14
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.fillMaxWidth().weight(1f))
+                            }
+                        }
+                    }
+
+                    // Right Hero Square Artwork Tile
+                    if (rightHeroSong != null) {
+                        val isActive = rightHeroSong.id == currentPlayingSongId
+                        Box(
+                            modifier = Modifier
+                                .weight(1.24f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(20.dp))
+                                .then(
+                                    if (isActive) Modifier.border(2.dp, BentoPrimary, RoundedCornerShape(20.dp))
+                                    else Modifier.border(0.75.dp, BentoBorder.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+                                )
+                                .clickable {
+                                    HapticUtils.performClickHaptic(context)
+                                    onPlayMix(rightHeroSong)
+                                }
+                                .testTag("suggestions_mix_tile_hero")
+                        ) {
+                            AlbumArtView(
+                                song = rightHeroSong,
+                                modifier = Modifier.fillMaxSize(),
+                                cornerRadius = 20
+                            )
+                        }
+                    }
+                }
+
+                // Bottom Row: 5 Equal Square Artwork Tiles
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(spacing)
+                ) {
+                    bottomRowSongs.forEachIndexed { idx, tileSong ->
+                        val isActive = tileSong.id == currentPlayingSongId
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .then(
+                                    if (isActive) Modifier.border(2.dp, BentoPrimary, RoundedCornerShape(14.dp))
+                                    else Modifier.border(0.75.dp, BentoBorder.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+                                )
+                                .clickable {
+                                    HapticUtils.performClickHaptic(context)
+                                    onPlayMix(tileSong)
+                                }
+                                .testTag("suggestions_mix_tile_bottom_$idx")
+                        ) {
+                            AlbumArtView(
+                                song = tileSong,
+                                modifier = Modifier.fillMaxSize(),
+                                cornerRadius = 14
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

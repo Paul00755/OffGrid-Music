@@ -120,6 +120,11 @@ fun NowPlayingScreen(
     showAdvancedSongInfo: Boolean = false,
     showRemainingTime: Boolean = false,
     onToggleShowRemainingTime: () -> Unit = {},
+    showSeekButtons: Boolean = false,
+    backwardSeconds: Int = 10,
+    forwardSeconds: Int = 10,
+    onSeekBackward: () -> Unit = {},
+    onSeekForward: () -> Unit = {},
     playbackPositionFlow: StateFlow<Long>? = null,
     keepScreenAwake: Boolean = false,
     gesturePlaybackEnabled: Boolean = true,
@@ -244,270 +249,488 @@ fun NowPlayingScreen(
         }
 
         val searchDialogDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        val dialogBg = if (searchDialogDark) BentoCardSurface else Color.White
+        val titleColor = if (searchDialogDark) Color.White else Color(0xFF0F172A)
+        val secondaryColor = if (searchDialogDark) BentoTextSecondary else Color(0xFF64748B)
+        val fieldBg = if (searchDialogDark) BentoCardDarkPurple.copy(alpha = 0.85f) else Color(0xFFF8FAFC)
+        val subtleBorder = if (searchDialogDark) BentoBorder.copy(alpha = 0.45f) else Color(0xFFE2E8F0)
 
-        AlertDialog(
+        androidx.compose.ui.window.Dialog(
             onDismissRequest = { showSearchLyricsDialog = false },
-            containerColor = if (searchDialogDark) BentoCardSurface else Color.White,
-            title = {
-                Text(
-                    text = "Find Lyrics Online",
-                    color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = true
+            )
+        ) {
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = dialogBg,
+                border = BorderStroke(1.dp, subtleBorder),
+                tonalElevation = 8.dp,
+                shadowElevation = 18.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .widthIn(max = 560.dp)
+                    .heightIn(min = 320.dp, max = 640.dp)
+                    .padding(vertical = 12.dp)
+                    .testTag("lyrics_online_search_dialog")
+            ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
                 ) {
-                    OutlinedTextField(
-                        value = searchQueryInput,
-                        onValueChange = { searchQueryInput = it },
-                        label = {
-                            Text(
-                                text = "Song Title / Artist",
-                                color = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(BentoPrimary.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lyrics,
+                                contentDescription = null,
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(21.dp)
                             )
-                        },
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
-                        ),
-                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                            onSearch = { onSearchLyricsCandidates(searchQueryInput, true) }
-                        ),
-                        trailingIcon = {
-                            Row {
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Find Lyrics Online",
+                                color = titleColor,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = when {
+                                    isSearchingLyrics -> "Searching lyrics databases…"
+                                    lyricsSearchResults.isNotEmpty() -> "${lyricsSearchResults.size} ${if (lyricsSearchResults.size == 1) "match" else "matches"} found · Tap to apply"
+                                    else -> "Search by song title or artist"
+                                },
+                                color = secondaryColor,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = { showSearchLyricsDialog = false },
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .testTag("lyrics_search_close_icon")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close lyrics search",
+                                tint = secondaryColor
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Spacious Search Row (input + dedicated filled search trigger)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = searchQueryInput,
+                            onValueChange = { searchQueryInput = it },
+                            placeholder = {
+                                Text(
+                                    text = "Song title or artist",
+                                    color = secondaryColor.copy(alpha = 0.75f),
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                            ),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onSearch = { onSearchLyricsCandidates(searchQueryInput, true) }
+                            ),
+                            trailingIcon = {
                                 if (searchQueryInput.isNotEmpty()) {
-                                    IconButton(onClick = { searchQueryInput = "" }) {
+                                    IconButton(
+                                        onClick = { searchQueryInput = "" },
+                                        modifier = Modifier.testTag("lyrics_search_clear_button")
+                                    ) {
                                         Icon(
                                             Icons.Default.Close,
-                                            contentDescription = "Clear text",
-                                            tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
+                                            contentDescription = "Clear search query",
+                                            tint = secondaryColor,
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
-                                IconButton(onClick = { onSearchLyricsCandidates(searchQueryInput, true) }) {
-                                    Icon(Icons.Default.Search, contentDescription = "Search", tint = BentoPrimary)
-                                }
-                            }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
-                            unfocusedTextColor = if (searchDialogDark) Color.White else Color(0xFF0F172A),
-                            focusedBorderColor = BentoPrimary,
-                            unfocusedBorderColor = if (searchDialogDark) BentoBorder.copy(alpha = 0.5f) else Color(0xFFCBD5E1),
-                            focusedContainerColor = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC),
-                            unfocusedContainerColor = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC),
-                            cursorColor = BentoPrimary,
-                            focusedLabelColor = BentoPrimary,
-                            unfocusedLabelColor = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B)
-                        ),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (isSearchingLyrics) {
-                        Box(
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = titleColor,
+                                unfocusedTextColor = titleColor,
+                                focusedBorderColor = BentoPrimary,
+                                unfocusedBorderColor = subtleBorder,
+                                focusedContainerColor = fieldBg,
+                                unfocusedContainerColor = fieldBg,
+                                cursorColor = BentoPrimary
+                            ),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = titleColor,
+                                fontSize = 14.5.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = BentoPrimary)
-                        }
-                    } else if (lyricsSearchResults.isEmpty()) {
-                        Box(
+                                .weight(1f)
+                                .testTag("lyrics_search_input")
+                        )
+
+                        FilledIconButton(
+                            onClick = { onSearchLyricsCandidates(searchQueryInput, true) },
+                            enabled = searchQueryInput.isNotBlank() && !isSearchingLyrics,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = BentoPrimary,
+                                contentColor = BentoOnPrimary,
+                                disabledContainerColor = BentoPrimary.copy(alpha = 0.35f),
+                                disabledContentColor = BentoOnPrimary.copy(alpha = 0.6f)
+                            ),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            contentAlignment = Alignment.Center
+                                .size(52.dp)
+                                .testTag("lyrics_search_submit_button")
                         ) {
-                            Text(
-                                text = "No lyrics candidates found.\nTry editing the title or artist name.",
-                                color = if (searchDialogDark) BentoTextSecondary else Color(0xFF64748B),
-                                fontSize = 13.sp,
-                                textAlign = TextAlign.Center
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search lyrics",
+                                modifier = Modifier.size(22.dp)
                             )
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(lyricsSearchResults) { candidate ->
-                                val candidateCardBg = if (searchDialogDark) BentoCardDarkPurple else Color(0xFFF8FAFC)
-                                val candidateCardBorder = if (searchDialogDark) BentoBorder.copy(alpha = 0.4f) else Color(0xFFE2E8F0)
-                                Card(
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    HorizontalDivider(
+                        color = subtleBorder.copy(alpha = 0.5f),
+                        thickness = 0.75.dp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Body Content
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .heightIn(min = 180.dp, max = 440.dp)
+                    ) {
+                        when {
+                            isSearchingLyrics -> {
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            onApplyLyricsCandidate(candidate)
-                                            showSearchLyricsDialog = false
-                                        },
-                                    colors = CardDefaults.cardColors(containerColor = candidateCardBg),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, candidateCardBorder),
-                                    shape = RoundedCornerShape(10.dp)
+                                        .height(200.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                    CircularProgressIndicator(
+                                        color = BentoPrimary,
+                                        strokeWidth = 3.dp,
+                                        modifier = Modifier.size(34.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Searching online lyrics…",
+                                        color = secondaryColor,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            lyricsSearchResults.isEmpty() -> {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .padding(horizontal = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(CircleShape)
+                                            .background(BentoPrimary.copy(alpha = 0.12f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SearchOff,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Text(
+                                        text = "No lyrics candidates found",
+                                        color = titleColor,
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Try searching with just the main song title or primary artist name.",
+                                        color = secondaryColor,
+                                        fontSize = 12.5.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                            else -> {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(vertical = 4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(lyricsSearchResults) { candidate ->
+                                        val candidateCardBg = if (searchDialogDark) BentoCardDarkPurple.copy(alpha = 0.72f) else Color(0xFFF8FAFC)
+                                        val candidateCardBorder = if (searchDialogDark) BentoBorder.copy(alpha = 0.42f) else Color(0xFFE2E8F0)
+                                        val previewBoxBg = if (searchDialogDark) Color.Black.copy(alpha = 0.22f) else Color(0xFFEEF2F6)
+                                        val langBadgeColor = when {
+                                            candidate.languageLabel.equals("Tamil", ignoreCase = true) ||
+                                                candidate.languageLabel.equals("Malayalam", ignoreCase = true) ||
+                                                candidate.languageLabel.equals("Hindi", ignoreCase = true) ||
+                                                candidate.languageLabel.equals("Telugu", ignoreCase = true) ||
+                                                candidate.languageLabel.equals("Kannada", ignoreCase = true) -> {
+                                                if (searchDialogDark) Color(0xFF34D399) else Color(0xFF059669)
+                                            }
+                                            candidate.languageLabel.contains("Tanglish", ignoreCase = true) ||
+                                                candidate.languageLabel.contains("(Eng)", ignoreCase = true) -> {
+                                                if (searchDialogDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                            }
+                                            else -> {
+                                                if (searchDialogDark) Color(0xFFC084FC) else Color(0xFF7C3AED)
+                                            }
+                                        }
+                                        val durationLabel = if (candidate.durationSec > 0) {
+                                            val mins = candidate.durationSec / 60
+                                            val secs = candidate.durationSec % 60
+                                            "%d:%02d".format(mins, secs)
+                                        } else null
+
+                                        Surface(
+                                            onClick = {
+                                                onApplyLyricsCandidate(candidate)
+                                                showSearchLyricsDialog = false
+                                            },
+                                            color = candidateCardBg,
+                                            border = BorderStroke(1.dp, candidateCardBorder),
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Text(
-                                                text = candidate.trackName,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (searchDialogDark) Color.White else Color(0xFF0F172A),
-                                                fontSize = 14.sp,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                // Language Badge (Tamil, Tanglish, English, Malayalam, Malayalam (Eng), Hindi, etc.)
-                                                val langBadgeColor = when {
-                                                    candidate.languageLabel.equals("Tamil", ignoreCase = true) ||
-                                                        candidate.languageLabel.equals("Malayalam", ignoreCase = true) ||
-                                                        candidate.languageLabel.equals("Hindi", ignoreCase = true) ||
-                                                        candidate.languageLabel.equals("Telugu", ignoreCase = true) ||
-                                                        candidate.languageLabel.equals("Kannada", ignoreCase = true) -> {
-                                                        if (searchDialogDark) Color(0xFF00E676) else Color(0xFF059669)
-                                                    }
-                                                    candidate.languageLabel.contains("Tanglish", ignoreCase = true) ||
-                                                        candidate.languageLabel.contains("(Eng)", ignoreCase = true) -> {
-                                                        if (searchDialogDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
-                                                    }
-                                                    else -> {
-                                                        if (searchDialogDark) Color(0xFFC084FC) else Color(0xFF7C3AED)
-                                                    }
-                                                }
-                                                Surface(
-                                                    color = langBadgeColor.copy(alpha = if (searchDialogDark) 0.16f else 0.12f),
-                                                    border = androidx.compose.foundation.BorderStroke(
-                                                        0.8.dp,
-                                                        langBadgeColor.copy(alpha = 0.42f)
-                                                    ),
-                                                    shape = RoundedCornerShape(6.dp)
+                                                // Top Row: Full-width Title + Duration Pill + Chevron
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Translate,
-                                                            contentDescription = null,
-                                                            tint = langBadgeColor,
-                                                            modifier = Modifier.size(11.dp)
-                                                        )
-                                                        Text(
-                                                            text = candidate.languageLabel,
-                                                            fontSize = 10.5.sp,
-                                                            color = langBadgeColor,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
+                                                    Text(
+                                                        text = candidate.trackName,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = titleColor,
+                                                        fontSize = 15.sp,
+                                                        modifier = Modifier.weight(1f),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (durationLabel != null) {
+                                                        Surface(
+                                                            color = if (searchDialogDark) Color.White.copy(alpha = 0.08f) else Color(0xFFE2E8F0),
+                                                            shape = RoundedCornerShape(8.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = durationLabel,
+                                                                color = secondaryColor,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                                                            )
+                                                        }
                                                     }
+                                                    Icon(
+                                                        imageVector = Icons.Default.ChevronRight,
+                                                        contentDescription = null,
+                                                        tint = secondaryColor.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
                                                 }
 
-                                                if (candidate.isSynced) {
+                                                // Artist & Album Line
+                                                Text(
+                                                    text = buildString {
+                                                        append(candidate.artistName)
+                                                        if (candidate.albumName.isNotBlank()) {
+                                                            append(" • ")
+                                                            append(candidate.albumName)
+                                                        }
+                                                    },
+                                                    color = secondaryColor,
+                                                    fontSize = 12.5.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+
+                                                // Dedicated Badges Row (Language + Synced/Plain)
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
                                                     Surface(
-                                                        color = BentoPrimary.copy(alpha = 0.18f),
-                                                        shape = RoundedCornerShape(6.dp)
+                                                        color = langBadgeColor.copy(alpha = if (searchDialogDark) 0.16f else 0.12f),
+                                                        border = BorderStroke(0.8.dp, langBadgeColor.copy(alpha = 0.42f)),
+                                                        shape = RoundedCornerShape(8.dp)
                                                     ) {
                                                         Row(
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                                         ) {
                                                             Icon(
-                                                                imageVector = Icons.Default.Sync,
+                                                                imageVector = Icons.Default.Translate,
                                                                 contentDescription = null,
-                                                                tint = BentoPrimary,
+                                                                tint = langBadgeColor,
                                                                 modifier = Modifier.size(12.dp)
                                                             )
                                                             Text(
-                                                                text = "Synced",
+                                                                text = candidate.languageLabel,
                                                                 fontSize = 11.sp,
-                                                                color = BentoPrimary,
+                                                                color = langBadgeColor,
                                                                 fontWeight = FontWeight.Bold
                                                             )
                                                         }
                                                     }
-                                                } else {
-                                                    Surface(
-                                                        color = if (searchDialogDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0),
-                                                        shape = RoundedCornerShape(6.dp)
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+
+                                                    if (candidate.isSynced) {
+                                                        Surface(
+                                                            color = BentoPrimary.copy(alpha = 0.16f),
+                                                            border = BorderStroke(0.8.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                                            shape = RoundedCornerShape(8.dp)
                                                         ) {
-                                                            Icon(
-                                                                imageVector = Icons.Default.TextFields,
-                                                                contentDescription = null,
-                                                                tint = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
-                                                                modifier = Modifier.size(12.dp)
-                                                            )
-                                                            Text(
-                                                                text = "Plain Text",
-                                                                fontSize = 11.sp,
-                                                                color = if (searchDialogDark) Color.White else Color(0xFF334155),
-                                                                fontWeight = FontWeight.Medium
-                                                            )
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Sync,
+                                                                    contentDescription = null,
+                                                                    tint = BentoPrimary,
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                                Text(
+                                                                    text = "Synced",
+                                                                    fontSize = 11.sp,
+                                                                    color = BentoPrimary,
+                                                                    fontWeight = FontWeight.Bold
+                                                                )
+                                                            }
+                                                        }
+                                                    } else {
+                                                        Surface(
+                                                            color = if (searchDialogDark) Color.White.copy(alpha = 0.1f) else Color(0xFFE2E8F0),
+                                                            shape = RoundedCornerShape(8.dp)
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.TextFields,
+                                                                    contentDescription = null,
+                                                                    tint = secondaryColor,
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                                Text(
+                                                                    text = "Plain Text",
+                                                                    fontSize = 11.sp,
+                                                                    color = if (searchDialogDark) Color.White.copy(alpha = 0.85f) else Color(0xFF334155),
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 }
+
+                                                // Inset Lyrics Preview Quote Box
+                                                if (candidate.previewSnippet.isNotBlank()) {
+                                                    Surface(
+                                                        color = previewBoxBg,
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(top = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "\"${candidate.previewSnippet}\"",
+                                                            color = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF475569),
+                                                            fontSize = 11.5.sp,
+                                                            lineHeight = 16.sp,
+                                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                                        )
+                                                    }
+                                                }
                                             }
-                                        }
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "${candidate.artistName}${if (candidate.albumName.isNotBlank()) " • " + candidate.albumName else ""}",
-                                            color = if (searchDialogDark) Color.White.copy(alpha = 0.7f) else Color(0xFF64748B),
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        if (candidate.previewSnippet.isNotBlank()) {
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            Text(
-                                                text = "\"${candidate.previewSnippet}\"",
-                                                color = if (searchDialogDark) Color.White.copy(alpha = 0.52f) else Color(0xFF475569),
-                                                fontSize = 11.sp,
-                                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSearchLyricsDialog = false }) {
-                    Text("Close", color = BentoPrimary)
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Footer
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { showSearchLyricsDialog = false },
+                            modifier = Modifier.testTag("lyrics_search_close_button")
+                        ) {
+                            Text(
+                                text = "Close",
+                                color = BentoPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
                 }
             }
-        )
+        }
     }
 
     // Intercept back button when Now Playing is open: close any active sub-sheet/dialog first, otherwise dismiss Now Playing
@@ -1056,6 +1279,31 @@ fun NowPlayingScreen(
                         }
                     }
 
+                    if (showSeekButtons) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            com.example.ui.components.SeekIntervalButton(
+                                seconds = backwardSeconds,
+                                isForward = false,
+                                onClick = onSeekBackward,
+                                tint = BentoTextPrimary,
+                                iconSize = 24.dp,
+                                touchSize = 48.dp
+                            )
+                            com.example.ui.components.SeekIntervalButton(
+                                seconds = forwardSeconds,
+                                isForward = true,
+                                onClick = onSeekForward,
+                                tint = BentoTextPrimary,
+                                iconSize = 24.dp,
+                                touchSize = 48.dp
+                            )
+                        }
+                    }
+
                     if (showVolumeBar) {
                         com.example.ui.components.NowPlayingVolumeBar(
                             inkColor = BentoTextPrimary,
@@ -1206,6 +1454,11 @@ fun NowPlayingScreen(
                         audioTechnicalInfo = audioTechnicalInfo,
                         showRemainingTime = showRemainingTime,
                         onToggleShowRemainingTime = onToggleShowRemainingTime,
+                        showSeekButtons = showSeekButtons,
+                        backwardSeconds = backwardSeconds,
+                        forwardSeconds = forwardSeconds,
+                        onSeekBackward = onSeekBackward,
+                        onSeekForward = onSeekForward,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1236,6 +1489,11 @@ fun NowPlayingScreen(
                         audioTechnicalInfo = audioTechnicalInfo,
                         showRemainingTime = showRemainingTime,
                         onToggleShowRemainingTime = onToggleShowRemainingTime,
+                        showSeekButtons = showSeekButtons,
+                        backwardSeconds = backwardSeconds,
+                        forwardSeconds = forwardSeconds,
+                        onSeekBackward = onSeekBackward,
+                        onSeekForward = onSeekForward,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1266,6 +1524,11 @@ fun NowPlayingScreen(
                         audioTechnicalInfo = audioTechnicalInfo,
                         showRemainingTime = showRemainingTime,
                         onToggleShowRemainingTime = onToggleShowRemainingTime,
+                        showSeekButtons = showSeekButtons,
+                        backwardSeconds = backwardSeconds,
+                        forwardSeconds = forwardSeconds,
+                        onSeekBackward = onSeekBackward,
+                        onSeekForward = onSeekForward,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1621,6 +1884,17 @@ fun NowPlayingScreen(
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (showSeekButtons) {
+                                    com.example.ui.components.SeekIntervalButton(
+                                        seconds = backwardSeconds,
+                                        isForward = false,
+                                        onClick = onSeekBackward,
+                                        tint = bentoInk,
+                                        iconSize = 27.dp,
+                                        touchSize = 48.dp
+                                    )
+                                }
+
                                 IconButton(
                                     onClick = {
                                         HapticUtils.performClickHaptic(context)
@@ -1663,6 +1937,17 @@ fun NowPlayingScreen(
                                         contentDescription = "Next",
                                         tint = bentoInk,
                                         modifier = Modifier.size(30.dp)
+                                    )
+                                }
+
+                                if (showSeekButtons) {
+                                    com.example.ui.components.SeekIntervalButton(
+                                        seconds = forwardSeconds,
+                                        isForward = true,
+                                        onClick = onSeekForward,
+                                        tint = bentoInk,
+                                        iconSize = 27.dp,
+                                        touchSize = 48.dp
                                     )
                                 }
                             }
@@ -1909,7 +2194,9 @@ fun NowPlayingScreen(
                 onDeleteSong = {
                     showOptionsMenu = false
                     showDeleteConfirmDialog = true
-                }
+                },
+                isSleepTimerActive = sleepTimerState.isActive,
+                onFavoriteToggle = onFavoriteToggle
             )
         }
 

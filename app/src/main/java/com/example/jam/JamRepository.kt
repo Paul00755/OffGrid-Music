@@ -1,5 +1,6 @@
 package com.example.jam
 
+import android.os.SystemClock
 import com.example.auth.AuthManager
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
@@ -9,6 +10,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.Transaction
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -108,6 +110,36 @@ class JamRepository(
         ))
     }
 
+    /**
+     * Measures the monotonic offset between local SystemClock.elapsedRealtime() and Firestore server time
+     * using the participant's own `lastSeenAt` field (allowed by existing rules). Runs [samples] probes
+     * and returns the lowest-RTT `(serverOffsetMs, rttMs)` pair for sub-20ms cross-device clock lock.
+     */
+    suspend fun calibrateServerClock(sessionId: String, samples: Int = 3): Pair<Long, Long>? {
+        val uid = authManager.currentUser?.uid?.takeIf(String::isNotBlank) ?: return null
+        val member = sessionRef(sessionId).collection(PARTICIPANTS).document(uid)
+        var bestOffsetMs: Long? = null
+        var bestRttMs = Long.MAX_VALUE
+        val probeCount = samples.coerceIn(1, 5)
+        repeat(probeCount) {
+            val probe = runCatching {
+                val tSend = SystemClock.elapsedRealtime()
+                member.update("lastSeenAt", FieldValue.serverTimestamp()).await()
+                val tAck = SystemClock.elapsedRealtime()
+                val serverSnap = member.get(Source.SERVER).await()
+                val serverTimeMs = serverSnap.getTimestamp("lastSeenAt")?.toDate()?.time ?: return@runCatching null
+                val rtt = (tAck - tSend).coerceAtLeast(0L)
+                val midpointElapsed = tSend + (rtt / 2L)
+                (serverTimeMs - midpointElapsed) to rtt
+            }.getOrNull()
+            if (probe != null && probe.second < bestRttMs) {
+                bestOffsetMs = probe.first
+                bestRttMs = probe.second
+            }
+        }
+        return bestOffsetMs?.let { it to bestRttMs }
+    }
+
     suspend fun requestFeature(sessionId: String, feature: JamFeature, displayName: String) {
         requireUid()
         call("requestJamFeature", mapOf(
@@ -142,14 +174,22 @@ class JamRepository(
         call("mutateJamQueue", mapOf("sessionId" to sessionId, "operation" to "PLAY_NEXT", "track" to track.toMap()))
     }
 
-    suspend fun playTrackNow(sessionId: String, track: JamTrack) {
+    suspend fun playTrackNow(
+        sessionId: String,
+        track: JamTrack,
+        commandId: String = java.util.UUID.randomUUID().toString(),
+        anchorServerMs: Long = 0L
+    ) {
         requireUid()
-        call("mutateJamQueue", mapOf(
+        val payload = mutableMapOf<String, Any>(
             "sessionId" to sessionId,
             "operation" to "ADD",
             "track" to track.toMap(),
-            "playImmediately" to true
-        ))
+            "playImmediately" to true,
+            "commandId" to commandId
+        )
+        if (anchorServerMs > 0L) payload["anchorServerMs"] = anchorServerMs
+        call("mutateJamQueue", payload)
     }
 
     suspend fun addTracksBatch(sessionId: String, tracks: List<JamTrack>, shuffle: Boolean = false): Int {
@@ -190,7 +230,8 @@ class JamRepository(
         hasActiveItem: Boolean = false,
         commandId: String = java.util.UUID.randomUUID().toString(),
         isDirectSelect: Boolean = false,
-        basePlaybackRevision: Long? = null
+        basePlaybackRevision: Long? = null,
+        anchorServerMs: Long = 0L
     ): JamPlaybackState {
         requireUid()
         val payload = mutableMapOf<String, Any>(
@@ -203,6 +244,7 @@ class JamRepository(
         if (positionMs != null) payload["positionMs"] = positionMs.coerceAtLeast(0L)
         if (type == JamPermissionKind.SKIP_TRACK) payload["step"] = if (step < 0) -1 else 1
         if (basePlaybackRevision != null) payload["basePlaybackRevision"] = basePlaybackRevision
+        if (anchorServerMs > 0L) payload["anchorServerMs"] = anchorServerMs
         if (!targetQueueItemId.isNullOrBlank()) payload["queueItemId"] = targetQueueItemId
         if (!targetSharedTrackId.isNullOrBlank() && !targetQueueItemId.isNullOrBlank()) {
             payload["sharedTrackId"] = targetSharedTrackId
@@ -217,6 +259,7 @@ class JamRepository(
             positionMs = (result["positionMs"] as? Number)?.toLong() ?: 0L,
             playbackSpeed = (result["playbackSpeed"] as? Number)?.toFloat() ?: 1f,
             updatedAtMs = (result["updatedAtMs"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            anchorServerMs = (result["anchorServerMs"] as? Number)?.toLong() ?: anchorServerMs,
             revision = (result["revision"] as? Number)?.toLong() ?: 0L,
             commandId = result["commandId"] as? String,
             commandType = result["commandType"] as? String,
@@ -600,7 +643,7 @@ class JamRepository(
         val id = sessionId(data); val session = sessionRef(id); val member = session.collection(PARTICIPANTS).document(uid)
         val snapshot = member.get().await()
         if (!snapshot.exists()) throw JamRepositoryException("You are not a participant in this Jam.")
-        member.update(mapOf("displayName" to safeDisplayName(data), "photoUrl" to safePhoto(data), "lastSeenAt" to Timestamp.now())).await()
+        member.update(mapOf("displayName" to safeDisplayName(data), "photoUrl" to safePhoto(data), "lastSeenAt" to FieldValue.serverTimestamp())).await()
         return mapOf("ok" to true)
     }
 
@@ -766,15 +809,18 @@ class JamRepository(
                     addedCount = 1
                 }
                 if (playImmediately && roomStarted && permissions.allows(JamPermissionKind.PLAY_PAUSE, uid, hostUid) && permissions.allows(JamPermissionKind.SKIP_TRACK, uid, hostUid)) {
+                    val cmdId = (data["commandId"] as? String)?.takeIf(String::isNotBlank) ?: java.util.UUID.randomUUID().toString()
+                    val anchorServerMs = (data["anchorServerMs"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L
                     updatedPlayback = mapOf(
                         "sharedTrackId" to trackSharedId,
                         "queueItemId" to targetDocId,
                         "isPlaying" to true,
                         "positionMs" to 0L,
                         "playbackSpeed" to 1.0,
-                        "updatedAt" to Timestamp.now(),
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                        "anchorServerMs" to anchorServerMs,
                         "revision" to nextRev,
-                        "commandId" to java.util.UUID.randomUUID().toString(),
+                        "commandId" to cmdId,
                         "commandType" to JamPermissionKind.SKIP_TRACK.name,
                         "actorUid" to uid,
                         "step" to 1
@@ -784,7 +830,8 @@ class JamRepository(
                         "sharedTrackId" to trackSharedId,
                         "queueItemId" to targetDocId,
                         "positionMs" to 0L,
-                        "updatedAt" to Timestamp.now(),
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                        "anchorServerMs" to 0L,
                         "revision" to nextRev,
                         "commandId" to java.util.UUID.randomUUID().toString(),
                         "actorUid" to uid
@@ -897,7 +944,8 @@ class JamRepository(
                         "queueItemId" to (nextDoc?.id ?: ""),
                         "isPlaying" to if (nextDoc == null) false else (currentPlayback["isPlaying"] as? Boolean ?: false),
                         "positionMs" to 0L,
-                        "updatedAt" to Timestamp.now(),
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                        "anchorServerMs" to 0L,
                         "revision" to nextRev,
                         "commandId" to java.util.UUID.randomUUID().toString(),
                         "commandType" to JamPermissionKind.SKIP_TRACK.name,
@@ -1203,8 +1251,10 @@ class JamRepository(
         val now = System.currentTimeMillis()
         val commandId = data["commandId"] as? String ?: java.util.UUID.randomUUID().toString()
 
+        val callerAnchorServerMs = (data["anchorServerMs"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L
+
         // Fast single-hop path when the controller has already resolved the target track, position, and permissions:
-        // avoids Firestore 2-round-trip transaction locking and retry backoff delays (reducing latency from 1.5-6s to ~60ms).
+        // avoids Firestore 2-round-trip transaction locking and retry backoff delays (reducing latency from 1.5-6s to ~50ms).
         if (resolvedByController && requestedQueueItemId != null && requestedSharedTrackId != null) {
             val baseRev = (data["basePlaybackRevision"] as? Number)?.toLong() ?: 0L
             val rev = maxOf(baseRev + 1L, now)
@@ -1219,7 +1269,8 @@ class JamRepository(
                 "isPlaying" to playing,
                 "positionMs" to position,
                 "playbackSpeed" to 1.0,
-                "updatedAt" to Timestamp.now(),
+                "updatedAt" to FieldValue.serverTimestamp(),
+                "anchorServerMs" to callerAnchorServerMs,
                 "revision" to rev,
                 "commandId" to commandId,
                 "commandType" to type,
@@ -1240,6 +1291,7 @@ class JamRepository(
                 "positionMs" to position,
                 "playbackSpeed" to 1.0,
                 "updatedAtMs" to ackNow,
+                "anchorServerMs" to callerAnchorServerMs,
                 "revision" to rev,
                 "commandId" to commandId,
                 "commandType" to type,
@@ -1359,12 +1411,12 @@ class JamRepository(
             }
             val rev = maxOf(((state["revision"] as? Number)?.toLong() ?: 0L) + 1L, System.currentTimeMillis())
             val updated = mapOf("sharedTrackId" to sharedId, "queueItemId" to itemId, "isPlaying" to playing, "positionMs" to position,
-                "playbackSpeed" to 1.0, "updatedAt" to Timestamp.now(), "revision" to rev, "commandId" to commandId,
-                "commandType" to type, "actorUid" to uid, "step" to step)
+                "playbackSpeed" to 1.0, "updatedAt" to FieldValue.serverTimestamp(), "anchorServerMs" to callerAnchorServerMs,
+                "revision" to rev, "commandId" to commandId, "commandType" to type, "actorUid" to uid, "step" to step)
             tx.update(session, mapOf("playback" to updated, "revision" to (currentSession.getLong("revision") ?: 0L) + 1L))
             mapOf("sharedTrackId" to sharedId, "queueItemId" to itemId, "isPlaying" to playing, "positionMs" to position,
-                "playbackSpeed" to 1.0, "updatedAtMs" to System.currentTimeMillis(), "revision" to rev, "commandId" to commandId,
-                "commandType" to type, "actorUid" to uid) as Map<String, Any?>
+                "playbackSpeed" to 1.0, "updatedAtMs" to System.currentTimeMillis(), "anchorServerMs" to callerAnchorServerMs,
+                "revision" to rev, "commandId" to commandId, "commandType" to type, "actorUid" to uid) as Map<String, Any?>
         }.await()
     }
 

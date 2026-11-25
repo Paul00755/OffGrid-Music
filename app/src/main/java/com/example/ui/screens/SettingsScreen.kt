@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -61,7 +63,7 @@ enum class SettingsSection(val title: String, val icon: androidx.compose.ui.grap
     ALL("All", Icons.Default.Tune),
     AUDIO("Audio & Sound", Icons.Default.Equalizer),
     UI("UI & Theme", Icons.Default.Palette),
-    HOME_FEED("Home Feed", Icons.Default.DashboardCustomize),
+    HOME_FEED("Organize & Order Your Feed", Icons.Default.DashboardCustomize),
     CACHE("Cache & Storage", Icons.Default.Storage),
     PLAYBACK("Playback & Timers", Icons.Default.PlayCircle),
     LIBRARY("Library & Folders", Icons.Default.Folder),
@@ -80,12 +82,12 @@ data class SettingsCategoryCardItem(
 val SETTINGS_CATEGORY_CARD_ITEMS = listOf(
     SettingsCategoryCardItem(SettingsSection.AUDIO, "Audio & Sound", "Crossfade, Equalizer, Loudness normalization & Balance", Icons.Default.Equalizer, Color(0xFF00E5FF)),
     SettingsCategoryCardItem(SettingsSection.UI, "UI & Theme", "Dark/Light/AMOLED, Dynamic colors & Screen layouts", Icons.Default.Palette, Color(0xFFBB86FC)),
-    SettingsCategoryCardItem(SettingsSection.HOME_FEED, "Home Feed", "Customize home sections, Reorder & Custom feed presets", Icons.Default.DashboardCustomize, Color(0xFF7C4DFF)),
+    SettingsCategoryCardItem(SettingsSection.HOME_FEED, "Organize & Order Your Feed", "Arrange home sections, Bottom bar order & Custom feed presets", Icons.Default.DashboardCustomize, Color(0xFF7C4DFF)),
     SettingsCategoryCardItem(SettingsSection.PLAYBACK, "Playback & Timers", "Sleep timer, Volume automation, Gestures & Queue behavior", Icons.Default.PlayCircle, Color(0xFFFF9100)),
     SettingsCategoryCardItem(SettingsSection.LIBRARY, "Library & Folders", "Scan device storage, Exclude folders & Short-clip filter", Icons.Default.Folder, Color(0xFF2979FF)),
     SettingsCategoryCardItem(SettingsSection.CACHE, "Cache & Storage", "Artwork cache, Lyrics storage & SQLite database optimization", Icons.Default.Storage, Color(0xFF00E676)),
     SettingsCategoryCardItem(SettingsSection.CLOUD_SYNC, "Cloud & Sync", "Google & Email account, Cloud backup & Cross-device sync", Icons.Default.CloudSync, Color(0xFF00E5FF)),
-    SettingsCategoryCardItem(SettingsSection.OTHER, "Other & Privacy", "Search history, Diagnostics logs, Updates & Reset", Icons.Default.Security, Color(0xFFFF5252))
+    SettingsCategoryCardItem(SettingsSection.OTHER, "Other & Privacy", "Search behavior, History, Diagnostics, Updates & Reset", Icons.Default.Security, Color(0xFFFF5252))
 )
 
 private val SETTINGS_WHITESPACE_REGEX = Regex("[\\s\\-_/.]+")
@@ -154,9 +156,9 @@ fun HomeScreenSectionsManagerCard(
 
     val builtInPresets = remember {
         listOf(
-            "Default Full" to listOf("continue_listening", "quick_actions", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
-            "Minimalist" to listOf("recently_played", "most_played_playlists"),
-            "Discovery & Stats" to listOf("listening_stats", "most_played", "top_artists", "top_albums"),
+            "Default Full" to listOf("continue_listening", "quick_actions", "suggestions_mix", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
+            "Minimalist" to listOf("suggestions_mix", "recently_played", "most_played_playlists"),
+            "Discovery & Stats" to listOf("suggestions_mix", "listening_stats", "most_played", "top_artists", "top_albums"),
             "Recents First" to listOf("recently_played", "recently_added", "most_played_playlists")
         )
     }
@@ -727,6 +729,12 @@ fun SettingsScreen(
     onSetShowNowPlayingVolumeBar: (Boolean) -> Unit = {},
     showAdvancedSongInfo: Boolean = false,
     onSetShowAdvancedSongInfo: (Boolean) -> Unit = {},
+    showNowPlayingSeekButtons: Boolean = false,
+    onSetShowNowPlayingSeekButtons: (Boolean) -> Unit = {},
+    nowPlayingBackwardSeconds: Int = 10,
+    onSetNowPlayingBackwardSeconds: (Int) -> Unit = {},
+    nowPlayingForwardSeconds: Int = 10,
+    onSetNowPlayingForwardSeconds: (Int) -> Unit = {},
     isDynamicArtworkTheme: Boolean = false,
     onSetDynamicArtworkTheme: (Boolean) -> Unit = {},
     useDarkColors: Boolean = false,
@@ -859,6 +867,8 @@ fun SettingsScreen(
     onSetHighRefreshRate: (Boolean) -> Unit = {},
     alwaysShuffleMode: Boolean = false,
     onSetAlwaysShuffleMode: (Boolean) -> Unit = {},
+    smartQueueEnabled: Boolean = false,
+    onSetSmartQueueEnabled: (Boolean) -> Unit = {},
     gesturePlaybackEnabled: Boolean = true,
     onSetGesturePlaybackEnabled: (Boolean) -> Unit = {},
     addToQueuePosition: String = "BOTTOM",
@@ -867,6 +877,11 @@ fun SettingsScreen(
     onSetPlaylistAddSongPosition: (String) -> Unit = {},
     homeSections: List<String> = emptyList(),
     onSetHomeSections: (List<String>) -> Unit = {},
+    bottomNavOrder: List<NavTab> = DEFAULT_BOTTOM_NAV_TABS,
+    onSetBottomNavOrder: (List<NavTab>) -> Unit = {},
+    onResetBottomNavOrder: () -> Unit = {},
+    autoOpenSearchKeyboard: Boolean = true,
+    onSetAutoOpenSearchKeyboard: (Boolean) -> Unit = {},
     customHomeFeedPresets: List<com.example.data.local.CustomHomeFeedPreset> = emptyList(),
     onSaveCustomHomeFeedPreset: (String, List<String>) -> Unit = { _, _ -> },
     onDeleteCustomHomeFeedPreset: (String) -> Unit = {},
@@ -935,6 +950,7 @@ fun SettingsScreen(
     var apiKeyInput by remember { mutableStateOf("") }
     var isEditingApiKey by remember { mutableStateOf(false) }
     var showKeyText by remember { mutableStateOf(false) }
+    var showApiKeyGuideDialog by remember { mutableStateOf(false) }
 
     fun navigateToSection(newSection: SettingsSection) {
         if (selectedSection != newSection) {
@@ -1476,6 +1492,12 @@ fun SettingsScreen(
         )
     }
 
+    if (showApiKeyGuideDialog) {
+        com.example.ui.components.GeminiApiKeyGuideDialog(
+            onDismiss = { showApiKeyGuideDialog = false }
+        )
+    }
+
     if (showQueuePositionDialog) {
         val queueOptions = listOf(
             Triple("BOTTOM", "Bottom of Queue", "Append new tracks to the end of the Up-Next queue"),
@@ -1753,7 +1775,8 @@ fun SettingsScreen(
             )
             val matchAudioTranscribe = matchesSettingsTokens(
                 searchTokens,
-                "transcribe", "translate", "gemini", "api key", "tamil", "tanglish", "hindi", "malayalam", "lyrics translation", "ai lyrics"
+                "transcribe", "translate", "gemini", "api key", "find api key", "add api key", "how do i add", "aistudio",
+                "tamil", "tanglish", "hindi", "malayalam", "lyrics translation", "ai lyrics"
             )
             val matchAudioBalance = matchesSettingsTokens(
                 searchTokens,
@@ -1825,6 +1848,11 @@ fun SettingsScreen(
                 "advanced song information", "song info", "audio format", "bitrate", "frequency", "sample rate",
                 "bit depth", "128", "192", "320", "khz", "flac", "kbps"
             )
+            val matchUiSeekButtons = matchesSettingsTokens(
+                searchTokens,
+                "forward", "backward", "rewind", "fast forward", "seek", "seek buttons",
+                "skip seconds", "5s", "10s", "30s", "jump", "now playing", "now-playing"
+            )
             val matchUiWaveform = matchesSettingsTokens(
                 searchTokens,
                 "waveform", "waveform visualizer", "visualizer style", "sleek line", "snake", "symmetric", "dotted", "bars", "wave", "wavy", "squiggly", "bar", "seekbar"
@@ -1842,12 +1870,14 @@ fun SettingsScreen(
             val anyUiItemMatches = matchUiScreenLayouts || matchUiDisplayMode ||
                 matchUiDisplayScale || matchUiAccentColor || matchUiDynamicArtwork || matchUiDarkColors ||
                 matchUiGradientGlass || matchUiHighResArtwork || matchUiLyricsAutoScroll || matchUiVolumeBar ||
-                matchUiAdvancedSongInfo || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
+                matchUiAdvancedSongInfo || matchUiSeekButtons || matchUiWaveform || matchUiRefreshRate || matchUiMiniPlayer
 
-            // Section 3: Home Feed granular matcher
+            // Section 3: Organize & Order Your Feed granular matcher
             val matchHomeFeedItem = matchesSettingsTokens(
                 searchTokens,
-                "home feed", "home screen feed", "section ordering", "reorder", "speed dial",
+                "organize", "order", "organize & order your feed", "home feed", "home screen feed",
+                "section ordering", "reorder", "bottom bar", "navigation bar", "nav bar", "tab order",
+                "suggestions", "new music mix", "speed dial",
                 "continue listening", "most played", "recently added", "recently played", "top albums",
                 "top artists", "smart playlist", "recents first", "discovery"
             )
@@ -1869,6 +1899,10 @@ fun SettingsScreen(
             val matchPlaybackAlwaysShuffle = matchesSettingsTokens(
                 searchTokens,
                 "always shuffle", "shuffle mode", "shuffle order", "random"
+            )
+            val matchPlaybackSmartQueue = matchesSettingsTokens(
+                searchTokens,
+                "smart queue", "smart shuffle", "shuffle", "dynamic queue", "genre", "playback history", "intelligent shuffle"
             )
             val matchPlaybackStartupAutoplay = matchesSettingsTokens(
                 searchTokens,
@@ -1895,7 +1929,7 @@ fun SettingsScreen(
                 "keep screen awake", "screen awake", "awake", "prevent device display from sleeping", "wakelock"
             )
             val anyPlaybackItemMatches = matchPlaybackSleepTimer || matchPlaybackCompletion ||
-                matchPlaybackShake || matchPlaybackAlwaysShuffle || matchPlaybackStartupAutoplay ||
+                matchPlaybackShake || matchPlaybackAlwaysShuffle || matchPlaybackSmartQueue || matchPlaybackStartupAutoplay ||
                 matchPlaybackGestures || matchPlaybackAddToQueuePos || matchPlaybackAddToPlaylistPos ||
                 matchPlaybackHeadphones || matchPlaybackKeepAwake ||
                 matchAudioPauseZero || matchAudioAutoResume
@@ -1950,7 +1984,8 @@ fun SettingsScreen(
             // Section 7: Other & Privacy granular matchers
             val matchOtherSearchHistory = matchesSettingsTokens(
                 searchTokens,
-                "recent search", "recent searches", "search history", "clear history", "search queries"
+                "recent search", "recent searches", "search history", "clear history", "search queries",
+                "keyboard", "wake keyboard", "immediately wake keyboard", "search screen", "auto focus"
             )
             val matchOtherDiagnostics = matchesSettingsTokens(
                 searchTokens,
@@ -2739,6 +2774,54 @@ fun SettingsScreen(
                                         )
                                     }
 
+                                    // Helpful guide trigger right near the Translation/Transcribe toggle
+                                    Surface(
+                                        onClick = {
+                                            HapticUtils.performClickHaptic(context)
+                                            showApiKeyGuideDialog = true
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = BentoPrimary.copy(alpha = 0.09f),
+                                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.28f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .testTag("how_to_find_api_key_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                                                    contentDescription = null,
+                                                    tint = BentoPrimary,
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                                Text(
+                                                    text = "How do I add / find my API key?",
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = BentoPrimary
+                                                )
+                                            }
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                contentDescription = "Open API key instructions",
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+
                                     if (isTranscribeTranslateEnabled || isEditingApiKey) {
                                         Surface(
                                             shape = RoundedCornerShape(14.dp),
@@ -3360,7 +3443,7 @@ fun SettingsScreen(
                 }
 
                 // Group 2C: Now Playing & Waveform
-                val showUiNowPlayingGroup = !isSearching || broadUiMatch || matchUiWaveform || matchUiVolumeBar || matchUiAdvancedSongInfo || matchUiLyricsAutoScroll || matchUiHighResArtwork
+                val showUiNowPlayingGroup = !isSearching || broadUiMatch || matchUiWaveform || matchUiVolumeBar || matchUiAdvancedSongInfo || matchUiSeekButtons || matchUiLyricsAutoScroll || matchUiHighResArtwork
                 if (showUiNowPlayingGroup) {
                     item(key = "settings_ui_now_playing_card") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3460,6 +3543,194 @@ fun SettingsScreen(
                                         icon = Icons.Default.GraphicEq,
                                         accentColor = BentoPrimary
                                     )
+                                    if (!isSearching || broadUiMatch) SettingsDivider()
+                                }
+
+                                if (!isSearching || matchUiSeekButtons || broadUiMatch) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("settings_now_playing_seek_buttons_section")
+                                    ) {
+                                        SettingsToggleRow(
+                                            title = "Forward & Backward Seek Buttons",
+                                            subtitle = if (showNowPlayingSeekButtons) {
+                                                "Showing -${nowPlayingBackwardSeconds}s / +${nowPlayingForwardSeconds}s jump controls across all 4 Now Playing screens"
+                                            } else {
+                                                "Add quick rewind and fast-forward buttons across all 4 Now Playing screens"
+                                            },
+                                            checked = showNowPlayingSeekButtons,
+                                            onCheckedChange = onSetShowNowPlayingSeekButtons,
+                                            icon = Icons.Default.Forward10,
+                                            accentColor = BentoPrimary
+                                        )
+
+                                        AnimatedVisibility(
+                                            visible = showNowPlayingSeekButtons,
+                                            enter = expandVertically() + fadeIn(),
+                                            exit = shrinkVertically() + fadeOut()
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(14.dp),
+                                                color = BentoCardPurple.copy(alpha = 0.45f),
+                                                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.24f)),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 8.dp, bottom = 4.dp)
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(12.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    val intervalOptions = remember { listOf(5, 10, 15, 30) }
+
+                                                    // Backward Interval Section
+                                                    Column(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        ) {
+                                                            com.example.ui.components.SeekIntervalIcon(
+                                                                seconds = nowPlayingBackwardSeconds,
+                                                                isForward = false,
+                                                                tint = BentoPrimary,
+                                                                iconSize = 26.dp
+                                                            )
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = "Backward Skip",
+                                                                    color = BentoTextPrimary,
+                                                                    fontSize = 13.sp,
+                                                                    fontWeight = FontWeight.SemiBold
+                                                                )
+                                                                Text(
+                                                                    text = "Rewind by ${nowPlayingBackwardSeconds}s",
+                                                                    color = BentoTextSecondary,
+                                                                    fontSize = 11.sp
+                                                                )
+                                                            }
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            intervalOptions.forEach { sec ->
+                                                                val isSelected = nowPlayingBackwardSeconds == sec
+                                                                Surface(
+                                                                    onClick = {
+                                                                        HapticUtils.performClickHaptic(context)
+                                                                        onSetNowPlayingBackwardSeconds(sec)
+                                                                    },
+                                                                    shape = RoundedCornerShape(10.dp),
+                                                                    color = if (isSelected) BentoPrimary else BentoCardDarkPurple.copy(alpha = 0.65f),
+                                                                    border = BorderStroke(
+                                                                        1.dp,
+                                                                        if (isSelected) BentoPrimary else BentoTextSecondary.copy(alpha = 0.22f)
+                                                                    ),
+                                                                    modifier = Modifier
+                                                                        .weight(1f)
+                                                                        .defaultMinSize(minHeight = 38.dp)
+                                                                        .testTag("settings_seek_backward_${sec}s")
+                                                                ) {
+                                                                    Box(
+                                                                        contentAlignment = Alignment.Center,
+                                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "${sec}s",
+                                                                            color = if (isSelected) Color.White else BentoTextPrimary,
+                                                                            fontSize = 12.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            maxLines = 1
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    HorizontalDivider(color = BentoTextSecondary.copy(alpha = 0.14f))
+
+                                                    // Forward Interval Section
+                                                    Column(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        ) {
+                                                            com.example.ui.components.SeekIntervalIcon(
+                                                                seconds = nowPlayingForwardSeconds,
+                                                                isForward = true,
+                                                                tint = BentoPrimary,
+                                                                iconSize = 26.dp
+                                                            )
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = "Forward Skip",
+                                                                    color = BentoTextPrimary,
+                                                                    fontSize = 13.sp,
+                                                                    fontWeight = FontWeight.SemiBold
+                                                                )
+                                                                Text(
+                                                                    text = "Jump ahead by ${nowPlayingForwardSeconds}s",
+                                                                    color = BentoTextSecondary,
+                                                                    fontSize = 11.sp
+                                                                )
+                                                            }
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            intervalOptions.forEach { sec ->
+                                                                val isSelected = nowPlayingForwardSeconds == sec
+                                                                Surface(
+                                                                    onClick = {
+                                                                        HapticUtils.performClickHaptic(context)
+                                                                        onSetNowPlayingForwardSeconds(sec)
+                                                                    },
+                                                                    shape = RoundedCornerShape(10.dp),
+                                                                    color = if (isSelected) BentoPrimary else BentoCardDarkPurple.copy(alpha = 0.65f),
+                                                                    border = BorderStroke(
+                                                                        1.dp,
+                                                                        if (isSelected) BentoPrimary else BentoTextSecondary.copy(alpha = 0.22f)
+                                                                    ),
+                                                                    modifier = Modifier
+                                                                        .weight(1f)
+                                                                        .defaultMinSize(minHeight = 38.dp)
+                                                                        .testTag("settings_seek_forward_${sec}s")
+                                                                ) {
+                                                                    Box(
+                                                                        contentAlignment = Alignment.Center,
+                                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "${sec}s",
+                                                                            color = if (isSelected) Color.White else BentoTextPrimary,
+                                                                            fontSize = 12.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            maxLines = 1
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     if (!isSearching || broadUiMatch) SettingsDivider()
                                 }
 
@@ -3715,15 +3986,15 @@ fun SettingsScreen(
             }
 
             // ==========================================
-            // SECTION 3: HOME FEED & CATEGORIES
+            // SECTION 3: ORGANIZE & ORDER YOUR FEED
             // ==========================================
             if (showHomeFeed) {
                 if (isSearching) {
                     item(key = "settings_home_feed_header") {
                         SettingsSectionHeader(
-                            title = "Home Feed",
-                            subtitle = "Customize section ordering, toggle categories & custom feed presets",
-                            kicker = "HOME FEED & DISCOVERY",
+                            title = "Organize & Order Your Feed",
+                            subtitle = "Arrange home sections, bottom bar order & custom feed presets",
+                            kicker = "FEED & NAVIGATION",
                             icon = Icons.Default.DashboardCustomize,
                             accentColor = BentoPrimary
                         )
@@ -3740,6 +4011,16 @@ fun SettingsScreen(
                             onDeleteCustomPreset = onDeleteCustomHomeFeedPreset
                         )
                     }
+                }
+
+                item(key = "settings_bottom_nav_order_card") {
+                    BottomNavOrderManagerCard(
+                        currentOrder = bottomNavOrder,
+                        onUpdateOrder = onSetBottomNavOrder,
+                        onResetOrder = onResetBottomNavOrder,
+                        isSignedIn = userAccount != null,
+                        onOpenAuth = onOpenAuth
+                    )
                 }
             }
 
@@ -4165,7 +4446,7 @@ fun SettingsScreen(
 
                 // Group 4C: Gestures, Shuffle & Display
                 val showPlaybackControls = !isSearching || broadPlaybackMatch ||
-                    matchPlaybackAlwaysShuffle || matchPlaybackGestures ||
+                    matchPlaybackAlwaysShuffle || matchPlaybackSmartQueue || matchPlaybackGestures ||
                     matchPlaybackShake || matchPlaybackKeepAwake
                 if (showPlaybackControls) {
                     item(key = "settings_playback_controls_card") {
@@ -4180,6 +4461,23 @@ fun SettingsScreen(
                                         onCheckedChange = onSetAlwaysShuffleMode,
                                         icon = Icons.Default.Shuffle,
                                         accentColor = BentoPrimary
+                                    )
+                                    if (!isSearching || broadPlaybackMatch) SettingsDivider()
+                                }
+
+                                if (!isSearching || matchPlaybackSmartQueue || broadPlaybackMatch) {
+                                    SettingsToggleRow(
+                                        title = "Smart Queue",
+                                        subtitle = if (smartQueueEnabled) {
+                                            "Smart Shuffle active — analyzes playback history & genre preferences to dynamically reorder shuffled queues"
+                                        } else {
+                                            "Default OFF — enable Smart Shuffle to analyze playback history & genre preferences when shuffling"
+                                        },
+                                        checked = smartQueueEnabled,
+                                        onCheckedChange = onSetSmartQueueEnabled,
+                                        icon = Icons.Default.AutoAwesome,
+                                        accentColor = BentoPrimary,
+                                        modifier = Modifier.testTag("toggle_smart_queue")
                                     )
                                     if (!isSearching || broadPlaybackMatch) SettingsDivider()
                                 }
@@ -5238,14 +5536,25 @@ fun SettingsScreen(
                     }
                 }
 
-                // Group 7A: Privacy & Diagnostics
+                // Group 7A: Search, Privacy & Diagnostics
                 val showOtherPrivacy = !isSearching || matchOtherSearchHistory || matchOtherDiagnostics || broadOtherMatch
                 if (showOtherPrivacy) {
                     item(key = "settings_other_privacy_card") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SettingsSubGroupLabel(title = "PRIVACY & DIAGNOSTICS")
+                            SettingsSubGroupLabel(title = "SEARCH, PRIVACY & DIAGNOSTICS")
                             SettingsCardContainer(accentGlow = BentoPrimary) {
                                 if (!isSearching || matchOtherSearchHistory || broadOtherMatch) {
+                                    SettingsToggleRow(
+                                        title = "Immediately wake keyboard when entering Search screen",
+                                        subtitle = "Automatically focus the search box and open the keyboard when opening Search",
+                                        checked = autoOpenSearchKeyboard,
+                                        onCheckedChange = {
+                                            HapticUtils.performClickHaptic(context)
+                                            onSetAutoOpenSearchKeyboard(it)
+                                        },
+                                        modifier = Modifier.testTag("toggle_auto_open_search_keyboard")
+                                    )
+                                    SettingsDivider()
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -5611,7 +5920,7 @@ fun SettingsScreen(
                                         },
                                         text = {
                                             Text(
-                                                text = "This will reset all Audio & DSP, UI & Themes, Home Feed, Playback, Cache, Library, and Privacy settings back to their default state.\n\n• Your stored Gemini API key will NOT be deleted (the Transcribe/Translate toggle will simply be turned OFF).\n• Your songs, playlists, favorites, lyrics, and cloud account will remain untouched.",
+                                                text = "This will reset all Audio & DSP, UI & Themes, Feed & Bottom Bar Order, Playback, Cache, Library, and Privacy settings back to their default state.\n\n• Your stored Gemini API key will NOT be deleted (the Transcribe/Translate toggle will simply be turned OFF).\n• Your songs, playlists, favorites, lyrics, and cloud account will remain untouched.",
                                                 fontSize = 13.sp,
                                                 color = BentoTextSecondary,
                                                 lineHeight = 18.5.sp

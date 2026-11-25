@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -132,6 +134,7 @@ import com.example.jam.JamRepository
 import com.example.jam.JamVote
 import com.example.jam.JamQueueItem
 import com.example.jam.JamSession
+import com.example.jam.JamSyncStatus
 import com.example.jam.JamUiState
 import com.example.jam.extractJamInviteCode
 import com.example.ui.components.AlbumArtView
@@ -175,6 +178,7 @@ fun JamScreen(
     val selectedRecommendationId = controller?.selectedRecommendationId?.collectAsStateWithLifecycle()?.value
     val invite = controller?.invite?.collectAsStateWithLifecycle()?.value
     val localTrackAvailable = controller?.localTrackAvailable?.collectAsStateWithLifecycle()?.value ?: false
+    val syncStatus = controller?.syncStatus?.collectAsStateWithLifecycle()?.value ?: JamSyncStatus()
     val sharedLibraryMatches = controller?.sharedLibraryMatches?.collectAsStateWithLifecycle()?.value.orEmpty()
     val libraryIndexStatus = controller?.libraryIndexStatus?.collectAsStateWithLifecycle()?.value ?: JamLibraryIndexStatus()
     val currentUid = controller?.currentUid?.collectAsStateWithLifecycle()?.value
@@ -302,111 +306,130 @@ fun JamScreen(
         )
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         if (glass.gradientEnabled) {
             GlassGradientBackdrop()
         } else {
             Box(Modifier.fillMaxSize().background(BentoScreenBackground))
         }
+        val contentMaxWidth = when {
+            page == JamPage.ACTIVE && maxWidth >= 840.dp -> 820.dp
+            maxWidth >= 600.dp -> 640.dp
+            else -> maxWidth
+        }
 
-        when (page) {
-            JamPage.LANDING -> LandingPage(
-                controller = controller,
-                onRequireAuthentication = onRequireAuthentication,
-                isSignedIn = isSignedIn,
-                onHowItWorks = { howItWorksStep = 0 },
-                state = state,
-                modifier = Modifier.fillMaxSize()
-            )
-            JamPage.CREATE -> CreatePage(
-                permissions = permissionDraft,
-                selectedPreset = selectedPreset,
-                onPresetChange = { preset ->
-                    selectedPreset = preset
-                    permissionDraft = permissionForPreset(preset)
-                },
-                maxParticipants = maxParticipants,
-                onMaxParticipantsChange = { maxParticipants = it },
-                onPermissionsChange = { permissionDraft = it },
-                onBack = { controller?.openPage(JamPage.LANDING) },
-                onCreate = { controller?.createJam(permissionDraft, maxParticipants) },
-                state = state
-            )
-            JamPage.JOIN -> JoinPage(
-                onBack = { controller?.openPage(JamPage.LANDING) },
-                onJoin = { code ->
-                    if (controller?.requestJoin(code) == true) onRequireAuthentication()
-                },
-                state = state
-            )
-            JamPage.INVITE -> InvitePage(
-                invite = invite,
-                participants = participants,
-                isHost = session?.hostUid != null && session.hostUid == currentUid,
-                currentUid = currentUid.orEmpty(),
-                maxParticipants = session?.maxParticipants ?: maxParticipants,
-                onBackToJam = { controller?.startJam() },
-                onCloseRoom = { showRoomLeaveConfirmation = true },
-                onRemoveParticipant = { participantUidToRemove = it },
-                onCopyCode = { code -> clipboard.setText(AnnotatedString(code)) },
-                onShare = { url, code ->
-                    val text = url ?: "Join my OffGrid Jam with invitation code $code"
-                    runCatching {
-                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, text)
-                        }, "Share OffGrid Jam"))
-                    }
-                },
-                state = state
-            )
-            JamPage.ACTIVE -> ActivePage(
-                controller = controller,
-                session = session,
-                participants = participants,
-                queue = queue,
-                recommendations = recommendations,
-                pendingVotes = pendingVotes,
-                incomingVoteAlert = incomingVoteAlert,
-                featureRequests = featureRequests,
-                selectedRecommendationId = selectedRecommendationId,
-                songs = songs,
-                localTrackAvailable = localTrackAvailable,
-                sharedLibraryMatches = sharedLibraryMatches,
-                libraryIndexStatus = libraryIndexStatus,
-                currentUid = currentUid.orEmpty(),
-                notificationsDenied = notificationPermissionDenied,
-                onNotificationSettings = {
-                    runCatching {
-                        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-                    }
-                },
-                state = state,
-                onPermissions = {
-                    permissionDraft = session?.permissions ?: JamPermissions()
-                    controller?.openPage(JamPage.PERMISSIONS)
-                },
-                onRequestFeature = { feature -> controller?.requestFeature(feature) },
-                onResolveFeatureRequest = { feature, enable, block -> controller?.resolveFeatureRequest(feature, enable, block) },
-                onRemoveParticipant = { participantUidToRemove = it },
-                onBackRequest = { showRoomLeaveConfirmation = true }
-            )
-            JamPage.PERMISSIONS -> PermissionsPage(
-                permissions = permissionDraft,
-                participants = participants,
-                isHost = session?.hostUid != null && session.hostUid == currentUid,
-                onPermissionsChange = { updated ->
-                    permissionDraft = updated
-                    controller?.setPermissions(updated)
-                },
-                onBack = { controller?.openPage(JamPage.ACTIVE) },
-                onSave = {
-                    controller?.setPermissions(permissionDraft)
-                    controller?.openPage(JamPage.ACTIVE)
-                },
-                state = state
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .align(Alignment.TopCenter),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = contentMaxWidth)
+            ) {
+                when (page) {
+                    JamPage.LANDING -> LandingPage(
+                        controller = controller,
+                        onRequireAuthentication = onRequireAuthentication,
+                        isSignedIn = isSignedIn,
+                        onHowItWorks = { howItWorksStep = 0 },
+                        state = state,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    JamPage.CREATE -> CreatePage(
+                        permissions = permissionDraft,
+                        selectedPreset = selectedPreset,
+                        onPresetChange = { preset ->
+                            selectedPreset = preset
+                            permissionDraft = permissionForPreset(preset)
+                        },
+                        maxParticipants = maxParticipants,
+                        onMaxParticipantsChange = { maxParticipants = it },
+                        onPermissionsChange = { permissionDraft = it },
+                        onBack = { controller?.openPage(JamPage.LANDING) },
+                        onCreate = { controller?.createJam(permissionDraft, maxParticipants) },
+                        state = state
+                    )
+                    JamPage.JOIN -> JoinPage(
+                        onBack = { controller?.openPage(JamPage.LANDING) },
+                        onJoin = { code ->
+                            if (controller?.requestJoin(code) == true) onRequireAuthentication()
+                        },
+                        state = state
+                    )
+                    JamPage.INVITE -> InvitePage(
+                        invite = invite,
+                        participants = participants,
+                        isHost = session?.hostUid != null && session.hostUid == currentUid,
+                        currentUid = currentUid.orEmpty(),
+                        maxParticipants = session?.maxParticipants ?: maxParticipants,
+                        onBackToJam = { controller?.startJam() },
+                        onCloseRoom = { showRoomLeaveConfirmation = true },
+                        onRemoveParticipant = { participantUidToRemove = it },
+                        onCopyCode = { code -> clipboard.setText(AnnotatedString(code)) },
+                        onShare = { url, code ->
+                            val text = url ?: "Join my OffGrid Jam with invitation code $code"
+                            runCatching {
+                                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }, "Share OffGrid Jam"))
+                            }
+                        },
+                        state = state
+                    )
+                    JamPage.ACTIVE -> ActivePage(
+                        controller = controller,
+                        session = session,
+                        participants = participants,
+                        queue = queue,
+                        recommendations = recommendations,
+                        pendingVotes = pendingVotes,
+                        incomingVoteAlert = incomingVoteAlert,
+                        featureRequests = featureRequests,
+                        selectedRecommendationId = selectedRecommendationId,
+                        songs = songs,
+                        localTrackAvailable = localTrackAvailable,
+                        syncStatus = syncStatus,
+                        sharedLibraryMatches = sharedLibraryMatches,
+                        libraryIndexStatus = libraryIndexStatus,
+                        currentUid = currentUid.orEmpty(),
+                        notificationsDenied = notificationPermissionDenied,
+                        onNotificationSettings = {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                            }
+                        },
+                        state = state,
+                        onPermissions = {
+                            permissionDraft = session?.permissions ?: JamPermissions()
+                            controller?.openPage(JamPage.PERMISSIONS)
+                        },
+                        onRequestFeature = { feature -> controller?.requestFeature(feature) },
+                        onResolveFeatureRequest = { feature, enable, block -> controller?.resolveFeatureRequest(feature, enable, block) },
+                        onRemoveParticipant = { participantUidToRemove = it },
+                        onBackRequest = { showRoomLeaveConfirmation = true }
+                    )
+                    JamPage.PERMISSIONS -> PermissionsPage(
+                        permissions = permissionDraft,
+                        participants = participants,
+                        isHost = session?.hostUid != null && session.hostUid == currentUid,
+                        onPermissionsChange = { updated ->
+                            permissionDraft = updated
+                            controller?.setPermissions(updated)
+                        },
+                        onBack = { controller?.openPage(JamPage.ACTIVE) },
+                        onSave = {
+                            controller?.setPermissions(permissionDraft)
+                            controller?.openPage(JamPage.ACTIVE)
+                        },
+                        state = state
+                    )
+                }
+            }
         }
     }
 }
@@ -961,6 +984,7 @@ private fun ActivePage(
     selectedRecommendationId: String?,
     songs: List<Song>,
     localTrackAvailable: Boolean,
+    syncStatus: JamSyncStatus,
     sharedLibraryMatches: List<JamSharedLibraryMatch>,
     libraryIndexStatus: JamLibraryIndexStatus,
     currentUid: String,
@@ -1126,8 +1150,10 @@ private fun ActivePage(
     LaunchedEffect(session?.playback, isSeeking, durationMs) {
         while (!isSeeking) {
             val playback = session?.playback ?: break
-            sliderPosition = playback.estimatedPosition().toFloat().coerceIn(0f, durationMs.toFloat())
-            kotlinx.coroutines.delay(200L)
+            val estimated = controller?.currentEstimatedPlaybackPositionMs(playback)
+                ?: playback.estimatedPosition()
+            sliderPosition = estimated.toFloat().coerceIn(0f, durationMs.toFloat())
+            kotlinx.coroutines.delay(if (playback.isPlaying) 120L else 350L)
         }
     }
 
@@ -1210,11 +1236,18 @@ private fun ActivePage(
         recommendations.count { it.isVoting }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isCompactWidth = maxWidth < 380.dp
+        val screenHorizontalPadding = if (isCompactWidth) 12.dp else 18.dp
+        val artSize = if (isCompactWidth) 62.dp else 72.dp
+        val isPlayingNow = session?.playback?.isPlaying == true
+        val controlsLockedForUser = roomStarted && !canPlayPause && !canSkip && !canSeek
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = screenHorizontalPadding, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         if (notificationsDenied) item {
             JamCard {
                 Text("Background Jam notifications are off. You can still vote while the Jam screen is open.", color = BentoTextSecondary)
@@ -1228,12 +1261,12 @@ private fun ActivePage(
                 subtitle = if (session == null) {
                     "Connecting to your session…"
                 } else {
-                    "${session.participantCount}/${session.maxParticipants} listeners · Host: $hostName · ${if (roomStarted) "Connected" else "Waiting"}"
+                    "${session.participantCount}/${session.maxParticipants} listeners · Host: $hostName · ${if (roomStarted) "Live" else "Waiting"}"
                 },
                 onBack = onBackRequest,
                 trailing = {
                     if (isHost) {
-                        IconButton(onClick = onPermissions) {
+                        IconButton(onClick = onPermissions, modifier = Modifier.testTag("jam_permissions_button")) {
                             Icon(Icons.Default.Tune, "Permissions", tint = BentoPrimary)
                         }
                     }
@@ -1296,6 +1329,84 @@ private fun ActivePage(
         // Synchronized Now Playing Card
         item {
             JamCard {
+                // Top live status strip: playback state + real-time clock sync + control lock indicator
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val liveDotColor = when {
+                        currentItem != null && !localTrackAvailable -> MaterialTheme.colorScheme.error
+                        isPlayingNow && syncStatus.isClockSynced -> androidx.compose.ui.graphics.Color(0xFF1DB954)
+                        isPlayingNow -> BentoPrimary
+                        else -> BentoTextSecondary
+                    }
+                    val statusLabel = when {
+                        !roomStarted -> "Waiting for host"
+                        currentItem == null -> "Queue ready"
+                        !localTrackAvailable -> "Track unavailable locally"
+                        isPlayingNow && syncStatus.isClockSynced -> {
+                            val absDrift = kotlin.math.abs(syncStatus.lastDriftMs)
+                            if (absDrift in 1L..99L) "Playing · Synced (±${absDrift}ms)"
+                            else "Playing · Synced live"
+                        }
+                        isPlayingNow -> "Playing · Syncing…"
+                        else -> "Paused · Ready"
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = liveDotColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, liveDotColor.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(liveDotColor)
+                            )
+                            Text(
+                                text = statusLabel,
+                                color = if (currentItem != null && !localTrackAvailable) MaterialTheme.colorScheme.error else BentoTextPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (controlsLockedForUser) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = BentoCardPurple.copy(alpha = 0.7f),
+                            border = BorderStroke(1.dp, BentoCardBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Playback controls locked",
+                                    tint = BentoTextSecondary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = "Listen only",
+                                    color = BentoTextSecondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     val nowPlayingSong = remember(currentItem?.track, sharedLibraryMatches, songs) {
                         currentItem?.track?.let { track ->
@@ -1306,15 +1417,15 @@ private fun ActivePage(
                     if (nowPlayingSong != null) {
                         AlbumArtView(
                             song = nowPlayingSong,
-                            modifier = Modifier.size(72.dp),
+                            modifier = Modifier.size(artSize),
                             cornerRadius = 16
                         )
                     } else {
                         Box(
-                            Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)).background(BentoCardPurple),
+                            Modifier.size(artSize).clip(RoundedCornerShape(16.dp)).background(BentoCardPurple),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(32.dp))
+                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(30.dp))
                         }
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -1334,18 +1445,19 @@ private fun ActivePage(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (currentItem != null && !localTrackAvailable) {
+                        val actorUid = session?.playback?.actorUid
+                        val actorLabel = remember(actorUid, participants, currentUid) {
+                            if (actorUid.isNullOrBlank()) null
+                            else if (actorUid == currentUid) "You"
+                            else participants.firstOrNull { it.uid == actorUid }?.displayName?.takeIf(String::isNotBlank)
+                        }
+                        if (currentItem != null && actorLabel != null && roomStarted) {
                             Text(
-                                text = "This track isn't available on your device",
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        } else if (currentItem != null) {
-                            Text(
-                                text = if (session?.playback?.isPlaying == true) "Synced live across all devices" else "Paused · Ready to play",
-                                color = BentoPrimary,
+                                text = "Last controlled by $actorLabel",
+                                color = BentoTextSecondary.copy(alpha = 0.85f),
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -1355,7 +1467,8 @@ private fun ActivePage(
                     onValueChange = { isSeeking = true; sliderPosition = it },
                     onValueChangeFinished = { controller?.seek(sliderPosition.toLong()); isSeeking = false },
                     valueRange = 0f..durationMs.toFloat(),
-                    enabled = roomStarted && currentItem != null && localTrackAvailable && canSeek
+                    enabled = roomStarted && currentItem != null && localTrackAvailable && canSeek,
+                    modifier = Modifier.testTag("jam_playback_slider")
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1372,6 +1485,9 @@ private fun ActivePage(
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
+                val shuffleEnabled = roomStarted && queue.size > 1 && canManageQueue
+                val skipEnabled = roomStarted && queue.isNotEmpty() && canSkip
+                val playPauseEnabled = roomStarted && (currentItem != null || queue.isNotEmpty()) && localTrackAvailable && canPlayPause
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1379,47 +1495,58 @@ private fun ActivePage(
                 ) {
                     IconButton(
                         onClick = { controller?.shuffleQueue() },
-                        enabled = roomStarted && queue.size > 1 && canManageQueue
+                        enabled = shuffleEnabled,
+                        modifier = Modifier.size(48.dp).testTag("jam_shuffle_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Shuffle,
                             contentDescription = "Shuffle shared queue",
-                            tint = if (roomStarted && queue.size > 1 && canManageQueue) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.4f)
+                            tint = if (shuffleEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
                         )
                     }
                     IconButton(
                         onClick = { controller?.skip(-1) },
-                        enabled = roomStarted && queue.isNotEmpty() && canSkip
+                        enabled = skipEnabled,
+                        modifier = Modifier.size(48.dp).testTag("jam_previous_button")
                     ) {
-                        Icon(Icons.Default.SkipPrevious, "Previous", tint = BentoTextPrimary)
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = "Previous",
+                            tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
+                        )
                     }
                     Surface(
                         modifier = Modifier
                             .size(58.dp)
                             .clip(CircleShape)
-                            .clickable(
-                                enabled = roomStarted && (currentItem != null || queue.isNotEmpty()) && localTrackAvailable && canPlayPause
-                            ) { controller?.togglePlayback() },
-                        color = BentoPrimary,
+                            .clickable(enabled = playPauseEnabled) { controller?.togglePlayback() }
+                            .testTag("jam_play_pause_button"),
+                        color = if (playPauseEnabled) BentoPrimary else BentoCardBorder.copy(alpha = 0.55f),
                         shape = CircleShape
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = if (session?.playback?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Play or pause",
-                                tint = BentoOnPrimary,
+                                imageVector = if (isPlayingNow) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlayingNow) "Pause" else "Play",
+                                tint = if (playPauseEnabled) BentoOnPrimary else BentoTextSecondary.copy(alpha = 0.65f),
                                 modifier = Modifier.size(30.dp)
                             )
                         }
                     }
                     IconButton(
                         onClick = { controller?.skip(1) },
-                        enabled = roomStarted && queue.isNotEmpty() && canSkip
+                        enabled = skipEnabled,
+                        modifier = Modifier.size(48.dp).testTag("jam_next_button")
                     ) {
-                        Icon(Icons.Default.SkipNext, "Next", tint = BentoTextPrimary)
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next",
+                            tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
+                        )
                     }
                     IconButton(
-                        onClick = { selectedRoomTab = 0 }
+                        onClick = { selectedRoomTab = 0 },
+                        modifier = Modifier.size(48.dp).testTag("jam_queue_shortcut_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.QueueMusic,
@@ -1433,6 +1560,12 @@ private fun ActivePage(
                         text = "Playback starts when the host opens the room.",
                         color = BentoTextSecondary,
                         style = MaterialTheme.typography.bodySmall
+                    )
+                } else if (controlsLockedForUser) {
+                    Text(
+                        text = "Host controls playback. Headphone and media buttons are locked for listen-only mode.",
+                        color = BentoTextSecondary,
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
@@ -1474,29 +1607,68 @@ private fun ActivePage(
             )
         }
 
-        // Room Navigation Tabs: Queue | Recommendations | Local Sharing
+        // Room Navigation Segmented Pill Bar: Queue | Suggest | Local Share (adapts cleanly to any screen width)
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val tabLabels = listOf(
-                    "Queue (${queue.size})",
-                    if (activeVotesBadgeCount > 0) "Recommendations ($activeVotesBadgeCount)" else "Recommendations",
-                    "Local Sharing"
-                )
-                tabLabels.forEachIndexed { index, label ->
-                    FilterChip(
-                        selected = selectedRoomTab == index,
-                        onClick = { selectedRoomTab = index },
-                        modifier = Modifier.weight(1f),
-                        label = {
-                            Text(
-                                text = label,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (selectedRoomTab == index) FontWeight.Bold else FontWeight.Medium
-                            )
+            val tabItems = listOf(
+                Triple("Queue", if (queue.isNotEmpty()) "${queue.size}" else null, "jam_tab_queue"),
+                Triple(if (isCompactWidth) "Suggest" else "Recommendations", if (activeVotesBadgeCount > 0) "$activeVotesBadgeCount" else null, "jam_tab_recommendations"),
+                Triple(if (isCompactWidth) "Share" else "Local Share", null, "jam_tab_local_share")
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(1.dp, BentoCardBorder)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    tabItems.forEachIndexed { index, (label, badge, tag) ->
+                        val selected = selectedRoomTab == index
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { selectedRoomTab = index }
+                                .testTag(tag),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selected) BentoPrimary else androidx.compose.ui.graphics.Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (selected) BentoOnPrimary else BentoTextSecondary,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (badge != null) {
+                                    Spacer(Modifier.width(5.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = if (selected) BentoOnPrimary.copy(alpha = 0.22f) else BentoPrimary.copy(alpha = 0.16f)
+                                    ) {
+                                        Text(
+                                            text = badge,
+                                            color = if (selected) BentoOnPrimary else BentoPrimary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -2245,6 +2417,7 @@ private fun ActivePage(
             }
         }
         item { JamStatus(state) }
+        }
     }
 }
 

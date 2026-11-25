@@ -544,6 +544,12 @@ class AppUpdateSystemTest {
             "release-notification.yml must invoke send_fcm_release_notification.py",
             releaseWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
         )
+        val releaseNotesScript = File(rootDir, ".github/scripts/generate_release_notes.py")
+        assertTrue("generate_release_notes.py must exist", releaseNotesScript.exists())
+        assertTrue(
+            "build-apk.yml must invoke generate_release_notes.py",
+            buildWorkflow.readText().contains("python3 .github/scripts/generate_release_notes.py")
+        )
         assertTrue(
             "build-apk.yml must invoke send_fcm_release_notification.py",
             buildWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
@@ -585,5 +591,77 @@ class AppUpdateSystemTest {
         assertFalse("Should omit SHA-256 table rows", cleaned.contains("SHA-256"))
         assertFalse("Should omit download links", cleaned.contains("Download OffGrid-Music.apk"))
         assertFalse("Should strip emojis", cleaned.contains("🎵") || cleaned.contains("🎧") || cleaned.contains("🚀") || cleaned.contains("✨"))
+    }
+
+    @Test
+    fun testMultiReleaseArrayAggregatesAllChangesSinceInstalledVersion() = runBlocking {
+        repo.setHttpClientForTesting(
+            fakeHttpClient { req ->
+                buildJsonResponse(
+                    req,
+                    200,
+                    """
+                    [
+                      {
+                        "tag_name": "v1.0.7",
+                        "name": "OffGrid Music v1.0.7",
+                        "body": "### Highlights\n- Added Smart Shuffle queue ordering\n### Fixes\n- Fixed seek bar jitter",
+                        "published_at": "2026-11-24T12:00:00Z",
+                        "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.7",
+                        "draft": false,
+                        "prerelease": false
+                      },
+                      {
+                        "tag_name": "v1.0.6",
+                        "name": "OffGrid Music v1.0.6",
+                        "body": "### Highlights\n- Added bottom navigation bar reordering\n### Improvements\n- Improved artwork color extraction",
+                        "published_at": "2026-11-23T12:00:00Z",
+                        "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.6",
+                        "draft": false,
+                        "prerelease": false
+                      },
+                      {
+                        "tag_name": "v1.0.5",
+                        "name": "OffGrid Music v1.0.5",
+                        "body": "### Highlights\n- Added New Music Mix suggestions to Home feed",
+                        "published_at": "2026-11-22T12:00:00Z",
+                        "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.5",
+                        "draft": false,
+                        "prerelease": false
+                      },
+                      {
+                        "tag_name": "v1.0.4",
+                        "name": "OffGrid Music v1.0.4",
+                        "body": "### Highlights\n- Older already-installed change",
+                        "published_at": "2026-11-20T12:00:00Z",
+                        "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.4",
+                        "draft": false,
+                        "prerelease": false
+                      }
+                    ]
+                    """.trimIndent()
+                )
+            }
+        )
+
+        val result = repo.checkForUpdates(isManual = true)
+        assertTrue("Should detect latest v1.0.7 update", result is UpdateCheckResult.UpdateAvailable)
+        val release = (result as UpdateCheckResult.UpdateAvailable).release
+        assertEquals("v1.0.7", release.tagName)
+
+        val doc = release.getStructuredChangelog()
+        val allBullets = doc.sections.flatMap { it.items }
+
+        assertTrue("Must include change from v1.0.7", allBullets.any { it.contains("Smart Shuffle") })
+        assertTrue("Must include fix from v1.0.7", allBullets.any { it.contains("seek bar jitter") })
+        assertTrue("Must include change from v1.0.6", allBullets.any { it.contains("bottom navigation bar reordering") })
+        assertTrue("Must include improvement from v1.0.6", allBullets.any { it.contains("artwork color extraction") })
+        assertTrue("Must include change from v1.0.5", allBullets.any { it.contains("New Music Mix") })
+        assertFalse("Must NOT include already-installed v1.0.4 change", allBullets.any { it.contains("Older already-installed change") })
+        assertEquals(
+            "Duplicate Highlights sections should be merged into one",
+            1,
+            doc.sections.count { it.heading.equals("Highlights", ignoreCase = true) }
+        )
     }
 }

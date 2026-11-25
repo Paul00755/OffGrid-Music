@@ -80,6 +80,11 @@ fun NowPlayingNeonWaveform(
     audioTechnicalInfo: AudioTechnicalInfo? = null,
     showRemainingTime: Boolean = false,
     onToggleShowRemainingTime: () -> Unit = {},
+    showSeekButtons: Boolean = false,
+    backwardSeconds: Int = 10,
+    forwardSeconds: Int = 10,
+    onSeekBackward: () -> Unit = {},
+    onSeekForward: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -432,6 +437,31 @@ fun NowPlayingNeonWaveform(
                         size = 23.dp,
                         contentDescription = "Favorite",
                         animationKey = song.id
+                    )
+                }
+            }
+
+            if (showSeekButtons) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(36.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    com.example.ui.components.SeekIntervalButton(
+                        seconds = backwardSeconds,
+                        isForward = false,
+                        onClick = onSeekBackward,
+                        tint = primaryInk,
+                        iconSize = 27.dp,
+                        touchSize = 48.dp
+                    )
+                    com.example.ui.components.SeekIntervalButton(
+                        seconds = forwardSeconds,
+                        isForward = true,
+                        onClick = onSeekForward,
+                        tint = primaryInk,
+                        iconSize = 27.dp,
+                        touchSize = 48.dp
                     )
                 }
             }

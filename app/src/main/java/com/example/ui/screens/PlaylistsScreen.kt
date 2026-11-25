@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
@@ -48,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -96,11 +98,13 @@ fun PlaylistsScreen(
     onOpenFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onReorderPlaylists: (List<Playlist>) -> Unit = {},
+    onReorderSmartPlaylists: (List<SmartPlaylist>) -> Unit = {},
     playlistsLayout: String = "BENTO_GRID",
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var showSmartCriteriaDialog by remember { mutableStateOf(false) }
+    var showReorderSmartPlaylistsSheet by remember { mutableStateOf(false) }
     var playlistNameText by remember { mutableStateOf("") }
     var playlistToRename by remember { mutableStateOf<Playlist?>(null) }
     var renamePlaylistText by remember { mutableStateOf("") }
@@ -122,6 +126,15 @@ fun PlaylistsScreen(
                 onCreateSmartPlaylist(smart)
                 showSmartCriteriaDialog = false
             }
+        )
+    }
+
+    if (showReorderSmartPlaylistsSheet && smartPlaylists.size > 1) {
+        com.example.ui.components.ReorderSmartPlaylistsSheet(
+            smartPlaylists = smartPlaylists,
+            allSongs = allSongs,
+            onReorderSmartPlaylists = onReorderSmartPlaylists,
+            onDismiss = { showReorderSmartPlaylistsSheet = false }
         )
     }
 
@@ -616,6 +629,59 @@ fun PlaylistsScreen(
 
                     // 3. Smart Playlists Floating Capsule Carousel (when populated)
                     if (smartPlaylists.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Smart Playlists (${smartPlaylists.size})",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextSecondary
+                                )
+                            }
+                            if (smartPlaylists.size > 1) {
+                                Surface(
+                                    onClick = { showReorderSmartPlaylistsSheet = true },
+                                    shape = RoundedCornerShape(50),
+                                    color = BentoCardSurface.copy(alpha = 0.85f),
+                                    border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                    modifier = Modifier.testTag("reorder_smart_playlists_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = "Reorder smart playlists",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Reorder",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         androidx.compose.foundation.lazy.LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.fillMaxWidth()

@@ -38,7 +38,8 @@ class MusicRepository(
     private val lyricsDao: LyricsDao,
     private val recentSearchDao: RecentSearchDao,
     private val smartPlaylistDao: SmartPlaylistDao,
-    private val libraryScanner: LibraryScanner
+    private val libraryScanner: LibraryScanner,
+    private val smartPlaylistMetadataStore: SmartPlaylistMetadataStore? = null
 ) {
 
     private val _localSongSyncProgress = MutableStateFlow(LocalSongSyncProgress())
@@ -96,17 +97,69 @@ class MusicRepository(
         .map { list -> list.map { it.toDomainModel() } }
         .flowOn(Dispatchers.Default)
     val recentSearches: Flow<List<String>> = recentSearchDao.getRecentSearches().distinctUntilChanged()
-    val smartPlaylists: Flow<List<SmartPlaylist>> = smartPlaylistDao.getAllSmartPlaylists()
-        .distinctUntilChanged()
-        .map { list -> list.map { it.toDomainModel() } }
-        .flowOn(Dispatchers.Default)
+    val smartPlaylists: Flow<List<SmartPlaylist>> = if (smartPlaylistMetadataStore != null) {
+        combine(
+            smartPlaylistDao.getAllSmartPlaylists().distinctUntilChanged(),
+            smartPlaylistMetadataStore.metadataMap
+        ) { entities, metaMap ->
+            entities.map { entity ->
+                smartPlaylistMetadataStore.applyMetadata(entity, metaMap)
+            }.sortedWith(
+                compareBy<SmartPlaylist> { it.displayOrder }
+                    .thenByDescending { it.createdAt }
+            )
+        }.flowOn(Dispatchers.Default)
+    } else {
+        smartPlaylistDao.getAllSmartPlaylists()
+            .distinctUntilChanged()
+            .map { list -> list.map { it.toDomainModel() } }
+            .flowOn(Dispatchers.Default)
+    }
 
     suspend fun createSmartPlaylist(smartPlaylist: SmartPlaylist): Long {
-        return smartPlaylistDao.insertSmartPlaylist(SmartPlaylistEntity.fromDomainModel(smartPlaylist))
+        val currentCount = smartPlaylistDao.getSmartPlaylistCountOnce()
+        val withOrder = if (smartPlaylist.displayOrder == Int.MAX_VALUE) {
+            smartPlaylist.copy(displayOrder = currentCount)
+        } else {
+            smartPlaylist
+        }
+        smartPlaylistMetadataStore?.saveFromSmartPlaylist(withOrder)
+        return smartPlaylistDao.insertSmartPlaylist(SmartPlaylistEntity.fromDomainModel(withOrder))
+    }
+
+    suspend fun updateSmartPlaylist(previous: SmartPlaylist, updated: SmartPlaylist): SmartPlaylist {
+        val normalized = updated.copy(
+            id = previous.id,
+            createdAt = previous.createdAt,
+            displayOrder = if (updated.displayOrder == Int.MAX_VALUE) previous.displayOrder else updated.displayOrder
+        )
+        smartPlaylistMetadataStore?.renameKeyIfNeeded(previous.name, previous.createdAt, normalized)
+        smartPlaylistDao.insertSmartPlaylist(SmartPlaylistEntity.fromDomainModel(normalized))
+        return normalized
+    }
+
+    suspend fun saveSmartPlaylistTrackOrder(smartPlaylist: SmartPlaylist, orderedSongs: List<Song>): SmartPlaylist {
+        val signatures = orderedSongs.map { com.example.data.sync.SongIdentityHelper.computeSignature(it) }
+            .filter { it.isNotBlank() }
+        smartPlaylistMetadataStore?.saveCustomTrackOrder(smartPlaylist.name, smartPlaylist.createdAt, signatures)
+        return smartPlaylist.copy(customTrackOrder = signatures)
+    }
+
+    suspend fun resetSmartPlaylistTrackOrder(smartPlaylist: SmartPlaylist): SmartPlaylist {
+        smartPlaylistMetadataStore?.clearCustomTrackOrder(smartPlaylist.name, smartPlaylist.createdAt)
+        return smartPlaylist.copy(customTrackOrder = emptyList())
+    }
+
+    suspend fun reorderSmartPlaylists(orderedPlaylists: List<SmartPlaylist>) {
+        smartPlaylistMetadataStore?.saveDisplayOrders(orderedPlaylists)
     }
 
     suspend fun deleteSmartPlaylist(id: Long) {
+        val existing = smartPlaylistDao.getAllSmartPlaylistsOnce().firstOrNull { it.id == id }
         smartPlaylistDao.deleteSmartPlaylist(id)
+        if (existing != null) {
+            smartPlaylistMetadataStore?.removeMetadata(existing.name, existing.createdAt)
+        }
     }
 
     val allPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylistsWithDetails()

@@ -52,156 +52,9 @@ jobs:
         env:
           INPUT_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
           INPUT_EXPLICIT_VERSION: ${{ github.event.inputs.explicit_version }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python3 - << 'PYEOF'
-          import os
-          import re
-          import subprocess
-          import unicodedata
-
-          def run_git(*args):
-              proc = subprocess.run(
-                  ["git", *args],
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.PIPE,
-                  text=True,
-                  check=False,
-              )
-              return proc.stdout.strip() if proc.returncode == 0 else ""
-
-          def parse_semver(text):
-              m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", text.strip())
-              if not m:
-                  return None
-              return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-
-          def strip_emojis(text):
-              out = []
-              for ch in text:
-                  cp = ord(ch)
-                  cat = unicodedata.category(ch)
-                  if (
-                      cat == "So"
-                      or cp in (0xFE0E, 0xFE0F, 0x200D)
-                      or 0x1F000 <= cp <= 0x1FAFF
-                      or 0x2600 <= cp <= 0x27BF
-                  ):
-                      continue
-                  out.append(ch)
-              return re.sub(r"\s{2,}", " ", "".join(out)).strip()
-
-          def to_plain_note(subject):
-              cleaned = strip_emojis(subject)
-              if not cleaned:
-                  return None
-              lower = cleaned.lower()
-              if lower.startswith("merge ") or lower.startswith("revert \"merge "):
-                  return None
-              if re.match(r"^(ci|build)\b(\([^)]*\))?!?:\s*", lower):
-                  return None
-
-              prefix_map = [
-                  (r"^fix(\([^)]*\))?!?:\s*", "Fixed "),
-                  (r"^bugfix(\([^)]*\))?!?:\s*", "Fixed "),
-                  (r"^hotfix(\([^)]*\))?!?:\s*", "Fixed "),
-                  (r"^feat(\([^)]*\))?!?:\s*", "Added "),
-                  (r"^perf(\([^)]*\))?!?:\s*", "Improved "),
-                  (r"^refactor(\([^)]*\))?!?:\s*", "Refined "),
-                  (r"^style(\([^)]*\))?!?:\s*", "Updated "),
-                  (r"^docs(\([^)]*\))?!?:\s*", "Updated documentation: "),
-                  (r"^chore(\([^)]*\))?!?:\s*", "Updated "),
-              ]
-              for pattern, replacement in prefix_map:
-                  if re.match(pattern, cleaned, flags=re.IGNORECASE):
-                      rest = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip()
-                      if not rest:
-                          return None
-                      if replacement.endswith(" ") and rest[:1].isupper() and not rest[:2].isupper():
-                          rest = rest[:1].lower() + rest[1:]
-                      cleaned = replacement + rest
-                      break
-
-              if cleaned and cleaned[0].islower():
-                  cleaned = cleaned[0].upper() + cleaned[1:]
-              return cleaned
-
-          # 1. Read floor version from version.properties (defaults to 1.0.4)
-          floor_ver = (1, 0, 4)
-          if os.path.exists("version.properties"):
-              with open("version.properties", "r", encoding="utf-8") as fh:
-                  for line in fh:
-                      if line.strip().startswith("VERSION_NAME="):
-                          parsed = parse_semver(line.split("=", 1)[1])
-                          if parsed:
-                              floor_ver = parsed
-
-          # 2. Scan existing clean semantic tags (vMAJOR.MINOR.PATCH)
-          raw_tags = run_git("tag", "--list").splitlines()
-          semver_tags = []
-          for tag in raw_tags:
-              parsed = parse_semver(tag)
-              if parsed:
-                  semver_tags.append((parsed, tag.strip()))
-
-          semver_tags.sort(key=lambda item: item[0])
-          highest_ver = floor_ver
-          prev_tag = ""
-          if semver_tags and semver_tags[-1][0] >= floor_ver:
-              highest_ver, prev_tag = semver_tags[-1]
-
-          # 3. Determine next semantic version
-          explicit = os.environ.get("INPUT_EXPLICIT_VERSION", "").strip().lstrip("vV")
-          bump_type = os.environ.get("INPUT_BUMP_TYPE", "").strip().lower()
-          latest_commit_full = run_git("log", "-1", "--pretty=%B")
-
-          explicit_parsed = parse_semver(explicit) if explicit else None
-          if explicit_parsed:
-              next_ver = explicit_parsed
-          else:
-              major, minor, patch = highest_ver
-              if bump_type == "major" or "[major]" in latest_commit_full.lower() or "breaking change" in latest_commit_full.lower():
-                  next_ver = (major + 1, 0, 0)
-              elif bump_type == "minor" or "[minor]" in latest_commit_full.lower():
-                  next_ver = (major, minor + 1, 0)
-              else:
-                  next_ver = (major, minor, patch + 1)
-
-          next_version_str = f"{next_ver[0]}.{next_ver[1]}.{next_ver[2]}"
-          version_tag = f"v{next_version_str}"
-
-          # 4. Build concise, plain-language, emoji-free change list since previous semantic tag
-          if prev_tag:
-              raw_subjects = run_git("log", f"{prev_tag}..HEAD", "--pretty=format:%s").splitlines()
-          else:
-              raw_subjects = run_git("log", "-n", "6", "--pretty=format:%s").splitlines()
-
-          notes = []
-          seen = set()
-          for subj in raw_subjects:
-              plain = to_plain_note(subj)
-              if not plain:
-                  continue
-              key = plain.lower()
-              if key in seen:
-                  continue
-              seen.add(key)
-              notes.append(f"- {plain}")
-              if len(notes) >= 6:
-                  break
-
-          if not notes:
-              notes = ["- Fixed minor bugs and improved playback stability and interface responsiveness."]
-
-          with open("plain_release_changes.md", "w", encoding="utf-8") as fh:
-              fh.write("\n".join(notes) + "\n")
-
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-              env_file.write(f"NEXT_VERSION={next_version_str}\n")
-              env_file.write(f"VERSION_TAG={version_tag}\n")
-              env_file.write(f"PREVIOUS_TAG={prev_tag}\n")
-
-          print(f"Computed semantic version: {next_version_str} (tag: {version_tag}, previous: {prev_tag or 'none'})")
-          PYEOF
+          python3 .github/scripts/generate_release_notes.py
 
       - name: Setup Environment and Persistent Keystore
         run: |
@@ -305,7 +158,6 @@ jobs:
           cat << EOF > release_notes_versioned.md
           ## OffGrid Music ${VERSION_TAG}
 
-          ### What's New
           ${PLAIN_CHANGES}
 
           ### Direct APK Downloads
@@ -354,7 +206,6 @@ jobs:
           cat << EOF > release_notes_latest.md
           ## OffGrid Music — Latest Release (${VERSION_TAG})
 
-          ### What's New
           ${PLAIN_CHANGES}
 
           ### Direct Download

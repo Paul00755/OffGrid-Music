@@ -136,17 +136,37 @@ data class JamPlaybackState(
     val positionMs: Long = 0L,
     val playbackSpeed: Float = 1f,
     val updatedAtMs: Long = 0L,
+    val anchorServerMs: Long = 0L,
     val revision: Long = 0L,
     val commandId: String? = null,
     val commandType: String? = null,
     val actorUid: String? = null
 ) {
     fun estimatedPosition(nowMs: Long = System.currentTimeMillis()): Long {
-        if (!isPlaying || updatedAtMs <= 0L) return positionMs
+        if (!isPlaying || updatedAtMs <= 0L) return positionMs.coerceAtLeast(0L)
         return (positionMs + ((nowMs - updatedAtMs).coerceAtLeast(0L) * playbackSpeed).toLong())
             .coerceAtLeast(0L)
     }
+
+    fun estimatedPositionAtServerTime(serverNowMs: Long): Long {
+        if (!isPlaying) return positionMs.coerceAtLeast(0L)
+        val refMs = when {
+            anchorServerMs > 0L -> anchorServerMs
+            updatedAtMs > 0L -> updatedAtMs
+            else -> return positionMs.coerceAtLeast(0L)
+        }
+        return (positionMs + ((serverNowMs - refMs).coerceAtLeast(0L) * playbackSpeed).toLong())
+            .coerceAtLeast(0L)
+    }
 }
+
+@Immutable
+data class JamSyncStatus(
+    val isClockSynced: Boolean = false,
+    val rttMs: Long = 0L,
+    val lastDriftMs: Long = 0L,
+    val isSyncedLocked: Boolean = false
+)
 
 @Immutable
 data class JamAnnouncement(
@@ -224,10 +244,13 @@ data class JamSession(
         const val STATUS_CLOSED = "CLOSED"
 
         fun from(id: String, snapshot: DocumentSnapshot): JamSession {
-            val playbackMap = snapshot.get("playback") as? Map<*, *> ?: emptyMap<Any, Any>()
+            val playbackMap = snapshot.get("playback", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) as? Map<*, *>
+                ?: snapshot.get("playback") as? Map<*, *>
+                ?: emptyMap<Any, Any>()
             val playbackTime = (playbackMap["updatedAt"] as? Timestamp)?.toDate()?.time
                 ?: (playbackMap["updatedAtMs"] as? Number)?.toLong()
                 ?: 0L
+            val anchorServerMs = (playbackMap["anchorServerMs"] as? Number)?.toLong() ?: 0L
             val playback = JamPlaybackState(
                 sharedTrackId = playbackMap["sharedTrackId"] as? String,
                 queueItemId = playbackMap["queueItemId"] as? String,
@@ -235,6 +258,7 @@ data class JamSession(
                 positionMs = (playbackMap["positionMs"] as? Number)?.toLong() ?: 0L,
                 playbackSpeed = (playbackMap["playbackSpeed"] as? Number)?.toFloat() ?: 1f,
                 updatedAtMs = playbackTime,
+                anchorServerMs = anchorServerMs,
                 revision = (playbackMap["revision"] as? Number)?.toLong() ?: 0L,
                 commandId = playbackMap["commandId"] as? String,
                 commandType = playbackMap["commandType"] as? String,

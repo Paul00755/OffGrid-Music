@@ -105,80 +105,71 @@ fun AccountScreen(
 
     val displayPhoto = if (userAccount != null) (customAvatarUri ?: userAccount.photoUrl) else null
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(BentoBackground)
-    ) {
-        GlassGradientBackdrop()
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = BentoScreenBackground,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                ) {
-                    TopAppBar(
-                        windowInsets = WindowInsets(0, 0, 0, 0),
-                        title = {
-                            Column {
-                                Text(
-                                    text = "Account",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 20.sp,
-                                    color = BentoTextPrimary
-                                )
-                                Text(
-                                    text = "Profile, cloud sync & backup preferences",
-                                    fontSize = 11.5.sp,
-                                    color = BentoTextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        },
-                        navigationIcon = {
-                            IconButton(
-                                onClick = handleBack,
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    tint = BentoTextPrimary
-                                )
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent
-                        )
-                    )
-                    HorizontalDivider(
-                        color = BentoBorder.copy(alpha = 0.22f),
-                        thickness = 0.75.dp,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.TopCenter
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            Column(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = 720.dp)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                        .navigationBarsPadding(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
+                TopAppBar(
+                    windowInsets = WindowInsets(0, 0, 0, 0),
+                    title = {
+                        Column {
+                            Text(
+                                text = "Account",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                color = BentoTextPrimary
+                            )
+                            Text(
+                                text = "Profile, cloud sync & backup preferences",
+                                fontSize = 11.5.sp,
+                                color = BentoTextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = handleBack,
+                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = BentoTextPrimary
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    )
+                )
+                HorizontalDivider(
+                    color = BentoBorder.copy(alpha = 0.22f),
+                    thickness = 0.75.dp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 720.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                     // Group 1: Profile
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         AccountSectionLabel("PROFILE")
@@ -612,7 +603,6 @@ fun AccountScreen(
                 }
             )
         }
-    }
 }
 
 @Composable

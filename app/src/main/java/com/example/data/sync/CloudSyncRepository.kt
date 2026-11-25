@@ -116,6 +116,7 @@ class CloudSyncRepository(
         context.getSharedPreferences("playlist_sync_meta", Context.MODE_PRIVATE)
     }
     private val lyricsDao by lazy { AppDatabase.getInstance(context).lyricsDao() }
+    private val smartPlaylistMetadataStore by lazy { SmartPlaylistMetadataStore.getInstance(context) }
 
     private fun getLocalPlaylistUpdatedAt(playlistId: Long): Long {
         return try {
@@ -189,6 +190,7 @@ class CloudSyncRepository(
             playlistDao.clearAllPlaylistSongs()
             playlistDao.clearAllPlaylistPlayEvents()
             smartPlaylistDao.clearAllSmartPlaylists()
+            smartPlaylistMetadataStore.clearAll()
             historyDao.clearHistory()
             recentSearchDao?.clearAll()
             folderDao?.clearAllFolders()
@@ -1986,46 +1988,57 @@ class CloudSyncRepository(
             }
         }
         val localSmart = smartPlaylistDao.getAllSmartPlaylistsOnce()
-        val cloudNames = cloudSmart.map { it.name.trim().lowercase() }.toSet()
+        val cloudByName = cloudSmart.associateBy { it.name.trim().lowercase() }
 
         if (replaceLocal) {
             smartPlaylistDao.clearAllSmartPlaylists()
-            val restored = cloudSmart.map {
-                SmartPlaylistEntity(
-                    name = it.name,
-                    genreFilter = it.filterType,
-                    maxTrackLimit = it.limit,
-                    sortCriteria = it.sortOrder.ifBlank { "RECENTLY_ADDED" },
-                    createdAt = it.createdAt
-                )
-            }
+            val restored = smartPlaylistMetadataStore.restoreFromCloud(cloudSmart, replaceAll = true)
             if (restored.isNotEmpty()) smartPlaylistDao.insertSmartPlaylists(restored)
             return
         }
 
         val localNames = localSmart.map { it.name.trim().lowercase() }.toSet()
-        val toInsertLocally = cloudSmart.filter { it.name.trim().lowercase() !in localNames }.map {
-            SmartPlaylistEntity(
-                name = it.name,
-                genreFilter = it.filterType,
-                maxTrackLimit = it.limit,
-                sortCriteria = it.sortOrder.ifBlank { "RECENTLY_ADDED" },
-                createdAt = it.createdAt
-            )
+        val missingLocally = cloudSmart.filter { it.name.trim().lowercase() !in localNames }
+        if (missingLocally.isNotEmpty()) {
+            val toInsertLocally = smartPlaylistMetadataStore.restoreFromCloud(missingLocally, replaceAll = false)
+            if (toInsertLocally.isNotEmpty()) smartPlaylistDao.insertSmartPlaylists(toInsertLocally)
         }
-        if (toInsertLocally.isNotEmpty()) smartPlaylistDao.insertSmartPlaylists(toInsertLocally)
+
+        // For playlists present both locally and in cloud, hydrate local metadata if local has no custom metadata yet
+        for (sp in localSmart) {
+            val matchingCloud = cloudByName[sp.name.trim().lowercase()] ?: continue
+            val localMeta = smartPlaylistMetadataStore.getMetadata(sp.name, sp.createdAt)
+            val cloudMeta = SmartPlaylistMetadata.fromRulesJson(matchingCloud.rulesJson)
+            val localIsDefault = localMeta.customTrackOrder.isEmpty() &&
+                localMeta.displayOrder == Int.MAX_VALUE &&
+                localMeta.artistFilter == "ALL" &&
+                !localMeta.favoritesOnly &&
+                localMeta.durationFilter == "ANY" &&
+                !localMeta.unplayedOnly
+            val cloudHasMetadata = cloudMeta.customTrackOrder.isNotEmpty() ||
+                cloudMeta.displayOrder != Int.MAX_VALUE ||
+                cloudMeta.artistFilter != "ALL" ||
+                cloudMeta.favoritesOnly ||
+                cloudMeta.durationFilter != "ANY" ||
+                cloudMeta.unplayedOnly
+            if (localIsDefault && cloudHasMetadata) {
+                smartPlaylistMetadataStore.saveMetadata(sp.name, sp.createdAt, cloudMeta)
+            }
+        }
+
         if (!pushLocalMissing) return
-        for (sp in localSmart.filter { it.name.trim().lowercase() !in cloudNames }) {
-            val cloudSp = CloudSmartPlaylist(
-                name = sp.name,
-                filterType = sp.genreFilter,
-                rulesJson = "{}",
-                sortOrder = sp.sortCriteria,
-                limit = sp.maxTrackLimit,
-                createdAt = sp.createdAt
-            )
-            val docId = "smart_${sp.name.hashCode()}_${sp.createdAt}"
-            smartRef.document(docId).set(cloudSp.toMap(), SetOptions.merge()).await()
+        for (sp in localSmart) {
+            val cloudSp = smartPlaylistMetadataStore.toCloudSmartPlaylist(sp)
+            val existingCloud = cloudByName[sp.name.trim().lowercase()]
+            val needsUpload = existingCloud == null ||
+                existingCloud.rulesJson != cloudSp.rulesJson ||
+                existingCloud.filterType != cloudSp.filterType ||
+                existingCloud.sortOrder != cloudSp.sortOrder ||
+                existingCloud.limit != cloudSp.limit
+            if (needsUpload) {
+                val docId = "smart_${sp.name.hashCode()}_${sp.createdAt}"
+                smartRef.document(docId).set(cloudSp.toMap(), SetOptions.merge()).await()
+            }
         }
     }
 
@@ -2242,15 +2255,10 @@ class CloudSyncRepository(
 
         if (getCurrentUid() != uid) throw CancellationException("Account changed while applying snapshot")
         smartPlaylistDao.clearAllSmartPlaylists()
-        val restoredSmartPlaylists = payload.smartPlaylists.map {
-            SmartPlaylistEntity(
-                name = it.name,
-                genreFilter = it.filterType,
-                maxTrackLimit = it.limit,
-                sortCriteria = it.sortOrder.ifBlank { "RECENTLY_ADDED" },
-                createdAt = it.createdAt
-            )
-        }
+        val restoredSmartPlaylists = smartPlaylistMetadataStore.restoreFromCloud(
+            payload.smartPlaylists,
+            replaceAll = true
+        )
         if (restoredSmartPlaylists.isNotEmpty()) smartPlaylistDao.insertSmartPlaylists(restoredSmartPlaylists)
 
         recentSearchDao?.let { dao ->
@@ -2597,16 +2605,9 @@ class CloudSyncRepository(
                     }
                 }
                 val smartDef = async(Dispatchers.IO) {
-                    smartPlaylistDao.getAllSmartPlaylistsOnce().map {
-                        CloudSmartPlaylist(
-                            name = it.name,
-                            filterType = it.genreFilter,
-                            rulesJson = "{}",
-                            sortOrder = it.sortCriteria,
-                            limit = it.maxTrackLimit,
-                            createdAt = it.createdAt
-                        )
-                    }
+                    smartPlaylistDao.getAllSmartPlaylistsOnce()
+                        .map { smartPlaylistMetadataStore.toCloudSmartPlaylist(it) }
+                        .sortedBy { SmartPlaylistMetadata.fromRulesJson(it.rulesJson).displayOrder }
                 }
                 val offsetsDef = async(Dispatchers.IO) { userPreferences.getAllLyricsSyncOffsets() }
                 val offsetTsDef = async(Dispatchers.IO) { userPreferences.getAllLyricsSyncOffsetUpdatedAt() }

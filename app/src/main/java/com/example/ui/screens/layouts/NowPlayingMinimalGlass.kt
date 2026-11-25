@@ -60,6 +60,11 @@ fun NowPlayingMinimalGlass(
     audioTechnicalInfo: AudioTechnicalInfo? = null,
     showRemainingTime: Boolean = false,
     onToggleShowRemainingTime: () -> Unit = {},
+    showSeekButtons: Boolean = false,
+    backwardSeconds: Int = 10,
+    forwardSeconds: Int = 10,
+    onSeekBackward: () -> Unit = {},
+    onSeekForward: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -286,6 +291,43 @@ fun NowPlayingMinimalGlass(
                             contentDescription = "Repeat",
                             tint = if (playbackState.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) BentoPrimary else BentoTextSecondary,
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            if (showSeekButtons) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = BentoCardSurface.copy(alpha = 0.85f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
+                    ) {
+                        com.example.ui.components.SeekIntervalButton(
+                            seconds = backwardSeconds,
+                            isForward = false,
+                            onClick = onSeekBackward,
+                            tint = BentoTextPrimary,
+                            iconSize = 25.dp,
+                            touchSize = 48.dp
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = BentoCardSurface.copy(alpha = 0.85f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f))
+                    ) {
+                        com.example.ui.components.SeekIntervalButton(
+                            seconds = forwardSeconds,
+                            isForward = true,
+                            onClick = onSeekForward,
+                            tint = BentoTextPrimary,
+                            iconSize = 25.dp,
+                            touchSize = 48.dp
                         )
                     }
                 }

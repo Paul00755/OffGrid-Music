@@ -395,18 +395,50 @@ fun PlaylistDetailScreen(
                         DropdownMenu(
                             expanded = showOptionsMenu,
                             onDismissRequest = { showOptionsMenu = false },
-                            modifier = Modifier.background(BentoCardSurface)
+                            shape = RoundedCornerShape(18.dp),
+                            containerColor = BentoCardSurface,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 12.dp,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .widthIn(min = 240.dp)
+                                .testTag("playlist_options_menu")
                         ) {
+                            Text(
+                                text = "PLAYLIST OPTIONS",
+                                color = BentoTextSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.9.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
                             DropdownMenuItem(
-                                text = { Text("Rename Playlist", color = BentoTextPrimary) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = null,
-                                        tint = BentoPrimary,
-                                        modifier = Modifier.size(20.dp)
+                                text = {
+                                    Text(
+                                        text = "Rename Playlist",
+                                        color = BentoTextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
                                     )
                                 },
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(BentoPrimary.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("playlist_menu_rename"),
                                 onClick = {
                                     showOptionsMenu = false
                                     renameText = playlist.name
@@ -414,7 +446,32 @@ fun PlaylistDetailScreen(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Change Playlist Cover", color = BentoTextPrimary) },
+                                text = {
+                                    Text(
+                                        text = "Change Playlist Cover",
+                                        color = BentoTextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(BentoPrimary.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("playlist_menu_change_cover"),
                                 onClick = {
                                     showOptionsMenu = false
                                     artworkPickerLauncher.launch("image/*")
@@ -422,7 +479,32 @@ fun PlaylistDetailScreen(
                             )
                             if (playlist.artworkUri != null) {
                                 DropdownMenuItem(
-                                    text = { Text("Remove Custom Cover", color = BentoTextSecondary) },
+                                    text = {
+                                        Text(
+                                            text = "Remove Custom Cover",
+                                            color = BentoTextSecondary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(BentoCardDarkPurple.copy(alpha = 0.75f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.HideImage,
+                                                contentDescription = null,
+                                                tint = BentoTextSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("playlist_menu_remove_cover"),
                                     onClick = {
                                         showOptionsMenu = false
                                         onUpdatePlaylistArtwork(playlist.id, null)
@@ -430,7 +512,32 @@ fun PlaylistDetailScreen(
                                 )
                             }
                             DropdownMenuItem(
-                                text = { Text("Export as M3U", color = BentoTextPrimary) },
+                                text = {
+                                    Text(
+                                        text = "Export as M3U",
+                                        color = BentoTextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(BentoPrimary.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FileUpload,
+                                            contentDescription = null,
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("playlist_menu_export_m3u"),
                                 onClick = {
                                     showOptionsMenu = false
                                     val customOrderedSongs = localEntries.map { it.song }
@@ -442,23 +549,71 @@ fun PlaylistDetailScreen(
                             )
                             if (onRemoveDuplicates != null) {
                                 DropdownMenuItem(
-                                    text = { Text("Remove Duplicate Songs", color = BentoTextPrimary) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = null,
-                                            tint = BentoPrimary,
-                                            modifier = Modifier.size(20.dp)
+                                    text = {
+                                        Text(
+                                            text = "Remove Duplicate Songs",
+                                            color = BentoTextPrimary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
                                         )
                                     },
+                                    leadingIcon = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(BentoPrimary.copy(alpha = 0.14f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = null,
+                                                tint = BentoPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("playlist_menu_remove_duplicates"),
                                     onClick = {
                                         showOptionsMenu = false
                                         onRemoveDuplicates()
                                     }
                                 )
                             }
+                            HorizontalDivider(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                thickness = 0.8.dp,
+                                color = BentoBorder.copy(alpha = 0.35f)
+                            )
+                            val deleteTint = MaterialTheme.colorScheme.error
                             DropdownMenuItem(
-                                text = { Text("Delete Playlist", color = BentoAccentPinkText) },
+                                text = {
+                                    Text(
+                                        text = "Delete Playlist",
+                                        color = deleteTint,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                leadingIcon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(deleteTint.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = null,
+                                            tint = deleteTint,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("playlist_menu_delete"),
                                 onClick = {
                                     showOptionsMenu = false
                                     showDeleteConfirmation = true

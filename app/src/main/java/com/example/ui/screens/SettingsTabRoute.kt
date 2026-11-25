@@ -71,6 +71,7 @@ private data class SettingsAudioAndPlaybackBundle(
     val sleepTimerMode: String,
     val highRefreshRate: Boolean,
     val alwaysShuffle: Boolean,
+    val smartQueueEnabled: Boolean,
     val gesturePlayback: Boolean
 )
 
@@ -216,6 +217,7 @@ private fun rememberSettingsAudioAndPlaybackBundle(viewModel: MusicViewModel): S
         sleepTimerMode = viewModel.sleepTimerMode.collectAsState().value,
         highRefreshRate = viewModel.highRefreshRate.collectAsState().value,
         alwaysShuffle = viewModel.alwaysShuffleMode.collectAsState().value,
+        smartQueueEnabled = viewModel.smartQueueEnabled.collectAsState().value,
         gesturePlayback = viewModel.gesturePlaybackEnabled.collectAsState().value
     )
 }
@@ -318,6 +320,9 @@ fun SettingsTabRoute(
     val displayScale by viewModel.displayScale.collectAsState()
     val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
     val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsState()
+    val showNowPlayingSeekButtons by viewModel.showNowPlayingSeekButtons.collectAsState()
+    val nowPlayingBackwardSeconds by viewModel.nowPlayingBackwardSeconds.collectAsState()
+    val nowPlayingForwardSeconds by viewModel.nowPlayingForwardSeconds.collectAsState()
     val useDarkColors by viewModel.useDarkColors.collectAsState()
     val isGradientEffect by viewModel.isGradientEffect.collectAsState()
     val isGlassEffect by viewModel.isGlassEffect.collectAsState()
@@ -348,6 +353,12 @@ fun SettingsTabRoute(
         onSetShowNowPlayingVolumeBar = viewModel::setShowNowPlayingVolumeBar,
         showAdvancedSongInfo = showAdvancedSongInfo,
         onSetShowAdvancedSongInfo = viewModel::setShowAdvancedSongInfo,
+        showNowPlayingSeekButtons = showNowPlayingSeekButtons,
+        onSetShowNowPlayingSeekButtons = viewModel::setShowNowPlayingSeekButtons,
+        nowPlayingBackwardSeconds = nowPlayingBackwardSeconds,
+        onSetNowPlayingBackwardSeconds = viewModel::setNowPlayingBackwardSeconds,
+        nowPlayingForwardSeconds = nowPlayingForwardSeconds,
+        onSetNowPlayingForwardSeconds = viewModel::setNowPlayingForwardSeconds,
         isDynamicArtworkTheme = isDynamicArtworkTheme,
         onSetDynamicArtworkTheme = viewModel::setDynamicArtworkTheme,
         useDarkColors = useDarkColors,
@@ -494,10 +505,17 @@ fun SettingsTabRoute(
         onSetHighRefreshRate = viewModel::setHighRefreshRate,
         alwaysShuffleMode = audio.alwaysShuffle,
         onSetAlwaysShuffleMode = viewModel::setAlwaysShuffleMode,
+        smartQueueEnabled = audio.smartQueueEnabled,
+        onSetSmartQueueEnabled = viewModel::setSmartQueueEnabled,
         gesturePlaybackEnabled = audio.gesturePlayback,
         onSetGesturePlaybackEnabled = viewModel::setGesturePlaybackEnabled,
         homeSections = homeSections,
         onSetHomeSections = viewModel::setHomeSections,
+        bottomNavOrder = viewModel.bottomNavOrder.collectAsState().value,
+        onSetBottomNavOrder = viewModel::setBottomNavOrder,
+        onResetBottomNavOrder = viewModel::resetBottomNavOrder,
+        autoOpenSearchKeyboard = viewModel.autoOpenSearchKeyboard.collectAsState().value,
+        onSetAutoOpenSearchKeyboard = viewModel::setAutoOpenSearchKeyboard,
         customHomeFeedPresets = viewModel.customHomeFeedPresets.collectAsState().value,
         onSaveCustomHomeFeedPreset = viewModel::saveCustomHomeFeedPreset,
         onDeleteCustomHomeFeedPreset = viewModel::deleteCustomHomeFeedPreset,

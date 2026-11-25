@@ -153,48 +153,12 @@ object WidgetBitmapRenderer {
     fun extractDominantAccentColor(bitmap: Bitmap?): Int? {
         if (bitmap == null || bitmap.isRecycled) return null
         try {
-            val scaled = Bitmap.createScaledBitmap(bitmap, 24, 24, false)
-            var bestColor = Color.parseColor("#FF6D3F")
-            var maxVibrancy = -1f
-
-            var totalR = 0
-            var totalG = 0
-            var totalB = 0
-            var validCount = 0
-
-            for (x in 0 until scaled.width) {
-                for (y in 0 until scaled.height) {
-                    val pixel = scaled.getPixel(x, y)
-                    val r = Color.red(pixel)
-                    val g = Color.green(pixel)
-                    val b = Color.blue(pixel)
-
-                    val max = maxOf(r, g, b)
-                    val min = minOf(r, g, b)
-                    val saturation = if (max > 0) (max - min).toFloat() / max else 0f
-                    val brightness = max / 255f
-
-                    if (brightness in 0.30f..0.95f && saturation > 0.25f) {
-                        val vibrancy = saturation * brightness
-                        if (vibrancy > maxVibrancy) {
-                            maxVibrancy = vibrancy
-                            bestColor = pixel
-                        }
-                    }
-
-                    if (max > 35 && min < 240) {
-                        totalR += r
-                        totalG += g
-                        totalB += b
-                        validCount++
-                    }
-                }
-            }
-
-            if (maxVibrancy > 0.15f) {
-                return bestColor
-            } else if (validCount > 0) {
-                return Color.rgb(totalR / validCount, totalG / validCount, totalB / validCount)
+            val extracted = com.example.util.ArtworkColorExtractor.findProminentColor(bitmap)
+            if (extracted != null) {
+                val r = (extracted.red * 255f).toInt().coerceIn(0, 255)
+                val g = (extracted.green * 255f).toInt().coerceIn(0, 255)
+                val b = (extracted.blue * 255f).toInt().coerceIn(0, 255)
+                return Color.rgb(r, g, b)
             }
         } catch (_: Exception) {}
         return Color.parseColor("#FF6D3F")

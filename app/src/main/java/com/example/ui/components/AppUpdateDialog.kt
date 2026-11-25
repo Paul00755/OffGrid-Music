@@ -1,26 +1,21 @@
 package com.example.ui.components
 
-import android.content.Intent
-import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,9 +28,8 @@ import com.example.update.AppUpdateRepository
 import com.example.update.ReleaseInfo
 
 /**
- * Clean, minimal Material 3 update dialog announcing a verified stable release.
- * Avoids boxy nested containers, heavy badges, and emojis; presents concise
- * plain-language fixes and improvements with pill actions that adapt across screen sizes.
+ * Clean, focused in-app update dialog presenting only the version title and a structured,
+ * human-readable Changelog (highlights, improvements, fixes) without GitHub tag/release clutter.
  */
 @Composable
 fun AppUpdateDialog(
@@ -44,28 +38,28 @@ fun AppUpdateDialog(
     onUpdateNow: (String) -> Unit = {},
     onOpenRepoUrl: ((String) -> Unit)? = null
 ) {
-    val context = LocalContext.current
-    val publishDate = remember(release.publishedAt) { release.getFormattedPublishDate() }
-    val bulletNotes = remember(release.body) {
-        release.getSanitizedNotes()
-            .lines()
-            .map { it.trim().removePrefix("•").trim() }
-            .filter { it.isNotBlank() }
-    }
-    val versionLabel = remember(release.tagName, release.version) {
+    val changelog = remember(release.body) { release.getStructuredChangelog() }
+    val cleanVersion = remember(release.tagName, release.version) {
         if (release.version.isValid) {
-            "Version ${release.version.major}.${release.version.minor}.${release.version.patch}"
+            "v${release.version.major}.${release.version.minor}.${release.version.patch}"
         } else {
-            release.tagName.removePrefix("v").let { "Version $it" }
+            val cleaned = release.tagName.trim()
+                .substringBefore('-')
+                .removePrefix("v")
+                .removePrefix("V")
+            if (cleaned.isNotBlank()) "v$cleaned" else "latest"
         }
     }
-    val metaLine = remember(versionLabel, publishDate, release.apkSize) {
-        buildList {
-            add(versionLabel)
-            if (publishDate.isNotBlank()) add(publishDate)
-            val sizeText = release.getFormattedApkSize()
-            if (sizeText.isNotBlank()) add(sizeText)
-        }.joinToString("  •  ")
+    val isDarkSurface = BentoCardSurface.luminance() < 0.5f
+    val headerCardColor = if (isDarkSurface) {
+        BentoBackground.copy(alpha = 0.55f)
+    } else {
+        BentoCardPurple.copy(alpha = 0.45f)
+    }
+    val changelogCardColor = if (isDarkSurface) {
+        BentoBackground.copy(alpha = 0.62f)
+    } else {
+        BentoCardPurple.copy(alpha = 0.35f)
     }
 
     Dialog(
@@ -79,142 +73,153 @@ fun AppUpdateDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .widthIn(max = 440.dp)
+                .widthIn(max = 460.dp)
                 .wrapContentHeight()
-                .padding(vertical = 24.dp),
+                .padding(vertical = 20.dp)
+                .testTag("app_update_dialog"),
             shape = RoundedCornerShape(28.dp),
             color = BentoCardSurface,
-            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.55f)),
-            tonalElevation = 6.dp
+            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+            tonalElevation = 8.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 22.dp)
+                    .padding(horizontal = 18.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Calm editorial header without loud boxed icons or badges
-                Text(
-                    text = metaLine,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = BentoPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // Top Header Card: pill badge + "Version vX.Y.Z is available"
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = headerCardColor,
+                    border = BorderStroke(0.75.dp, BentoBorder.copy(alpha = 0.28f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = BentoPrimary.copy(alpha = 0.18f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = BentoPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Update available",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BentoTextPrimary
+                                )
+                            }
+                        }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Version $cleanVersion is available",
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextPrimary,
+                            letterSpacing = (-0.25).sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
 
-                Text(
-                    text = "Update available",
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BentoTextPrimary,
-                    letterSpacing = (-0.2).sp
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "A newer version of OffGrid Music is ready. Your library, playlists, and settings stay intact.",
-                    fontSize = 13.sp,
-                    color = BentoTextSecondary,
-                    lineHeight = 18.5.sp
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                HorizontalDivider(
-                    color = BentoBorder.copy(alpha = 0.35f),
-                    thickness = 0.8.dp
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Plain, scannable What's New list directly on the surface (no boxy inner card)
-                Text(
-                    text = "What's fixed and improved",
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BentoTextPrimary
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Column(
+                // Scrollable Changelog Container
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = changelogCardColor,
+                    border = BorderStroke(0.75.dp, BentoBorder.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 210.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .weight(1f, fill = false)
+                        .heightIn(max = 420.dp)
                 ) {
-                    bulletNotes.forEach { item ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 7.dp)
-                                    .size(5.dp)
-                                    .clip(CircleShape)
-                                    .background(BentoPrimary)
-                            )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Changelog",
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoPrimary
+                        )
+
+                        if (!changelog.intro.isNullOrBlank()) {
                             Text(
-                                text = item,
-                                fontSize = 13.sp,
+                                text = changelog.intro,
+                                fontSize = 13.5.sp,
                                 color = BentoTextSecondary,
-                                lineHeight = 19.sp,
-                                modifier = Modifier.weight(1f)
+                                lineHeight = 20.sp
                             )
+                        }
+
+                        changelog.sections.forEachIndexed { sectionIndex, section ->
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!section.heading.isNullOrBlank()) {
+                                    if (sectionIndex > 0 || !changelog.intro.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                    }
+                                    Text(
+                                        text = section.heading,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoPrimary
+                                    )
+                                }
+
+                                section.items.forEach { bullet ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.Top,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(top = 8.dp)
+                                                .size(4.5.dp)
+                                                .clip(CircleShape)
+                                                .background(BentoTextPrimary.copy(alpha = 0.8f))
+                                        )
+                                        Text(
+                                            text = bullet,
+                                            fontSize = 13.5.sp,
+                                            color = BentoTextPrimary.copy(alpha = 0.90f),
+                                            lineHeight = 20.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Subtle inline link instead of a boxy rectangle card
+                // Action Row: "Next time" + "Update"
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            val repoUrl = AppUpdateRepository.GITHUB_REPO_URL
-                            if (onOpenRepoUrl != null) {
-                                onOpenRepoUrl(repoUrl)
-                            } else {
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(repoUrl)))
-                                } catch (_: Exception) {
-                                    Toast.makeText(context, "Could not open GitHub repository", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                        .defaultMinSize(minHeight = 40.dp)
-                        .padding(horizontal = 4.dp, vertical = 6.dp)
-                        .testTag("update_github_repo_link"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "View release details on GitHub",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = BentoPrimary
-                    )
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "Open GitHub repository",
-                        tint = BentoPrimary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Clean Material 3 pill actions (text dismiss + pill primary)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(
@@ -225,19 +230,19 @@ fun AppUpdateDialog(
                             .testTag("update_later_button")
                     ) {
                         Text(
-                            text = "Not now",
+                            text = "Next time",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = BentoTextSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BentoPrimary,
                             modifier = Modifier.padding(horizontal = 8.dp)
                         )
                     }
 
                     Button(
                         onClick = {
-                            val targetUrl = release.htmlUrl.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
-                                ?: release.apkDownloadUrl?.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
-                                ?: "${AppUpdateRepository.GITHUB_REPO_URL}/releases/tag/${release.tagName}"
+                            val targetUrl = release.apkDownloadUrl?.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
+                                ?: release.htmlUrl.takeIf { it.isNotBlank() && it.startsWith("https://github.com/") }
+                                ?: "${AppUpdateRepository.GITHUB_REPO_URL}/releases/latest"
                             onUpdateNow(targetUrl)
                         },
                         shape = CircleShape,
@@ -245,21 +250,15 @@ fun AppUpdateDialog(
                             containerColor = BentoPrimary,
                             contentColor = BentoOnPrimary
                         ),
-                        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
                         modifier = Modifier
                             .defaultMinSize(minHeight = 48.dp)
                             .testTag("update_now_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowDownward,
-                            contentDescription = "Download update",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Update",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

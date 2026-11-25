@@ -252,13 +252,26 @@ class PlaybackManager(
         }
     }
 
+    private fun createCrossfadeLoadControl(): androidx.media3.exoplayer.LoadControl {
+        return androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 12_000,
+                /* maxBufferMs = */ 24_000,
+                /* bufferForPlaybackMs = */ 120,
+                /* bufferForPlaybackAfterRebufferMs = */ 200
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(0, /* retainBackBufferFromKeyframe = */ false)
+            .build()
+    }
+
     private var _crossfadePlayer: ExoPlayer? = null
     val crossfadePlayer: ExoPlayer
         get() {
             return _crossfadePlayer ?: synchronized(this) {
                 _crossfadePlayer ?: ExoPlayer.Builder(context, crossfadeRenderersFactory)
                     .setMediaSourceFactory(createGaplessMediaSourceFactory())
-                    .setLoadControl(createLoadControl())
+                    .setLoadControl(createCrossfadeLoadControl())
                     .setUsePlatformDiagnostics(false)
                     .build()
                     .apply {
@@ -277,6 +290,8 @@ class PlaybackManager(
         }
 
     private var crossfadeJob: Job? = null
+    @Volatile private var prestagedCrossfadeSongId: Long? = null
+    private var crossfadeNotificationJob: Job? = null
 
     fun setAudioBalance(balance: Float) {
         stereoBalanceProcessor.balance = balance
@@ -391,6 +406,56 @@ class PlaybackManager(
         } catch (_: Throwable) {}
     }
 
+    fun notifyAvailableCommandsChanged() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) {
+                notifyAvailableCommandsChanged()
+            }
+            return
+        }
+        try {
+            val commands = forwardingPlayer.availableCommands
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED)
+                    .build()
+            )
+            for (listener in forwardingListeners) {
+                try {
+                    listener.onAvailableCommandsChanged(commands)
+                    listener.onEvents(forwardingPlayer, events)
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /** Lightweight MediaSession heartbeat so Android Control Center keeps paused controls active longer. */
+    fun refreshMediaSessionKeepAlive() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) {
+                refreshMediaSessionKeepAlive()
+            }
+            return
+        }
+        try {
+            val hasSong = _playbackState.value.currentSong != null || player.mediaItemCount > 0
+            if (!hasSong) return
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .addAll(
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_MEDIA_METADATA_CHANGED
+                    )
+                    .build()
+            )
+            for (listener in forwardingListeners) {
+                try {
+                    listener.onEvents(forwardingPlayer, events)
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
+    }
+
     val forwardingPlayer: androidx.media3.common.ForwardingPlayer = object : androidx.media3.common.ForwardingPlayer(player) {
         override fun addListener(listener: Player.Listener) {
             forwardingListeners.add(listener)
@@ -464,22 +529,79 @@ class PlaybackManager(
             val base = super.getAvailableCommands()
             val hasLoadedSong = _playbackState.value.currentSong != null || super.getMediaItemCount() > 0
             if (!hasLoadedSong) return base
-            return base.buildUpon()
+            val builder = base.buildUpon()
+                .addAll(
+                    Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_GET_TIMELINE,
+                    Player.COMMAND_GET_METADATA
+                )
+            if (jamPlaybackActive) {
+                if (jamCanPlayPause) {
+                    builder.add(Player.COMMAND_PLAY_PAUSE)
+                } else {
+                    builder.remove(Player.COMMAND_PLAY_PAUSE)
+                    builder.remove(Player.COMMAND_STOP)
+                }
+                if (jamCanSeek) {
+                    builder.addAll(
+                        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_FORWARD,
+                        Player.COMMAND_SEEK_BACK
+                    )
+                } else {
+                    builder.remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                    builder.remove(Player.COMMAND_SEEK_FORWARD)
+                    builder.remove(Player.COMMAND_SEEK_BACK)
+                }
+                if (jamCanSkip) {
+                    builder.addAll(
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
+                    )
+                } else {
+                    builder.remove(Player.COMMAND_SEEK_TO_NEXT)
+                    builder.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    builder.remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+                    builder.remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                }
+                builder.remove(Player.COMMAND_SET_REPEAT_MODE)
+                builder.remove(Player.COMMAND_SET_SHUFFLE_MODE)
+                builder.remove(Player.COMMAND_SET_MEDIA_ITEM)
+                builder.remove(Player.COMMAND_CHANGE_MEDIA_ITEMS)
+                return builder.build()
+            }
+            return builder
                 .addAll(
                     Player.COMMAND_PLAY_PAUSE,
                     Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                     Player.COMMAND_SEEK_TO_NEXT,
                     Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
                     Player.COMMAND_SEEK_TO_PREVIOUS,
-                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
-                    Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
-                    Player.COMMAND_GET_TIMELINE,
-                    Player.COMMAND_GET_METADATA
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
                 )
                 .build()
         }
 
         override fun isCommandAvailable(command: Int): Boolean {
+            if (jamPlaybackActive) {
+                when (command) {
+                    Player.COMMAND_PLAY_PAUSE,
+                    Player.COMMAND_STOP -> return jamCanPlayPause && (_playbackState.value.currentSong != null || super.getMediaItemCount() > 0)
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> return jamCanSkip && (_playbackState.value.currentSong != null || super.getMediaItemCount() > 0)
+                    Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_FORWARD,
+                    Player.COMMAND_SEEK_BACK -> return jamCanSeek && (_playbackState.value.currentSong != null || super.getMediaItemCount() > 0)
+                    Player.COMMAND_SET_REPEAT_MODE,
+                    Player.COMMAND_SET_SHUFFLE_MODE,
+                    Player.COMMAND_SET_MEDIA_ITEM,
+                    Player.COMMAND_CHANGE_MEDIA_ITEMS -> return false
+                }
+            }
             val hasLoadedSong = _playbackState.value.currentSong != null || super.getMediaItemCount() > 0
             if (hasLoadedSong && command in setOf(
                     Player.COMMAND_PLAY_PAUSE,
@@ -524,6 +646,7 @@ class PlaybackManager(
         }
 
         override fun play() {
+            if (jamPlaybackActive && !jamCanPlayPause) return
             if (!jamPlaybackActive && fadeInMs > 0) {
                 playWithFade()
             } else {
@@ -532,6 +655,7 @@ class PlaybackManager(
         }
 
         override fun pause() {
+            if (jamPlaybackActive && !jamCanPlayPause) return
             if (!jamPlaybackActive && fadeOutMs > 0) {
                 pauseWithFade()
             } else {
@@ -540,31 +664,51 @@ class PlaybackManager(
         }
 
         override fun seekToNext() {
+            if (jamPlaybackActive && !jamCanSkip) return
             this@PlaybackManager.skipToNext()
         }
 
         override fun seekToNextMediaItem() {
+            if (jamPlaybackActive && !jamCanSkip) return
             this@PlaybackManager.skipToNext()
         }
 
         override fun seekToPrevious() {
+            if (jamPlaybackActive && !jamCanSkip) return
             this@PlaybackManager.skipToPrevious()
         }
 
         override fun seekToPreviousMediaItem() {
+            if (jamPlaybackActive && !jamCanSkip) return
             this@PlaybackManager.skipToPrevious()
         }
 
         override fun seekTo(positionMs: Long) {
+            if (jamPlaybackActive && !jamCanSeek) return
             this@PlaybackManager.seekTo(positionMs)
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
-            if (jamPlaybackActive || mediaItemIndex == currentMediaItemIndex) {
+            if (jamPlaybackActive) {
+                if (!jamCanSeek) return
+                this@PlaybackManager.seekTo(positionMs)
+            } else if (mediaItemIndex == currentMediaItemIndex) {
                 this@PlaybackManager.seekTo(positionMs)
             } else {
                 super.seekTo(mediaItemIndex, positionMs)
             }
+        }
+
+        override fun seekForward() {
+            if (jamPlaybackActive && !jamCanSeek) return
+            val target = (resolveEffectivePositionMs() + 10_000L).coerceAtMost(resolveEffectiveDurationMs().coerceAtLeast(0L))
+            this@PlaybackManager.seekTo(target)
+        }
+
+        override fun seekBack() {
+            if (jamPlaybackActive && !jamCanSeek) return
+            val target = (resolveEffectivePositionMs() - 10_000L).coerceAtLeast(0L)
+            this@PlaybackManager.seekTo(target)
         }
 
         override fun setRepeatMode(repeatMode: Int) {
@@ -578,7 +722,11 @@ class PlaybackManager(
         }
 
         override fun stop() {
-            if (jamPlaybackActive) this@PlaybackManager.pause() else super.stop()
+            if (jamPlaybackActive) {
+                if (jamCanPlayPause) this@PlaybackManager.pause()
+            } else {
+                super.stop()
+            }
         }
     }
 
@@ -609,6 +757,23 @@ class PlaybackManager(
                     playerCommands
                         .remove(Player.COMMAND_SET_MEDIA_ITEM)
                         .remove(Player.COMMAND_CHANGE_MEDIA_ITEMS)
+                        .remove(Player.COMMAND_SET_REPEAT_MODE)
+                        .remove(Player.COMMAND_SET_SHUFFLE_MODE)
+                    if (!jamCanPlayPause) {
+                        playerCommands.remove(Player.COMMAND_PLAY_PAUSE)
+                        playerCommands.remove(Player.COMMAND_STOP)
+                    }
+                    if (!jamCanSkip) {
+                        playerCommands.remove(Player.COMMAND_SEEK_TO_NEXT)
+                        playerCommands.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        playerCommands.remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        playerCommands.remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    }
+                    if (!jamCanSeek) {
+                        playerCommands.remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                        playerCommands.remove(Player.COMMAND_SEEK_FORWARD)
+                        playerCommands.remove(Player.COMMAND_SEEK_BACK)
+                    }
                 }
                 return androidx.media3.session.MediaSession.ConnectionResult.accept(
                     sessionCommands,
@@ -616,18 +781,70 @@ class PlaybackManager(
                 )
             }
 
+            override fun onMediaButtonEvent(
+                session: androidx.media3.session.MediaSession,
+                controllerInfo: androidx.media3.session.MediaSession.ControllerInfo,
+                intent: android.content.Intent
+            ): Boolean {
+                if (jamPlaybackActive) {
+                    val keyEvent: android.view.KeyEvent? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(android.content.Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(android.content.Intent.EXTRA_KEY_EVENT)
+                    }
+                    if (keyEvent != null) {
+                        val blocked = when (keyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                            android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
+                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                            android.view.KeyEvent.KEYCODE_HEADSETHOOK,
+                            android.view.KeyEvent.KEYCODE_MEDIA_STOP -> !jamCanPlayPause
+                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT,
+                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> !jamCanSkip
+                            android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                            android.view.KeyEvent.KEYCODE_MEDIA_REWIND,
+                            android.view.KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+                            android.view.KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+                            android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD,
+                            android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD -> !jamCanSeek
+                            else -> false
+                        }
+                        if (blocked) {
+                            // Consume unauthorized Bluetooth/wired headphone media button events so listeners
+                            // without Jam control permissions cannot pause, resume, skip, or seek playback.
+                            return true
+                        }
+                    }
+                }
+                return super.onMediaButtonEvent(session, controllerInfo, intent)
+            }
+
             override fun onPlayerCommandRequest(
                 session: androidx.media3.session.MediaSession,
                 controller: androidx.media3.session.MediaSession.ControllerInfo,
                 playerCommand: Int
             ): Int {
-                if (jamPlaybackActive && playerCommand in setOf(
+                if (jamPlaybackActive) {
+                    val blocked = when (playerCommand) {
                         Player.COMMAND_CHANGE_MEDIA_ITEMS,
                         Player.COMMAND_SET_MEDIA_ITEM,
                         Player.COMMAND_SET_REPEAT_MODE,
-                        Player.COMMAND_SET_SHUFFLE_MODE
-                    )) {
-                    return androidx.media3.session.SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                        Player.COMMAND_SET_SHUFFLE_MODE -> true
+                        Player.COMMAND_PLAY_PAUSE,
+                        Player.COMMAND_STOP -> !jamCanPlayPause
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> !jamCanSkip
+                        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_FORWARD,
+                        Player.COMMAND_SEEK_BACK -> !jamCanSeek
+                        else -> false
+                    }
+                    if (blocked) {
+                        return androidx.media3.session.SessionResult.RESULT_ERROR_NOT_SUPPORTED
+                    }
                 }
                 if (!jamPlaybackActive && playerCommand == Player.COMMAND_PLAY_PAUSE) {
                     if (player.playbackState == Player.STATE_IDLE) {
@@ -766,9 +983,13 @@ class PlaybackManager(
     fun cancelCrossfade(resetVolume: Boolean = true) {
         crossfadeJob?.cancel()
         crossfadeJob = null
+        crossfadeNotificationJob?.cancel()
+        crossfadeNotificationJob = null
         isCrossfadeTransitioning = false
         hasTriggeredCrossfadeTransition = false
+        prestagedCrossfadeSongId = null
         try {
+            _crossfadePlayer?.volume = 0f
             _crossfadePlayer?.playWhenReady = false
             _crossfadePlayer?.stop()
             _crossfadePlayer?.clearMediaItems()
@@ -1670,6 +1891,127 @@ class PlaybackManager(
             }
         }
 
+    @Volatile
+    var smartQueueEnabled: Boolean = false
+
+    @Volatile
+    private var cachedListeningProfile: SmartShuffleEngine.ListeningProfile = SmartShuffleEngine.ListeningProfile.EMPTY
+
+    @Volatile
+    private var lastListeningProfileRefreshMs: Long = 0L
+
+    private var smartProfileRefreshJob: Job? = null
+
+    fun refreshSmartShuffleProfileAsync(force: Boolean = false) {
+        if (!smartQueueEnabled && !force) return
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastListeningProfileRefreshMs) < 120_000L && cachedListeningProfile.totalHistoryEvents > 0) {
+            return
+        }
+        if (smartProfileRefreshJob?.isActive == true && !force) return
+        smartProfileRefreshJob = scope.launch(Dispatchers.IO) {
+            try {
+                val db = com.example.data.local.AppDatabase.getInstance(context)
+                val history = db.historyDao().getHistoryBatchOnce(600)
+                val songs = db.songDao().getAllSongs().firstOrNull()?.map { it.toDomainModel() } ?: emptyList()
+                cachedListeningProfile = SmartShuffleEngine.buildListeningProfile(
+                    songs = songs,
+                    history = history,
+                    nowMs = System.currentTimeMillis()
+                )
+                lastListeningProfileRefreshMs = System.currentTimeMillis()
+            } catch (e: Exception) {
+                Log.w(TAG, "SmartShuffle profile refresh skipped: ${e.message}")
+            }
+        }
+    }
+
+    private fun buildShuffledQueue(songs: List<Song>, anchorSong: Song?): List<Song> {
+        if (songs.size <= 1) return songs
+        return if (smartQueueEnabled) {
+            refreshSmartShuffleProfileAsync(force = false)
+            SmartShuffleEngine.reorderQueue(
+                songs = songs,
+                anchorSong = anchorSong,
+                profile = cachedListeningProfile
+            )
+        } else {
+            if (anchorSong != null) {
+                val anchorIdx = songs.indexOfFirst { it.id == anchorSong.id }
+                if (anchorIdx >= 0) {
+                    val locked = songs[anchorIdx]
+                    val pool = songs.filterIndexed { index, _ -> index != anchorIdx }.shuffled()
+                    listOf(locked) + pool
+                } else {
+                    songs.shuffled()
+                }
+            } else {
+                songs.shuffled()
+            }
+        }
+    }
+
+    /**
+     * When Smart Queue is enabled while a non-Jam queue is already shuffled, dynamically reorders
+     * only the upcoming tracks without interrupting or restarting the currently playing song.
+     */
+    fun reorderUpcomingWithSmartShuffleIfActive() {
+        if (!smartQueueEnabled || jamPlaybackActive) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val db = com.example.data.local.AppDatabase.getInstance(context)
+                val history = db.historyDao().getHistoryBatchOnce(600)
+                val songs = db.songDao().getAllSongs().firstOrNull()?.map { it.toDomainModel() } ?: emptyList()
+                val freshProfile = SmartShuffleEngine.buildListeningProfile(
+                    songs = songs,
+                    history = history,
+                    nowMs = System.currentTimeMillis()
+                )
+                cachedListeningProfile = freshProfile
+                lastListeningProfileRefreshMs = System.currentTimeMillis()
+
+                withContext(Dispatchers.Main) {
+                    val state = _playbackState.value
+                    if (!smartQueueEnabled || jamPlaybackActive || !state.isShuffleEnabled) return@withContext
+                    val queue = state.queue
+                    val curIdx = state.queueIndex
+                    if (curIdx !in queue.indices || curIdx >= queue.size - 2) return@withContext
+
+                    val currentSong = queue[curIdx]
+                    val playedPrefix = queue.subList(0, curIdx + 1)
+                    val upcoming = queue.subList(curIdx + 1, queue.size)
+                    val reorderedWithAnchor = SmartShuffleEngine.reorderQueue(
+                        songs = listOf(currentSong) + upcoming,
+                        anchorSong = currentSong,
+                        profile = freshProfile
+                    )
+                    val reorderedUpcoming = if (reorderedWithAnchor.isNotEmpty() && reorderedWithAnchor.first().id == currentSong.id) {
+                        reorderedWithAnchor.drop(1)
+                    } else {
+                        reorderedWithAnchor
+                    }
+                    if (reorderedUpcoming.size != upcoming.size) return@withContext
+
+                    val updatedQueue = playedPrefix + reorderedUpcoming
+                    _playbackState.value = _playbackState.value.copy(queue = updatedQueue)
+
+                    val playerItemCount = player.mediaItemCount
+                    val removeStart = (curIdx + 1).coerceAtMost(playerItemCount)
+                    if (removeStart < playerItemCount) {
+                        player.removeMediaItems(removeStart, playerItemCount)
+                    }
+                    val upcomingItems = reorderedUpcoming.map { buildMediaItem(it, loadArtworkBytes = false) }
+                    if (upcomingItems.isNotEmpty()) {
+                        player.addMediaItems(removeStart, upcomingItems)
+                    }
+                    persistPlaybackStateNow()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "SmartShuffle upcoming reorder skipped: ${e.message}")
+            }
+        }
+    }
+
     fun jumpToQueueIndex(index: Int) {
         if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
             turnRepeatOneOff()
@@ -1735,11 +2077,9 @@ class PlaybackManager(
 
         val currentQueue = if (useShuffle) {
             if (forceShuffle == true && startIndex == 0) {
-                songs.shuffled()
+                buildShuffledQueue(songs, anchorSong = null)
             } else {
-                val selectedSong = songs[targetIndex]
-                val pool = songs.filterIndexed { index, _ -> index != targetIndex }.shuffled()
-                listOf(selectedSong) + pool
+                buildShuffledQueue(songs, anchorSong = songs[targetIndex])
             }
         } else {
             songs
@@ -1808,6 +2148,9 @@ class PlaybackManager(
         }
     var crossfadeDurationSec: Int = 0
     @Volatile private var jamPlaybackActive: Boolean = false
+    @Volatile private var jamCanPlayPause: Boolean = true
+    @Volatile private var jamCanSkip: Boolean = true
+    @Volatile private var jamCanSeek: Boolean = true
     @Volatile private var applyingJamSnapshot: Boolean = false
     @Volatile private var jamCommandHandler: ((JamPlaybackAction, Long) -> Unit)? = null
     private var jamRestoreGeneration = 0L
@@ -1822,7 +2165,12 @@ class PlaybackManager(
 
     /** Keeps local crossfade preferences intact while Jam playback uses server-led track changes. */
     fun setJamPlaybackActive(active: Boolean) {
-        if (!active) jamCommandHandler = null
+        if (!active) {
+            jamCommandHandler = null
+            jamCanPlayPause = true
+            jamCanSkip = true
+            jamCanSeek = true
+        }
         if (jamPlaybackActive == active) return
         jamPlaybackActive = active
         if (active) {
@@ -1831,6 +2179,22 @@ class PlaybackManager(
             fadeJob = null
             cancelCrossfade(resetVolume = true)
             player.volume = transitionTargetVolume()
+        }
+        notifyAvailableCommandsChanged()
+        updateNotificationLayout()
+        MusicPlaybackService.instance?.triggerNotificationUpdate()
+    }
+
+    /** Updates media-button, Bluetooth, and lockscreen permissions dynamically for the active Jam listener. */
+    fun updateJamControlPermissions(canPlayPause: Boolean, canSkip: Boolean, canSeek: Boolean) {
+        val changed = jamCanPlayPause != canPlayPause || jamCanSkip != canSkip || jamCanSeek != canSeek
+        jamCanPlayPause = canPlayPause
+        jamCanSkip = canSkip
+        jamCanSeek = canSeek
+        if (changed && jamPlaybackActive) {
+            notifyAvailableCommandsChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
         }
     }
 
@@ -1852,35 +2216,72 @@ class PlaybackManager(
         try {
             player.repeatMode = Player.REPEAT_MODE_OFF
             player.shuffleModeEnabled = false
-            _playbackState.value = _playbackState.value.copy(repeatMode = Player.REPEAT_MODE_OFF, isShuffleEnabled = false)
-
             val safePos = positionMs.coerceAtLeast(0L)
             val songChanged = _playbackState.value.currentSong?.id != song.id || player.mediaItemCount == 0
             if (songChanged) {
-                playQueue(
-                    songs = listOf(song),
-                    startIndex = 0,
+                // Ultra-low-latency fast path for Jam track switches: load & start ExoPlayer immediately
+                // before secondary artwork/notification/widget work to minimize inter-device audio lag.
+                cancelCrossfade(resetVolume = true)
+                fadeJob?.cancel()
+                fadeJob = null
+                player.volume = transitionTargetVolume()
+                currentSourceContext = "JAM"
+                originalQueue = listOf(song)
+                audioNormalizerProcessor.setTrack(song.id, song.path)
+                crossfadeNormalizerProcessor.setTrack(song.id, song.path)
+                val targetStartPos = if (seekPosition) safePos else 0L
+                val mediaItem = buildMediaItem(song, loadArtworkBytes = false)
+                player.setMediaItems(listOf(mediaItem), 0, targetStartPos)
+                player.prepare()
+                if (isPlaying) {
+                    if (!audioFocusManager.hasAudioFocus) {
+                        audioFocusManager.requestAudioFocus()
+                    }
+                    player.playWhenReady = true
+                    player.play()
+                    startProgressTracker()
+                } else {
+                    player.playWhenReady = false
+                    player.pause()
+                }
+                currentPositionMs = targetStartPos
+                _playbackPositionMs.value = targetStartPos
+                _playbackState.value = _playbackState.value.copy(
+                    isShuffleEnabled = false,
+                    repeatMode = Player.REPEAT_MODE_OFF,
+                    queue = listOf(song),
+                    queueIndex = 0,
+                    currentSong = song,
+                    positionMs = targetStartPos,
+                    durationMs = song.durationMs,
+                    isPlaying = isPlaying,
+                    playbackError = null,
                     sourceContext = "JAM",
-                    forceShuffle = false,
-                    startPlayback = isPlaying,
-                    initialPositionMs = if (seekPosition) safePos else 0L
+                    queuedSongRepeatCounts = emptyMap()
                 )
-            } else if (seekPosition) {
-                seekTo(safePos)
-            }
-
-            if (isPlaying) {
-                if (player.playbackState == Player.STATE_ENDED) {
+                startMusicPlaybackService()
+                launchSongArtworkRefresh(song)
+                updateNotificationLayout()
+                MusicPlaybackService.instance?.triggerNotificationUpdate()
+                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            } else {
+                _playbackState.value = _playbackState.value.copy(repeatMode = Player.REPEAT_MODE_OFF, isShuffleEnabled = false)
+                if (seekPosition) {
                     seekTo(safePos)
-                    player.prepare()
-                } else if (player.playbackState == Player.STATE_IDLE) {
-                    player.prepare()
                 }
-                if (!player.isPlaying || !player.playWhenReady || !_playbackState.value.isPlaying) {
-                    play()
+                if (isPlaying) {
+                    if (player.playbackState == Player.STATE_ENDED) {
+                        seekTo(safePos)
+                        player.prepare()
+                    } else if (player.playbackState == Player.STATE_IDLE) {
+                        player.prepare()
+                    }
+                    if (!player.isPlaying || !player.playWhenReady || !_playbackState.value.isPlaying) {
+                        play()
+                    }
+                } else if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) {
+                    pause()
                 }
-            } else if (player.isPlaying || player.playWhenReady || _playbackState.value.isPlaying) {
-                pause()
             }
         } finally {
             applyingJamSnapshot = wasApplying
@@ -2130,6 +2531,7 @@ class PlaybackManager(
     }
 
     private fun onHeadphoneConnected(key: String, type: Int, deviceName: String?) {
+        if (jamPlaybackActive) return
         if (!isHeadphoneDetectionInitialized) return
         if (!autoPlayOnHeadphoneConnection) return
         if (knownConnectedDevices.contains(key)) return
@@ -2141,6 +2543,7 @@ class PlaybackManager(
         pendingAutoPlayJob = scope.launch(Dispatchers.Main) {
             delay(450)
 
+            if (jamPlaybackActive) return@launch
             if (!autoPlayOnHeadphoneConnection) return@launch
             if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
@@ -2161,13 +2564,16 @@ class PlaybackManager(
     }
 
     fun handleHeadphoneConnectedFromBroadcast() {
+        if (jamPlaybackActive) return
         scope.launch(Dispatchers.Main) {
+            if (jamPlaybackActive) return@launch
             if (!autoPlayOnHeadphoneConnection) return@launch
             if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
             pendingAutoPlayJob?.cancel()
             pendingAutoPlayJob = scope.launch(Dispatchers.Main) {
                 delay(450)
+                if (jamPlaybackActive) return@launch
                 if (!autoPlayOnHeadphoneConnection) return@launch
                 if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
@@ -2191,6 +2597,7 @@ class PlaybackManager(
     }
 
     private fun resumePlaybackOnHeadphoneConnect() {
+        if (jamPlaybackActive) return
         try {
             if (player.isPlaying || _playbackState.value.isPlaying) return
             if (isVolumeZero()) {
@@ -2394,6 +2801,10 @@ class PlaybackManager(
             isNormalizeAudioEnabled = userPreferences.getNormalizeAudioSync()
             setAudioBalance(userPreferences.getAudioBalanceSync())
             alwaysShuffleMode = userPreferences.getAlwaysShuffleModeSync()
+            smartQueueEnabled = userPreferences.getSmartQueueEnabledSync()
+            if (smartQueueEnabled) {
+                refreshSmartShuffleProfileAsync(force = true)
+            }
             if (alwaysShuffleMode && !_playbackState.value.isShuffleEnabled) {
                 _playbackState.value = _playbackState.value.copy(isShuffleEnabled = true)
             }
@@ -2473,6 +2884,14 @@ class PlaybackManager(
         scope.launch {
             userPreferences.alwaysShuffleMode.collect { enabled ->
                 alwaysShuffleMode = enabled
+            }
+        }
+        scope.launch {
+            userPreferences.smartQueueEnabled.collect { enabled ->
+                smartQueueEnabled = enabled
+                if (enabled) {
+                    refreshSmartShuffleProfileAsync(force = true)
+                }
             }
         }
 
@@ -2836,10 +3255,22 @@ class PlaybackManager(
 
                     launchSongArtworkRefresh(song)
                 }
-                updateNotificationLayout()
-                MusicPlaybackService.instance?.triggerNotificationUpdate()
-                com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
-                persistPlaybackStateNow()
+                if (wasCrossfading) {
+                    // Defer binder/widget/disk updates briefly so the crossfade handoff keeps Main thread 100% stutter-free
+                    crossfadeNotificationJob?.cancel()
+                    crossfadeNotificationJob = scope.launch(Dispatchers.Main) {
+                        delay(90L)
+                        updateNotificationLayout()
+                        MusicPlaybackService.instance?.triggerNotificationUpdate()
+                        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                        persistPlaybackStateNow()
+                    }
+                } else {
+                    updateNotificationLayout()
+                    MusicPlaybackService.instance?.triggerNotificationUpdate()
+                    com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+                    persistPlaybackStateNow()
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -3176,6 +3607,30 @@ class PlaybackManager(
         }
     }
 
+    /**
+     * Proactively initializes and pre-buffers the outgoing track on [crossfadePlayer] a few seconds
+     * before the crossfade trigger window so the handoff has zero ExoPlayer construction stall or
+     * decoder startup lag. Only called when crossfade is enabled.
+     */
+    private fun prestageOutgoingTrackForCrossfade(song: Song, triggerPosMs: Long) {
+        if (prestagedCrossfadeSongId == song.id || isCrossfadeTransitioning || crossfadeJob?.isActive == true) return
+        prestagedCrossfadeSongId = song.id
+        try {
+            val cf = crossfadePlayer
+            cf.playWhenReady = false
+            cf.volume = 0f
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                currentPreferredDevice?.let { cf.setPreferredAudioDevice(it) }
+            }
+            cf.playbackParameters = player.playbackParameters
+            crossfadeNormalizerProcessor.setTrack(song.id, song.path)
+            cf.setMediaItem(buildMediaItem(song), triggerPosMs.coerceAtLeast(0L))
+            cf.prepare()
+        } catch (_: Exception) {
+            prestagedCrossfadeSongId = null
+        }
+    }
+
     fun triggerOverlappingCrossfade(targetIndex: Int, durationMs: Long) {
         val queue = _playbackState.value.queue
         if (targetIndex !in queue.indices) return
@@ -3196,44 +3651,94 @@ class PlaybackManager(
         crossfadeJob = scope.launch(Dispatchers.Main) {
             var transitionStarted = false
             try {
-                // 1. Prepare crossfadePlayer with the outgoing track A while primary player continues playing track A uninterrupted
-                crossfadePlayer.stop()
-                crossfadePlayer.clearMediaItems()
+                // 1. Reuse pre-staged crossfadePlayer when ready, otherwise fast-prepare outgoing track A
+                val cf = crossfadePlayer
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    currentPreferredDevice?.let { crossfadePlayer.setPreferredAudioDevice(it) }
+                    currentPreferredDevice?.let { cf.setPreferredAudioDevice(it) }
                 }
-                crossfadePlayer.playbackParameters = player.playbackParameters
+                cf.playbackParameters = player.playbackParameters
                 crossfadeNormalizerProcessor.setTrack(currentSong.id, currentSong.path)
-                val currentPos = player.currentPosition.coerceAtLeast(0L)
-                val outgoingItem = buildMediaItem(currentSong)
-                crossfadePlayer.setMediaItem(outgoingItem, currentPos)
-                crossfadePlayer.volume = player.volume.coerceIn(0f, 1f)
-                crossfadePlayer.prepare()
 
-                // Wait for crossfadePlayer to be ready (up to 450ms) so outgoing audio flows with zero gap
-                var waitElapsed = 0L
-                while (crossfadePlayer.playbackState != Player.STATE_READY && waitElapsed < 450L && coroutineContext[Job]?.isActive == true) {
-                    delay(16L)
-                    waitElapsed += 16L
+                val isPrestagedReady = prestagedCrossfadeSongId == currentSong.id &&
+                    cf.mediaItemCount > 0 &&
+                    cf.playbackState != Player.STATE_IDLE &&
+                    cf.playbackState != Player.STATE_ENDED
+
+                if (!isPrestagedReady) {
+                    cf.playWhenReady = false
+                    cf.stop()
+                    cf.clearMediaItems()
+                    val currentPos = player.currentPosition.coerceAtLeast(0L)
+                    cf.volume = 0f
+                    cf.setMediaItem(buildMediaItem(currentSong), currentPos)
+                    cf.prepare()
+                } else {
+                    cf.volume = 0f
+                    val livePos = player.currentPosition.coerceAtLeast(0L)
+                    val drift = kotlin.math.abs(cf.currentPosition - livePos)
+                    if (drift > 65L) {
+                        cf.seekTo(livePos + 20L)
+                    }
                 }
-                if (crossfadePlayer.playbackState != Player.STATE_READY) {
-                    // Leave the primary track untouched and let ExoPlayer perform the normal transition.
+
+                // Wait briefly for crossfadePlayer to reach STATE_READY (fast LoadControl typically finishes in <50ms)
+                var waitElapsed = 0L
+                while (cf.playbackState != Player.STATE_READY && waitElapsed < 420L && coroutineContext[Job]?.isActive == true) {
+                    delay(10L)
+                    waitElapsed += 10L
+                }
+                if (cf.playbackState != Player.STATE_READY) {
+                    prestagedCrossfadeSongId = null
                     hasTriggeredCrossfadeTransition = true
                     return@launch
                 }
                 if (player.currentMediaItemIndex != outgoingIndex ||
-                    _playbackState.value.currentSong?.id != currentSong.id
+                    _playbackState.value.currentSong?.id != currentSong.id ||
+                    !player.playWhenReady
                 ) {
+                    prestagedCrossfadeSongId = null
                     return@launch
                 }
 
-                // 2. Start crossfadePlayer on outgoing track A, and transition primary player to incoming track B from 0:00
+                // Re-sync outgoing position right before starting so track A never echoes or jumps backwards
+                val liveBeforeStart = player.currentPosition.coerceAtLeast(0L)
+                val finalDrift = kotlin.math.abs(cf.currentPosition - liveBeforeStart)
+                if (finalDrift > 80L) {
+                    cf.seekTo(liveBeforeStart + 24L)
+                    var seekWait = 0L
+                    while (cf.playbackState != Player.STATE_READY && seekWait < 120L && coroutineContext[Job]?.isActive == true) {
+                        delay(8L)
+                        seekWait += 8L
+                    }
+                }
+
+                // 2. Silky 36ms equal-power micro-handoff of outgoing track A from primary player -> crossfadePlayer
                 fadeJob?.cancel()
                 fadeJob = null
                 val initialPlayerVol = player.volume.coerceIn(0f, 1f)
-                crossfadePlayer.volume = initialPlayerVol
-                crossfadePlayer.playWhenReady = true
-                crossfadePlayer.play()
+                cf.volume = 0f
+                cf.playWhenReady = true
+                cf.play()
+
+                var cfStartWait = 0L
+                while (!cf.isPlaying && cfStartWait < 72L && coroutineContext[Job]?.isActive == true) {
+                    delay(8L)
+                    cfStartWait += 8L
+                }
+
+                val handoffSteps = 3
+                for (step in 1..handoffSteps) {
+                    if (coroutineContext[Job]?.isActive != true) return@launch
+                    val t = step.toDouble() / handoffSteps.toDouble()
+                    val primaryFactor = kotlin.math.cos(t * (Math.PI / 2.0)).toFloat()
+                    val cfFactor = kotlin.math.sin(t * (Math.PI / 2.0)).toFloat()
+                    player.volume = transitionTargetVolume((initialPlayerVol * primaryFactor).coerceIn(0f, 1f))
+                    cf.volume = transitionTargetVolume((initialPlayerVol * cfFactor).coerceIn(0f, 1f))
+                    delay(12L)
+                }
+
+                // 3. Primary player is now silent -> switch cleanly to incoming track B from 0:00
+                prestagedCrossfadeSongId = null
                 audioNormalizerProcessor.setTrack(targetSong.id, targetSong.path)
                 isCrossfadeTransitioning = true
                 transitionStarted = true
@@ -3242,27 +3747,51 @@ class PlaybackManager(
                 player.playWhenReady = true
                 player.play()
 
-                // Keep the outgoing track at its current level until the incoming track is actually audible.
+                // Keep outgoing track A steady at full level while track B starts decoding (capped so slow files never stall)
+                val maxIncomingWaitMs = minOf(fadeDuration / 2L, 1200L)
+                var incomingWait = 0L
                 while (!player.isPlaying && player.playWhenReady &&
                     player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED &&
+                    incomingWait < maxIncomingWaitMs &&
                     coroutineContext[Job]?.isActive == true
                 ) {
-                    delay(16L)
+                    delay(10L)
+                    incomingWait += 10L
                 }
-                if (!player.isPlaying) return@launch
+                if (!player.playWhenReady || player.playbackState == Player.STATE_IDLE) return@launch
 
-                // 3. Smooth Equal-Power Crossfade curves (sine / cosine energy conservation)
+                // 4. High-resolution 10ms smoothstep equal-power crossfade curve (zero corner clicks, constant perceived loudness)
+                val effectiveFadeMs = (fadeDuration - incomingWait.coerceAtMost(fadeDuration / 3L)).coerceAtLeast(500L)
                 val startTime = android.os.SystemClock.elapsedRealtime()
                 while (coroutineContext[Job]?.isActive == true) {
                     val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
-                    if (elapsed >= fadeDuration) break
-                    val progress = (elapsed.toDouble() / fadeDuration.toDouble()).coerceIn(0.0, 1.0)
-                    val outVol = (kotlin.math.cos(progress * (Math.PI / 2.0)) * initialPlayerVol).toFloat().coerceIn(0f, 1f)
-                    val inVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0f, 1f)
+                    if (elapsed >= effectiveFadeMs) break
 
-                    crossfadePlayer.volume = transitionTargetVolume(outVol)
+                    // If outgoing track A reaches natural EOF early, smoothly finish bringing Track B up to unity
+                    if (cf.playbackState == Player.STATE_ENDED || cf.playbackState == Player.STATE_IDLE) {
+                        val currentIn = player.volume.coerceIn(0f, 1f)
+                        val finishMs = minOf(240L, (effectiveFadeMs - elapsed).coerceAtLeast(80L))
+                        val finishStart = android.os.SystemClock.elapsedRealtime()
+                        while (coroutineContext[Job]?.isActive == true) {
+                            val fElapsed = android.os.SystemClock.elapsedRealtime() - finishStart
+                            if (fElapsed >= finishMs) break
+                            val fFrac = (fElapsed.toFloat() / finishMs.toFloat()).coerceIn(0f, 1f)
+                            val blended = currentIn + (1f - currentIn) * fFrac
+                            player.volume = transitionTargetVolume(blended)
+                            delay(10L)
+                        }
+                        break
+                    }
+
+                    val t = (elapsed.toDouble() / effectiveFadeMs.toDouble()).coerceIn(0.0, 1.0)
+                    // Smoothstep S-curve eases entry & exit slope to zero for imperceptible blend boundaries
+                    val eased = t * t * (3.0 - 2.0 * t)
+                    val outVol = (kotlin.math.cos(eased * (Math.PI / 2.0)) * initialPlayerVol).toFloat().coerceIn(0f, 1f)
+                    val inVol = kotlin.math.sin(eased * (Math.PI / 2.0)).toFloat().coerceIn(0f, 1f)
+
+                    cf.volume = transitionTargetVolume(outVol)
                     player.volume = transitionTargetVolume(inVol)
-                    delay(16L)
+                    delay(10L)
                 }
             } catch (_: kotlinx.coroutines.CancellationException) {
                 // Deliberately cancelled
@@ -3270,10 +3799,12 @@ class PlaybackManager(
                 android.util.Log.e(TAG, "Error during crossfadeJob execution", e)
             } finally {
                 val wasCancelled = coroutineContext[Job]?.isCancelled == true
+                prestagedCrossfadeSongId = null
                 try {
-                    crossfadePlayer.playWhenReady = false
-                    crossfadePlayer.stop()
-                    crossfadePlayer.clearMediaItems()
+                    _crossfadePlayer?.volume = 0f
+                    _crossfadePlayer?.playWhenReady = false
+                    _crossfadePlayer?.stop()
+                    _crossfadePlayer?.clearMediaItems()
                 } catch (_: Exception) {}
                 if (transitionStarted && !wasCancelled && player.playWhenReady && !isFadingOutToPause) {
                     player.volume = transitionTargetVolume()
@@ -3360,6 +3891,7 @@ class PlaybackManager(
         _playbackState.value = _playbackState.value.copy(isPlaying = false, positionMs = curPos)
         com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
         updateNotificationLayout()
+        MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         persistPlaybackStateNow()
     }
@@ -3514,13 +4046,13 @@ class PlaybackManager(
     fun togglePlayPause() {
         val currentlyPlaying = if (isFadingOutToPause) false else (_playbackState.value.isPlaying || player.isPlaying)
         if (currentlyPlaying) {
-            if (fadeOutMs > 0) {
+            if (effectiveFadeOutMs > 0) {
                 pauseWithFade()
             } else {
                 pause()
             }
         } else {
-            if (fadeInMs > 0) {
+            if (effectiveFadeInMs > 0) {
                 playWithFade()
             } else {
                 play()
@@ -3692,7 +4224,11 @@ class PlaybackManager(
         if (jamPlaybackActive) return "Shuffle is unavailable during Jam playback"
         val currentShuffle = _playbackState.value.isShuffleEnabled
         val newShuffle = !currentShuffle
-        val message = if (newShuffle) "Shuffle: On" else "Shuffle: Off"
+        val message = when {
+            newShuffle && smartQueueEnabled -> "Smart Shuffle: On"
+            newShuffle -> "Shuffle: On"
+            else -> "Shuffle: Off"
+        }
 
         if (originalQueue.isEmpty() && _playbackState.value.queue.isNotEmpty()) {
             originalQueue = _playbackState.value.queue
@@ -3713,12 +4249,7 @@ class PlaybackManager(
         val safePos = if (currentPos > 0L && currentPos != C.TIME_UNSET) currentPos else _playbackState.value.positionMs.coerceAtLeast(0L)
 
         val newQueue = if (newShuffle) {
-            if (currentSong != null) {
-                val pool = originalQueue.filter { it.id != currentSong.id }.shuffled()
-                listOf(currentSong) + pool
-            } else {
-                originalQueue.shuffled()
-            }
+            buildShuffledQueue(originalQueue, anchorSong = currentSong)
         } else {
             originalQueue
         }
@@ -3796,9 +4327,11 @@ class PlaybackManager(
             try {
                 var lastWidgetSec = -1L
                 var inCrossfadeZone = false
+                var approachingCrossfade = false
                 var inTrackEndFadeOut = false
                 while (player.isPlaying || (player.playWhenReady && player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE)) {
                     inCrossfadeZone = false
+                    approachingCrossfade = false
                     inTrackEndFadeOut = false
                     if (player.isPlaying) {
                         audioFocusManager.pollActiveCallStateWhilePlaying()
@@ -3852,6 +4385,24 @@ class PlaybackManager(
                             }
                         } else if (crossfadeMs > 0L && reliableDur > (crossfadeMs + 1000L) && (reliableDur - currentPos) > crossfadeMs) {
                             hasTriggeredCrossfadeTransition = false
+                            val remBeforeCrossfade = reliableDur - currentPos
+                            if (!isFinalSleepTrack && !isRepeatOne && !isCrossfadeTransitioning) {
+                                // Proactively pre-stage outgoing track on crossfadePlayer 1..5.5s before trigger window
+                                if (remBeforeCrossfade in (crossfadeMs + 600L)..(crossfadeMs + 5500L)) {
+                                    val currSongObj = _playbackState.value.currentSong
+                                    val hasUpcoming = player.hasNextMediaItem() ||
+                                        (_playbackState.value.repeatMode == Player.REPEAT_MODE_ALL && _playbackState.value.queue.size > 1)
+                                    if (currSongObj != null && hasUpcoming) {
+                                        prestageOutgoingTrackForCrossfade(
+                                            song = currSongObj,
+                                            triggerPosMs = (reliableDur - crossfadeMs).coerceAtLeast(0L)
+                                        )
+                                    }
+                                }
+                                if (remBeforeCrossfade <= (crossfadeMs + 1500L)) {
+                                    approachingCrossfade = true
+                                }
+                            }
                             if (!isCrossfadeTransitioning && crossfadeJob?.isActive != true && !isAudioFocusDucked && player.volume < 1.0f && (fadeJob == null || !fadeJob!!.isActive)) {
                                 player.volume = 1.0f
                             }
@@ -3948,9 +4499,10 @@ class PlaybackManager(
                         }
                     }
 
-                    val inCrossfadeWindow = effectiveCrossfadeDurationSec > 0 && inCrossfadeZone
+                    val inCrossfadeWindow = effectiveCrossfadeDurationSec > 0 && (inCrossfadeZone || approachingCrossfade)
                     val loopDelay = when {
-                        inCrossfadeWindow || inTrackEndFadeOut -> 60L
+                        inCrossfadeWindow -> 40L
+                        inTrackEndFadeOut -> 60L
                         !isUiInForeground -> 500L
                         else -> 220L
                     }

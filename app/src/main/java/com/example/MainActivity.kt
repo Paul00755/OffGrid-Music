@@ -290,6 +290,8 @@ class MainActivity : ComponentActivity() {
                     val homeScreenLayout by viewModel.homeScreenLayout.collectAsStateWithLifecycle()
                     val speedDialSongs by viewModel.speedDialSongs.collectAsStateWithLifecycle()
                     val homeSections by viewModel.homeSections.collectAsStateWithLifecycle()
+                    val bottomNavOrder by viewModel.bottomNavOrder.collectAsStateWithLifecycle()
+                    val autoOpenSearchKeyboard by viewModel.autoOpenSearchKeyboard.collectAsStateWithLifecycle()
                     val nowPlayingLayout by viewModel.nowPlayingLayout.collectAsStateWithLifecycle()
                     val playlistsLayout by viewModel.playlistsLayout.collectAsStateWithLifecycle()
                     val lyricsLayout by viewModel.lyricsLayout.collectAsStateWithLifecycle()
@@ -304,6 +306,18 @@ class MainActivity : ComponentActivity() {
                     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
                     val updateCheckResult by viewModel.updateCheckResult.collectAsStateWithLifecycle()
                     val forceShowUpdateDialog by viewModel.forceShowUpdateDialog.collectAsStateWithLifecycle()
+
+                    // If user is signed out and not actively completing a Jam sign-in flow, keep them off the hidden Jam tab.
+                    LaunchedEffect(userAccount, selectedTab, showAuthScreen, jamInviteCode, jamRecommendation) {
+                        if (userAccount == null &&
+                            selectedTab == NavTab.JAM &&
+                            !showAuthScreen &&
+                            jamInviteCode == null &&
+                            jamRecommendation == null
+                        ) {
+                            viewModel.navigateToTab(NavTab.HOME)
+                        }
+                    }
 
                     // Onboarding state is resolved at startup via UserPreferences & AppDatabase upgrade detection.
 
@@ -575,7 +589,9 @@ class MainActivity : ComponentActivity() {
                                                         viewModel.navigateToTab(it)
                                                     },
                                                     onTogglePlayPause = { viewModel.togglePlayPause() },
-                                                    onOpenNowPlaying = { viewModel.showNowPlaying.value = true }
+                                                    onOpenNowPlaying = { viewModel.showNowPlaying.value = true },
+                                                    tabs = bottomNavOrder,
+                                                    isSignedIn = userAccount != null
                                                 )
                                             }
                                         }
@@ -693,6 +709,15 @@ class MainActivity : ComponentActivity() {
                                                 viewModel.playAll(songs, sourceContext = "SMART_PLAYLIST")
                                             },
                                             onDeleteSmartPlaylist = { id -> viewModel.deleteSmartPlaylist(id) },
+                                            onUpdateSmartPlaylist = { prev, updated ->
+                                                viewModel.updateSmartPlaylist(prev, updated)
+                                            },
+                                            onReorderSongs = { sp, orderedSongs ->
+                                                viewModel.reorderSmartPlaylistSongs(sp, orderedSongs)
+                                            },
+                                            onResetCustomOrder = { sp ->
+                                                viewModel.resetSmartPlaylistTrackOrder(sp)
+                                            },
                                             onFavoriteToggle = { viewModel.toggleFavorite(it) },
                                             onPlayNext = { viewModel.playNext(it) },
                                             onAddToQueue = { viewModel.addToQueue(it) },
@@ -840,6 +865,7 @@ class MainActivity : ComponentActivity() {
                                                     onOpenFavorites = { viewModel.navigateToTab(NavTab.FAVORITES) },
                                                     onOpenSettings = { viewModel.openSettings() },
                                                     onReorderPlaylists = { viewModel.reorderPlaylists(it) },
+                                                    onReorderSmartPlaylists = { viewModel.reorderSmartPlaylists(it) },
                                                     playlistsLayout = playlistsLayout
                                                 )
                                             }
@@ -867,7 +893,8 @@ class MainActivity : ComponentActivity() {
                                                     if (!viewModel.navigateBackTab()) {
                                                         viewModel.selectedTab.value = NavTab.HOME
                                                     }
-                                                }
+                                                },
+                                                autoOpenKeyboard = autoOpenSearchKeyboard
                                             )
                                             NavTab.FAVORITES -> FavoritesScreen(
                                                 favoriteSongs = favoriteSongs,

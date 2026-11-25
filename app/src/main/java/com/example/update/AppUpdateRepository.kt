@@ -95,7 +95,7 @@ class AppUpdateRepository(
             _updateState.value = UpdateCheckResult.Checking
 
             val request = Request.Builder()
-                .url(GITHUB_LATEST_RELEASE_URL)
+                .url(GITHUB_RELEASES_API_URL)
                 .header("Accept", "application/vnd.github.v3+json")
                 .header("User-Agent", "OffGrid-Music-Android/${BuildConfig.VERSION_NAME}")
                 .get()
@@ -106,7 +106,33 @@ class AppUpdateRepository(
                     when (response.code) {
                         200 -> {
                             val bodyString = response.body?.string().orEmpty()
-                            val release = ReleaseInfo.fromJsonString(bodyString)
+                            val trimmedBody = bodyString.trim()
+
+                            val resolvedRelease: ReleaseInfo?
+                            val cachePayload: String
+
+                            if (trimmedBody.startsWith("[")) {
+                                val releases = ReleaseInfo.parseReleaseListJson(trimmedBody)
+                                if (releases.isEmpty()) {
+                                    hasAutoCheckedThisOpen = true
+                                    val upToDate = UpdateCheckResult.UpToDate(currentInstalled.displayString)
+                                    _updateState.value = upToDate
+                                    return@withLock upToDate
+                                }
+                                val latest = releases.first()
+                                val newerReleases = releases.filter { it.version.isNewerThan(currentInstalled) }
+                                resolvedRelease = if (newerReleases.size > 1) {
+                                    latest.copy(body = ReleaseInfo.aggregateChangelogBodies(newerReleases))
+                                } else {
+                                    latest
+                                }
+                                cachePayload = resolvedRelease.toCacheJsonString()
+                            } else {
+                                resolvedRelease = ReleaseInfo.fromJsonString(bodyString)
+                                cachePayload = bodyString
+                            }
+
+                            val release = resolvedRelease
                             if (release == null) {
                                 // Note: Do NOT update lastUpdateCheckTimestamp on invalid/draft/prerelease data
                                 val err = UpdateCheckResult.Error("No valid stable release found")
@@ -114,8 +140,8 @@ class AppUpdateRepository(
                                 return@withLock err
                             }
 
-                            // Persist verified stable release cache and successful check timestamp
-                            preferences.setCachedLatestReleaseJson(bodyString)
+                            // Persist verified stable release cache (with aggregated notes if multi-release) and check timestamp
+                            preferences.setCachedLatestReleaseJson(cachePayload)
                             preferences.setLastUpdateCheckTimestamp(now)
                             hasAutoCheckedThisOpen = true
 
@@ -348,6 +374,7 @@ class AppUpdateRepository(
         const val GITHUB_REPO_URL = "https://github.com/Paul00755/OffGrid-Music"
         const val GITHUB_RELEASES_URL = "https://github.com/Paul00755/OffGrid-Music/releases"
         const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Paul00755/OffGrid-Music/releases/latest"
+        const val GITHUB_RELEASES_API_URL = "https://api.github.com/repos/Paul00755/OffGrid-Music/releases?per_page=10"
         const val UPDATE_TOPIC = "offgrid_updates"
         const val COOLDOWN_MS = 4 * 3600 * 1000L // 4 hours
 

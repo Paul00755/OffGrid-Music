@@ -55,7 +55,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         db.lyricsDao(),
         db.recentSearchDao(),
         db.smartPlaylistDao(),
-        scanner
+        scanner,
+        com.example.data.local.SmartPlaylistMetadataStore.getInstance(application)
     )
     val authManager: AuthManager = AuthManager.getInstance(application)
     val cloudSyncRepository: com.example.data.sync.CloudSyncRepository = com.example.data.sync.CloudSyncRepository.getInstance(
@@ -596,7 +597,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     val mostPlayedPlaylists: StateFlow<List<Playlist>> = repository.mostPlayedPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    val smartPlaylists: StateFlow<List<com.example.data.model.SmartPlaylist>> = repository.smartPlaylists.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val smartPlaylists: StateFlow<List<com.example.data.model.SmartPlaylist>> = repository.smartPlaylists
+        .onEach { latestList ->
+            val current = selectedSmartPlaylist.value
+            if (current != null) {
+                val refreshed = latestList.firstOrNull { it.id == current.id }
+                    ?: latestList.firstOrNull {
+                        it.name.equals(current.name, ignoreCase = true) && it.createdAt == current.createdAt
+                    }
+                if (refreshed != null && refreshed != current) {
+                    selectedSmartPlaylist.value = refreshed
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val recentSearches: StateFlow<List<String>> = repository.recentSearches.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
     val scanProgress: StateFlow<ScanProgress> = repository.scanProgress.stateIn(viewModelScope, SharingStarted.Lazily, ScanProgress())
@@ -613,6 +627,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val lyricsLayout: StateFlow<String> = preferences.lyricsLayout.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLyricsLayoutSync())
     val showNowPlayingVolumeBar: StateFlow<Boolean> = preferences.showNowPlayingVolumeBar.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowNowPlayingVolumeBarSync())
     val showAdvancedSongInfo: StateFlow<Boolean> = preferences.showAdvancedSongInfo.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowAdvancedSongInfoSync())
+    val showNowPlayingSeekButtons: StateFlow<Boolean> = preferences.showNowPlayingSeekButtons.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getShowNowPlayingSeekButtonsSync())
+    val nowPlayingBackwardSeconds: StateFlow<Int> = preferences.nowPlayingBackwardSeconds.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNowPlayingBackwardSecondsSync())
+    val nowPlayingForwardSeconds: StateFlow<Int> = preferences.nowPlayingForwardSeconds.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getNowPlayingForwardSecondsSync())
     val librarySortOption: StateFlow<String> = preferences.librarySortOption.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortOptionSync())
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortAscendingSync())
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistViewModeSync())
@@ -696,6 +713,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val scrobbleThresholdValue: StateFlow<Int> = preferences.scrobbleThresholdValue.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getScrobbleThresholdValueSync())
     val highRefreshRate: StateFlow<Boolean> = preferences.highRefreshRate.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getHighRefreshRateSync())
     val alwaysShuffleMode: StateFlow<Boolean> = preferences.alwaysShuffleMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAlwaysShuffleModeSync())
+    val smartQueueEnabled: StateFlow<Boolean> = preferences.smartQueueEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getSmartQueueEnabledSync())
     val gesturePlaybackEnabled: StateFlow<Boolean> = preferences.gesturePlaybackEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getGesturePlaybackEnabledSync())
     val fetchOnlineArtworkHighRes: StateFlow<Boolean> = preferences.fetchOnlineArtworkHighRes.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getFetchOnlineArtworkHighResSync())
     val cacheLyricsEnabled: StateFlow<Boolean> = preferences.cacheLyricsEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCacheLyricsEnabledSync())
@@ -717,14 +735,68 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
     val displayScale: StateFlow<String> = preferences.displayScale.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDisplayScaleSync())
 
+    val bottomNavOrder: StateFlow<List<NavTab>> = preferences.bottomNavOrder
+        .map { names ->
+            val parsed = names.mapNotNull { key ->
+                com.example.ui.components.DEFAULT_BOTTOM_NAV_TABS.find { it.name.equals(key, ignoreCase = true) }
+            }.distinct().toMutableList()
+            for (req in com.example.ui.components.DEFAULT_BOTTOM_NAV_TABS) {
+                if (req !in parsed) parsed.add(req)
+            }
+            parsed.toList()
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            preferences.getBottomNavOrderSync().mapNotNull { key ->
+                com.example.ui.components.DEFAULT_BOTTOM_NAV_TABS.find { it.name.equals(key, ignoreCase = true) }
+            }.ifEmpty { com.example.ui.components.DEFAULT_BOTTOM_NAV_TABS }
+        )
+
+    fun setBottomNavOrder(tabs: List<NavTab>) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setBottomNavOrder(tabs.map { it.name })
+        }
+    }
+
+    fun resetBottomNavOrder() = setBottomNavOrder(com.example.ui.components.DEFAULT_BOTTOM_NAV_TABS)
+
+    val autoOpenSearchKeyboard: StateFlow<Boolean> = preferences.autoOpenSearchKeyboard.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        preferences.getAutoOpenSearchKeyboardSync()
+    )
+
+    fun setAutoOpenSearchKeyboard(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setAutoOpenSearchKeyboard(enabled)
+        }
+    }
+
     private val _speedDialSongs = MutableStateFlow<List<Song>>(emptyList())
     val speedDialSongs: StateFlow<List<Song>> = _speedDialSongs.asStateFlow()
 
     fun refreshSpeedDial() {
         val songs = allSongs.value
-        if (songs.isNotEmpty()) {
-            _speedDialSongs.value = songs.shuffled().take(9)
+        if (songs.isEmpty()) return
+        val targetCount = 10
+        val currentIds = _speedDialSongs.value.mapTo(HashSet()) { it.id }
+        val freshPool = songs.filter { it.id !in currentIds }
+        val nextMix = when {
+            freshPool.size >= targetCount -> freshPool.shuffled().take(targetCount)
+            freshPool.isNotEmpty() -> {
+                val remainder = songs.filter { it.id in currentIds }.shuffled().take((targetCount - freshPool.size).coerceAtLeast(0))
+                (freshPool.shuffled() + remainder).take(targetCount)
+            }
+            else -> {
+                var shuffled = songs.shuffled().take(targetCount)
+                if (songs.size > 1 && shuffled.map { it.id } == _speedDialSongs.value.map { it.id }) {
+                    shuffled = shuffled.drop(1) + shuffled.first()
+                }
+                shuffled
+            }
         }
+        _speedDialSongs.value = nextMix
     }
 
     fun setHomeSections(sections: List<String>) = viewModelScope.launch {
@@ -875,7 +947,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val selectedSpeedDial = _speedDialSongs.value
                     val selectedIds = selectedSpeedDial.mapTo(HashSet()) { it.id }
                     val refreshedById = HashMap<Long, Song>(selectedIds.size)
-                    val sampledSongs = if (selectedSpeedDial.isEmpty()) ArrayList<Song>(9) else null
+                    val sampledSongs = if (selectedSpeedDial.isEmpty()) ArrayList<Song>(10) else null
                     var signature = songs.size.toLong()
 
                     val activeSong = playbackState.value.currentSong
@@ -889,7 +961,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         }
 
                         if (sampledSongs != null) {
-                            if (index < 9) {
+                            if (index < 10) {
                                 sampledSongs.add(song)
                             } else {
                                 val replacementIndex = kotlin.random.Random.Default.nextInt(index + 1)
@@ -936,6 +1008,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             alwaysShuffleMode.collect {
                 playbackManager.alwaysShuffleMode = it
+            }
+        }
+        viewModelScope.launch {
+            smartQueueEnabled.collect { enabled ->
+                playbackManager.smartQueueEnabled = enabled
+                if (enabled) {
+                    playbackManager.refreshSmartShuffleProfileAsync(force = false)
+                }
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -1179,6 +1259,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setShowAdvancedSongInfo(enabled: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowAdvancedSongInfo(enabled) }
+    }
+    fun setShowNowPlayingSeekButtons(enabled: Boolean) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setShowNowPlayingSeekButtons(enabled) }
+    }
+    fun setNowPlayingBackwardSeconds(seconds: Int) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setNowPlayingBackwardSeconds(seconds) }
+    }
+    fun setNowPlayingForwardSeconds(seconds: Int) = viewModelScope.launch {
+        withContext(kotlinx.coroutines.NonCancellable) { preferences.setNowPlayingForwardSeconds(seconds) }
     }
     fun setWaveformStyle(style: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setWaveformStyle(style) }
@@ -1487,6 +1576,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playbackManager.alwaysShuffleMode = enabled
         viewModelScope.launch {
             withContext(kotlinx.coroutines.NonCancellable) { preferences.setAlwaysShuffleMode(enabled) }
+        }
+    }
+    fun setSmartQueueEnabled(enabled: Boolean) {
+        playbackManager.smartQueueEnabled = enabled
+        if (enabled) {
+            playbackManager.reorderUpcomingWithSmartShuffleIfActive()
+        }
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) { preferences.setSmartQueueEnabled(enabled) }
         }
     }
     fun setFetchOnlineArtworkHighRes(enabled: Boolean) = viewModelScope.launch {
@@ -1993,6 +2091,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun skipToNext() = playbackManager.skipToNext()
     fun skipToPrevious() = playbackManager.skipToPrevious()
     fun seekTo(positionMs: Long) = playbackManager.seekTo(positionMs)
+    fun seekForward(deltaMs: Long) = playbackManager.seekForward(deltaMs)
+    fun seekBackward(deltaMs: Long) = playbackManager.seekBackward(deltaMs)
     fun toggleShuffle(): String = playbackManager.toggleShuffle()
     fun shuffleAndPlay(songs: List<Song> = allSongs.value, sourceContext: String = "LIBRARY") {
         if (songs.isNotEmpty()) {
@@ -2137,15 +2237,66 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createSmartPlaylist(smartPlaylist: com.example.data.model.SmartPlaylist) {
         viewModelScope.launch {
-            repository.createSmartPlaylist(smartPlaylist)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                repository.createSmartPlaylist(smartPlaylist)
+            }
+        }
+    }
+
+    fun updateSmartPlaylist(
+        previous: com.example.data.model.SmartPlaylist,
+        updated: com.example.data.model.SmartPlaylist
+    ) {
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                val saved = repository.updateSmartPlaylist(previous, updated)
+                if (selectedSmartPlaylist.value?.id == previous.id) {
+                    selectedSmartPlaylist.value = saved
+                }
+            }
+        }
+    }
+
+    fun reorderSmartPlaylistSongs(
+        smartPlaylist: com.example.data.model.SmartPlaylist,
+        orderedSongs: List<Song>
+    ) {
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                val saved = repository.saveSmartPlaylistTrackOrder(smartPlaylist, orderedSongs)
+                if (selectedSmartPlaylist.value?.id == smartPlaylist.id) {
+                    selectedSmartPlaylist.value = saved
+                }
+            }
+        }
+    }
+
+    fun resetSmartPlaylistTrackOrder(smartPlaylist: com.example.data.model.SmartPlaylist) {
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                val saved = repository.resetSmartPlaylistTrackOrder(smartPlaylist)
+                if (selectedSmartPlaylist.value?.id == smartPlaylist.id) {
+                    selectedSmartPlaylist.value = saved
+                }
+            }
+        }
+    }
+
+    fun reorderSmartPlaylists(orderedPlaylists: List<com.example.data.model.SmartPlaylist>) {
+        viewModelScope.launch {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                repository.reorderSmartPlaylists(orderedPlaylists)
+            }
         }
     }
 
     fun deleteSmartPlaylist(id: Long) {
         viewModelScope.launch {
-            repository.deleteSmartPlaylist(id)
-            if (selectedSmartPlaylist.value?.id == id) {
-                selectedSmartPlaylist.value = null
+            withContext(kotlinx.coroutines.NonCancellable) {
+                repository.deleteSmartPlaylist(id)
+                if (selectedSmartPlaylist.value?.id == id) {
+                    selectedSmartPlaylist.value = null
+                }
             }
         }
     }

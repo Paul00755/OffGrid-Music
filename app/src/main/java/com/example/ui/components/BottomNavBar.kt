@@ -44,6 +44,14 @@ enum class NavTab(val title: String, val icon: ImageVector) {
     SETTINGS("Settings", Icons.Default.Settings)
 }
 
+val DEFAULT_BOTTOM_NAV_TABS: List<NavTab> = listOf(
+    NavTab.HOME,
+    NavTab.LIBRARY,
+    NavTab.PLAYLISTS,
+    NavTab.SEARCH,
+    NavTab.JAM
+)
+
 @Composable
 fun FloatingPillNavBar(
     selectedTab: NavTab,
@@ -51,10 +59,18 @@ fun FloatingPillNavBar(
     onTabSelected: (NavTab) -> Unit,
     onTogglePlayPause: () -> Unit,
     onOpenNowPlaying: () -> Unit,
+    tabs: List<NavTab> = DEFAULT_BOTTOM_NAV_TABS,
+    isSignedIn: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val bottomTabs = listOf(NavTab.HOME, NavTab.LIBRARY, NavTab.PLAYLISTS, NavTab.SEARCH, NavTab.JAM)
+    val bottomTabs = androidx.compose.runtime.remember(tabs, isSignedIn) {
+        val valid = tabs.filter { it in DEFAULT_BOTTOM_NAV_TABS }.distinct().toMutableList()
+        for (req in DEFAULT_BOTTOM_NAV_TABS) {
+            if (req !in valid) valid.add(req)
+        }
+        if (isSignedIn) valid else valid.filter { it != NavTab.JAM }
+    }
 
     Box(
         modifier = modifier

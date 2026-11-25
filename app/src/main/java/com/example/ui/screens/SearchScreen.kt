@@ -24,12 +24,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,16 +78,31 @@ fun SearchScreen(
     onOpenSettings: () -> Unit = {},
     onOpenFavorites: () -> Unit = {},
     onBackClick: () -> Unit = {},
+    autoOpenKeyboard: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var selectedFilter by remember { mutableStateOf(SearchFilter.ALL) }
     var selectedAlbumForDetail by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
     var selectedArtistForDetail by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
 
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
     val searchResultsListState = rememberLazyListState()
     var isSearchHeaderVisible by remember { mutableStateOf(true) }
     var previousIndex by remember { mutableIntStateOf(0) }
     var previousScrollOffset by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(autoOpenKeyboard) {
+        if (autoOpenKeyboard && selectedAlbumForDetail == null && selectedArtistForDetail == null) {
+            isSearchHeaderVisible = true
+            kotlinx.coroutines.delay(90L)
+            try {
+                searchFocusRequester.requestFocus()
+                keyboardController?.show()
+            } catch (_: Exception) {}
+        }
+    }
 
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
@@ -272,7 +290,13 @@ fun SearchScreen(
                     }
                 } else {
                     Surface(
-                        onClick = { /* Already on search screen */ },
+                        onClick = {
+                            isSearchHeaderVisible = true
+                            try {
+                                searchFocusRequester.requestFocus()
+                                keyboardController?.show()
+                            } catch (_: Exception) {}
+                        },
                         shape = CircleShape,
                         color = BentoCardSurface,
                         border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.32f)),
@@ -382,7 +406,9 @@ fun SearchScreen(
                         fontWeight = FontWeight.Medium
                     ),
                     shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(searchFocusRequester)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))

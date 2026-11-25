@@ -133,6 +133,9 @@ class UserPreferencesRepository(private val context: Context) {
         val LYRICS_LAYOUT = stringPreferencesKey("lyrics_layout") // "CLASSIC_DEFAULT", "FLUID_GLOW", "KARAOKE_SPOTLIGHT", "EDITORIAL_TIMELINE"
         val SHOW_NOW_PLAYING_VOLUME_BAR = booleanPreferencesKey("show_now_playing_volume_bar")
         val SHOW_ADVANCED_SONG_INFO = booleanPreferencesKey("show_advanced_song_info")
+        val SHOW_NOW_PLAYING_SEEK_BUTTONS = booleanPreferencesKey("show_now_playing_seek_buttons")
+        val NOW_PLAYING_BACKWARD_SECONDS = intPreferencesKey("now_playing_backward_seconds")
+        val NOW_PLAYING_FORWARD_SECONDS = intPreferencesKey("now_playing_forward_seconds")
         val ACCENT_COLOR = stringPreferencesKey("accent_color")
         val CUSTOM_ACCENT_COLOR = intPreferencesKey("custom_accent_color")
         val DISPLAY_SCALE = stringPreferencesKey("display_scale") // "DEFAULT", "COMPACT", "COMFORT"
@@ -208,6 +211,7 @@ class UserPreferencesRepository(private val context: Context) {
         val SCROBBLE_THRESHOLD_VALUE = intPreferencesKey("scrobble_threshold_value") // e.g. 30 (sec or %)
         val HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
         val ALWAYS_SHUFFLE_MODE = booleanPreferencesKey("always_shuffle_mode")
+        val SMART_QUEUE_ENABLED = booleanPreferencesKey("smart_queue_enabled")
         val AUTOPLAY_ON_APP_STARTUP = booleanPreferencesKey("autoplay_on_app_startup")
         val GESTURE_PLAYBACK_ENABLED = booleanPreferencesKey("gesture_playback_enabled")
         val FETCH_ONLINE_ARTWORK_HIGH_RES = booleanPreferencesKey("fetch_online_artwork_high_res")
@@ -222,9 +226,11 @@ class UserPreferencesRepository(private val context: Context) {
         val CUSTOM_BASS_BOOST = intPreferencesKey("custom_bass_boost")
         val CUSTOM_VIRTUALIZER = intPreferencesKey("custom_virtualizer")
 
-        // HomeScreen Customization
+        // HomeScreen & Navigation Customization
         val HOME_SECTIONS = stringPreferencesKey("home_sections")
         val CUSTOM_HOME_FEED_PRESETS = stringPreferencesKey("custom_home_feed_presets")
+        val BOTTOM_NAV_ORDER = stringPreferencesKey("bottom_nav_order")
+        val AUTO_OPEN_SEARCH_KEYBOARD = booleanPreferencesKey("auto_open_search_keyboard")
 
         // Normalize Audio
         val NORMALIZE_AUDIO = booleanPreferencesKey("normalize_audio")
@@ -449,6 +455,9 @@ class UserPreferencesRepository(private val context: Context) {
             lyricsLayout = prefs[PreferenceKeys.LYRICS_LAYOUT] ?: readStringCached("lyrics_layout", "FLUID_GLOW"),
             showNowPlayingVolumeBar = prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] ?: readBoolCached("show_now_playing_volume_bar", false),
             showAdvancedSongInfo = prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] ?: readBoolCached("show_advanced_song_info", false),
+            showNowPlayingSeekButtons = prefs[PreferenceKeys.SHOW_NOW_PLAYING_SEEK_BUTTONS] ?: readBoolCached("show_now_playing_seek_buttons", false),
+            nowPlayingBackwardSeconds = sanitizeSeekIntervalSeconds(prefs[PreferenceKeys.NOW_PLAYING_BACKWARD_SECONDS] ?: readIntCached("now_playing_backward_seconds", 10)),
+            nowPlayingForwardSeconds = sanitizeSeekIntervalSeconds(prefs[PreferenceKeys.NOW_PLAYING_FORWARD_SECONDS] ?: readIntCached("now_playing_forward_seconds", 10)),
             accentColorPreset = prefs[PreferenceKeys.ACCENT_COLOR_PRESET] ?: readStringCached("accent_color_preset", "ORANGE"),
             customAccentColor = prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] ?: readIntCached("custom_accent_color", 0),
             dynamicArtworkTheme = prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true),
@@ -500,6 +509,7 @@ class UserPreferencesRepository(private val context: Context) {
             repeatMode = prefs[PreferenceKeys.REPEAT_MODE] ?: readIntCached("repeat_mode", 0),
             shuffleMode = prefs[PreferenceKeys.SHUFFLE_MODE] ?: readBoolCached("shuffle_mode", false),
             alwaysShuffleMode = prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] ?: readBoolCached("always_shuffle_mode", true),
+            smartQueueEnabled = prefs[PreferenceKeys.SMART_QUEUE_ENABLED] ?: readBoolCached("smart_queue_enabled", false),
             gesturePlaybackEnabled = prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true),
             highRefreshRate = prefs[PreferenceKeys.HIGH_REFRESH_RATE] ?: readBoolCached("high_refresh_rate", true),
             addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM"),
@@ -548,6 +558,9 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.LYRICS_LAYOUT] = cloud.lyricsLayout
                 prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = cloud.showNowPlayingVolumeBar
                 prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = cloud.showAdvancedSongInfo
+                prefs[PreferenceKeys.SHOW_NOW_PLAYING_SEEK_BUTTONS] = cloud.showNowPlayingSeekButtons
+                prefs[PreferenceKeys.NOW_PLAYING_BACKWARD_SECONDS] = sanitizeSeekIntervalSeconds(cloud.nowPlayingBackwardSeconds)
+                prefs[PreferenceKeys.NOW_PLAYING_FORWARD_SECONDS] = sanitizeSeekIntervalSeconds(cloud.nowPlayingForwardSeconds)
                 prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = cloud.accentColorPreset
                 prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = cloud.customAccentColor
                 prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = cloud.dynamicArtworkTheme
@@ -599,6 +612,7 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.REPEAT_MODE] = cloud.repeatMode
                 prefs[PreferenceKeys.SHUFFLE_MODE] = cloud.shuffleMode
                 prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = cloud.alwaysShuffleMode
+                prefs[PreferenceKeys.SMART_QUEUE_ENABLED] = cloud.smartQueueEnabled
                 prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = cloud.gesturePlaybackEnabled
                 prefs[PreferenceKeys.HIGH_REFRESH_RATE] = cloud.highRefreshRate
                 if (!bootCachePrefs.getBoolean("pref_add_to_queue_position_explicit_v1", false)) {
@@ -652,6 +666,9 @@ class UserPreferencesRepository(private val context: Context) {
                         .putString("pref_lyrics_layout", cloud.lyricsLayout)
                         .putBoolean("pref_show_now_playing_volume_bar", cloud.showNowPlayingVolumeBar)
                         .putBoolean("pref_show_advanced_song_info", cloud.showAdvancedSongInfo)
+                        .putBoolean("pref_show_now_playing_seek_buttons", cloud.showNowPlayingSeekButtons)
+                        .putInt("pref_now_playing_backward_seconds", sanitizeSeekIntervalSeconds(cloud.nowPlayingBackwardSeconds))
+                        .putInt("pref_now_playing_forward_seconds", sanitizeSeekIntervalSeconds(cloud.nowPlayingForwardSeconds))
                         .putString("pref_accent_color_preset", cloud.accentColorPreset)
                         .putInt("pref_custom_accent_color", cloud.customAccentColor)
                         .putBoolean("pref_dynamic_artwork_theme", cloud.dynamicArtworkTheme)
@@ -701,6 +718,7 @@ class UserPreferencesRepository(private val context: Context) {
                         .putInt("pref_repeat_mode", cloud.repeatMode)
                         .putBoolean("pref_shuffle_mode", cloud.shuffleMode)
                         .putBoolean("pref_always_shuffle_mode", cloud.alwaysShuffleMode)
+                        .putBoolean("pref_smart_queue_enabled", cloud.smartQueueEnabled)
                         .putBoolean("pref_gesture_playback_enabled", cloud.gesturePlaybackEnabled)
                         .putBoolean("pref_high_refresh_rate", cloud.highRefreshRate)
                         .apply {
@@ -886,12 +904,17 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getAlwaysShuffleModeSync(): Boolean = readBoolCached("always_shuffle_mode", true)
 
+    val smartQueueEnabled: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SMART_QUEUE_ENABLED] ?: readBoolCached("smart_queue_enabled", false)
+    }
+    fun getSmartQueueEnabledSync(): Boolean = readBoolCached("smart_queue_enabled", false)
+
     val gesturePlaybackEnabled: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] ?: readBoolCached("gesture_playback_enabled", true)
     }
     fun getGesturePlaybackEnabledSync(): Boolean = readBoolCached("gesture_playback_enabled", true)
 
-    private val defaultHomeSectionsRaw = "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
+    private val defaultHomeSectionsRaw = "continue_listening,quick_actions,suggestions_mix,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
 
     val homeSections: Flow<List<String>> = safeData.map { prefs ->
         val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", defaultHomeSectionsRaw)
@@ -908,6 +931,47 @@ class UserPreferencesRepository(private val context: Context) {
         writeStringCached("home_sections", serialized, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.HOME_SECTIONS] = serialized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    // Bottom Navigation Bar Order (rearrangeable only; all 5 tabs remain pinned and cannot be removed)
+    val bottomNavOrder: Flow<List<String>> = safeData.map { prefs ->
+        val raw = prefs[PreferenceKeys.BOTTOM_NAV_ORDER]
+            ?: readStringCached("bottom_nav_order", DEFAULT_BOTTOM_NAV_ORDER_RAW)
+        sanitizeBottomNavOrder(raw)
+    }
+
+    fun getBottomNavOrderSync(): List<String> {
+        val raw = readStringCached("bottom_nav_order", DEFAULT_BOTTOM_NAV_ORDER_RAW)
+        return sanitizeBottomNavOrder(raw)
+    }
+
+    suspend fun setBottomNavOrder(order: List<String>) {
+        val sanitized = sanitizeBottomNavOrder(order.joinToString(","))
+        val serialized = sanitized.joinToString(",")
+        val now = System.currentTimeMillis()
+        writeStringCached("bottom_nav_order", serialized, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.BOTTOM_NAV_ORDER] = serialized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    // Search Screen: Automatically wake keyboard when entering Search (default ON)
+    val autoOpenSearchKeyboard: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.AUTO_OPEN_SEARCH_KEYBOARD]
+            ?: readBoolCached("auto_open_search_keyboard", true)
+    }
+
+    fun getAutoOpenSearchKeyboardSync(): Boolean =
+        readBoolCached("auto_open_search_keyboard", true)
+
+    suspend fun setAutoOpenSearchKeyboard(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("auto_open_search_keyboard", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.AUTO_OPEN_SEARCH_KEYBOARD] = enabled
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
@@ -1127,6 +1191,30 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] ?: readBoolCached("show_advanced_song_info", false)
     }
     fun getShowAdvancedSongInfoSync(): Boolean = readBoolCached("show_advanced_song_info", false)
+
+    private fun sanitizeSeekIntervalSeconds(seconds: Int): Int =
+        if (seconds == 5 || seconds == 10 || seconds == 15 || seconds == 30) seconds else 10
+
+    val showNowPlayingSeekButtons: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.SHOW_NOW_PLAYING_SEEK_BUTTONS] ?: readBoolCached("show_now_playing_seek_buttons", false)
+    }
+    fun getShowNowPlayingSeekButtonsSync(): Boolean = readBoolCached("show_now_playing_seek_buttons", false)
+
+    val nowPlayingBackwardSeconds: Flow<Int> = safeData.map { prefs ->
+        sanitizeSeekIntervalSeconds(
+            prefs[PreferenceKeys.NOW_PLAYING_BACKWARD_SECONDS] ?: readIntCached("now_playing_backward_seconds", 10)
+        )
+    }
+    fun getNowPlayingBackwardSecondsSync(): Int =
+        sanitizeSeekIntervalSeconds(readIntCached("now_playing_backward_seconds", 10))
+
+    val nowPlayingForwardSeconds: Flow<Int> = safeData.map { prefs ->
+        sanitizeSeekIntervalSeconds(
+            prefs[PreferenceKeys.NOW_PLAYING_FORWARD_SECONDS] ?: readIntCached("now_playing_forward_seconds", 10)
+        )
+    }
+    fun getNowPlayingForwardSecondsSync(): Int =
+        sanitizeSeekIntervalSeconds(readIntCached("now_playing_forward_seconds", 10))
 
     val isDynamicArtworkTheme: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] ?: readBoolCached("dynamic_artwork_theme", true)
@@ -2014,6 +2102,15 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun setSmartQueueEnabled(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("smart_queue_enabled", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SMART_QUEUE_ENABLED] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
     suspend fun setGesturePlaybackEnabled(enabled: Boolean) {
         val now = System.currentTimeMillis()
         writeBoolCached("gesture_playback_enabled", enabled, now)
@@ -2338,6 +2435,35 @@ class UserPreferencesRepository(private val context: Context) {
         writeBoolCached("show_advanced_song_info", enabled, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setShowNowPlayingSeekButtons(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("show_now_playing_seek_buttons", enabled, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.SHOW_NOW_PLAYING_SEEK_BUTTONS] = enabled
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setNowPlayingBackwardSeconds(seconds: Int) {
+        val sanitized = sanitizeSeekIntervalSeconds(seconds)
+        val now = System.currentTimeMillis()
+        writeIntCached("now_playing_backward_seconds", sanitized, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NOW_PLAYING_BACKWARD_SECONDS] = sanitized
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setNowPlayingForwardSeconds(seconds: Int) {
+        val sanitized = sanitizeSeekIntervalSeconds(seconds)
+        val now = System.currentTimeMillis()
+        writeIntCached("now_playing_forward_seconds", sanitized, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.NOW_PLAYING_FORWARD_SECONDS] = sanitized
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
@@ -2847,6 +2973,7 @@ class UserPreferencesRepository(private val context: Context) {
                 .putString("pref_scrobble_threshold_type", "SECONDS")
                 .putInt("pref_scrobble_threshold_value", 30)
                 .putBoolean("pref_always_shuffle_mode", true)
+                .putBoolean("pref_smart_queue_enabled", false)
                 .putBoolean("pref_gesture_playback_enabled", true)
                 .putBoolean("pref_high_refresh_rate", true)
                 .putString("pref_add_to_queue_position", "BOTTOM")
@@ -2855,6 +2982,8 @@ class UserPreferencesRepository(private val context: Context) {
                 .putBoolean("pref_playlist_add_song_position_explicit_v1", false)
                 .putString("pref_playlist_view_mode", "GRID")
                 .putString("pref_home_sections", defaultHomeSectionsRaw)
+                .putString("pref_bottom_nav_order", DEFAULT_BOTTOM_NAV_ORDER_RAW)
+                .putBoolean("pref_auto_open_search_keyboard", true)
                 .putString("pref_database_storage_tier", "EXPANDED")
                 .putInt("pref_ignore_audio_duration", 0)
                 .putInt("pref_max_song_duration_sec", 300)
@@ -2889,6 +3018,9 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.LYRICS_LAYOUT] = "FLUID_GLOW"
             prefs[PreferenceKeys.SHOW_NOW_PLAYING_VOLUME_BAR] = false
             prefs[PreferenceKeys.SHOW_ADVANCED_SONG_INFO] = false
+            prefs[PreferenceKeys.SHOW_NOW_PLAYING_SEEK_BUTTONS] = false
+            prefs[PreferenceKeys.NOW_PLAYING_BACKWARD_SECONDS] = 10
+            prefs[PreferenceKeys.NOW_PLAYING_FORWARD_SECONDS] = 10
             prefs[PreferenceKeys.ACCENT_COLOR_PRESET] = "ORANGE"
             prefs[PreferenceKeys.CUSTOM_ACCENT_COLOR] = 0
             prefs[PreferenceKeys.DYNAMIC_ARTWORK_THEME] = true
@@ -2938,12 +3070,15 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.SCROBBLE_THRESHOLD_TYPE] = "SECONDS"
             prefs[PreferenceKeys.SCROBBLE_THRESHOLD_VALUE] = 30
             prefs[PreferenceKeys.ALWAYS_SHUFFLE_MODE] = true
+            prefs[PreferenceKeys.SMART_QUEUE_ENABLED] = false
             prefs[PreferenceKeys.GESTURE_PLAYBACK_ENABLED] = true
             prefs[PreferenceKeys.HIGH_REFRESH_RATE] = true
             prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] = "BOTTOM"
             prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] = "BOTTOM"
             prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] = "GRID"
             prefs[PreferenceKeys.HOME_SECTIONS] = defaultHomeSectionsRaw
+            prefs[PreferenceKeys.BOTTOM_NAV_ORDER] = DEFAULT_BOTTOM_NAV_ORDER_RAW
+            prefs[PreferenceKeys.AUTO_OPEN_SEARCH_KEYBOARD] = true
             prefs[PreferenceKeys.DATABASE_STORAGE_TIER] = "EXPANDED"
             prefs[PreferenceKeys.IGNORE_AUDIO_DURATION] = 0
             prefs[PreferenceKeys.MAX_SONG_DURATION] = 300
@@ -2973,6 +3108,25 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     companion object {
+        val DEFAULT_BOTTOM_NAV_ORDER: List<String> = listOf("HOME", "LIBRARY", "PLAYLISTS", "SEARCH", "JAM")
+        const val DEFAULT_BOTTOM_NAV_ORDER_RAW: String = "HOME,LIBRARY,PLAYLISTS,SEARCH,JAM"
+
+        fun sanitizeBottomNavOrder(raw: String?): List<String> {
+            val allowed = DEFAULT_BOTTOM_NAV_ORDER.toSet()
+            val parsed = raw.orEmpty()
+                .split(",")
+                .map { it.trim().uppercase() }
+                .filter { it in allowed }
+                .distinct()
+                .toMutableList()
+            for (required in DEFAULT_BOTTOM_NAV_ORDER) {
+                if (required !in parsed) {
+                    parsed.add(required)
+                }
+            }
+            return parsed
+        }
+
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
 
