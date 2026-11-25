@@ -561,8 +561,12 @@ class AppUpdateSystemTest {
             buildWorkflow.readText().contains("python3 .github/scripts/send_fcm_release_notification.py")
         )
         assertTrue(
-            "build-apk.yml must use gradle/actions/setup-gradle for build caching",
-            buildWorkflow.readText().contains("gradle/actions/setup-gradle@v4")
+            "build-apk.yml must enable Gradle caching via setup-java",
+            buildWorkflow.readText().contains("cache: 'gradle'")
+        )
+        assertTrue(
+            "generate_release_notes.py must anchor version bumping on published releases so failed runs don't bump versions",
+            releaseNotesScript.readText().contains("fetch_latest_published_release_tag")
         )
         assertTrue(
             "build-apk.yml must exclude lintVitalRelease for faster release builds",

@@ -50,12 +50,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Gradle (Build Cache & Dependency Caching)
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
-          cache-cleanup: on-success
+          cache: 'gradle'
 
       - name: Compute Semantic Version and Plain-Language Release Notes
         id: semver

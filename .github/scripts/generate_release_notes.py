@@ -746,20 +746,22 @@ def format_categorized_markdown(items: List[Tuple[str, str]]) -> str:
     return "\n\n".join(sections)
 
 
-def fetch_latest_published_release_tag() -> str:
+def fetch_latest_published_release_tag() -> Tuple[Optional[Tuple[int, int, int]], str]:
     """
     Queries GitHub Releases (when GH_TOKEN/GITHUB_TOKEN is set in CI) to find the latest
-    actually-published non-draft, non-prerelease semantic tag. This guarantees that if an
-    earlier CI run pushed a git tag and crashed before publishing its release (leaving an
-    orphan tag/draft), the next run still diffs against the last PUBLISHED release so zero
-    user-facing changes are omitted from the changelog.
+    actually-published non-draft, non-prerelease semantic release.
+    Using published releases as the version baseline guarantees:
+      1. Failed CI pipelines (even if an older workflow pushed an orphan tag or draft)
+         NEVER increment the version number.
+      2. The next successful run diffs against the last PUBLISHED release so zero
+         user-facing changes are omitted from the changelog.
     """
     token = (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
     repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
     if not token or not repo:
-        return ""
+        return None, ""
 
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=30"
     req = urllib.request.Request(
         url,
         headers={
@@ -774,8 +776,9 @@ def fetch_latest_published_release_tag() -> str:
         with urllib.request.urlopen(req, timeout=10) as resp:
             releases = json.loads(resp.read().decode("utf-8"))
         if not isinstance(releases, list):
-            return ""
-        published_semver: List[Tuple[Tuple[int, int, int], str]] = []
+            return None, ""
+        published_with_apk: List[Tuple[Tuple[int, int, int], str]] = []
+        published_any: List[Tuple[Tuple[int, int, int], str]] = []
         for rel in releases:
             if not isinstance(rel, dict):
                 continue
@@ -783,14 +786,24 @@ def fetch_latest_published_release_tag() -> str:
                 continue
             tag = (rel.get("tag_name") or "").strip()
             parsed = parse_semver(tag)
-            if parsed:
-                published_semver.append((parsed, tag))
-        if published_semver:
-            published_semver.sort(key=lambda item: item[0])
-            return published_semver[-1][1]
+            if not parsed:
+                continue
+            published_any.append((parsed, tag))
+            assets = rel.get("assets") or []
+            has_apk = any(
+                isinstance(a, dict) and str(a.get("name", "")).lower().endswith(".apk")
+                for a in assets
+            )
+            if has_apk:
+                published_with_apk.append((parsed, tag))
+
+        chosen = published_with_apk if published_with_apk else published_any
+        if chosen:
+            chosen.sort(key=lambda item: item[0])
+            return chosen[-1]
     except Exception as exc:
         print(f"Note: Could not query published GitHub releases ({exc}); using git tags.", file=sys.stderr)
-    return ""
+    return None, ""
 
 
 def determine_version_and_base() -> Tuple[str, str, str, str]:
@@ -818,17 +831,19 @@ def determine_version_and_base() -> Tuple[str, str, str, str]:
     semver_tags.sort(key=lambda item: item[0])
     highest_ver = floor_ver
     prev_tag = ""
-    if semver_tags and semver_tags[-1][0] >= floor_ver:
+
+    # Authoritative baseline in CI: highest actually-published GitHub Release (with APK).
+    # This ensures failed pipelines (which never publish a release) never bump the version number.
+    published_ver, published_tag = fetch_latest_published_release_tag()
+    if published_ver is not None and published_ver >= floor_ver:
+        highest_ver = published_ver
+        prev_tag = published_tag
+    elif semver_tags and semver_tags[-1][0] >= floor_ver:
         highest_ver, prev_tag = semver_tags[-1]
 
-    # Prefer the latest PUBLISHED GitHub release tag as diff baseline so an orphaned tag from a
-    # previously failed CI run never hides changes from the user-facing release notes.
-    published_tag = fetch_latest_published_release_tag()
     head_sha = git_rev_parse("HEAD")
     diff_base_ref = ""
-    if published_tag and git_ref_exists(published_tag) and git_rev_parse(published_tag) != head_sha:
-        diff_base_ref = published_tag
-    elif prev_tag and git_ref_exists(prev_tag) and git_rev_parse(prev_tag) != head_sha:
+    if prev_tag and git_ref_exists(prev_tag) and git_rev_parse(prev_tag) != head_sha:
         diff_base_ref = prev_tag
     elif len(semver_tags) >= 2 and git_ref_exists(semver_tags[-2][1]):
         diff_base_ref = semver_tags[-2][1]

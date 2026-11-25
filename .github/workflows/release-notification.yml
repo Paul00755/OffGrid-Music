@@ -69,12 +69,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Gradle (only if APK build needed)
-        if: steps.check_artifacts.outputs.has_apk != 'true'
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: true
+          cache: 'gradle'
 
       - name: Build and Attach APK (if not attached)
         if: steps.check_artifacts.outputs.has_apk != 'true'

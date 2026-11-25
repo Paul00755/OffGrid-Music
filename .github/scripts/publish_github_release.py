@@ -196,6 +196,23 @@ def upload_apk_asset(
     raise RuntimeError(f"Failed to upload '{asset_name}' to release {release_id}")
 
 
+def delete_orphan_remote_tag_if_present(repo: str, token: str, tag: str) -> None:
+    """Removes a stale git tag left behind by an earlier failed CI run so GitHub attaches
+    the newly published release cleanly to the current successful commit SHA."""
+    encoded_tag = urllib.parse.quote(tag, safe="")
+    ref_url = f"https://api.github.com/repos/{repo}/git/refs/tags/{encoded_tag}"
+    try:
+        api_request("DELETE", ref_url, token, retry_delays=(2, 4))
+        print(f"Cleared stale orphan git tag '{tag}' before publishing release.")
+    except GitHubApiError as exc:
+        if exc.status in (404, 422):
+            return
+        print(
+            f"Warning: Could not clear pre-existing tag '{tag}' ({exc}); continuing.",
+            file=sys.stderr,
+        )
+
+
 def ensure_release_published(
     repo: str,
     token: str,
@@ -208,6 +225,11 @@ def ensure_release_published(
 ) -> Dict[str, Any]:
     releases = list_recent_releases(repo, token)
     existing = find_release_by_tag(releases, tag)
+
+    # If this semantic tag has no published release yet, clear any orphan git tag from an
+    # earlier failed CI run so GitHub binds the published release to the current commit_sha.
+    if tag != "latest" and (existing is None or existing.get("draft")):
+        delete_orphan_remote_tag_if_present(repo, token, tag)
 
     if existing is not None:
         release_id = int(existing["id"])
