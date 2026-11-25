@@ -1133,14 +1133,15 @@ fun NowPlayingScreen(
                         }
                     }
 
-                    // Centered Album Artwork
-                    Box(
+                    // Centered Album Artwork (scales cleanly when seek buttons, volume bar, and advanced info are all enabled)
+                    BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        val artSize = minOf(maxHeight * 0.94f, maxWidth * 0.65f, 135.dp).coerceAtLeast(64.dp)
                         com.example.ui.components.AlbumArtGestureBox(
                             enabled = gesturePlaybackEnabled,
                             isPlaying = playbackState.isPlaying,
@@ -1151,7 +1152,7 @@ fun NowPlayingScreen(
                             AlbumArtView(
                                 song = song,
                                 modifier = Modifier
-                                    .size(135.dp)
+                                    .size(artSize)
                                     .clip(RoundedCornerShape(16.dp))
                                     .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp)),
                                 cornerRadius = 16,
@@ -1737,14 +1738,21 @@ fun NowPlayingScreen(
                         }
 
                         // 2. Lower Seamless Controls Overlay harmonized with the atmospheric velvet stage
+                        val isDenseClassicOverlay = showVolumeBar && (showAdvancedSongInfo || showSeekButtons)
                         Column(
                             modifier = Modifier
                                 .widthIn(max = 560.dp)
                                 .fillMaxWidth()
                                 .align(Alignment.BottomCenter)
                                 .navigationBarsPadding()
-                                .padding(horizontal = 24.dp, vertical = 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (showVolumeBar) 10.dp else 14.dp)
+                                .padding(horizontal = 24.dp, vertical = if (isDenseClassicOverlay) 10.dp else 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(
+                                when {
+                                    isDenseClassicOverlay -> 8.dp
+                                    showVolumeBar -> 10.dp
+                                    else -> 14.dp
+                                }
+                            )
                         ) {
                             // Title + Artist on Left, Circular Options (⋮) + Favorite (♡) on Right
                             Row(
@@ -1880,7 +1888,7 @@ fun NowPlayingScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = if (isDenseClassicOverlay) 3.dp else 6.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {

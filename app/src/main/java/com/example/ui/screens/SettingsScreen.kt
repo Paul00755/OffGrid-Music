@@ -68,7 +68,8 @@ enum class SettingsSection(val title: String, val icon: androidx.compose.ui.grap
     PLAYBACK("Playback & Timers", Icons.Default.PlayCircle),
     LIBRARY("Library & Folders", Icons.Default.Folder),
     OTHER("Other & Privacy", Icons.Default.Security),
-    CLOUD_SYNC("Cloud & Sync", Icons.Default.CloudSync)
+    CLOUD_SYNC("Cloud & Sync", Icons.Default.CloudSync),
+    SUPPORT_DEVELOPER("Support the Developer", Icons.Default.LocalCafe)
 }
 
 data class SettingsCategoryCardItem(
@@ -87,7 +88,8 @@ val SETTINGS_CATEGORY_CARD_ITEMS = listOf(
     SettingsCategoryCardItem(SettingsSection.LIBRARY, "Library & Folders", "Scan device storage, Exclude folders & Short-clip filter", Icons.Default.Folder, Color(0xFF2979FF)),
     SettingsCategoryCardItem(SettingsSection.CACHE, "Cache & Storage", "Artwork cache, Lyrics storage & SQLite database optimization", Icons.Default.Storage, Color(0xFF00E676)),
     SettingsCategoryCardItem(SettingsSection.CLOUD_SYNC, "Cloud & Sync", "Google & Email account, Cloud backup & Cross-device sync", Icons.Default.CloudSync, Color(0xFF00E5FF)),
-    SettingsCategoryCardItem(SettingsSection.OTHER, "Other & Privacy", "Search behavior, History, Diagnostics, Updates & Reset", Icons.Default.Security, Color(0xFFFF5252))
+    SettingsCategoryCardItem(SettingsSection.OTHER, "Other & Privacy", "Search behavior, FAQ, Support email, Updates & Reset", Icons.Default.Security, Color(0xFFFF5252)),
+    SettingsCategoryCardItem(SettingsSection.SUPPORT_DEVELOPER, "Support the Developer", "Optional Buy Me a Coffee support for an independent student developer", Icons.Default.LocalCafe, Color(0xFFFFB74D))
 )
 
 private val SETTINGS_WHITESPACE_REGEX = Regex("[\\s\\-_/.]+")
@@ -939,8 +941,9 @@ fun SettingsScreen(
                 "CACHE", "STORAGE" -> SettingsSection.CACHE
                 "PLAYBACK", "TIMER", "SLEEP_TIMER" -> SettingsSection.PLAYBACK
                 "LIBRARY", "FOLDERS" -> SettingsSection.LIBRARY
-                "OTHER", "PRIVACY" -> SettingsSection.OTHER
+                "OTHER", "PRIVACY", "FAQ" -> SettingsSection.OTHER
                 "CLOUD", "SYNC", "CLOUD_SYNC", "ACCOUNT" -> SettingsSection.CLOUD_SYNC
+                "SUPPORT", "SUPPORT_DEVELOPER", "COFFEE", "DONATE" -> SettingsSection.SUPPORT_DEVELOPER
                 else -> SettingsSection.ALL
             }
         )
@@ -951,6 +954,9 @@ fun SettingsScreen(
     var isEditingApiKey by remember { mutableStateOf(false) }
     var showKeyText by remember { mutableStateOf(false) }
     var showApiKeyGuideDialog by remember { mutableStateOf(false) }
+    var showFaqScreen by remember(initialTargetSection) {
+        mutableStateOf(initialTargetSection?.uppercase() == "FAQ")
+    }
 
     fun navigateToSection(newSection: SettingsSection) {
         if (selectedSection != newSection) {
@@ -966,6 +972,10 @@ fun SettingsScreen(
     var showPlaylistPositionDialog by remember { mutableStateOf(false) }
 
     fun handleBack() {
+        if (showFaqScreen) {
+            showFaqScreen = false
+            return
+        }
         if (showLayoutStudio) {
             showLayoutStudio = false
             return
@@ -1026,9 +1036,13 @@ fun SettingsScreen(
                 "CACHE", "STORAGE" -> SettingsSection.CACHE
                 "PLAYBACK", "TIMER", "SLEEP_TIMER" -> SettingsSection.PLAYBACK
                 "LIBRARY", "FOLDERS" -> SettingsSection.LIBRARY
-                "OTHER", "PRIVACY" -> SettingsSection.OTHER
+                "OTHER", "PRIVACY", "FAQ" -> SettingsSection.OTHER
                 "CLOUD", "SYNC", "CLOUD_SYNC", "ACCOUNT" -> SettingsSection.CLOUD_SYNC
+                "SUPPORT", "SUPPORT_DEVELOPER", "COFFEE", "DONATE" -> SettingsSection.SUPPORT_DEVELOPER
                 else -> SettingsSection.ALL
+            }
+            if (rawTarget == "FAQ") {
+                showFaqScreen = true
             }
             if (targetSection != SettingsSection.ALL && selectedSection != targetSection) {
                 selectedSection = targetSection
@@ -1678,6 +1692,14 @@ fun SettingsScreen(
         )
     }
 
+    if (showFaqScreen) {
+        FaqScreen(
+            onBack = { showFaqScreen = false },
+            modifier = modifier
+        )
+        return
+    }
+
     if (showLayoutStudio) {
         UiLayoutStudioScreen(
             initialTabId = layoutStudioInitialTab,
@@ -1999,7 +2021,16 @@ fun SettingsScreen(
                 searchTokens,
                 "reset", "reset to default", "reset to default settings", "default settings", "factory defaults", "restore defaults"
             )
-            val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates || matchOtherResetDefaults
+            val matchOtherSupportEmail = matchesSettingsTokens(
+                searchTokens,
+                "email", "mail", "bug", "bugs", "bug report", "feedback", "suggestion", "suggestions", "feature", "query", "queries", "contact", "offgridmusicsupport"
+            )
+            val matchOtherFaq = matchesSettingsTokens(
+                searchTokens,
+                "faq", "faqs", "frequently asked", "question", "questions", "help", "play store", "safe", "api key error", "backup stored"
+            )
+            val anyOtherItemMatches = matchOtherSearchHistory || matchOtherDiagnostics || matchOtherUpdates ||
+                matchOtherResetDefaults || matchOtherSupportEmail || matchOtherFaq
 
             // Section 8: Cloud Sync granular matcher
             val matchCloudSyncItem = matchesSettingsTokens(
@@ -2007,9 +2038,15 @@ fun SettingsScreen(
                 "cloud", "sync", "synchronize", "backup", "restore", "cross-device", "cross device", "firebase", "google", "lyrics offset"
             )
 
+            // Section 9: Support the Developer granular matcher
+            val matchSupportDeveloper = matchesSettingsTokens(
+                searchTokens,
+                "support", "support the developer", "developer", "buy me a coffee", "coffee", "donate", "donation", "tip", "contribute", "student"
+            )
+
             val anySpecificSettingMatched = anyAudioItemMatches || anyUiItemMatches || matchHomeFeedItem ||
                 anyPlaybackItemMatches || anyCacheItemMatches || anyLibraryItemMatches ||
-                anyOtherItemMatches || matchCloudSyncItem || matchAccountTile
+                anyOtherItemMatches || matchCloudSyncItem || matchSupportDeveloper || matchAccountTile
 
             // Broad category fallback only when no specific setting matched (e.g., searching "audio" or "ui")
             val broadAudioMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "audio", "sound")
@@ -2018,7 +2055,7 @@ fun SettingsScreen(
             val broadPlaybackMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "playback", "controls")
             val broadCacheMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "cache", "storage", "disk")
             val broadLibraryMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "library", "scan")
-            val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other", "update", "github")
+            val broadOtherMatch = !anySpecificSettingMatched && matchesSettingsTokens(searchTokens, "privacy", "security", "other", "update", "github", "faq", "help")
 
             val audioMatches = anyAudioItemMatches || broadAudioMatch
             val uiMatches = anyUiItemMatches || broadUiMatch
@@ -2028,12 +2065,14 @@ fun SettingsScreen(
             val libraryMatches = anyLibraryItemMatches || broadLibraryMatch
             val otherMatches = anyOtherItemMatches || broadOtherMatch
             val cloudSyncMatches = matchCloudSyncItem
+            val supportDeveloperMatches = matchSupportDeveloper
 
-            val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches || libraryMatches || otherMatches || cloudSyncMatches || (isSearching && matchAccountTile)
+            val anyMatches = audioMatches || uiMatches || homeFeedMatches || playbackMatches || cacheMatches ||
+                libraryMatches || otherMatches || cloudSyncMatches || supportDeveloperMatches || (isSearching && matchAccountTile)
 
             val matchedSectionsCount = if (!isSearching) 0 else listOf(
                 audioMatches, uiMatches, homeFeedMatches, playbackMatches,
-                cacheMatches, libraryMatches, otherMatches, cloudSyncMatches, matchAccountTile
+                cacheMatches, libraryMatches, otherMatches, cloudSyncMatches, supportDeveloperMatches, matchAccountTile
             ).count { it }
 
             val isTopLevelHub = selectedSection == SettingsSection.ALL && !isSearching
@@ -2046,6 +2085,7 @@ fun SettingsScreen(
             val showLibrary = if (isSearching) libraryMatches else (!isTopLevelHub && selectedSection == SettingsSection.LIBRARY)
             val showOther = if (isSearching) otherMatches else (!isTopLevelHub && selectedSection == SettingsSection.OTHER)
             val showCloudSync = if (isSearching) cloudSyncMatches else (!isTopLevelHub && selectedSection == SettingsSection.CLOUD_SYNC)
+            val showSupportDeveloper = if (isSearching) supportDeveloperMatches else (!isTopLevelHub && selectedSection == SettingsSection.SUPPORT_DEVELOPER)
 
             if (isTopLevelHub || isSearching) {
                 // Clean, borderless User Account header row
@@ -2287,7 +2327,7 @@ fun SettingsScreen(
                             letterSpacing = 1.2.sp
                         )
                         Text(
-                            text = "8 categories",
+                            text = "${SETTINGS_CATEGORY_CARD_ITEMS.size} categories",
                             fontSize = 11.sp,
                             color = BentoTextSubtle
                         )
@@ -5833,7 +5873,24 @@ fun SettingsScreen(
                     }
                 }
 
-                // Group 7C: Reset Preferences
+                // Group 7C: FAQ & Contact Support
+                if (!isSearching || matchOtherFaq || matchOtherSupportEmail || broadOtherMatch) {
+                    item(key = "settings_other_help_and_faq") {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            SettingsSubGroupLabel(title = "HELP, FAQ & FEEDBACK")
+                            if (!isSearching || matchOtherFaq || broadOtherMatch) {
+                                OtherFaqEntryCard(
+                                    onOpenFaq = { showFaqScreen = true }
+                                )
+                            }
+                            if (!isSearching || matchOtherSupportEmail || broadOtherMatch) {
+                                OtherSupportFeedbackCard()
+                            }
+                        }
+                    }
+                }
+
+                // Group 7D: Reset Preferences
                 if (!isSearching || matchOtherResetDefaults || broadOtherMatch) {
                     item(key = "settings_other_reset_card") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -6219,6 +6276,27 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // ==========================================
+            // SECTION 9: SUPPORT THE DEVELOPER (LAST SECTION)
+            // ==========================================
+            if (showSupportDeveloper) {
+                if (isSearching) {
+                    item(key = "settings_support_developer_header") {
+                        SettingsSectionHeader(
+                            title = "Support the Developer",
+                            subtitle = "Optional Buy Me a Coffee support for OffGrid Music",
+                            kicker = "INDEPENDENT DEVELOPER",
+                            icon = Icons.Default.LocalCafe,
+                            accentColor = BentoPrimary
+                        )
+                    }
+                }
+
+                item(key = "settings_support_developer_content") {
+                    SupportDeveloperContent()
                 }
             }
 

@@ -1012,6 +1012,9 @@ class MainActivity : ComponentActivity() {
                                 val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsStateWithLifecycle()
                                 val showAdvancedSongInfo by viewModel.showAdvancedSongInfo.collectAsStateWithLifecycle()
                                 val showRemainingTime by viewModel.showRemainingTime.collectAsStateWithLifecycle()
+                                val showNowPlayingSeekButtons by viewModel.showNowPlayingSeekButtons.collectAsStateWithLifecycle()
+                                val nowPlayingBackwardSeconds by viewModel.nowPlayingBackwardSeconds.collectAsStateWithLifecycle()
+                                val nowPlayingForwardSeconds by viewModel.nowPlayingForwardSeconds.collectAsStateWithLifecycle()
                                 NowPlayingScreen(
                                     playbackState = playbackState,
                                     currentLyrics = currentLyrics,
@@ -1041,6 +1044,11 @@ class MainActivity : ComponentActivity() {
                                     showAdvancedSongInfo = showAdvancedSongInfo,
                                     showRemainingTime = showRemainingTime,
                                     onToggleShowRemainingTime = { viewModel.toggleShowRemainingTime() },
+                                    showSeekButtons = showNowPlayingSeekButtons,
+                                    backwardSeconds = nowPlayingBackwardSeconds,
+                                    forwardSeconds = nowPlayingForwardSeconds,
+                                    onSeekBackward = { viewModel.seekBackward(nowPlayingBackwardSeconds * 1000L) },
+                                    onSeekForward = { viewModel.seekForward(nowPlayingForwardSeconds * 1000L) },
                                     playbackPositionFlow = viewModel.playbackPositionMs,
                                     onDismiss = { viewModel.showNowPlaying.value = false },
                                     onTogglePlayPause = { viewModel.togglePlayPause() },

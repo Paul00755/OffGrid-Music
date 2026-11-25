@@ -196,15 +196,16 @@ fun NowPlayingNeonWaveform(
             ),
         contentAlignment = Alignment.Center
     ) {
+        val isDenseNeon = showSeekButtons && showVolumeBar
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 560.dp)
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 10.dp),
+                .padding(horizontal = 24.dp, vertical = if (isDenseNeon) 6.dp else 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(if (isDenseNeon) 4.dp else 8.dp)
         ) {
             // Subtle Top Handle & Collapse Affordance
             Box(
@@ -234,17 +235,16 @@ fun NowPlayingNeonWaveform(
                 )
             }
 
-            // Large Centered Rounded-Square Album Art
-            Box(
+            // Large Centered Rounded-Square Album Art (scales smoothly to preserve space for seek & volume controls)
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .padding(vertical = 4.dp),
+                    .weight(1f)
+                    .padding(vertical = if (isDenseNeon) 2.dp else 4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                BoxWithConstraints(contentAlignment = Alignment.Center) {
-                    val maxArtSize = minOf(maxWidth * 0.96f, maxHeight * 0.94f, 340.dp)
-                    com.example.ui.components.AlbumArtGestureBox(
+                val maxArtSize = minOf(maxWidth * 0.94f, maxHeight * 0.94f, 340.dp).coerceAtLeast(120.dp)
+                com.example.ui.components.AlbumArtGestureBox(
                         enabled = gesturePlaybackEnabled,
                         isPlaying = playbackState.isPlaying,
                         onTogglePlayPause = onTogglePlayPause,
@@ -265,7 +265,6 @@ fun NowPlayingNeonWaveform(
                             )
                         }
                     }
-                }
             }
 
             // Seek / Waveform Visualizer & Elapsed / Remaining Timestamps directly below Album Art
@@ -344,12 +343,11 @@ fun NowPlayingNeonWaveform(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (showAdvancedSongInfo && audioTechnicalInfo != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
                     AdvancedSongInfoRow(
                         info = audioTechnicalInfo,
-                        inkColor = primaryInk,
+                        inkColor = secondaryInk,
                         centered = true,
-                        usePillSurface = true
+                        usePillSurface = false
                     )
                 }
             }

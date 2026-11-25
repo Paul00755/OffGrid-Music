@@ -103,6 +103,7 @@ fun NowPlayingMinimalGlass(
                     )
             )
         }
+        val isDenseGlass = showSeekButtons && showVolumeBar
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -110,9 +111,9 @@ fun NowPlayingMinimalGlass(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp, vertical = 12.dp),
+                .padding(horizontal = 24.dp, vertical = if (isDenseGlass) 8.dp else 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(if (isDenseGlass) 6.dp else 10.dp)
         ) {
             // Header
             Row(
@@ -120,55 +121,53 @@ fun NowPlayingMinimalGlass(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close", tint = BentoTextPrimary, modifier = Modifier.size(26.dp))
                 }
                 Text("MINIMAL GLASS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BentoPrimary, letterSpacing = 1.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onOpenOptionsMenu, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = onOpenOptionsMenu, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
                     }
-                    IconButton(onClick = onOpenAudioOutputSwitcher, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = onOpenAudioOutputSwitcher, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.SpeakerGroup, contentDescription = "Audio Output", tint = BentoPrimary, modifier = Modifier.size(20.dp))
                     }
                 }
             }
 
-            // Glass Frosted Card Artwork
-            Box(
+            // Glass Frosted Card Artwork (fluidly adapts so seek buttons & volume bar always fit cleanly)
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .padding(vertical = 4.dp),
+                    .weight(1f)
+                    .padding(vertical = 2.dp),
                 contentAlignment = Alignment.Center
             ) {
-                BoxWithConstraints(contentAlignment = Alignment.Center) {
-                    val cardSize = minOf(maxHeight * 0.95f, maxWidth * 0.88f, 320.dp)
-                    com.example.ui.components.AlbumArtGestureBox(
-                        enabled = gesturePlaybackEnabled,
-                        isPlaying = playbackState.isPlaying,
-                        onTogglePlayPause = onTogglePlayPause,
-                        onSkipPrevious = onSkipPrevious,
-                        onSkipNext = onSkipNext
+                val cardSize = minOf(maxHeight * 0.94f, maxWidth * 0.88f, 320.dp).coerceAtLeast(116.dp)
+                com.example.ui.components.AlbumArtGestureBox(
+                    enabled = gesturePlaybackEnabled,
+                    isPlaying = playbackState.isPlaying,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onSkipPrevious = onSkipPrevious,
+                    onSkipNext = onSkipNext
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = BentoCardSurface.copy(alpha = 0.7f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .size(cardSize)
+                            .padding(6.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(28.dp),
-                            color = BentoCardSurface.copy(alpha = 0.7f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
-                            modifier = Modifier
-                                .size(cardSize)
-                                .padding(8.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(16.dp)) {
-                                AlbumArtView(
-                                    song = song,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(RoundedCornerShape(20.dp)),
-                                    cornerRadius = 20,
-                                    forceHighResOnline = true
-                                )
-                            }
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(14.dp)) {
+                            AlbumArtView(
+                                song = song,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(20.dp)),
+                                cornerRadius = 20,
+                                forceHighResOnline = true
+                            )
                         }
                     }
                 }
@@ -219,7 +218,7 @@ fun NowPlayingMinimalGlass(
                     playbackPositionFlow = playbackPositionFlow,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
+                        .height(if (isDenseGlass) 34.dp else 40.dp)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
