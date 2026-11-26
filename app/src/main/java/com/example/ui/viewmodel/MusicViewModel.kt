@@ -429,6 +429,49 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val currentAudioRoute: StateFlow<com.example.util.AudioRouteInfo> = audioRouteManager.currentRoute
     val availableAudioDevices: StateFlow<List<com.example.util.AudioRouteDevice>> = audioRouteManager.availableDevices
 
+    val castManager: com.example.cast.CastManager = com.example.cast.CastManager(application)
+    val castSessionState: StateFlow<com.example.cast.CastSessionState> = castManager.sessionState
+    val showCastSheet = MutableStateFlow(false)
+    val openCastSheetInHelpMode = MutableStateFlow(false)
+
+    fun openCastSheet(showHelpDirectly: Boolean = false) {
+        openCastSheetInHelpMode.value = showHelpDirectly
+        showCastSheet.value = true
+    }
+
+    fun closeCastSheet() {
+        showCastSheet.value = false
+        openCastSheetInHelpMode.value = false
+    }
+
+    fun startCastDiscovery() = castManager.startDiscovery()
+    fun stopCastDiscovery() = castManager.stopDiscovery()
+
+    fun connectCastDevice(device: com.example.cast.CastDevice) {
+        val currentState = playbackState.value
+        val activeSong = currentState.currentSong
+        val startPos = playbackPositionMs.value.takeIf { it > 0L } ?: currentState.positionMs
+        if (activeSong != null) {
+            playbackManager.pause()
+        }
+        castManager.connectAndCast(device = device, song = activeSong, startPositionMs = startPos)
+    }
+
+    fun disconnectCastDevice() = castManager.disconnect()
+    fun setRemoteCastVolume(volume01: Float) = castManager.setRemoteVolume(volume01)
+
+    fun quickPlayOnCast() {
+        val candidate = playbackState.value.currentSong
+            ?: recentlyPlayedSongs.value.firstOrNull()
+            ?: allSongs.value.firstOrNull()
+            ?: return
+        playSong(candidate)
+    }
+
+    fun launchSystemCastSettings(context: android.content.Context) = castManager.launchSystemCastSettings(context)
+    fun launchWifiSettings(context: android.content.Context) = castManager.launchWifiSettings(context)
+    fun launchBluetoothSettings(context: android.content.Context) = castManager.launchBluetoothSettings(context)
+
     fun selectAudioRoute(device: com.example.util.AudioRouteDevice) {
         audioRouteManager.selectRoute(device)
     }
@@ -939,6 +982,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         audioRouteManager.onDeviceSelected = { dev ->
             playbackManager.setPreferredAudioDevice(dev)
+        }
+        castManager.onRemotePlaybackTick = { posMs, isPlaying ->
+            playbackManager.syncRemoteCastPlaybackState(posMs, isPlaying)
+        }
+        castManager.onRemoteTrackFinished = {
+            if (castManager.isCastingRemote) {
+                val state = playbackState.value
+                val queue = state.queue
+                if (queue.isNotEmpty()) {
+                    val nextIdx = when {
+                        state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ONE -> state.queueIndex.coerceIn(queue.indices)
+                        state.queueIndex + 1 < queue.size -> state.queueIndex + 1
+                        state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ALL -> 0
+                        else -> -1
+                    }
+                    if (nextIdx >= 0) {
+                        val nextSong = playbackManager.selectQueueIndexForRemoteCast(nextIdx)
+                        if (nextSong != null) {
+                            castManager.castSong(nextSong, 0L)
+                        }
+                    }
+                }
+            }
+        }
+        castManager.onCastDisconnected = { lastPosMs ->
+            if (lastPosMs > 0L && playbackState.value.currentSong != null) {
+                playbackManager.syncRemoteCastPlaybackState(lastPosMs, false)
+            }
         }
         viewModelScope.launch(Dispatchers.Default) {
             var lastWarmedLibrarySignature = 0L
@@ -2060,16 +2131,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playSong(song: Song, queue: List<Song> = allSongs.value, sourceContext: String = "UNKNOWN") {
         val index = queue.indexOfFirst { it.id == song.id }.let { if (it >= 0) it else queue.indexOf(song).coerceAtLeast(0) }
-        playbackManager.playQueue(queue, index, sourceContext)
+        if (castManager.isCastingRemote) {
+            playbackManager.playQueue(queue, index, sourceContext, startPlayback = false)
+            castManager.castSong(song, 0L)
+        } else {
+            playbackManager.playQueue(queue, index, sourceContext)
+        }
     }
 
     fun playAll(songs: List<Song>, sourceContext: String = "UNKNOWN") {
         if (songs.isNotEmpty()) {
-            playbackManager.playQueue(
-                songs = songs,
-                startIndex = 0,
-                sourceContext = sourceContext
-            )
+            if (castManager.isCastingRemote) {
+                playbackManager.playQueue(
+                    songs = songs,
+                    startIndex = 0,
+                    sourceContext = sourceContext,
+                    startPlayback = false
+                )
+                playbackState.value.currentSong?.let { castManager.castSong(it, 0L) }
+            } else {
+                playbackManager.playQueue(
+                    songs = songs,
+                    startIndex = 0,
+                    sourceContext = sourceContext
+                )
+            }
         }
     }
 
@@ -2087,16 +2173,92 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun togglePlayPause() = playbackManager.togglePlayPause()
-    fun skipToNext() = playbackManager.skipToNext()
-    fun skipToPrevious() = playbackManager.skipToPrevious()
-    fun seekTo(positionMs: Long) = playbackManager.seekTo(positionMs)
-    fun seekForward(deltaMs: Long) = playbackManager.seekForward(deltaMs)
-    fun seekBackward(deltaMs: Long) = playbackManager.seekBackward(deltaMs)
+    fun togglePlayPause() {
+        if (castManager.isCastingRemote) {
+            castManager.toggleRemotePlayPause()
+        } else {
+            playbackManager.togglePlayPause()
+        }
+    }
+
+    fun skipToNext() {
+        if (castManager.isCastingRemote) {
+            val state = playbackState.value
+            val queue = state.queue
+            if (queue.isNotEmpty()) {
+                val targetIdx = when {
+                    state.queueIndex + 1 < queue.size -> state.queueIndex + 1
+                    state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ALL -> 0
+                    else -> -1
+                }
+                if (targetIdx >= 0) {
+                    val nextSong = playbackManager.selectQueueIndexForRemoteCast(targetIdx)
+                    if (nextSong != null) castManager.castSong(nextSong, 0L)
+                }
+            }
+            return
+        }
+        playbackManager.skipToNext()
+    }
+
+    fun skipToPrevious() {
+        if (castManager.isCastingRemote) {
+            val state = playbackState.value
+            if (castSessionState.value.remotePositionMs > 3000L) {
+                castManager.seekRemote(0L)
+                return
+            }
+            val queue = state.queue
+            if (queue.isNotEmpty()) {
+                val targetIdx = when {
+                    state.queueIndex - 1 >= 0 -> state.queueIndex - 1
+                    state.repeatMode == androidx.media3.common.Player.REPEAT_MODE_ALL -> queue.lastIndex
+                    else -> -1
+                }
+                if (targetIdx >= 0) {
+                    val prevSong = playbackManager.selectQueueIndexForRemoteCast(targetIdx)
+                    if (prevSong != null) castManager.castSong(prevSong, 0L)
+                }
+            }
+            return
+        }
+        playbackManager.skipToPrevious()
+    }
+
+    fun seekTo(positionMs: Long) {
+        if (castManager.isCastingRemote) {
+            castManager.seekRemote(positionMs)
+        } else {
+            playbackManager.seekTo(positionMs)
+        }
+    }
+    fun seekForward(deltaMs: Long) {
+        if (castManager.isCastingRemote) {
+            val cur = castSessionState.value.remotePositionMs
+            val dur = castSessionState.value.remoteDurationMs
+            val target = if (dur > 0L) (cur + deltaMs).coerceAtMost(dur) else cur + deltaMs
+            castManager.seekRemote(target)
+        } else {
+            playbackManager.seekForward(deltaMs)
+        }
+    }
+    fun seekBackward(deltaMs: Long) {
+        if (castManager.isCastingRemote) {
+            val target = (castSessionState.value.remotePositionMs - deltaMs).coerceAtLeast(0L)
+            castManager.seekRemote(target)
+        } else {
+            playbackManager.seekBackward(deltaMs)
+        }
+    }
     fun toggleShuffle(): String = playbackManager.toggleShuffle()
     fun shuffleAndPlay(songs: List<Song> = allSongs.value, sourceContext: String = "LIBRARY") {
         if (songs.isNotEmpty()) {
-            playbackManager.playQueue(songs, startIndex = 0, sourceContext = sourceContext, forceShuffle = true)
+            if (castManager.isCastingRemote) {
+                playbackManager.playQueue(songs, startIndex = 0, sourceContext = sourceContext, forceShuffle = true, startPlayback = false)
+                playbackState.value.currentSong?.let { castManager.castSong(it, 0L) }
+            } else {
+                playbackManager.playQueue(songs, startIndex = 0, sourceContext = sourceContext, forceShuffle = true)
+            }
         }
     }
     fun toggleRepeat() = playbackManager.toggleRepeat()
@@ -3469,6 +3631,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         audioRouteManager.unregister()
+        castManager.release()
         super.onCleared()
     }
 }

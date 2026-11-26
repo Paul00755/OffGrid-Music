@@ -97,4 +97,8 @@
 }
 -keep class com.example.jam.** { *; }
 
-
+# ==============================================================================
+# Google Cast SDK & MediaRouter
+# ==============================================================================
+-keep class com.example.cast.OffGridCastOptionsProvider { *; }
+-keep class * implements com.google.android.gms.cast.framework.OptionsProvider { *; }

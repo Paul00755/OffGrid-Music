@@ -284,6 +284,9 @@ class MainActivity : ComponentActivity() {
                     val sleepTimerState by viewModel.sleepTimerState.collectAsStateWithLifecycle()
                     val currentLyrics by viewModel.currentLyrics.collectAsStateWithLifecycle()
                     val currentAudioRoute by viewModel.currentAudioRoute.collectAsStateWithLifecycle()
+                    val castSessionState by viewModel.castSessionState.collectAsStateWithLifecycle()
+                    val showCastSheet by viewModel.showCastSheet.collectAsStateWithLifecycle()
+                    val openCastSheetInHelpMode by viewModel.openCastSheetInHelpMode.collectAsStateWithLifecycle()
                     val librarySortOption by viewModel.librarySortOption.collectAsStateWithLifecycle()
                     val librarySortAscending by viewModel.librarySortAscending.collectAsStateWithLifecycle()
                     val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
@@ -779,7 +782,9 @@ class MainActivity : ComponentActivity() {
                                                     viewModel.checkForUpdates(isManual = false)
                                                 },
                                                 waveformStyle = homeWaveformStyle,
-                                                onSeekTo = { pos -> viewModel.seekTo(pos) }
+                                                onSeekTo = { pos -> viewModel.seekTo(pos) },
+                                                castSessionState = castSessionState,
+                                                onOpenCastSheet = { openHelp -> viewModel.openCastSheet(openHelp) }
                                              )
                                             NavTab.LIBRARY -> LibraryScreen(
                                                 allSongs = allSongs,
@@ -1127,6 +1132,32 @@ class MainActivity : ComponentActivity() {
                                         viewModel.createPlaylist(newName)
                                     },
                                     onDismiss = { songForAddToPlaylist = null }
+                                )
+                            }
+
+                            if (showCastSheet) {
+                                val castAudioDevices by viewModel.availableAudioDevices.collectAsStateWithLifecycle()
+                                com.example.ui.components.CastDeviceSheet(
+                                    castState = castSessionState,
+                                    currentSong = playbackState.currentSong,
+                                    audioRouteInfo = currentAudioRoute,
+                                    availableAudioDevices = castAudioDevices,
+                                    initialShowHelp = openCastSheetInHelpMode,
+                                    onStartScan = { viewModel.startCastDiscovery() },
+                                    onStopScan = { viewModel.stopCastDiscovery() },
+                                    onSelectCastDevice = { device -> viewModel.connectCastDevice(device) },
+                                    onDisconnectCast = { viewModel.disconnectCastDevice() },
+                                    onToggleRemotePlayPause = { viewModel.togglePlayPause() },
+                                    onSkipNext = { viewModel.skipToNext() },
+                                    onSkipPrevious = { viewModel.skipToPrevious() },
+                                    onSeekRemote = { pos -> viewModel.seekTo(pos) },
+                                    onSetRemoteVolume = { vol -> viewModel.setRemoteCastVolume(vol) },
+                                    onQuickPlayOnCast = { viewModel.quickPlayOnCast() },
+                                    onSelectAudioDevice = { device -> viewModel.selectAudioRoute(device) },
+                                    onLaunchSystemCast = { viewModel.launchSystemCastSettings(this@MainActivity) },
+                                    onOpenWifiSettings = { viewModel.launchWifiSettings(this@MainActivity) },
+                                    onOpenBluetoothSettings = { viewModel.launchBluetoothSettings(this@MainActivity) },
+                                    onDismiss = { viewModel.closeCastSheet() }
                                 )
                             }
 

@@ -4947,4 +4947,54 @@ class PlaybackManager(
             }
         }
     }
+
+    /**
+     * Updates the active queue index and metadata while keeping local ExoPlayer paused,
+     * used when playback is routed to a remote TV / Cast receiver.
+     */
+    fun selectQueueIndexForRemoteCast(index: Int): Song? {
+        val state = _playbackState.value
+        val targetSong = state.queue.getOrNull(index) ?: return null
+        cancelCrossfade(resetVolume = true)
+        fadeJob?.cancel()
+        fadeJob = null
+        currentPositionMs = 0L
+        _playbackPositionMs.value = 0L
+        _playbackState.value = state.copy(
+            currentSong = targetSong,
+            queueIndex = index,
+            positionMs = 0L,
+            durationMs = targetSong.durationMs.takeIf { it > 0L } ?: state.durationMs,
+            isPlaying = true,
+            playbackError = null
+        )
+        try {
+            player.playWhenReady = false
+            player.pause()
+            if (index in 0 until player.mediaItemCount) {
+                player.seekTo(index, 0L)
+            }
+        } catch (_: Throwable) {}
+        launchSongArtworkRefresh(targetSong)
+        updateNotificationLayout()
+        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        return targetSong
+    }
+
+    /**
+     * Reflects live remote TV playback position and play/pause state in the app UI
+     * without starting local speaker audio.
+     */
+    fun syncRemoteCastPlaybackState(positionMs: Long, isPlaying: Boolean) {
+        val safePos = positionMs.coerceAtLeast(0L)
+        currentPositionMs = safePos
+        _playbackPositionMs.value = safePos
+        val cur = _playbackState.value
+        if (cur.positionMs != safePos || cur.isPlaying != isPlaying) {
+            _playbackState.value = cur.copy(
+                positionMs = safePos,
+                isPlaying = isPlaying
+            )
+        }
+    }
 }

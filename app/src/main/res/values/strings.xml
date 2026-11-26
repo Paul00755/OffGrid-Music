@@ -5,4 +5,11 @@
     <string name="widget_medium_description">Medium Music Widget with split album cover, progress bar, and controls</string>
     <string name="widget_secondary_description">Secondary Music Widget with left-bleed album cover, glowing waveform progress bar, and controls</string>
     <string name="widget_lyrics_description">Live Lyrics Music Widget with smooth synced lyric transitions and adaptive Black/Light theme</string>
+    <string name="cast_title">Cast to TV &amp; Devices</string>
+    <string name="cast_sidebar_subtitle">Stream to TV, speaker or nearby device</string>
+    <string name="cast_help_button">How should I connect?</string>
+    <string name="cast_help_title">How to Connect &amp; Cast</string>
+    <string name="cast_scanning">Scanning Wi-Fi &amp; nearby devices…</string>
+    <string name="cast_stop_casting">Stop Casting</string>
+    <string name="cast_system_display">System Cast / Wireless Display</string>
 </resources>

@@ -15,9 +15,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
@@ -281,6 +283,8 @@ fun HomeScreen(
     onScreenEntered: () -> Unit = {},
     waveformStyle: String = "SNAKE",
     onSeekTo: (Long) -> Unit = {},
+    castSessionState: com.example.cast.CastSessionState = com.example.cast.CastSessionState(),
+    onOpenCastSheet: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedMostPlayedFilter by remember { mutableStateOf(MostPlayedFilter.SEVEN_DAYS) }
@@ -811,6 +815,116 @@ fun HomeScreen(
                                 onClick = { closeSidebarAndRun { onOpenFavorites() } },
                                 modifier = Modifier.weight(1f)
                             )
+                        }
+
+                        // Featured Cast to TV & Nearby Devices Button with Direct "How to Connect?" Help
+                        val isCastingActive = castSessionState.isConnected
+                        val castDeviceName = castSessionState.connectedDevice?.name
+                        Surface(
+                            onClick = { closeSidebarAndRun { onOpenCastSheet(false) } },
+                            shape = RoundedCornerShape(15.dp),
+                            color = if (isCastingActive) BentoPrimary.copy(alpha = 0.18f) else BentoCardDarkPurple.copy(alpha = 0.72f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isCastingActive) BentoPrimary.copy(alpha = 0.62f) else BentoPrimary.copy(alpha = 0.30f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 56.dp)
+                                .testTag("btn_sidebar_cast")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (isCastingActive) BentoPrimary else BentoPrimary.copy(alpha = 0.16f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (isCastingActive) Icons.Default.CastConnected else Icons.Default.Cast,
+                                        contentDescription = "Cast to TV and nearby devices",
+                                        tint = if (isCastingActive) BentoOnPrimary else BentoPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isCastingActive && !castDeviceName.isNullOrBlank()) {
+                                                "Casting: $castDeviceName"
+                                            } else {
+                                                "Cast to TV & Devices"
+                                            },
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BentoTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (isCastingActive) {
+                                            Surface(
+                                                shape = RoundedCornerShape(50),
+                                                color = BentoPrimary
+                                            ) {
+                                                Text(
+                                                    text = "LIVE",
+                                                    fontSize = 8.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = BentoOnPrimary,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Text(
+                                        text = if (isCastingActive) {
+                                            "Tap to control TV or disconnect"
+                                        } else {
+                                            "Stream to TV, speaker or nearby device"
+                                        },
+                                        fontSize = 10.sp,
+                                        color = if (isCastingActive) BentoPrimary else BentoTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Surface(
+                                    onClick = { closeSidebarAndRun { onOpenCastSheet(true) } },
+                                    shape = CircleShape,
+                                    color = BentoPrimary.copy(alpha = 0.14f),
+                                    border = BorderStroke(0.8.dp, BentoPrimary.copy(alpha = 0.35f)),
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .testTag("btn_sidebar_cast_help")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.HelpOutline,
+                                            contentDescription = "How should I connect help",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(2.dp))
