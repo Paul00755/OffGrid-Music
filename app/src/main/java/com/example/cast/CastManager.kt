@@ -13,9 +13,12 @@ import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.example.data.local.AppDatabase
 import com.example.data.local.UserPreferencesRepository
+import com.example.data.model.Lyrics
 import com.example.data.model.Song
 import com.example.util.LrcParser
 import com.google.android.gms.cast.CastMediaControlIntent
+import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -87,6 +90,7 @@ class CastManager(context: Context) {
     var onCastDisconnected: ((lastPositionMs: Long) -> Unit)? = null
     var onEnsureLocalPlaybackSilenced: (() -> Unit)? = null
     var nextSongProvider: (() -> Song?)? = null
+    var currentLyricsProvider: ((songId: Long) -> Pair<Lyrics?, Long>?)? = null
 
     private var castContext: CastContext? = null
     private var mediaRouter: MediaRouter? = null
@@ -106,8 +110,12 @@ class CastManager(context: Context) {
     private var castLoadJob: Job? = null
     private var hasNotifiedFinishForSongId: Long? = null
     private var dlnaWasPlayingSinceLoad: Boolean = false
+    private var googleCastWasPlayingSinceLoad: Boolean = false
     private var lastPreQueuedNextSongId: Long? = null
     private var lastKeepAliveAtMs: Long = 0L
+    private var registeredCallbackClient: RemoteMediaClient? = null
+    private var currentSongUsingHlsVideo: Boolean = false
+    private val hlsFallbackSongIds = HashSet<Long>()
 
     private var castWakeLock: PowerManager.WakeLock? = null
     private var castWifiLock: WifiManager.WifiLock? = null
@@ -128,61 +136,121 @@ class CastManager(context: Context) {
 
     private val remoteMediaCallback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
+            val session = currentGoogleCastSession() ?: return
+            val client = session.remoteMediaClient ?: return
+            processGoogleCastStatus(session, client)
+        }
+    }
+
+    private fun ensureRemoteMediaCallbackRegistered(session: CastSession?) {
+        val client = session?.remoteMediaClient ?: return
+        if (registeredCallbackClient === client) return
+        try {
+            registeredCallbackClient?.unregisterCallback(remoteMediaCallback)
+        } catch (_: Throwable) {}
+        try {
+            client.registerCallback(remoteMediaCallback)
+            registeredCallbackClient = client
+        } catch (_: Throwable) {}
+    }
+
+    private fun extractRemoteSongId(status: MediaStatus?): Long? {
+        if (status == null) return null
+        status.mediaInfo?.customData?.optLong("songId", -1L)?.takeIf { it > 0L }?.let { return it }
+        try {
+            val curItem = status.getQueueItemById(status.currentItemId)
+            curItem?.customData?.optLong("songId", -1L)?.takeIf { it > 0L }?.let { return it }
+            curItem?.media?.customData?.optLong("songId", -1L)?.takeIf { it > 0L }?.let { return it }
+        } catch (_: Throwable) {}
+        val contentId = status.mediaInfo?.contentId.orEmpty()
+        if (contentId.isNotBlank()) {
+            // Matches /hls/{token}/{songId}/playlist.m3u8 or /stream/{token}/{songId}.ext
+            val hlsMatch = Regex("/hls/[^/]+/(\\d+)/").find(contentId)
+            hlsMatch?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { return it }
+            val streamMatch = Regex("/stream/[^/]+/(\\d+)\\.").find(contentId)
+            streamMatch?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    private fun processGoogleCastStatus(session: CastSession, client: RemoteMediaClient) {
+        try {
+            val status = client.mediaStatus
+            val playerState = status?.playerState ?: MediaStatus.PLAYER_STATE_UNKNOWN
+            val isPlaying = client.isPlaying || playerState == MediaStatus.PLAYER_STATE_PLAYING
+            if (isPlaying) {
+                googleCastWasPlayingSinceLoad = true
+            }
+            val pos = client.approximateStreamPosition.coerceAtLeast(0L)
+            val stateBefore = _sessionState.value
+            val dur = client.streamDuration.takeIf { it > 0L }
+                ?: stateBefore.castingSong?.durationMs
+                ?: stateBefore.remoteDurationMs
+
+            // Sync remote volume if changed on TV remote or Google Home
             try {
-                val session = currentGoogleCastSession() ?: return
-                val client = session.remoteMediaClient ?: return
-                val status = client.mediaStatus
-                val isPlaying = client.isPlaying
-                val pos = client.approximateStreamPosition.coerceAtLeast(0L)
-                val dur = client.streamDuration.takeIf { it > 0L }
-                    ?: _sessionState.value.castingSong?.durationMs
-                    ?: 0L
-
-                // Sync remote volume if user changed it on TV remote or Google Home
-                try {
-                    val tvVol = session.volume.toFloat().coerceIn(0f, 1f)
-                    if (kotlin.math.abs(tvVol - _sessionState.value.remoteVolume) >= 0.02f) {
-                        _sessionState.update { it.copy(remoteVolume = tvVol) }
-                        onRemoteVolumeChanged?.invoke(tvVol)
-                    }
-                } catch (_: Throwable) {}
-
-                // Detect seamless TV-side queue auto-advance to pre-queued next song
-                val remoteSongId = status?.mediaInfo?.customData?.optLong("songId", -1L)
-                    ?.takeIf { it > 0L }
-                val currentCastingId = _sessionState.value.castingSong?.id
-                if (remoteSongId != null &&
-                    currentCastingId != null &&
-                    remoteSongId != currentCastingId &&
-                    status.playerState != MediaStatus.PLAYER_STATE_IDLE
-                ) {
-                    hasNotifiedFinishForSongId = null
-                    lastPreQueuedNextSongId = null
-                    onRemoteAutoAdvancedToSong?.invoke(remoteSongId)
+                val tvVol = session.volume.toFloat().coerceIn(0f, 1f)
+                if (kotlin.math.abs(tvVol - stateBefore.remoteVolume) >= 0.02f) {
+                    _sessionState.update { it.copy(remoteVolume = tvVol) }
+                    onRemoteVolumeChanged?.invoke(tvVol)
                 }
+            } catch (_: Throwable) {}
 
-                _sessionState.update { state ->
-                    state.copy(
+            // Detect seamless TV-side queue auto-advance to pre-queued next song
+            val remoteSongId = extractRemoteSongId(status)
+            val currentCastingId = stateBefore.castingSong?.id
+            if (remoteSongId != null &&
+                currentCastingId != null &&
+                remoteSongId != currentCastingId &&
+                playerState != MediaStatus.PLAYER_STATE_IDLE
+            ) {
+                hasNotifiedFinishForSongId = null
+                lastPreQueuedNextSongId = null
+                googleCastWasPlayingSinceLoad = true
+                onRemoteAutoAdvancedToSong?.invoke(remoteSongId)
+            }
+
+            if (stateBefore.isRemotePlaying != isPlaying ||
+                kotlin.math.abs(stateBefore.remotePositionMs - pos) >= 400L ||
+                stateBefore.remoteDurationMs != dur
+            ) {
+                _sessionState.update { s ->
+                    s.copy(
                         isRemotePlaying = isPlaying,
                         remotePositionMs = pos,
                         remoteDurationMs = dur
                     )
                 }
-                onRemotePlaybackTick?.invoke(pos, isPlaying)
+            }
+            onRemotePlaybackTick?.invoke(pos, isPlaying)
 
-                val songId = _sessionState.value.castingSong?.id
-                if (status != null &&
-                    status.playerState == MediaStatus.PLAYER_STATE_IDLE &&
-                    status.idleReason == MediaStatus.IDLE_REASON_FINISHED &&
-                    songId != null &&
-                    hasNotifiedFinishForSongId != songId
-                ) {
+            val activeSong = _sessionState.value.castingSong
+            val songId = activeSong?.id
+            if (status != null && playerState == MediaStatus.PLAYER_STATE_IDLE && songId != null) {
+                val idleReason = status.idleReason
+                // If HLS video failed on this specific track/device, immediately fall back to direct audio seamlessly
+                if (idleReason == MediaStatus.IDLE_REASON_ERROR && currentSongUsingHlsVideo && songId !in hlsFallbackSongIds) {
+                    hlsFallbackSongIds.add(songId)
+                    currentSongUsingHlsVideo = false
+                    castSong(activeSong, pos.coerceAtLeast(0L))
+                    return
+                }
+
+                val finishedNormally = idleReason == MediaStatus.IDLE_REASON_FINISHED
+                val reachedNaturalEnd = googleCastWasPlayingSinceLoad &&
+                    idleReason != MediaStatus.IDLE_REASON_CANCELED &&
+                    idleReason != MediaStatus.IDLE_REASON_INTERRUPTED &&
+                    dur > 4_000L &&
+                    pos >= (dur - 2_500L)
+
+                if ((finishedNormally || reachedNaturalEnd) && hasNotifiedFinishForSongId != songId) {
                     hasNotifiedFinishForSongId = songId
+                    googleCastWasPlayingSinceLoad = false
                     onRemoteTrackFinished?.invoke()
                 }
-            } catch (_: Throwable) {
-                // Defensive guard against transient Play Services / Cast IPC errors on abrupt TV disconnect
             }
+        } catch (_: Throwable) {
+            // Defensive guard against transient Play Services / Cast IPC errors
         }
     }
 
@@ -209,9 +277,7 @@ class CastManager(context: Context) {
 
             val device = buildDeviceFromCastSession(session)
             pendingGoogleCastDevice = null
-            try {
-                session.remoteMediaClient?.registerCallback(remoteMediaCallback)
-            } catch (_: Throwable) {}
+            ensureRemoteMediaCallbackRegistered(session)
 
             val currentVol = try {
                 session.volume.toFloat().coerceIn(0f, 1f)
@@ -263,6 +329,7 @@ class CastManager(context: Context) {
             try {
                 session.remoteMediaClient?.unregisterCallback(remoteMediaCallback)
             } catch (_: Throwable) {}
+            registeredCallbackClient = null
         }
 
         override fun onSessionEnded(session: CastSession, error: Int) {
@@ -272,6 +339,11 @@ class CastManager(context: Context) {
             releaseCastLocks()
             mediaServer.stop()
             lastPreQueuedNextSongId = null
+            hasNotifiedFinishForSongId = null
+            googleCastWasPlayingSinceLoad = false
+            currentSongUsingHlsVideo = false
+            hlsFallbackSongIds.clear()
+            registeredCallbackClient = null
             _sessionState.update {
                 it.copy(
                     connectionState = CastConnectionState.IDLE,
@@ -305,9 +377,7 @@ class CastManager(context: Context) {
             unregisterMediaRouterDiscovery()
             acquireCastLocks()
             val device = buildDeviceFromCastSession(session)
-            try {
-                session.remoteMediaClient?.registerCallback(remoteMediaCallback)
-            } catch (_: Throwable) {}
+            ensureRemoteMediaCallbackRegistered(session)
             _sessionState.update {
                 it.copy(
                     connectionState = CastConnectionState.CONNECTED,
@@ -472,6 +542,7 @@ class CastManager(context: Context) {
         if (existingSession != null && existingSession.isConnected && targetRoute.isSelected) {
             unregisterMediaRouterDiscovery()
             acquireCastLocks()
+            ensureRemoteMediaCallbackRegistered(existingSession)
             _sessionState.update {
                 it.copy(
                     connectionState = CastConnectionState.CONNECTED,
@@ -600,6 +671,7 @@ class CastManager(context: Context) {
 
         hasNotifiedFinishForSongId = null
         dlnaWasPlayingSinceLoad = false
+        googleCastWasPlayingSinceLoad = false
         lastPreQueuedNextSongId = null
 
         castLoadJob?.cancel()
@@ -614,18 +686,36 @@ class CastManager(context: Context) {
 
             when (device.protocol) {
                 CastProtocol.GOOGLE_CAST -> {
+                    val lyricsEnabled = _sessionState.value.tvLyricsEnabled
+                    val useTvVideoHls = device.kind != CastDeviceKind.SPEAKER && song.id !in hlsFallbackSongIds
+
                     val prepared = withContext(Dispatchers.IO) {
-                        val vtt = resolveSyncedLyricsVttForSong(song)
-                        val urls = mediaServer.prepareMediaForSong(song, localIp, vtt)
-                        // Also prepare the next song for seamless gapless TV queue transitions!
+                        val resolvedLyrics = resolveSyncedLyricsForSong(song)
+                        val urls = mediaServer.prepareMediaForSong(
+                            song = song,
+                            localIp = localIp,
+                            syncedLyricsLines = resolvedLyrics.lines,
+                            syncOffsetMs = resolvedLyrics.offsetMs,
+                            tvLyricsEnabled = lyricsEnabled,
+                            enableTvVideoHls = useTvVideoHls
+                        )
+                        // Also prepare the next song for seamless gapless TV queue transitions
                         val upcomingSong = try { nextSongProvider?.invoke() } catch (_: Throwable) { null }
                         val upcomingUrls = if (upcomingSong != null && upcomingSong.id != song.id) {
-                            val nextVtt = resolveSyncedLyricsVttForSong(upcomingSong)
-                            mediaServer.prepareMediaForSong(upcomingSong, localIp, nextVtt)?.let { upcomingSong to it }
+                            val nextLyrics = resolveSyncedLyricsForSong(upcomingSong)
+                            val nextUseHls = device.kind != CastDeviceKind.SPEAKER && upcomingSong.id !in hlsFallbackSongIds
+                            mediaServer.prepareMediaForSong(
+                                song = upcomingSong,
+                                localIp = localIp,
+                                syncedLyricsLines = nextLyrics.lines,
+                                syncOffsetMs = nextLyrics.offsetMs,
+                                tvLyricsEnabled = lyricsEnabled,
+                                enableTvVideoHls = nextUseHls
+                            )?.let { upcomingSong to it }
                         } else {
                             null
                         }
-                        Triple(urls, upcomingUrls, !vtt.isNullOrBlank())
+                        Triple(urls, upcomingUrls, resolvedLyrics.lines.isNotEmpty())
                     }
 
                     val urls = prepared.first
@@ -636,33 +726,59 @@ class CastManager(context: Context) {
                         _sessionState.update { it.copy(errorMessage = "Could not prepare local stream for ${song.displayTitle}") }
                         return@launch
                     }
-                    val client = currentGoogleCastSession()?.remoteMediaClient
-                    if (client == null) {
+                    val session = currentGoogleCastSession()
+                    val client = session?.remoteMediaClient
+                    if (session == null || client == null) {
                         _sessionState.update { it.copy(errorMessage = "Cast session is not active. Tap your TV to reconnect.") }
                         return@launch
                     }
+                    ensureRemoteMediaCallbackRegistered(session)
 
-                    val lyricsEnabled = _sessionState.value.tvLyricsEnabled
+                    val usingHls = useTvVideoHls && !urls.hlsVideoUrl.isNullOrBlank()
+                    currentSongUsingHlsVideo = usingHls
                     val style = buildTvLyricsTrackStyle()
 
                     try {
-                        val currentMediaInfo = buildGoogleCastMediaInfo(song, urls, style)
-                        val activeTrackIds = if (lyricsEnabled && urls.hasSyncedLyrics) longArrayOf(LYRICS_TRACK_ID) else longArrayOf()
+                        val currentMediaInfo = buildGoogleCastMediaInfo(
+                            song = song,
+                            urls = urls,
+                            style = style,
+                            preferHlsVideo = usingHls
+                        )
+                        val activeTrackIds = if (!usingHls && lyricsEnabled && urls.hasSyncedLyrics) {
+                            longArrayOf(LYRICS_TRACK_ID)
+                        } else {
+                            longArrayOf()
+                        }
 
                         if (upcomingPair != null) {
                             val (nextSong, nextUrls) = upcomingPair
-                            val nextMediaInfo = buildGoogleCastMediaInfo(nextSong, nextUrls, style)
-                            val nextActiveTracks = if (lyricsEnabled && nextUrls.hasSyncedLyrics) longArrayOf(LYRICS_TRACK_ID) else longArrayOf()
+                            val nextUsingHls = device.kind != CastDeviceKind.SPEAKER &&
+                                nextSong.id !in hlsFallbackSongIds &&
+                                !nextUrls.hlsVideoUrl.isNullOrBlank()
+                            val nextMediaInfo = buildGoogleCastMediaInfo(
+                                song = nextSong,
+                                urls = nextUrls,
+                                style = style,
+                                preferHlsVideo = nextUsingHls
+                            )
+                            val nextActiveTracks = if (!nextUsingHls && lyricsEnabled && nextUrls.hasSyncedLyrics) {
+                                longArrayOf(LYRICS_TRACK_ID)
+                            } else {
+                                longArrayOf()
+                            }
 
                             val currentItem = MediaQueueItem.Builder(currentMediaInfo)
                                 .setAutoplay(true)
+                                .setCustomData(JSONObject().put("songId", song.id))
                                 .apply {
                                     if (activeTrackIds.isNotEmpty()) setActiveTrackIds(activeTrackIds)
                                 }
                                 .build()
                             val nextItem = MediaQueueItem.Builder(nextMediaInfo)
                                 .setAutoplay(true)
-                                .setPreloadTime(8.0)
+                                .setPreloadTime(10.0)
+                                .setCustomData(JSONObject().put("songId", nextSong.id))
                                 .apply {
                                     if (nextActiveTracks.isNotEmpty()) setActiveTrackIds(nextActiveTracks)
                                 }
@@ -688,13 +804,14 @@ class CastManager(context: Context) {
                             client.load(requestData)
                         }
 
-                        // Explicitly apply crisp TextTrackStyle and active tracks on the receiver
-                        try {
-                            client.setTextTrackStyle(style)
-                            if (activeTrackIds.isNotEmpty()) {
-                                client.setActiveMediaTracks(activeTrackIds)
-                            }
-                        } catch (_: Throwable) {}
+                        if (!usingHls) {
+                            try {
+                                client.setTextTrackStyle(style)
+                                if (activeTrackIds.isNotEmpty()) {
+                                    client.setActiveMediaTracks(activeTrackIds)
+                                }
+                            } catch (_: Throwable) {}
+                        }
 
                         _sessionState.update {
                             it.copy(
@@ -752,36 +869,70 @@ class CastManager(context: Context) {
     fun onSyncedAutoAdvance(activeSong: Song, upcomingNextSong: Song?) {
         val device = _sessionState.value.connectedDevice ?: return
         scope.launch {
-            val hasCurrentLyrics = withContext(Dispatchers.IO) {
-                !resolveSyncedLyricsVttForSong(activeSong).isNullOrBlank()
+            val lyricsEnabled = _sessionState.value.tvLyricsEnabled
+            val resolvedCurrent = withContext(Dispatchers.IO) {
+                resolveSyncedLyricsForSong(activeSong).also { res ->
+                    mediaServer.updateLiveLyricsForSong(
+                        songId = activeSong.id,
+                        durationMs = activeSong.durationMs,
+                        syncedLyricsLines = res.lines,
+                        syncOffsetMs = res.offsetMs,
+                        tvLyricsEnabled = lyricsEnabled
+                    )
+                }
             }
+            val activeUsingHls = device.protocol == CastProtocol.GOOGLE_CAST &&
+                device.kind != CastDeviceKind.SPEAKER &&
+                activeSong.id !in hlsFallbackSongIds
+            currentSongUsingHlsVideo = activeUsingHls
+
             _sessionState.update {
                 it.copy(
                     castingSong = activeSong,
                     isRemotePlaying = true,
-                    hasSyncedLyricsOnTv = hasCurrentLyrics,
+                    hasSyncedLyricsOnTv = resolvedCurrent.lines.isNotEmpty(),
                     remotePositionMs = 0L,
                     remoteDurationMs = activeSong.durationMs,
                     statusMessage = "Casting to ${device.name}",
                     errorMessage = null
                 )
             }
-            if (device.protocol == CastProtocol.GOOGLE_CAST && upcomingNextSong != null && upcomingNextSong.id != activeSong.id && upcomingNextSong.id != lastPreQueuedNextSongId) {
+            if (device.protocol == CastProtocol.GOOGLE_CAST &&
+                upcomingNextSong != null &&
+                upcomingNextSong.id != activeSong.id &&
+                upcomingNextSong.id != lastPreQueuedNextSongId
+            ) {
                 val localIp = resolveLocalIpOnIo() ?: return@launch
+                val nextUseHls = device.kind != CastDeviceKind.SPEAKER && upcomingNextSong.id !in hlsFallbackSongIds
                 val nextUrls = withContext(Dispatchers.IO) {
-                    val nextVtt = resolveSyncedLyricsVttForSong(upcomingNextSong)
-                    mediaServer.prepareMediaForSong(upcomingNextSong, localIp, nextVtt)
+                    val nextLyrics = resolveSyncedLyricsForSong(upcomingNextSong)
+                    mediaServer.prepareMediaForSong(
+                        song = upcomingNextSong,
+                        localIp = localIp,
+                        syncedLyricsLines = nextLyrics.lines,
+                        syncOffsetMs = nextLyrics.offsetMs,
+                        tvLyricsEnabled = lyricsEnabled,
+                        enableTvVideoHls = nextUseHls
+                    )
                 } ?: return@launch
-                val client = currentGoogleCastSession()?.remoteMediaClient ?: return@launch
+                val session = currentGoogleCastSession() ?: return@launch
+                val client = session.remoteMediaClient ?: return@launch
+                ensureRemoteMediaCallbackRegistered(session)
                 val style = buildTvLyricsTrackStyle()
-                val lyricsEnabled = _sessionState.value.tvLyricsEnabled
+                val nextActuallyHls = nextUseHls && !nextUrls.hlsVideoUrl.isNullOrBlank()
                 try {
-                    val nextInfo = buildGoogleCastMediaInfo(upcomingNextSong, nextUrls, style)
+                    val nextInfo = buildGoogleCastMediaInfo(
+                        song = upcomingNextSong,
+                        urls = nextUrls,
+                        style = style,
+                        preferHlsVideo = nextActuallyHls
+                    )
                     val nextItem = MediaQueueItem.Builder(nextInfo)
                         .setAutoplay(true)
-                        .setPreloadTime(8.0)
+                        .setPreloadTime(10.0)
+                        .setCustomData(JSONObject().put("songId", upcomingNextSong.id))
                         .apply {
-                            if (lyricsEnabled && nextUrls.hasSyncedLyrics) {
+                            if (!nextActuallyHls && lyricsEnabled && nextUrls.hasSyncedLyrics) {
                                 setActiveTrackIds(longArrayOf(LYRICS_TRACK_ID))
                             }
                         }
@@ -793,26 +944,109 @@ class CastManager(context: Context) {
         }
     }
 
+    /**
+     * Pushes newly loaded, fetched, edited, or offset-adjusted lyrics from the app directly
+     * into the live TV HLS stream and updates the Cast sheet status immediately.
+     */
+    fun updateLyricsForSong(songId: Long, lyrics: Lyrics?, offsetMs: Long) {
+        val state = _sessionState.value
+        if (!state.isActiveSession) return
+        val castingSong = state.castingSong
+        val syncedLines = extractSyncedLinesFromModel(lyrics)
+        val hasLyricsNow = syncedLines.isNotEmpty()
+        val isCurrentSong = castingSong?.id == songId
+        val hadLyricsBefore = state.hasSyncedLyricsOnTv
+        val lyricsEnabled = state.tvLyricsEnabled
+
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                mediaServer.updateLiveLyricsForSong(
+                    songId = songId,
+                    durationMs = castingSong?.takeIf { it.id == songId }?.durationMs ?: 0L,
+                    syncedLyricsLines = syncedLines,
+                    syncOffsetMs = offsetMs,
+                    tvLyricsEnabled = lyricsEnabled
+                )
+            }
+            if (isCurrentSong) {
+                if (hadLyricsBefore != hasLyricsNow) {
+                    _sessionState.update { it.copy(hasSyncedLyricsOnTv = hasLyricsNow) }
+                }
+                // Flush the Chromecast HLS buffer once when lyrics first become available mid-song
+                if (!hadLyricsBefore && hasLyricsNow && lyricsEnabled && currentSongUsingHlsVideo && state.isConnected) {
+                    seekRemote(_sessionState.value.remotePositionMs)
+                }
+            }
+        }
+    }
+
     fun setTvLyricsEnabled(enabled: Boolean) {
         _sessionState.update { it.copy(tvLyricsEnabled = enabled) }
-        val device = _sessionState.value.connectedDevice ?: return
+        val state = _sessionState.value
+        val device = state.connectedDevice ?: return
         if (device.protocol != CastProtocol.GOOGLE_CAST) return
-        val client = currentGoogleCastSession()?.remoteMediaClient ?: return
-        try {
-            if (enabled && _sessionState.value.hasSyncedLyricsOnTv) {
-                client.setTextTrackStyle(buildTvLyricsTrackStyle())
-                client.setActiveMediaTracks(longArrayOf(LYRICS_TRACK_ID))
-            } else {
-                client.setActiveMediaTracks(longArrayOf())
+        val song = state.castingSong
+        if (song != null) {
+            scope.launch {
+                val resolved = withContext(Dispatchers.IO) {
+                    resolveSyncedLyricsForSong(song).also { res ->
+                        mediaServer.updateLiveLyricsForSong(
+                            songId = song.id,
+                            durationMs = song.durationMs,
+                            syncedLyricsLines = res.lines,
+                            syncOffsetMs = res.offsetMs,
+                            tvLyricsEnabled = enabled
+                        )
+                    }
+                }
+                if (resolved.lines.isNotEmpty() && !state.hasSyncedLyricsOnTv) {
+                    _sessionState.update { it.copy(hasSyncedLyricsOnTv = true) }
+                }
+                if (currentSongUsingHlsVideo) {
+                    // Refresh TV buffer at current position so toggling lyrics on/off takes effect immediately
+                    seekRemote(_sessionState.value.remotePositionMs)
+                } else {
+                    val client = currentGoogleCastSession()?.remoteMediaClient ?: return@launch
+                    try {
+                        if (enabled && resolved.lines.isNotEmpty()) {
+                            client.setTextTrackStyle(buildTvLyricsTrackStyle())
+                            client.setActiveMediaTracks(longArrayOf(LYRICS_TRACK_ID))
+                        } else {
+                            client.setActiveMediaTracks(longArrayOf())
+                        }
+                    } catch (_: Throwable) {}
+                }
             }
-        } catch (_: Throwable) {}
+        }
     }
 
     private fun buildGoogleCastMediaInfo(
         song: Song,
         urls: CastMediaUrls,
-        style: TextTrackStyle
+        style: TextTrackStyle,
+        preferHlsVideo: Boolean
     ): MediaInfo {
+        if (preferHlsVideo && !urls.hlsVideoUrl.isNullOrBlank()) {
+            val videoMetadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
+                putString(MediaMetadata.KEY_TITLE, song.displayTitle)
+                putString(MediaMetadata.KEY_SUBTITLE, song.displayArtist)
+                urls.artworkUrl?.let { art ->
+                    addImage(WebImage(Uri.parse(art)))
+                }
+            }
+            return MediaInfo.Builder(urls.hlsVideoUrl)
+                .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+                .setContentType("application/x-mpegurl")
+                .setHlsSegmentFormat(HlsSegmentFormat.TS)
+                .setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
+                .setMetadata(videoMetadata)
+                .setCustomData(JSONObject().put("songId", song.id))
+                .apply {
+                    if (song.durationMs > 0L) setStreamDuration(song.durationMs)
+                }
+                .build()
+        }
+
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply {
             putString(MediaMetadata.KEY_TITLE, song.displayTitle)
             putString(MediaMetadata.KEY_ARTIST, song.displayArtist)
@@ -864,40 +1098,104 @@ class CastManager(context: Context) {
         }
     }
 
-    private suspend fun resolveSyncedLyricsVttForSong(song: Song): String? {
+    private data class ResolvedLyrics(
+        val lines: List<Pair<Long, String>>,
+        val offsetMs: Long
+    )
+
+    private fun extractSyncedLinesFromModel(lyrics: Lyrics?): List<Pair<Long, String>> {
+        if (lyrics == null || lyrics.source == "loading") return emptyList()
+        val parsed = try {
+            lyrics.parseSyncedLines()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        if (parsed.isNotEmpty()) return parsed
+        val raw = lyrics.syncedLyricsJson?.takeIf { it.isNotBlank() } ?: lyrics.plainLyrics.orEmpty()
+        if (raw.isBlank()) return emptyList()
         return try {
-            val offsetMs = try {
+            LrcParser.parseLrcToLines(raw).map { it.timeMs to it.text }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun readLrcFileLines(file: File): List<Pair<Long, String>> {
+        if (!file.exists() || !file.canRead() || file.length() !in 1L..1_048_576L) return emptyList()
+        val rawUtf8 = try {
+            file.readText(Charsets.UTF_8).removePrefix("\uFEFF")
+        } catch (_: Throwable) {
+            ""
+        }
+        val utf8Lines = try {
+            LrcParser.parseLrcToLines(rawUtf8).map { it.timeMs to it.text }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        if (utf8Lines.isNotEmpty()) return utf8Lines
+
+        // Fallback for non-UTF8 encoded .lrc files
+        return try {
+            val rawAlt = file.readText(Charsets.ISO_8859_1)
+            LrcParser.parseLrcToLines(rawAlt).map { it.timeMs to it.text }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private suspend fun resolveSyncedLyricsForSong(song: Song): ResolvedLyrics {
+        return try {
+            var offsetMs = try {
                 UserPreferencesRepository.getInstance(appContext).getLyricsSyncOffsetMs(song.id)
             } catch (_: Throwable) {
                 0L
             }
 
-            // 1. Check cached lyrics in Room DB
+            // 1. Live in-memory lyrics already displayed in MusicViewModel (covers embedded tags, online fetches, edits)
+            val liveEntry = try {
+                currentLyricsProvider?.invoke(song.id)
+            } catch (_: Throwable) {
+                null
+            }
+            if (liveEntry != null) {
+                offsetMs = liveEntry.second
+                val liveLines = extractSyncedLinesFromModel(liveEntry.first)
+                if (liveLines.isNotEmpty()) {
+                    return ResolvedLyrics(liveLines, offsetMs)
+                }
+            }
+
+            // 2. Room DB cached lyrics
             val dbLyrics = try {
                 AppDatabase.getInstance(appContext).lyricsDao().getLyricsForSong(song.id)?.toDomainModel()
             } catch (_: Throwable) {
                 null
             }
-            var syncedLines: List<Pair<Long, String>> = dbLyrics?.parseSyncedLines().orEmpty()
+            val dbLines = extractSyncedLinesFromModel(dbLyrics)
+            if (dbLines.isNotEmpty()) {
+                return ResolvedLyrics(dbLines, offsetMs)
+            }
 
-            // 2. Fallback: check sidecar .lrc file alongside the audio file
-            if (syncedLines.isEmpty() && song.path.isNotBlank()) {
+            // 3. Internal app cacheDir/lyrics/<songId>.lrc
+            val cachedLrcFile = File(File(appContext.cacheDir, "lyrics"), "${song.id}.lrc")
+            val cachedLines = readLrcFileLines(cachedLrcFile)
+            if (cachedLines.isNotEmpty()) {
+                return ResolvedLyrics(cachedLines, offsetMs)
+            }
+
+            // 4. Sidecar .lrc file alongside the audio file
+            if (song.path.isNotBlank()) {
                 val lrcFile = LrcParser.findLocalLrcFile(song.path)
                     ?: File("${song.path.substringBeforeLast('.', song.path)}.lrc")
-                if (lrcFile.exists() && lrcFile.canRead() && lrcFile.length() in 1L..512_000L) {
-                    val rawLrc = lrcFile.readText(Charsets.UTF_8)
-                    syncedLines = LrcParser.parseLrcToLines(rawLrc).map { it.timeMs to it.text }
+                val sidecarLines = readLrcFileLines(lrcFile)
+                if (sidecarLines.isNotEmpty()) {
+                    return ResolvedLyrics(sidecarLines, offsetMs)
                 }
             }
 
-            if (syncedLines.isEmpty()) return null
-            LocalCastMediaServer.buildWebVttFromLyrics(
-                syncedLines = syncedLines,
-                songDurationMs = song.durationMs,
-                syncOffsetMs = offsetMs
-            )
+            ResolvedLyrics(emptyList(), offsetMs)
         } catch (_: Throwable) {
-            null
+            ResolvedLyrics(emptyList(), 0L)
         }
     }
 
@@ -1030,6 +1328,10 @@ class CastManager(context: Context) {
         pendingGoogleCastSong = null
         hasNotifiedFinishForSongId = null
         dlnaWasPlayingSinceLoad = false
+        googleCastWasPlayingSinceLoad = false
+        currentSongUsingHlsVideo = false
+        hlsFallbackSongIds.clear()
+        registeredCallbackClient = null
         lastPreQueuedNextSongId = null
         mediaServer.stop()
 
@@ -1149,32 +1451,15 @@ class CastManager(context: Context) {
                 when (device.protocol) {
                     CastProtocol.GOOGLE_CAST -> {
                         try {
-                            val client = currentGoogleCastSession()?.remoteMediaClient
-                            if (client != null) {
-                                val isPlaying = client.isPlaying
-                                val pos = client.approximateStreamPosition.coerceAtLeast(0L)
-                                val dur = client.streamDuration.takeIf { it > 0L }
-                                    ?: state.castingSong?.durationMs
-                                    ?: state.remoteDurationMs
+                            val session = currentGoogleCastSession()
+                            val client = session?.remoteMediaClient
+                            if (session != null && client != null) {
+                                ensureRemoteMediaCallbackRegistered(session)
+                                processGoogleCastStatus(session, client)
 
-                                // Only mutate CastSessionState when values meaningfully change
-                                if (state.isRemotePlaying != isPlaying ||
-                                    kotlin.math.abs(state.remotePositionMs - pos) >= 500L ||
-                                    state.remoteDurationMs != dur
-                                ) {
-                                    _sessionState.update {
-                                        it.copy(
-                                            isRemotePlaying = isPlaying,
-                                            remotePositionMs = pos,
-                                            remoteDurationMs = dur
-                                        )
-                                    }
-                                }
-                                onRemotePlaybackTick?.invoke(pos, isPlaying)
-
-                                // Periodic 30s status keepalive prevents router NAT idle drop after 2-3 songs
+                                // Periodic 20s status keepalive keeps Cast channel & TV session warm indefinitely
                                 val nowMs = SystemClock.elapsedRealtime()
-                                if (nowMs - lastKeepAliveAtMs >= 30_000L) {
+                                if (nowMs - lastKeepAliveAtMs >= 20_000L) {
                                     lastKeepAliveAtMs = nowMs
                                     try {
                                         client.requestStatus()
@@ -1251,6 +1536,7 @@ class CastManager(context: Context) {
                         if (active != null && active.isConnected) {
                             onEnsureLocalPlaybackSilenced?.invoke()
                             acquireCastLocks()
+                            ensureRemoteMediaCallbackRegistered(active)
                             val dev = buildDeviceFromCastSession(active)
                             _sessionState.update {
                                 it.copy(

@@ -436,6 +436,13 @@ class MusicPlaybackService : MediaSessionService() {
             try {
                 com.example.jam.JamFeatureController.activeInstance?.onAppClosed()
             } catch (_: Throwable) {}
+            // Stop active TV casting when the user explicitly closes/swipes away the app
+            try {
+                val cm = com.example.cast.CastManager.activeInstance
+                if (cm != null && cm.isCastingOrConnecting) {
+                    cm.disconnect()
+                }
+            } catch (_: Throwable) {}
 
             val hasActiveSong = PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null || (player != null && player.mediaItemCount > 0)
 

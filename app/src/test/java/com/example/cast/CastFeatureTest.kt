@@ -256,4 +256,126 @@ class CastFeatureTest {
             manager.release()
         }
     }
+
+    @Test
+    fun mpegTsMuxerProducesAlignedValidPacketsAndAdtsHeaders() {
+        val muxer = MpegTsMuxer()
+        muxer.writePatAndPmt()
+
+        // Synthetic Annex-B SPS + PPS + IDR frame
+        val spsPps = byteArrayOf(
+            0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1E,
+            0, 0, 0, 1, 0x68, 0xCE.toByte(), 0x3C, 0x80.toByte()
+        )
+        val idr = byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte(), 0x84.toByte(), 0x21, 0x43)
+        muxer.writeVideoFrame(idr, pts90k = 90_000L, isKeyframe = true, spsPpsAnnexB = spsPps)
+
+        // Synthetic ADTS-wrapped AAC-LC frame
+        val rawAac = ByteArray(120) { (it + 1).toByte() }
+        val adts = MpegTsMuxer.wrapAacWithAdtsHeader(rawAac, sampleRate = 44_100, channelCount = 2)
+        assertEquals(127, adts.size)
+        assertEquals(0xFF.toByte(), adts[0])
+        assertEquals(0xF1.toByte(), adts[1])
+        muxer.writeAudioAdtsChunk(adts, pts90k = 90_000L)
+
+        val tsBytes = muxer.toByteArray()
+        assertTrue(tsBytes.isNotEmpty())
+        assertEquals("TS output must be a multiple of 188 bytes", 0, tsBytes.size % MpegTsMuxer.TS_PACKET_SIZE)
+        assertTrue(tsBytes.size >= 4 * MpegTsMuxer.TS_PACKET_SIZE)
+
+        // Every 188-byte packet must begin with MPEG-TS sync byte 0x47
+        for (offset in tsBytes.indices step MpegTsMuxer.TS_PACKET_SIZE) {
+            assertEquals("Sync byte mismatch at packet ${offset / 188}", 0x47.toByte(), tsBytes[offset])
+        }
+
+        // First packet PID must be PAT (0x0000), second packet PID must be PMT (0x1000)
+        val pid0 = ((tsBytes[1].toInt() and 0x1F) shl 8) or (tsBytes[2].toInt() and 0xFF)
+        val pid1 = ((tsBytes[189].toInt() and 0x1F) shl 8) or (tsBytes[190].toInt() and 0xFF)
+        assertEquals(MpegTsMuxer.PID_PAT, pid0)
+        assertEquals(MpegTsMuxer.PID_PMT, pid1)
+
+        // AVCC length-prefixed NAL conversion to Annex-B
+        val avcc = byteArrayOf(0, 0, 0, 3, 0x65, 0x11, 0x22)
+        val converted = MpegTsMuxer.ensureAnnexB(avcc)
+        assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x65, 0x11, 0x22), converted)
+    }
+
+    @Test
+    fun castHlsStreamerGeneratesVodPlaylistAndMatchesTamilSyncedLyricsWithOffset() {
+        val m3u8 = CastHlsStreamer.buildVodPlaylistM3u8(durationMs = 10_500L)
+        assertTrue(m3u8.startsWith("#EXTM3U"))
+        assertTrue(m3u8.contains("#EXT-X-PLAYLIST-TYPE:VOD"))
+        assertTrue(m3u8.contains("#EXTINF:4.000,\nseg_0.ts"))
+        assertTrue(m3u8.contains("#EXTINF:4.000,\nseg_1.ts"))
+        assertTrue(m3u8.contains("#EXTINF:2.500,\nseg_2.ts"))
+        assertTrue(m3u8.trimEnd().endsWith("#EXT-X-ENDLIST"))
+
+        val tamilLyrics = listOf(
+            10_000L to "சிறுக்கி சீனிகட்டி சிணுங்கி சிங்காரி",
+            15_000L to "மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி",
+            20_000L to "அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி"
+        )
+
+        // Before first line
+        val (beforeCur, beforeNext) = CastHlsStreamer.findActiveAndNextLyric(tamilLyrics, 5_000L, 0L)
+        assertEquals(null, beforeCur)
+        assertEquals("சிறுக்கி சீனிகட்டி சிணுங்கி சிங்காரி", beforeNext)
+
+        // Active line + next preview
+        val (midCur, midNext) = CastHlsStreamer.findActiveAndNextLyric(tamilLyrics, 16_000L, 0L)
+        assertEquals("மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி", midCur)
+        assertEquals("அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி", midNext)
+
+        // Positive sync offset matches NowPlayingScreen (advances lyrics earlier)
+        val (offsetCur, offsetNext) = CastHlsStreamer.findActiveAndNextLyric(tamilLyrics, 14_500L, 1_000L)
+        assertEquals("மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி", offsetCur)
+        assertEquals("அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி", offsetNext)
+    }
+
+    @Test
+    fun castTvFrameRendererDraws720pFrameWithTamilLyricsAndProducesI420Planes() {
+        val song = Song(
+            id = 99L,
+            title = "Siriki",
+            artist = "Senthil Ganesh, Ramaniammal",
+            album = "Kaappaan",
+            durationMs = 282_000L,
+            path = "",
+            contentUriString = ""
+        )
+        val renderer = CastTvFrameRenderer(song = song, artworkBytes = null)
+        try {
+            renderer.renderFrameToYuv(
+                positionMs = 134_000L,
+                durationMs = song.durationMs,
+                currentLyricLine = "மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி",
+                nextLyricLine = "அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி",
+                showLyrics = true,
+                frameTickIndex = 0
+            )
+            assertEquals(CastTvFrameRenderer.VIDEO_WIDTH * CastTvFrameRenderer.VIDEO_HEIGHT, renderer.yPlane.size)
+            assertEquals((CastTvFrameRenderer.VIDEO_WIDTH / 2) * (CastTvFrameRenderer.VIDEO_HEIGHT / 2), renderer.uPlane.size)
+            assertEquals((CastTvFrameRenderer.VIDEO_WIDTH / 2) * (CastTvFrameRenderer.VIDEO_HEIGHT / 2), renderer.vPlane.size)
+            // Verify incremental redraw also succeeds without throwing
+            renderer.renderFrameToYuv(
+                positionMs = 135_000L,
+                durationMs = song.durationMs,
+                currentLyricLine = "மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி",
+                nextLyricLine = "அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி",
+                showLyrics = true,
+                frameTickIndex = 2
+            )
+            // Verify toggling lyrics off succeeds cleanly
+            renderer.renderFrameToYuv(
+                positionMs = 136_000L,
+                durationMs = song.durationMs,
+                currentLyricLine = "மினுக்கி மீனுக்குட்டி தலுக்கி ஒய்யாரி",
+                nextLyricLine = "அவ ஒத்த ஜடை பின்னழகு எத்தனை கோடி",
+                showLyrics = false,
+                frameTickIndex = 4
+            )
+        } finally {
+            renderer.close()
+        }
+    }
 }

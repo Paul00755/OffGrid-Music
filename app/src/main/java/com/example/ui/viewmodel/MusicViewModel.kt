@@ -984,6 +984,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playbackManager.setPreferredAudioDevice(dev)
         }
         playbackManager.bindCastManager(castManager)
+        castManager.currentLyricsProvider = { songId ->
+            _currentLyrics.value
+                ?.takeIf { it.songId == songId && it.source != "loading" }
+                ?.let { it to _currentLyricsOffsetMs.value }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            combine(_currentLyrics, _currentLyricsOffsetMs) { lyrics, offsetMs ->
+                lyrics to offsetMs
+            }.collect { (lyrics, offsetMs) ->
+                if (lyrics != null && lyrics.songId > 0L && lyrics.source != "loading") {
+                    castManager.updateLyricsForSong(lyrics.songId, lyrics, offsetMs)
+                }
+            }
+        }
         viewModelScope.launch(Dispatchers.Default) {
             var lastWarmedLibrarySignature = 0L
             allSongs.collectLatest { songs ->

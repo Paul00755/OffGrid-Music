@@ -731,9 +731,9 @@ private fun ActiveCastRemoteCard(
                                 )
                                 Text(
                                     text = when {
-                                        !castState.hasSyncedLyricsOnTv -> "No LRC"
-                                        castState.tvLyricsEnabled -> "Lyrics"
-                                        else -> "Off"
+                                        !castState.hasSyncedLyricsOnTv -> "No Lyrics"
+                                        castState.tvLyricsEnabled -> "TV Lyrics"
+                                        else -> "Lyrics Off"
                                     },
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,

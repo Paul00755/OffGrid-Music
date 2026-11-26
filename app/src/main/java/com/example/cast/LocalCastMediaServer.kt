@@ -30,6 +30,7 @@ data class CastMediaUrls(
     val streamUrl: String,
     val artworkUrl: String?,
     val lyricsVttUrl: String? = null,
+    val hlsVideoUrl: String? = null,
     val hasSyncedLyrics: Boolean = false,
     val mimeType: String,
     val fileSizeBytes: Long
@@ -64,6 +65,7 @@ class LocalCastMediaServer(private val context: Context) {
     private val authorizedSongOrder = java.util.ArrayDeque<Long>()
     private val artworkCache = ConcurrentHashMap<Long, ByteArray>()
     private val lyricsVttCache = ConcurrentHashMap<Long, ByteArray>()
+    private val hlsStreamer = CastHlsStreamer(context.applicationContext)
 
     val port: Int
         get() = serverSocket?.localPort ?: -1
@@ -80,7 +82,7 @@ class LocalCastMediaServer(private val context: Context) {
         socket.reuseAddress = true
         serverSocket = socket
         running.set(true)
-        workerPool = Executors.newFixedThreadPool(4) { r ->
+        workerPool = Executors.newFixedThreadPool(6) { r ->
             Thread(r, "OffGridCastHttpWorker").apply {
                 isDaemon = true
                 priority = Thread.NORM_PRIORITY - 1
@@ -111,6 +113,7 @@ class LocalCastMediaServer(private val context: Context) {
         authorizedSongOrder.clear()
         artworkCache.clear()
         lyricsVttCache.clear()
+        hlsStreamer.clearAll()
         try {
             serverSocket?.close()
         } catch (_: Throwable) {}
@@ -128,7 +131,11 @@ class LocalCastMediaServer(private val context: Context) {
     fun prepareMediaForSong(
         song: Song,
         localIp: String,
-        lyricsVttContent: String? = null
+        lyricsVttContent: String? = null,
+        syncedLyricsLines: List<Pair<Long, String>> = emptyList(),
+        syncOffsetMs: Long = 0L,
+        tvLyricsEnabled: Boolean = true,
+        enableTvVideoHls: Boolean = false
     ): CastMediaUrls? {
         val boundPort = try {
             ensureStarted()
@@ -143,11 +150,28 @@ class LocalCastMediaServer(private val context: Context) {
             if (it.isNotEmpty()) artworkCache[song.id] = it
         }
 
-        val hasLyrics = !lyricsVttContent.isNullOrBlank()
-        if (hasLyrics) {
-            lyricsVttCache[song.id] = lyricsVttContent!!.toByteArray(Charsets.UTF_8)
+        val effectiveVtt = lyricsVttContent ?: if (syncedLyricsLines.isNotEmpty()) {
+            buildWebVttFromLyrics(syncedLyricsLines, song.durationMs, syncOffsetMs)
+        } else {
+            null
+        }
+        val hasLyrics = !effectiveVtt.isNullOrBlank() || syncedLyricsLines.isNotEmpty()
+        if (!effectiveVtt.isNullOrBlank()) {
+            lyricsVttCache[song.id] = effectiveVtt.toByteArray(Charsets.UTF_8)
         } else {
             lyricsVttCache.remove(song.id)
+        }
+
+        val hlsReady = if (enableTvVideoHls) {
+            hlsStreamer.prepareSong(
+                song = song,
+                artworkBytes = artworkBytes,
+                syncedLines = syncedLyricsLines,
+                syncOffsetMs = syncOffsetMs,
+                tvLyricsEnabled = tvLyricsEnabled
+            )
+        } else {
+            false
         }
 
         val ext = guessFileExtension(song)
@@ -160,8 +184,13 @@ class LocalCastMediaServer(private val context: Context) {
         } else {
             null
         }
-        val lyricsUrl = if (hasLyrics) {
+        val lyricsUrl = if (!effectiveVtt.isNullOrBlank()) {
             "$baseUrl/lyrics/$sessionToken/${song.id}.vtt"
+        } else {
+            null
+        }
+        val hlsUrl = if (hlsReady) {
+            "$baseUrl/hls/$sessionToken/${song.id}/playlist.m3u8"
         } else {
             null
         }
@@ -169,10 +198,34 @@ class LocalCastMediaServer(private val context: Context) {
             streamUrl = streamUrl,
             artworkUrl = artUrl,
             lyricsVttUrl = lyricsUrl,
+            hlsVideoUrl = hlsUrl,
             hasSyncedLyrics = hasLyrics,
             mimeType = mime,
             fileSizeBytes = size
         )
+    }
+
+    /**
+     * Dynamically updates live lyrics for a currently streaming song without interrupting playback.
+     */
+    fun updateLiveLyricsForSong(
+        songId: Long,
+        durationMs: Long,
+        syncedLyricsLines: List<Pair<Long, String>>,
+        syncOffsetMs: Long,
+        tvLyricsEnabled: Boolean
+    ) {
+        val vtt = if (syncedLyricsLines.isNotEmpty()) {
+            buildWebVttFromLyrics(syncedLyricsLines, durationMs, syncOffsetMs)
+        } else {
+            null
+        }
+        if (!vtt.isNullOrBlank()) {
+            lyricsVttCache[songId] = vtt.toByteArray(Charsets.UTF_8)
+        } else {
+            lyricsVttCache.remove(songId)
+        }
+        hlsStreamer.updateLyrics(songId, syncedLyricsLines, syncOffsetMs, tvLyricsEnabled)
     }
 
     @Synchronized
@@ -221,6 +274,33 @@ class LocalCastMediaServer(private val context: Context) {
                 }
 
                 val segments = rawPath.trimStart('/').split('/')
+                if (segments.size == 4 && segments[0] == "hls") {
+                    val reqToken = segments[1]
+                    val reqSongId = segments[2].toLongOrNull()
+                    val fileName = segments[3]
+                    if (reqToken != sessionToken || reqSongId == null) {
+                        writeSimpleResponse(out, 403, "Forbidden")
+                        return
+                    }
+                    if (authorizedSongs[reqSongId] == null) {
+                        writeSimpleResponse(out, 404, "Not Found")
+                        return
+                    }
+                    when {
+                        fileName == "playlist.m3u8" -> serveHlsPlaylist(reqSongId, method == "HEAD", out)
+                        fileName.startsWith("seg_") && fileName.endsWith(".ts") -> {
+                            val segIdx = fileName.removePrefix("seg_").removeSuffix(".ts").toIntOrNull()
+                            if (segIdx == null || segIdx < 0) {
+                                writeSimpleResponse(out, 404, "Not Found")
+                            } else {
+                                serveHlsSegment(reqSongId, segIdx, method == "HEAD", headers["range"], out)
+                            }
+                        }
+                        else -> writeSimpleResponse(out, 404, "Not Found")
+                    }
+                    return
+                }
+
                 if (segments.size != 3) {
                     writeSimpleResponse(out, 404, "Not Found")
                     return
@@ -252,6 +332,100 @@ class LocalCastMediaServer(private val context: Context) {
                 // Client disconnected mid-stream (normal on seek/stop/skip)
             }
         }
+    }
+
+    private fun serveHlsPlaylist(songId: Long, headOnly: Boolean, out: BufferedOutputStream) {
+        val playlist = hlsStreamer.buildPlaylistM3u8(songId)
+        if (playlist.isNullOrBlank()) {
+            writeSimpleResponse(out, 404, "Playlist Unavailable")
+            return
+        }
+        val bytes = playlist.toByteArray(Charsets.UTF_8)
+        val header = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: application/vnd.apple.mpegurl; charset=utf-8\r\n")
+            append("Content-Length: ${bytes.size}\r\n")
+            append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
+            append("Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin\r\n")
+            append("Cache-Control: no-cache\r\n")
+            append("Connection: close\r\n\r\n")
+        }
+        out.write(header.toByteArray(Charsets.UTF_8))
+        if (!headOnly) {
+            out.write(bytes)
+        }
+        out.flush()
+    }
+
+    private fun serveHlsSegment(
+        songId: Long,
+        segmentIndex: Int,
+        headOnly: Boolean,
+        rangeHeader: String?,
+        out: BufferedOutputStream
+    ) {
+        val bytes = hlsStreamer.getSegmentBytes(songId, segmentIndex)
+        if (bytes == null || bytes.isEmpty()) {
+            writeSimpleResponse(out, 404, "Segment Unavailable")
+            return
+        }
+        val total = bytes.size.toLong()
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=", ignoreCase = true)) {
+            val rangeSpec = rangeHeader.substringAfter("bytes=").substringBefore(",").trim()
+            val dashIndex = rangeSpec.indexOf('-')
+            if (dashIndex >= 0) {
+                val startStr = rangeSpec.substring(0, dashIndex).trim()
+                val endStr = rangeSpec.substring(dashIndex + 1).trim()
+                val start = if (startStr.isEmpty()) {
+                    (total - (endStr.toLongOrNull() ?: 0L)).coerceAtLeast(0L)
+                } else {
+                    startStr.toLongOrNull() ?: 0L
+                }
+                val end = if (endStr.isEmpty()) {
+                    total - 1L
+                } else {
+                    (endStr.toLongOrNull() ?: (total - 1L)).coerceAtMost(total - 1L)
+                }
+                if (start in 0L until total && end >= start) {
+                    val len = (end - start + 1L).toInt()
+                    val header = buildString {
+                        append("HTTP/1.1 206 Partial Content\r\n")
+                        append("Content-Type: video/mp2t\r\n")
+                        append("Content-Length: $len\r\n")
+                        append("Content-Range: bytes $start-$end/$total\r\n")
+                        append("Accept-Ranges: bytes\r\n")
+                        append("Access-Control-Allow-Origin: *\r\n")
+                        append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
+                        append("Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin\r\n")
+                        append("Cache-Control: no-cache\r\n")
+                        append("Connection: close\r\n\r\n")
+                    }
+                    out.write(header.toByteArray(Charsets.UTF_8))
+                    if (!headOnly) {
+                        out.write(bytes, start.toInt(), len)
+                    }
+                    out.flush()
+                    return
+                }
+            }
+        }
+        val header = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: video/mp2t\r\n")
+            append("Content-Length: ${bytes.size}\r\n")
+            append("Accept-Ranges: bytes\r\n")
+            append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
+            append("Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin\r\n")
+            append("Cache-Control: no-cache\r\n")
+            append("Connection: close\r\n\r\n")
+        }
+        out.write(header.toByteArray(Charsets.UTF_8))
+        if (!headOnly) {
+            out.write(bytes)
+        }
+        out.flush()
     }
 
     private fun writeCorsPreflightResponse(out: BufferedOutputStream) {
