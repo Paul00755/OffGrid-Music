@@ -1152,6 +1152,7 @@ class MainActivity : ComponentActivity() {
                                     onSkipPrevious = { viewModel.skipToPrevious() },
                                     onSeekRemote = { pos -> viewModel.seekTo(pos) },
                                     onSetRemoteVolume = { vol -> viewModel.setRemoteCastVolume(vol) },
+                                    onToggleTvLyrics = { enabled -> viewModel.setTvLyricsEnabled(enabled) },
                                     onQuickPlayOnCast = { viewModel.quickPlayOnCast() },
                                     onSelectAudioDevice = { device -> viewModel.selectAudioRoute(device) },
                                     onLaunchSystemCast = { viewModel.launchSystemCastSettings(this@MainActivity) },
@@ -1654,6 +1655,27 @@ class MainActivity : ComponentActivity() {
         }
         mediaStoreObserver = null
         if (currentActivity === this) currentActivity = null
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val cm = com.example.cast.CastManager.activeInstance
+        if (cm != null && cm.isCastingRemote) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                        cm.adjustRemoteVolume(0.05f)
+                    }
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                        cm.adjustRemoteVolume(-0.05f)
+                    }
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun applyHighRefreshRate(enabled: Boolean = true) {

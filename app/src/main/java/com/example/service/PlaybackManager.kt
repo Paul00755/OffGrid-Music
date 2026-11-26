@@ -315,10 +315,20 @@ class PlaybackManager(
         return if (queueSongDur > 0L) queueSongDur else 0L
     }
 
+    val isCastPlaybackActive: Boolean
+        get() = com.example.cast.CastManager.activeInstance?.isCastingOrConnecting == true
+
+    val activeCastDeviceName: String?
+        get() = com.example.cast.CastManager.activeInstance?.sessionState?.value?.connectedDevice?.name
+
     private fun resolveEffectivePositionMs(): Long {
+        val dur = resolveEffectiveDurationMs()
+        if (isCastPlaybackActive) {
+            val remotePos = currentPositionMs.coerceAtLeast(0L)
+            return if (dur > 0L) remotePos.coerceIn(0L, dur) else remotePos
+        }
         val statePos = maxOf(currentPositionMs, _playbackPositionMs.value, _playbackState.value.positionMs).coerceAtLeast(0L)
         val pbState = try { player.playbackState } catch (_: Throwable) { Player.STATE_IDLE }
-        val dur = resolveEffectiveDurationMs()
         if (pbState == Player.STATE_IDLE) {
             return if (dur > 0L) statePos.coerceIn(0L, dur) else statePos
         }
@@ -467,7 +477,109 @@ class PlaybackManager(
             super.removeListener(listener)
         }
 
+        override fun isPlaying(): Boolean {
+            return if (isCastPlaybackActive) _playbackState.value.isPlaying else super.isPlaying()
+        }
+
+        override fun getPlayWhenReady(): Boolean {
+            return if (isCastPlaybackActive) _playbackState.value.isPlaying else super.getPlayWhenReady()
+        }
+
+        override fun getPlaybackState(): Int {
+            return if (isCastPlaybackActive && _playbackState.value.currentSong != null) {
+                Player.STATE_READY
+            } else {
+                super.getPlaybackState()
+            }
+        }
+
+        override fun getDeviceInfo(): androidx.media3.common.DeviceInfo {
+            return if (isCastPlaybackActive) {
+                androidx.media3.common.DeviceInfo.Builder(androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                    .setMinVolume(0)
+                    .setMaxVolume(20)
+                    .build()
+            } else {
+                super.getDeviceInfo()
+            }
+        }
+
+        override fun getDeviceVolume(): Int {
+            return if (isCastPlaybackActive) {
+                val vol = com.example.cast.CastManager.activeInstance?.sessionState?.value?.remoteVolume ?: 0.7f
+                kotlin.math.round(vol * 20f).toInt().coerceIn(0, 20)
+            } else {
+                super.getDeviceVolume()
+            }
+        }
+
+        override fun isDeviceMuted(): Boolean {
+            return if (isCastPlaybackActive) {
+                (com.example.cast.CastManager.activeInstance?.sessionState?.value?.remoteVolume ?: 0.7f) <= 0.001f
+            } else {
+                super.isDeviceMuted()
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun setDeviceVolume(volume: Int) {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.setRemoteVolume((volume / 20f).coerceIn(0f, 1f))
+            } else {
+                @Suppress("DEPRECATION")
+                super.setDeviceVolume(volume)
+            }
+        }
+
+        override fun setDeviceVolume(volume: Int, flags: Int) {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.setRemoteVolume((volume / 20f).coerceIn(0f, 1f))
+            } else {
+                super.setDeviceVolume(volume, flags)
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun increaseDeviceVolume() {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.adjustRemoteVolume(0.05f)
+            } else {
+                @Suppress("DEPRECATION")
+                super.increaseDeviceVolume()
+            }
+        }
+
+        override fun increaseDeviceVolume(flags: Int) {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.adjustRemoteVolume(0.05f)
+            } else {
+                super.increaseDeviceVolume(flags)
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun decreaseDeviceVolume() {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.adjustRemoteVolume(-0.05f)
+            } else {
+                @Suppress("DEPRECATION")
+                super.decreaseDeviceVolume()
+            }
+        }
+
+        override fun decreaseDeviceVolume(flags: Int) {
+            if (isCastPlaybackActive) {
+                com.example.cast.CastManager.activeInstance?.adjustRemoteVolume(-0.05f)
+            } else {
+                super.decreaseDeviceVolume(flags)
+            }
+        }
+
         override fun getDuration(): Long {
+            if (isCastPlaybackActive) {
+                val resolved = resolveEffectiveDurationMs()
+                return if (resolved > 0L) resolved else C.TIME_UNSET
+            }
             val d = super.getDuration()
             if (d > 0L && d != C.TIME_UNSET) return d
             val resolved = resolveEffectiveDurationMs()
@@ -572,6 +684,13 @@ class PlaybackManager(
                 builder.remove(Player.COMMAND_CHANGE_MEDIA_ITEMS)
                 return builder.build()
             }
+            if (isCastPlaybackActive) {
+                builder.addAll(
+                    Player.COMMAND_GET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
+                )
+            }
             return builder
                 .addAll(
                     Player.COMMAND_PLAY_PAUSE,
@@ -585,6 +704,14 @@ class PlaybackManager(
         }
 
         override fun isCommandAvailable(command: Int): Boolean {
+            if (isCastPlaybackActive && command in setOf(
+                    Player.COMMAND_GET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
+                )
+            ) {
+                return true
+            }
             if (jamPlaybackActive) {
                 when (command) {
                     Player.COMMAND_PLAY_PAUSE,
@@ -647,6 +774,10 @@ class PlaybackManager(
 
         override fun play() {
             if (jamPlaybackActive && !jamCanPlayPause) return
+            if (isCastPlaybackActive) {
+                this@PlaybackManager.play()
+                return
+            }
             if (!jamPlaybackActive && fadeInMs > 0) {
                 playWithFade()
             } else {
@@ -656,6 +787,10 @@ class PlaybackManager(
 
         override fun pause() {
             if (jamPlaybackActive && !jamCanPlayPause) return
+            if (isCastPlaybackActive) {
+                this@PlaybackManager.pause()
+                return
+            }
             if (!jamPlaybackActive && fadeOutMs > 0) {
                 pauseWithFade()
             } else {
@@ -689,7 +824,13 @@ class PlaybackManager(
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
-            if (jamPlaybackActive) {
+            if (isCastPlaybackActive) {
+                if (mediaItemIndex != _playbackState.value.queueIndex && mediaItemIndex in _playbackState.value.queue.indices) {
+                    this@PlaybackManager.jumpToQueueIndex(mediaItemIndex)
+                } else {
+                    this@PlaybackManager.seekTo(positionMs)
+                }
+            } else if (jamPlaybackActive) {
                 if (!jamCanSeek) return
                 this@PlaybackManager.seekTo(positionMs)
             } else if (mediaItemIndex == currentMediaItemIndex) {
@@ -2018,6 +2159,14 @@ class PlaybackManager(
         }
         val queue = _playbackState.value.queue
         if (index in queue.indices) {
+            if (isCastPlaybackActive) {
+                val targetSong = selectQueueIndexForRemoteCast(index)
+                if (targetSong != null) {
+                    com.example.cast.CastManager.activeInstance?.castSong(targetSong, 0L)
+                }
+                persistPlaybackStateNow()
+                return
+            }
             val targetSong = queue[index]
             cancelCrossfade(resetVolume = true)
             currentPositionMs = 0L
@@ -2120,7 +2269,15 @@ class PlaybackManager(
                 player.repeatMode = Player.REPEAT_MODE_OFF
             }
             player.prepare()
-            if (startPlayback && effectiveFadeInMs > 0) {
+            if (isCastPlaybackActive && sourceContext != "JAM") {
+                // Keep local ExoPlayer strictly silenced while casting; route selected song to TV
+                player.playWhenReady = false
+                player.pause()
+                stopProgressTracker()
+                if (startPlayback) {
+                    com.example.cast.CastManager.activeInstance?.castSong(selectedSongFromQueue, safeInitialPos)
+                }
+            } else if (startPlayback && effectiveFadeInMs > 0) {
                 playWithFade(effectiveFadeInMs)
             } else if (startPlayback) {
                 play()
@@ -2386,6 +2543,9 @@ class PlaybackManager(
     fun checkVolume(explicitVolume: Int? = null, fromBroadcast: Boolean = false) {
         scope.launch(Dispatchers.Main) {
             try {
+                if (isCastPlaybackActive) {
+                    return@launch
+                }
                 if (isAudioFocusDucked || audioFocusManager.hasActiveInterruption()) {
                     return@launch
                 }
@@ -2564,16 +2724,16 @@ class PlaybackManager(
     }
 
     fun handleHeadphoneConnectedFromBroadcast() {
-        if (jamPlaybackActive) return
+        if (jamPlaybackActive || isCastPlaybackActive) return
         scope.launch(Dispatchers.Main) {
-            if (jamPlaybackActive) return@launch
+            if (jamPlaybackActive || isCastPlaybackActive) return@launch
             if (!autoPlayOnHeadphoneConnection) return@launch
             if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
             pendingAutoPlayJob?.cancel()
             pendingAutoPlayJob = scope.launch(Dispatchers.Main) {
                 delay(450)
-                if (jamPlaybackActive) return@launch
+                if (jamPlaybackActive || isCastPlaybackActive) return@launch
                 if (!autoPlayOnHeadphoneConnection) return@launch
                 if (player.isPlaying || _playbackState.value.isPlaying) return@launch
 
@@ -2597,7 +2757,7 @@ class PlaybackManager(
     }
 
     private fun resumePlaybackOnHeadphoneConnect() {
-        if (jamPlaybackActive) return
+        if (jamPlaybackActive || isCastPlaybackActive) return
         try {
             if (player.isPlaying || _playbackState.value.isPlaying) return
             if (isVolumeZero()) {
@@ -3853,7 +4013,7 @@ class PlaybackManager(
     }
 
     private fun resumeFromInterruption() {
-        if (isSleepTimerFinalStopping) return
+        if (isSleepTimerFinalStopping || isCastPlaybackActive) return
         val alreadyPlaying = !isFadingOutToPause && (player.isPlaying || _playbackState.value.isPlaying)
         if (alreadyPlaying) return
         val wasApplying = applyingJamSnapshot
@@ -3871,6 +4031,18 @@ class PlaybackManager(
 
     fun pause() {
         if (dispatchJamCommand(JamPlaybackAction.PAUSE)) return
+        if (isCastPlaybackActive) {
+            audioFocusManager.cancelPendingResume()
+            pauseLocalSilentlyForCast()
+            com.example.cast.CastManager.activeInstance?.setRemotePlayState(false)
+            _playbackState.value = _playbackState.value.copy(isPlaying = false)
+            com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
+            notifyCastMediaSessionStateChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            return
+        }
         audioFocusManager.cancelPendingResume()
         pauseInternal()
     }
@@ -3898,6 +4070,10 @@ class PlaybackManager(
 
     fun pauseWithFade(customFadeOutMs: Int? = null, fromZeroVolume: Boolean = false) {
         if (!fromZeroVolume && dispatchJamCommand(JamPlaybackAction.PAUSE)) return
+        if (isCastPlaybackActive) {
+            if (!fromZeroVolume) pause()
+            return
+        }
         if (!fromZeroVolume) {
             audioFocusManager.cancelPendingResume()
         }
@@ -3938,6 +4114,24 @@ class PlaybackManager(
 
     fun play(fromAutoResume: Boolean = false) {
         if (dispatchJamCommand(JamPlaybackAction.PLAY)) return
+        if (isCastPlaybackActive) {
+            pauseLocalSilentlyForCast()
+            val cm = com.example.cast.CastManager.activeInstance
+            val curSong = _playbackState.value.currentSong
+            if (cm != null && cm.sessionState.value.castingSong == null && curSong != null) {
+                cm.castSong(curSong, currentPositionMs.coerceAtLeast(0L))
+            } else {
+                cm?.setRemotePlayState(true)
+            }
+            _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+            com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, true)
+            startMusicPlaybackService()
+            notifyCastMediaSessionStateChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+            return
+        }
         if (!fromAutoResume) {
             audioFocusManager.onUserPlayRequested()
         }
@@ -3984,6 +4178,10 @@ class PlaybackManager(
 
     fun playWithFade(customFadeInMs: Int? = null, fromAutoResume: Boolean = false) {
         if (dispatchJamCommand(JamPlaybackAction.PLAY)) return
+        if (isCastPlaybackActive) {
+            play(fromAutoResume = fromAutoResume)
+            return
+        }
         if (!fromAutoResume) {
             audioFocusManager.onUserPlayRequested()
         }
@@ -4044,6 +4242,10 @@ class PlaybackManager(
     }
 
     fun togglePlayPause() {
+        if (isCastPlaybackActive) {
+            if (_playbackState.value.isPlaying) pause() else play()
+            return
+        }
         val currentlyPlaying = if (isFadingOutToPause) false else (_playbackState.value.isPlaying || player.isPlaying)
         if (currentlyPlaying) {
             if (effectiveFadeOutMs > 0) {
@@ -4062,6 +4264,26 @@ class PlaybackManager(
 
     fun skipToNext() {
         if (dispatchJamCommand(JamPlaybackAction.SKIP_NEXT)) return
+        if (isCastPlaybackActive) {
+            if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
+                turnRepeatOneOff()
+            }
+            val queue = _playbackState.value.queue
+            if (queue.isEmpty()) return
+            val curIdx = _playbackState.value.queueIndex
+            val targetIdx = when {
+                curIdx + 1 < queue.size -> curIdx + 1
+                _playbackState.value.repeatMode == Player.REPEAT_MODE_ALL -> 0
+                else -> -1
+            }
+            if (targetIdx >= 0) {
+                val nextSong = selectQueueIndexForRemoteCast(targetIdx)
+                if (nextSong != null) {
+                    com.example.cast.CastManager.activeInstance?.castSong(nextSong, 0L)
+                }
+            }
+            return
+        }
         if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
             turnRepeatOneOff()
         }
@@ -4111,6 +4333,34 @@ class PlaybackManager(
 
     fun skipToPrevious() {
         if (dispatchJamCommand(JamPlaybackAction.SKIP_PREVIOUS)) return
+        if (isCastPlaybackActive) {
+            val remotePos = maxOf(
+                currentPositionMs,
+                com.example.cast.CastManager.activeInstance?.sessionState?.value?.remotePositionMs ?: 0L
+            )
+            if (remotePos > 3000L) {
+                seekTo(0L)
+                return
+            }
+            if (_playbackState.value.repeatMode == Player.REPEAT_MODE_ONE || repeatOneRemainingPlays > 0) {
+                turnRepeatOneOff()
+            }
+            val queue = _playbackState.value.queue
+            if (queue.isEmpty()) return
+            val curIdx = _playbackState.value.queueIndex
+            val targetIdx = when {
+                curIdx - 1 >= 0 -> curIdx - 1
+                _playbackState.value.repeatMode == Player.REPEAT_MODE_ALL -> queue.lastIndex
+                else -> -1
+            }
+            if (targetIdx >= 0) {
+                val prevSong = selectQueueIndexForRemoteCast(targetIdx)
+                if (prevSong != null) {
+                    com.example.cast.CastManager.activeInstance?.castSong(prevSong, 0L)
+                }
+            }
+            return
+        }
         val effectivePos = maxOf(
             if (player.currentPosition >= 0L && player.currentPosition != C.TIME_UNSET) player.currentPosition else 0L,
             currentPositionMs,
@@ -4194,8 +4444,18 @@ class PlaybackManager(
 
     fun seekTo(positionMs: Long) {
         if (dispatchJamCommand(JamPlaybackAction.SEEK, positionMs.coerceAtLeast(0L))) return
-        cancelCrossfade(resetVolume = true)
         val safePos = positionMs.coerceAtLeast(0L)
+        if (isCastPlaybackActive) {
+            currentPositionMs = safePos
+            _playbackPositionMs.value = safePos
+            com.example.cast.CastManager.activeInstance?.seekRemote(safePos)
+            val dur = resolveEffectiveDurationMs()
+            com.example.widget.WidgetUpdateManager.updateWidgetsProgress(context, safePos, dur)
+            notifyLiveMetadataChanged()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            return
+        }
+        cancelCrossfade(resetVolume = true)
         currentPositionMs = safePos
         _playbackPositionMs.value = safePos
         _playbackState.value = _playbackState.value.copy(positionMs = safePos)
@@ -4208,14 +4468,26 @@ class PlaybackManager(
     }
 
     fun seekForward(deltaMs: Long = 10000L) {
-        val cur = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else _playbackState.value.positionMs
-        val dur = if (player.duration > 0 && player.duration != androidx.media3.common.C.TIME_UNSET) player.duration else _playbackState.value.durationMs
+        val cur = if (isCastPlaybackActive) {
+            currentPositionMs.coerceAtLeast(0L)
+        } else if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) {
+            player.currentPosition
+        } else {
+            _playbackState.value.positionMs
+        }
+        val dur = resolveEffectiveDurationMs()
         val target = if (dur > 0) (cur + deltaMs).coerceAtMost(dur) else cur + deltaMs
         seekTo(target)
     }
 
     fun seekBackward(deltaMs: Long = 10000L) {
-        val cur = if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) player.currentPosition else _playbackState.value.positionMs
+        val cur = if (isCastPlaybackActive) {
+            currentPositionMs.coerceAtLeast(0L)
+        } else if (player.currentPosition > 0L && player.currentPosition != androidx.media3.common.C.TIME_UNSET) {
+            player.currentPosition
+        } else {
+            _playbackState.value.positionMs
+        }
         val target = (cur - deltaMs).coerceAtLeast(0L)
         seekTo(target)
     }
@@ -4948,6 +5220,170 @@ class PlaybackManager(
         }
     }
 
+    private var lastRemoteWidgetSec: Long = -1L
+
+    /**
+     * Immediately silences local ExoPlayer, fades, crossfades, and pending auto-resume timers
+     * so audio can never split between phone/headphones and the TV receiver.
+     */
+    fun pauseLocalSilentlyForCast() {
+        try {
+            pendingAutoPlayJob?.cancel()
+            pendingAutoPlayJob = null
+            zeroVolumeVerifyJob?.cancel()
+            zeroVolumeVerifyJob = null
+            audioFocusManager.cancelPendingResume()
+            isFadingOutToPause = false
+            isAudioFocusDucked = false
+            wasPausedByZeroVolume = false
+            cancelCrossfade(resetVolume = true)
+            fadeJob?.cancel()
+            fadeJob = null
+            stopProgressTracker()
+            player.playWhenReady = false
+            player.pause()
+            player.volume = transitionTargetVolume()
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Computes the upcoming song in the active queue for seamless Google Cast pre-queuing.
+     */
+    fun peekUpcomingSongForCast(): Song? {
+        val state = _playbackState.value
+        val queue = state.queue
+        if (queue.isEmpty()) return null
+        val nextIdx = when {
+            state.repeatMode == Player.REPEAT_MODE_ONE -> state.queueIndex.coerceIn(queue.indices)
+            state.queueIndex + 1 < queue.size -> state.queueIndex + 1
+            state.repeatMode == Player.REPEAT_MODE_ALL -> 0
+            else -> -1
+        }
+        return if (nextIdx in queue.indices) queue[nextIdx] else null
+    }
+
+    /**
+     * Wires the shared [CastManager] singleton directly into [PlaybackManager] so every UI surface
+     * (in-app, mini-player, Now Playing, queue, notification, lock screen, headphones, and all 5 widgets)
+     * operates on one unified playback state.
+     */
+    fun bindCastManager(castManager: com.example.cast.CastManager) {
+        castManager.onEnsureLocalPlaybackSilenced = {
+            pauseLocalSilentlyForCast()
+        }
+        castManager.nextSongProvider = {
+            peekUpcomingSongForCast()
+        }
+        castManager.onRemotePlaybackTick = { posMs, isPlaying ->
+            syncRemoteCastPlaybackState(posMs, isPlaying)
+        }
+        castManager.onRemoteVolumeChanged = { vol01 ->
+            notifyCastDeviceVolumeChanged(vol01)
+        }
+        castManager.onCastConnectionChanged = { active, _ ->
+            if (active) {
+                pauseLocalSilentlyForCast()
+                startMusicPlaybackService()
+            }
+            notifyCastMediaSessionStateChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+        }
+        castManager.onRemoteAutoAdvancedToSong = { newSongId ->
+            val state = _playbackState.value
+            val nextIdx = state.queue.indexOfFirst { it.id == newSongId }
+            if (nextIdx in state.queue.indices) {
+                val activeSong = selectQueueIndexForRemoteCast(nextIdx)
+                if (activeSong != null) {
+                    castManager.onSyncedAutoAdvance(activeSong, peekUpcomingSongForCast())
+                }
+            }
+        }
+        castManager.onRemoteTrackFinished = {
+            if (castManager.isCastingRemote) {
+                val state = _playbackState.value
+                val queue = state.queue
+                if (queue.isNotEmpty()) {
+                    val nextIdx = when {
+                        state.repeatMode == Player.REPEAT_MODE_ONE -> state.queueIndex.coerceIn(queue.indices)
+                        state.queueIndex + 1 < queue.size -> state.queueIndex + 1
+                        state.repeatMode == Player.REPEAT_MODE_ALL -> 0
+                        else -> -1
+                    }
+                    if (nextIdx >= 0) {
+                        val nextSong = selectQueueIndexForRemoteCast(nextIdx)
+                        if (nextSong != null) {
+                            castManager.castSong(nextSong, 0L)
+                        }
+                    } else {
+                        syncRemoteCastPlaybackState(0L, false)
+                    }
+                }
+            }
+        }
+        castManager.onCastDisconnected = { lastPosMs ->
+            val safePos = lastPosMs.coerceAtLeast(0L)
+            currentPositionMs = safePos
+            _playbackPositionMs.value = safePos
+            _playbackState.value = _playbackState.value.copy(
+                positionMs = safePos,
+                isPlaying = false
+            )
+            try {
+                if (player.mediaItemCount > 0 && safePos > 0L) {
+                    player.seekTo(safePos)
+                }
+            } catch (_: Throwable) {}
+            com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, false)
+            notifyCastMediaSessionStateChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        }
+    }
+
+    private fun notifyCastDeviceVolumeChanged(vol01: Float) {
+        val discrete = kotlin.math.round(vol01 * 20f).toInt().coerceIn(0, 20)
+        val muted = vol01 <= 0.001f
+        for (listener in forwardingListeners) {
+            try {
+                listener.onDeviceVolumeChanged(discrete, muted)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun notifyCastMediaSessionStateChanged() {
+        try {
+            val devInfo = forwardingPlayer.deviceInfo
+            val playing = forwardingPlayer.isPlaying
+            val pbState = forwardingPlayer.playbackState
+            val availCmds = forwardingPlayer.availableCommands
+            val events = Player.Events(
+                androidx.media3.common.FlagSet.Builder()
+                    .addAll(
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_DEVICE_INFO_CHANGED,
+                        Player.EVENT_DEVICE_VOLUME_CHANGED,
+                        Player.EVENT_AVAILABLE_COMMANDS_CHANGED,
+                        Player.EVENT_MEDIA_METADATA_CHANGED
+                    )
+                    .build()
+            )
+            for (listener in forwardingListeners) {
+                try {
+                    listener.onDeviceInfoChanged(devInfo)
+                    listener.onAvailableCommandsChanged(availCmds)
+                    listener.onPlayWhenReadyChanged(playing, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                    listener.onPlaybackStateChanged(pbState)
+                    listener.onIsPlayingChanged(playing)
+                    listener.onEvents(forwardingPlayer, events)
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
+    }
+
     /**
      * Updates the active queue index and metadata while keeping local ExoPlayer paused,
      * used when playback is routed to a remote TV / Cast receiver.
@@ -4955,10 +5391,9 @@ class PlaybackManager(
     fun selectQueueIndexForRemoteCast(index: Int): Song? {
         val state = _playbackState.value
         val targetSong = state.queue.getOrNull(index) ?: return null
-        cancelCrossfade(resetVolume = true)
-        fadeJob?.cancel()
-        fadeJob = null
+        pauseLocalSilentlyForCast()
         currentPositionMs = 0L
+        lastRemoteWidgetSec = -1L
         _playbackPositionMs.value = 0L
         _playbackState.value = state.copy(
             currentSong = targetSong,
@@ -4969,32 +5404,44 @@ class PlaybackManager(
             playbackError = null
         )
         try {
-            player.playWhenReady = false
-            player.pause()
             if (index in 0 until player.mediaItemCount) {
                 player.seekTo(index, 0L)
             }
         } catch (_: Throwable) {}
         launchSongArtworkRefresh(targetSong)
+        notifyCastMediaSessionStateChanged()
         updateNotificationLayout()
+        MusicPlaybackService.instance?.triggerNotificationUpdate()
         com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
         return targetSong
     }
 
     /**
      * Reflects live remote TV playback position and play/pause state in the app UI
-     * without starting local speaker audio.
+     * with ZERO unnecessary `_playbackState` recompositions (eliminating UI lag).
      */
     fun syncRemoteCastPlaybackState(positionMs: Long, isPlaying: Boolean) {
         val safePos = positionMs.coerceAtLeast(0L)
         currentPositionMs = safePos
         _playbackPositionMs.value = safePos
         val cur = _playbackState.value
-        if (cur.positionMs != safePos || cur.isPlaying != isPlaying) {
+        if (cur.isPlaying != isPlaying) {
             _playbackState.value = cur.copy(
                 positionMs = safePos,
                 isPlaying = isPlaying
             )
+            com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, isPlaying)
+            notifyCastMediaSessionStateChanged()
+            updateNotificationLayout()
+            MusicPlaybackService.instance?.triggerNotificationUpdate()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        } else if (isPlaying) {
+            val sec = safePos / 1000L
+            if (sec != lastRemoteWidgetSec) {
+                lastRemoteWidgetSec = sec
+                val dur = resolveEffectiveDurationMs()
+                com.example.widget.WidgetUpdateManager.updateWidgetsProgress(context, safePos, dur)
+            }
         }
     }
 }

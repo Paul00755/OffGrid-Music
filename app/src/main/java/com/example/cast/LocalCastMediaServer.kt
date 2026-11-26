@@ -10,7 +10,6 @@ import com.example.util.ArtworkManager
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -22,6 +21,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.SecureRandom
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -29,19 +29,24 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class CastMediaUrls(
     val streamUrl: String,
     val artworkUrl: String?,
+    val lyricsVttUrl: String? = null,
+    val hasSyncedLyrics: Boolean = false,
     val mimeType: String,
     val fileSizeBytes: Long
 )
 
 /**
- * Lightweight on-demand HTTP/1.1 LAN media server that streams ONLY the currently authorized
- * local song and its album artwork to Chromecast / Google TV / DLNA Smart TVs.
+ * Lightweight on-demand HTTP/1.1 LAN media server that streams ONLY authorized local songs,
+ * album artwork, and synced WebVTT lyrics to Chromecast / Google TV / DLNA Smart TVs.
  *
- * Security:
+ * Reliability & Security:
  * - Binds on an ephemeral free port only while a cast session is active.
  * - Requires a cryptographically random 128-bit per-session token in the path.
- * - Strictly serves only the currently authorized Song ID (never arbitrary file paths).
- * - Supports HTTP HEAD and Range (206 Partial Content) for smooth TV seeking.
+ * - Keeps a small bounded authorization window (current + pre-queued next tracks) so seamless
+ *   Google Cast queue transitions never hit a 404.
+ * - Full CORS headers + OPTIONS preflight so Default Media Receiver fetches WebVTT lyrics cleanly.
+ * - Supports HTTP HEAD and Range (206 Partial Content) for instant TV seeking.
+ * - Uses a bounded 4-thread daemon pool to keep phone CPU and memory overhead minimal.
  */
 class LocalCastMediaServer(private val context: Context) {
 
@@ -55,14 +60,10 @@ class LocalCastMediaServer(private val context: Context) {
     @Volatile
     private var sessionToken: String = generateToken()
 
-    @Volatile
-    private var authorizedSong: Song? = null
-
-    @Volatile
-    private var cachedArtworkSongId: Long = -1L
-
-    @Volatile
-    private var cachedArtworkBytes: ByteArray? = null
+    private val authorizedSongs = ConcurrentHashMap<Long, Song>()
+    private val authorizedSongOrder = java.util.ArrayDeque<Long>()
+    private val artworkCache = ConcurrentHashMap<Long, ByteArray>()
+    private val lyricsVttCache = ConcurrentHashMap<Long, ByteArray>()
 
     val port: Int
         get() = serverSocket?.localPort ?: -1
@@ -70,6 +71,7 @@ class LocalCastMediaServer(private val context: Context) {
     val isRunning: Boolean
         get() = running.get() && serverSocket != null && serverSocket?.isClosed == false
 
+    @Synchronized
     fun ensureStarted(): Int {
         if (isRunning) return port
         stop()
@@ -78,14 +80,18 @@ class LocalCastMediaServer(private val context: Context) {
         socket.reuseAddress = true
         serverSocket = socket
         running.set(true)
-        workerPool = Executors.newCachedThreadPool { r ->
-            Thread(r, "OffGridCastHttpWorker").apply { isDaemon = true }
+        workerPool = Executors.newFixedThreadPool(4) { r ->
+            Thread(r, "OffGridCastHttpWorker").apply {
+                isDaemon = true
+                priority = Thread.NORM_PRIORITY - 1
+            }
         }
         acceptThread = Thread({
             while (running.get() && !socket.isClosed) {
                 try {
                     val client = socket.accept()
-                    client.soTimeout = 15_000
+                    client.soTimeout = 30_000
+                    client.tcpNoDelay = true
                     workerPool?.execute { handleClient(client) }
                 } catch (_: Throwable) {
                     if (!running.get()) break
@@ -98,11 +104,13 @@ class LocalCastMediaServer(private val context: Context) {
         return socket.localPort
     }
 
+    @Synchronized
     fun stop() {
         running.set(false)
-        authorizedSong = null
-        cachedArtworkBytes = null
-        cachedArtworkSongId = -1L
+        authorizedSongs.clear()
+        authorizedSongOrder.clear()
+        artworkCache.clear()
+        lyricsVttCache.clear()
         try {
             serverSocket?.close()
         } catch (_: Throwable) {}
@@ -117,7 +125,11 @@ class LocalCastMediaServer(private val context: Context) {
         workerPool = null
     }
 
-    fun prepareMediaForSong(song: Song, localIp: String): CastMediaUrls? {
+    fun prepareMediaForSong(
+        song: Song,
+        localIp: String,
+        lyricsVttContent: String? = null
+    ): CastMediaUrls? {
         val boundPort = try {
             ensureStarted()
         } catch (_: Throwable) {
@@ -125,10 +137,18 @@ class LocalCastMediaServer(private val context: Context) {
         }
         if (boundPort <= 0 || localIp.isBlank()) return null
 
-        authorizedSong = song
-        val artworkBytes = resolveArtworkBytes(song)
-        cachedArtworkSongId = song.id
-        cachedArtworkBytes = artworkBytes
+        registerAuthorizedSong(song)
+
+        val artworkBytes = artworkCache[song.id] ?: resolveArtworkBytes(song)?.also {
+            if (it.isNotEmpty()) artworkCache[song.id] = it
+        }
+
+        val hasLyrics = !lyricsVttContent.isNullOrBlank()
+        if (hasLyrics) {
+            lyricsVttCache[song.id] = lyricsVttContent!!.toByteArray(Charsets.UTF_8)
+        } else {
+            lyricsVttCache.remove(song.id)
+        }
 
         val ext = guessFileExtension(song)
         val mime = guessMimeType(ext)
@@ -140,12 +160,32 @@ class LocalCastMediaServer(private val context: Context) {
         } else {
             null
         }
+        val lyricsUrl = if (hasLyrics) {
+            "$baseUrl/lyrics/$sessionToken/${song.id}.vtt"
+        } else {
+            null
+        }
         return CastMediaUrls(
             streamUrl = streamUrl,
             artworkUrl = artUrl,
+            lyricsVttUrl = lyricsUrl,
+            hasSyncedLyrics = hasLyrics,
             mimeType = mime,
             fileSizeBytes = size
         )
+    }
+
+    @Synchronized
+    private fun registerAuthorizedSong(song: Song) {
+        authorizedSongs[song.id] = song
+        authorizedSongOrder.remove(song.id)
+        authorizedSongOrder.addLast(song.id)
+        while (authorizedSongOrder.size > MAX_AUTHORIZED_SONGS) {
+            val evicted = authorizedSongOrder.pollFirst() ?: break
+            authorizedSongs.remove(evicted)
+            artworkCache.remove(evicted)
+            lyricsVttCache.remove(evicted)
+        }
     }
 
     private fun handleClient(client: Socket) {
@@ -170,7 +210,11 @@ class LocalCastMediaServer(private val context: Context) {
                     }
                 }
 
-                val out = BufferedOutputStream(socket.getOutputStream())
+                val out = BufferedOutputStream(socket.getOutputStream(), 32 * 1024)
+                if (method == "OPTIONS") {
+                    writeCorsPreflightResponse(out)
+                    return
+                }
                 if (method != "GET" && method != "HEAD") {
                     writeSimpleResponse(out, 405, "Method Not Allowed")
                     return
@@ -192,8 +236,8 @@ class LocalCastMediaServer(private val context: Context) {
                     return
                 }
 
-                val song = authorizedSong
-                if (song == null || song.id != reqSongId) {
+                val song = authorizedSongs[reqSongId]
+                if (song == null) {
                     writeSimpleResponse(out, 404, "Not Found")
                     return
                 }
@@ -201,16 +245,52 @@ class LocalCastMediaServer(private val context: Context) {
                 when (kind) {
                     "stream" -> serveAudioStream(song, method == "HEAD", headers["range"], out)
                     "art" -> serveArtwork(song, method == "HEAD", out)
+                    "lyrics" -> serveLyricsVtt(song.id, method == "HEAD", out)
                     else -> writeSimpleResponse(out, 404, "Not Found")
                 }
             } catch (_: Throwable) {
-                // Client disconnected mid-stream (normal on seek/stop)
+                // Client disconnected mid-stream (normal on seek/stop/skip)
             }
         }
     }
 
+    private fun writeCorsPreflightResponse(out: BufferedOutputStream) {
+        val resp = buildString {
+            append("HTTP/1.1 204 No Content\r\n")
+            append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
+            append("Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin\r\n")
+            append("Access-Control-Max-Age: 86400\r\n")
+            append("Connection: close\r\n\r\n")
+        }
+        out.write(resp.toByteArray(Charsets.UTF_8))
+        out.flush()
+    }
+
+    private fun serveLyricsVtt(songId: Long, headOnly: Boolean, out: BufferedOutputStream) {
+        val bytes = lyricsVttCache[songId]
+        if (bytes == null || bytes.isEmpty()) {
+            writeSimpleResponse(out, 404, "No Lyrics")
+            return
+        }
+        val header = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: text/vtt; charset=utf-8\r\n")
+            append("Content-Length: ${bytes.size}\r\n")
+            append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
+            append("Cache-Control: no-cache\r\n")
+            append("Connection: close\r\n\r\n")
+        }
+        out.write(header.toByteArray(Charsets.UTF_8))
+        if (!headOnly) {
+            out.write(bytes)
+        }
+        out.flush()
+    }
+
     private fun serveArtwork(song: Song, headOnly: Boolean, out: BufferedOutputStream) {
-        val bytes = if (cachedArtworkSongId == song.id) cachedArtworkBytes else resolveArtworkBytes(song)
+        val bytes = artworkCache[song.id] ?: resolveArtworkBytes(song)
         if (bytes == null || bytes.isEmpty()) {
             writeSimpleResponse(out, 404, "No Artwork")
             return
@@ -220,6 +300,7 @@ class LocalCastMediaServer(private val context: Context) {
             append("Content-Type: image/jpeg\r\n")
             append("Content-Length: ${bytes.size}\r\n")
             append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
             append("Connection: close\r\n\r\n")
         }
         out.write(header.toByteArray(Charsets.UTF_8))
@@ -259,7 +340,7 @@ class LocalCastMediaServer(private val context: Context) {
                 }
 
                 if (start < 0L || start >= totalLength || end < start) {
-                    val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$totalLength\r\nConnection: close\r\n\r\n"
+                    val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$totalLength\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                     out.write(resp.toByteArray(Charsets.UTF_8))
                     out.flush()
                     return
@@ -273,6 +354,7 @@ class LocalCastMediaServer(private val context: Context) {
                     append("Content-Range: bytes $start-$end/$totalLength\r\n")
                     append("Accept-Ranges: bytes\r\n")
                     append("Access-Control-Allow-Origin: *\r\n")
+                    append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
                     append("transferMode.dlna.org: Streaming\r\n")
                     append("contentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n")
                     append("Connection: close\r\n\r\n")
@@ -301,6 +383,7 @@ class LocalCastMediaServer(private val context: Context) {
             }
             append("Accept-Ranges: bytes\r\n")
             append("Access-Control-Allow-Origin: *\r\n")
+            append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n")
             append("transferMode.dlna.org: Streaming\r\n")
             append("contentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n")
             append("Connection: close\r\n\r\n")
@@ -415,19 +498,73 @@ class LocalCastMediaServer(private val context: Context) {
 
     private fun writeSimpleResponse(out: BufferedOutputStream, code: Int, message: String) {
         val body = message.toByteArray(Charsets.UTF_8)
-        val resp = "HTTP/1.1 $code $message\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+        val resp = "HTTP/1.1 $code $message\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
         out.write(resp.toByteArray(Charsets.UTF_8))
         out.write(body)
         out.flush()
     }
 
     companion object {
+        private const val MAX_AUTHORIZED_SONGS = 10
         private val secureRandom = SecureRandom()
 
         fun generateToken(): String {
             val bytes = ByteArray(16)
             secureRandom.nextBytes(bytes)
             return bytes.joinToString("") { "%02x".format(it) }
+        }
+
+        /**
+         * Converts parsed synced lyrics `(timestampMs, lineText)` into a valid W3C WebVTT file
+         * positioned cleanly in the lower-left area of the TV Default Media Receiver below the artist name.
+         */
+        fun buildWebVttFromLyrics(
+            syncedLines: List<Pair<Long, String>>,
+            songDurationMs: Long,
+            syncOffsetMs: Long = 0L
+        ): String? {
+            val cleaned = syncedLines
+                .mapNotNull { (ts, text) ->
+                    val trimmed = text.trim()
+                        .replace("\r\n", " ")
+                        .replace('\n', ' ')
+                        .replace("-->", "—")
+                    if (trimmed.isEmpty()) null else ((ts + syncOffsetMs).coerceAtLeast(0L) to trimmed)
+                }
+                .sortedBy { it.first }
+            if (cleaned.isEmpty()) return null
+
+            val maxEndMs = if (songDurationMs > 0L) songDurationMs else (cleaned.last().first + 6_000L)
+            return buildString {
+                append("WEBVTT\n\n")
+                for (i in cleaned.indices) {
+                    val (startMs, line) = cleaned[i]
+                    val nextStartMs = cleaned.getOrNull(i + 1)?.first
+                    val rawEndMs = when {
+                        nextStartMs != null && nextStartMs > startMs -> nextStartMs - 60L
+                        else -> (startMs + 6_000L).coerceAtMost(maxEndMs.coerceAtLeast(startMs + 2_500L))
+                    }
+                    val endMs = rawEndMs.coerceAtLeast(startMs + 400L)
+                    append(i + 1)
+                    append('\n')
+                    append(formatWebVttTimestamp(startMs))
+                    append(" --> ")
+                    append(formatWebVttTimestamp(endMs))
+                    // Position cleanly in the bottom-left zone below Title/Artist without covering album art on the right
+                    append(" line:85% position:6% align:start size:46%\n")
+                    append(line)
+                    append("\n\n")
+                }
+            }
+        }
+
+        fun formatWebVttTimestamp(ms: Long): String {
+            val safe = ms.coerceAtLeast(0L)
+            val hours = safe / 3_600_000L
+            val minutes = (safe % 3_600_000L) / 60_000L
+            val seconds = (safe % 60_000L) / 1_000L
+            val millis = safe % 1_000L
+            return String.format(Locale.US, "%02d:%02d:%02d.%03d", hours, minutes, seconds, millis)
         }
 
         fun guessFileExtension(song: Song): String {
@@ -471,7 +608,6 @@ class LocalCastMediaServer(private val context: Context) {
         }
 
         fun resolveLocalLanIpv4(context: Context): String? {
-            // 1. Prefer LinkProperties from active Wi-Fi / Ethernet network
             try {
                 val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 if (cm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -488,7 +624,6 @@ class LocalCastMediaServer(private val context: Context) {
                 }
             } catch (_: Throwable) {}
 
-            // 2. Fallback to scanning active non-loopback site-local IPv4 network interfaces
             return try {
                 val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
                 var fallbackSiteLocal: String? = null

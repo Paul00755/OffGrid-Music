@@ -162,7 +162,13 @@ class MusicPlaybackService : MediaSessionService() {
                             try {
                                 mediaNotification.notification.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, currentSong.displayTitle)
                                 mediaNotification.notification.extras.putCharSequence(android.app.Notification.EXTRA_TEXT, currentSong.displayArtist)
-                                mediaNotification.notification.extras.putCharSequence(android.app.Notification.EXTRA_SUB_TEXT, currentSong.displayAlbum)
+                                val castDeviceName = PlaybackManager.activeInstance?.activeCastDeviceName
+                                val subText = if (PlaybackManager.activeInstance?.isCastPlaybackActive == true && !castDeviceName.isNullOrBlank()) {
+                                    "Casting to $castDeviceName"
+                                } else {
+                                    currentSong.displayAlbum
+                                }
+                                mediaNotification.notification.extras.putCharSequence(android.app.Notification.EXTRA_SUB_TEXT, subText)
                                 mediaNotification.notification.tickerText = "${currentSong.displayTitle} - ${currentSong.displayArtist}"
                             } catch (_: Throwable) {}
 
@@ -460,9 +466,10 @@ class MusicPlaybackService : MediaSessionService() {
     private fun updateNotification(session: MediaSession, startInForegroundRequired: Boolean, force: Boolean) {
         try {
             val player = session.player
-            val isPlaying = player.isPlaying || player.playWhenReady
+            val isCasting = PlaybackManager.activeInstance?.isCastPlaybackActive == true
+            val isPlaying = player.isPlaying || player.playWhenReady || (isCasting && PlaybackManager.activeInstance?.playbackState?.value?.isPlaying == true)
             val hasActiveMedia = player.mediaItemCount > 0 || PlaybackManager.activeInstance?.playbackState?.value?.currentSong != null
-            val shouldHoldWakeLock = isPlaying || (player.playWhenReady && hasActiveMedia)
+            val shouldHoldWakeLock = isPlaying || isCasting || (player.playWhenReady && hasActiveMedia)
             if (shouldHoldWakeLock) {
                 acquireWakeLock()
             } else {

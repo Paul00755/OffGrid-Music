@@ -57,8 +57,12 @@ class HeadphoneConnectionReceiver : BroadcastReceiver() {
         val isAutoPlayEnabled = prefs.cachedAutoPlayOnHeadphoneConnection
         if (!isAutoPlayEnabled) return
 
-        // 2. If playback is already active in RAM, do nothing
-        val activePlayer = PlaybackManager.activeInstance?.player
+        // 2. If playback or TV casting is already active in RAM, do nothing (never split audio!)
+        val activePm = PlaybackManager.activeInstance
+        if (activePm?.isCastPlaybackActive == true) {
+            return
+        }
+        val activePlayer = activePm?.player
         if (activePlayer != null && (activePlayer.isPlaying || activePlayer.playWhenReady)) {
             return
         }

@@ -43,6 +43,8 @@ data class CastSessionState(
     val remoteDurationMs: Long = 0L,
     val remoteVolume: Float = 0.7f,
     val castingSong: Song? = null,
+    val tvLyricsEnabled: Boolean = true,
+    val hasSyncedLyricsOnTv: Boolean = false,
     val isWifiConnected: Boolean = false,
     val localIpAddress: String? = null,
     val statusMessage: String? = null,
@@ -53,4 +55,7 @@ data class CastSessionState(
 
     val isConnecting: Boolean
         get() = connectionState == CastConnectionState.CONNECTING
+
+    val isActiveSession: Boolean
+        get() = isConnected || isConnecting
 }
