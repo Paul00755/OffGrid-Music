@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,23 +31,69 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.ui.theme.*
 import com.example.util.HapticUtils
+
+data class FaqVisualImage(
+    val drawableResId: Int,
+    val caption: String,
+    val contentDescription: String
+)
 
 data class FaqEntry(
     val id: String,
     val category: String,
     val question: String,
-    val answer: String
+    val answer: String,
+    val images: List<FaqVisualImage> = emptyList()
 )
 
 val OFFGRID_FAQ_ENTRIES: List<FaqEntry> = listOf(
+    FaqEntry(
+        id = "download_and_install_apk",
+        category = "Download & Install",
+        question = "How do I download and install the OffGrid Music APK?",
+        answer = "Follow these step-by-step instructions to download and install OffGrid Music on Android 7.0+:\n\n" +
+            "1. Download the APK: Tap Download Latest APK at https://offgrid-music-web.pages.dev/ or open official GitHub Releases (Releases → Latest → OffGrid-Music.apk).\n" +
+            "2. Grant Browser Download Access (if prompted): Allow Storage / Downloads permission in your browser. If Android shows \"File might be harmful\", tap \"Download anyway\".\n" +
+            "3. Allow \"Install unknown apps\" (one-time setup):\n" +
+            "   • Tap Open on the completed download notification (or open your Files / Downloads app and tap OffGrid-Music.apk).\n" +
+            "   • When prompted \"For your security, your phone currently isn't allowed to install unknown apps from this source\", tap Settings.\n" +
+            "   • Or go to Android Settings → Apps → Special app access → Install unknown apps, pick your browser (Chrome, Brave, Samsung Internet, etc.) or Files, and switch \"Allow from this source\" ON.\n" +
+            "4. Verify & Install: Press Back, let Google Play Protect scan the APK (\"This app looks safe\"), tap Install, and launch OffGrid Music.\n\n" +
+            "Tip: To update later, install any newer OffGrid-Music.apk right over your current app (or tap Settings → Check for App Updates)—no need to uninstall and zero data is lost."
+    ),
+    FaqEntry(
+        id = "browser_harmful_warning_safe",
+        category = "Trust & Safety",
+        question = "My browser shows \"File might be harmful\" when downloading OffGrid-Music.apk. Is it really safe?",
+        answer = "Yes — it is 100% safe to download and install.\n\n" +
+            "• Why this warning appears: Android browsers automatically show a generic \"File might be harmful\" prompt for EVERY .apk file downloaded outside Google Play. It is triggered only by the .apk file type, not by scanning OffGrid Music.\n" +
+            "• Google Play Protect scan passes cleanly: Tap \"Download anyway\" (from release-assets.githubusercontent.com), open OffGrid-Music.apk, and Google Play Protect inspects the signed package directly on your device—confirming \"This app looks safe — You can continue to install it\".\n\n" +
+            "Every release is 100% open source on GitHub, compiled via transparent CI builds, and contains zero ads or tracking SDKs.",
+        images = listOf(
+            FaqVisualImage(
+                drawableResId = R.drawable.faq_browser_harmful_warning,
+                caption = "1. Generic APK prompt — tap \"Download anyway\"",
+                contentDescription = "Android browser prompt showing File might be harmful for OffGrid-Music.apk with Download anyway button"
+            ),
+            FaqVisualImage(
+                drawableResId = R.drawable.faq_play_protect_safe,
+                caption = "2. Play Protect passed: \"This app looks safe\"",
+                contentDescription = "Google Play Protect scan dialog for OffGrid Music confirming This app looks safe and You can continue to install it"
+            )
+        )
+    ),
     FaqEntry(
         id = "play_store_safety",
         category = "Trust & Safety",
@@ -215,7 +262,8 @@ fun FaqScreen(
                 .widthIn(max = 720.dp)
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .testTag("faq_list"),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -293,7 +341,7 @@ fun FaqScreen(
                             onValueChange = { searchQuery = it },
                             placeholder = {
                                 Text(
-                                    text = "Search Jam, backup, Google sign-in, API key...",
+                                    text = "Search APK install, Play Protect, Jam, backup...",
                                     fontSize = 13.sp,
                                     color = BentoTextSubtle,
                                     maxLines = 1,
@@ -442,6 +490,14 @@ fun FaqScreen(
                 ) { index, entry ->
                     val isExpanded = entry.id in expandedIds
                     Surface(
+                        onClick = {
+                            HapticUtils.performClickHaptic(context)
+                            expandedIds = if (isExpanded) {
+                                expandedIds - entry.id
+                            } else {
+                                expandedIds + entry.id
+                            }
+                        },
                         shape = RoundedCornerShape(18.dp),
                         color = BentoCardSurface,
                         border = BorderStroke(
@@ -455,14 +511,6 @@ fun FaqScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    HapticUtils.performClickHaptic(context)
-                                    expandedIds = if (isExpanded) {
-                                        expandedIds - entry.id
-                                    } else {
-                                        expandedIds + entry.id
-                                    }
-                                }
                                 .padding(horizontal = 16.dp, vertical = 14.dp)
                         ) {
                             Row(
@@ -532,6 +580,51 @@ fun FaqScreen(
                                         color = BentoTextSecondary,
                                         lineHeight = 19.5.sp
                                     )
+                                    if (entry.images.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(14.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("faq_images_${entry.id}"),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            entry.images.forEachIndexed { imgIdx, visual ->
+                                                Surface(
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    color = BentoCardPurple.copy(alpha = 0.45f),
+                                                    border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.45f)),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("faq_image_${entry.id}_$imgIdx")
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Image(
+                                                            painter = painterResource(id = visual.drawableResId),
+                                                            contentDescription = visual.contentDescription,
+                                                            contentScale = ContentScale.Fit,
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .heightIn(max = 220.dp)
+                                                                .clip(RoundedCornerShape(10.dp))
+                                                        )
+                                                        Text(
+                                                            text = visual.caption,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = BentoTextPrimary,
+                                                            textAlign = TextAlign.Center,
+                                                            lineHeight = 15.sp
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
