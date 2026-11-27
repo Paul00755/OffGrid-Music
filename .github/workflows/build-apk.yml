@@ -2,13 +2,13 @@ name: Build and Release Android APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, test ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
       bump_type:
-        description: "Semantic version bump type"
+        description: "Semantic version bump type (main/master only)"
         required: false
         default: "patch"
         type: choice
@@ -17,15 +17,15 @@ on:
           - minor
           - major
       explicit_version:
-        description: "Optional explicit semantic version (e.g. 1.1.0 or 2.0.1)"
+        description: "Optional explicit semantic version for main/master (e.g. 1.1.0 or 2.0.1)"
         required: false
         default: ""
         type: string
 
-# Cancel outdated PR builds automatically, while never canceling an active main/master release
+# Cancel outdated PR or test builds automatically, while never canceling an active main/master release
 concurrency:
   group: build-release-apk-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref_name == 'test' }}
 
 permissions:
   contents: write
@@ -132,6 +132,7 @@ jobs:
           echo "APK_SIZE=$APK_SIZE" >> $GITHUB_ENV
 
       - name: Upload Release APK Artifact
+        if: (github.ref_name == 'main' || github.ref_name == 'master') || github.event_name == 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: OffGrid-Music-APK
@@ -139,12 +140,57 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+      - name: Prepare Private Test Artifact
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name != 'main' && github.ref_name != 'master'
+        env:
+          TEST_APK_PASSCODE: ${{ secrets.TEST_APK_PASSCODE }}
+        run: |
+          TEST_DIR="app/build/outputs/apk/release/test-artifact"
+          rm -rf "$TEST_DIR"
+          mkdir -p "$TEST_DIR"
+          SRC_APK="app/build/outputs/apk/release/OffGrid-Music.apk"
+          if [ -n "$TEST_APK_PASSCODE" ]; then
+            OUT_ARCHIVE="$TEST_DIR/OffGrid-Music-Test-${NEXT_VERSION}.zip"
+            if command -v 7z >/dev/null 2>&1; then
+              7z a -tzip -mem=AES256 -p"$TEST_APK_PASSCODE" "$OUT_ARCHIVE" "$SRC_APK" >/dev/null
+            elif command -v zip >/dev/null 2>&1; then
+              zip -j -P "$TEST_APK_PASSCODE" "$OUT_ARCHIVE" "$SRC_APK" >/dev/null
+            else
+              sudo apt-get update && sudo apt-get install -y zip >/dev/null
+              zip -j -P "$TEST_APK_PASSCODE" "$OUT_ARCHIVE" "$SRC_APK" >/dev/null
+            fi
+            PROTECTION_MODE="Password-protected AES-256 ZIP (TEST_APK_PASSCODE)"
+          else
+            cp "$SRC_APK" "$TEST_DIR/OffGrid-Music-Test-${NEXT_VERSION}.apk"
+            PROTECTION_MODE="Actions artifact (GitHub sign-in required; set TEST_APK_PASSCODE secret for password lock)"
+          fi
+
+          {
+            echo "### Test Build Summary (Non-Production)"
+            echo "- **Branch**: \`${{ github.ref_name }}\`"
+            echo "- **Build Version**: \`${NEXT_VERSION}\` (production version unchanged at \`${PREVIOUS_TAG:-latest}\`)"
+            echo "- **APK Size**: ${APK_SIZE} | **SHA-256**: \`${APK_SHA256}\`"
+            echo "- **Artifact Access**: ${PROTECTION_MODE}"
+            echo "- **GitHub Releases & FCM Notifications**: Skipped (end users will not receive updates)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Test APK Artifact (Private Actions Only — No Release)
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name != 'main' && github.ref_name != 'master'
+        uses: actions/upload-artifact@v6
+        with:
+          name: OffGrid-Music-Test-APK-${{ github.run_number }}
+          path: app/build/outputs/apk/release/test-artifact/
+          retention-days: 7
+          compression-level: 0
+
       - name: Publish GitHub Releases (Immutable Semantic Version History + Latest Release)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref_name == 'main' || github.ref_name == 'master')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           APK_PATH: app/build/outputs/apk/release/OffGrid-Music.apk
           VERSIONED_NOTES_FILE: release_notes_versioned.md
           LATEST_NOTES_FILE: release_notes_latest.md
@@ -213,10 +259,13 @@ jobs:
           python3 .github/scripts/publish_github_release.py
 
       - name: Broadcast FCM Update Notification to Subscribers
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref_name == 'main' || github.ref_name == 'master')
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           python3 .github/scripts/send_fcm_release_notification.py

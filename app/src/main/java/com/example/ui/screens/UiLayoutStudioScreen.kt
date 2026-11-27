@@ -121,6 +121,7 @@ fun UiLayoutStudioScreen(
     currentPlaylistsLayout: String,
     currentLyricsLayout: String,
     waveformStyle: String,
+    isWaveformUserOverridden: Boolean = true,
     themeMode: String,
     isGradientEffect: Boolean,
     isGlassEffect: Boolean,
@@ -505,14 +506,24 @@ fun UiLayoutStudioScreen(
                             }
                     ) { palette ->
                         when (activeTab) {
-                            LayoutStudioTab.NOW_PLAYING -> LiveNowPlayingMockup(
-                                layout = NowPlayingLayout.entries[page],
-                                palette = palette,
-                                waveformStyle = waveformStyle,
-                                showVolumeBar = showVolumeBar,
-                                showAdvancedSongInfo = showAdvancedSongInfo,
-                                liveCtx = liveCtx
-                            )
+                            LayoutStudioTab.NOW_PLAYING -> {
+                                val targetNpLayout = NowPlayingLayout.entries[page]
+                                val previewWaveform = if (!isWaveformUserOverridden ||
+                                    com.example.ui.components.normalizeWaveformStyleId(waveformStyle) == "SLEEK_LINE"
+                                ) {
+                                    if (targetNpLayout == NowPlayingLayout.MODERN_BENTO) "WAVY" else "SNAKE"
+                                } else {
+                                    waveformStyle
+                                }
+                                LiveNowPlayingMockup(
+                                    layout = targetNpLayout,
+                                    palette = palette,
+                                    waveformStyle = previewWaveform,
+                                    showVolumeBar = showVolumeBar,
+                                    showAdvancedSongInfo = showAdvancedSongInfo,
+                                    liveCtx = liveCtx
+                                )
+                            }
                             LayoutStudioTab.HOME -> LiveHomeMockup(
                                 layout = HomeScreenLayout.entries[page],
                                 palette = palette,
@@ -538,14 +549,24 @@ fun UiLayoutStudioScreen(
                                     feedSections = effectiveFeedSections,
                                     liveCtx = liveCtx
                                 )
-                                1 -> LiveNowPlayingMockup(
-                                    layout = NowPlayingLayout.fromId(stagedNowPlaying),
-                                    palette = palette,
-                                    waveformStyle = waveformStyle,
-                                    showVolumeBar = showVolumeBar,
-                                    showAdvancedSongInfo = showAdvancedSongInfo,
-                                    liveCtx = liveCtx
-                                )
+                                1 -> {
+                                    val stagedNpLayout = NowPlayingLayout.fromId(stagedNowPlaying)
+                                    val comboWaveform = if (!isWaveformUserOverridden ||
+                                        com.example.ui.components.normalizeWaveformStyleId(waveformStyle) == "SLEEK_LINE"
+                                    ) {
+                                        if (stagedNpLayout == NowPlayingLayout.MODERN_BENTO) "WAVY" else "SNAKE"
+                                    } else {
+                                        waveformStyle
+                                    }
+                                    LiveNowPlayingMockup(
+                                        layout = stagedNpLayout,
+                                        palette = palette,
+                                        waveformStyle = comboWaveform,
+                                        showVolumeBar = showVolumeBar,
+                                        showAdvancedSongInfo = showAdvancedSongInfo,
+                                        liveCtx = liveCtx
+                                    )
+                                }
                                 2 -> LiveLyricsMockup(
                                     layout = LyricsLayout.fromId(stagedLyrics),
                                     palette = palette,

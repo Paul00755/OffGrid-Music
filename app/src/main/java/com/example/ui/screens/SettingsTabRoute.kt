@@ -316,6 +316,7 @@ fun SettingsTabRoute(
     )
 
     val waveformStyle by viewModel.waveformStyle.collectAsState()
+    val isWaveformUserOverridden by viewModel.isWaveformUserOverridden.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val displayScale by viewModel.displayScale.collectAsState()
     val showNowPlayingVolumeBar by viewModel.showNowPlayingVolumeBar.collectAsState()
@@ -334,6 +335,7 @@ fun SettingsTabRoute(
         folders = allFolders,
         sleepTimerState = sleepTimerState,
         waveformStyle = waveformStyle,
+        isWaveformUserOverridden = isWaveformUserOverridden,
         onSetWaveformStyle = viewModel::setWaveformStyle,
         themeMode = themeMode,
         onSetThemeMode = viewModel::setThemeMode,

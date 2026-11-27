@@ -677,6 +677,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val librarySortAscending: StateFlow<Boolean> = preferences.librarySortAscending.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getLibrarySortAscendingSync())
     val playlistViewMode: StateFlow<String> = preferences.playlistViewMode.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getPlaylistViewModeSync())
     val waveformStyle: StateFlow<String> = preferences.waveformStyle.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getWaveformStyleSync())
+    val isWaveformUserOverridden: StateFlow<Boolean> = preferences.isWaveformUserOverridden.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        preferences.isWaveformUserOverriddenSync()
+    )
     val accentColorPreset: StateFlow<String> = preferences.accentColorPreset.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getAccentColorPresetSync())
     val customAccentColor: StateFlow<Int> = preferences.customAccentColor.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getCustomAccentColorSync())
     val isDynamicArtworkTheme: StateFlow<Boolean> = preferences.isDynamicArtworkTheme.stateIn(viewModelScope, SharingStarted.Eagerly, preferences.getDynamicArtworkThemeSync())
@@ -1267,6 +1272,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun defaultWaveformForNowPlayingLayout(layoutId: String): String {
+        return when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
+            com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "WAVY"
+            com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "SNAKE"
+            com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
+            com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
+        }
+    }
+
     fun setOnboardingThemeMode(mode: String, isSystemDark: Boolean) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             val targetMode = mode.uppercase()
@@ -1275,7 +1289,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val pairedNowPlaying = defaultNowPlayingLayoutForTheme(targetMode, isSystemDark)
             preferences.setNowPlayingUserOverridden(false)
             preferences.setNowPlayingLayout(pairedNowPlaying, isUserExplicit = false)
-            preferences.setWaveformStyle("SNAKE")
+            if (!preferences.isWaveformUserOverriddenSync()) {
+                preferences.setWaveformStyle(defaultWaveformForNowPlayingLayout(pairedNowPlaying), isUserExplicit = false)
+            }
             com.example.widget.WidgetUpdateManager.forceRefreshTheme(getApplication(), playbackState.value)
         }
     }
@@ -1297,13 +1313,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setNowPlayingLayout(layoutId: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
             preferences.setNowPlayingLayout(layoutId, isUserExplicit = true)
-            val defaultWaveform = when (com.example.ui.theme.NowPlayingLayout.fromId(layoutId)) {
-                com.example.ui.theme.NowPlayingLayout.MODERN_BENTO -> "SLEEK_LINE"
-                com.example.ui.theme.NowPlayingLayout.NEON_WAVEFORM -> "SNAKE"
-                com.example.ui.theme.NowPlayingLayout.VINYL_TURNTABLE -> "SNAKE"
-                com.example.ui.theme.NowPlayingLayout.MINIMAL_GLASS -> "SNAKE"
+            val currentNormalized = com.example.ui.components.normalizeWaveformStyleId(
+                preferences.getWaveformStyleSync()
+            )
+            // Keep the user's explicitly selected waveform style intact across all Now Playing screens;
+            // only apply screen-specific defaults if the user hasn't picked a waveform (or is still on Sleek Line).
+            if (!preferences.isWaveformUserOverriddenSync() || currentNormalized == "SLEEK_LINE") {
+                preferences.setWaveformStyle(
+                    defaultWaveformForNowPlayingLayout(layoutId),
+                    isUserExplicit = false
+                )
             }
-            preferences.setWaveformStyle(defaultWaveform)
         }
     }
     fun setPlaylistsLayout(layoutId: String) = viewModelScope.launch {
@@ -1328,7 +1348,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         withContext(kotlinx.coroutines.NonCancellable) { preferences.setNowPlayingForwardSeconds(seconds) }
     }
     fun setWaveformStyle(style: String) = viewModelScope.launch {
-        withContext(kotlinx.coroutines.NonCancellable) { preferences.setWaveformStyle(style) }
+        withContext(kotlinx.coroutines.NonCancellable) {
+            preferences.setWaveformStyle(style, isUserExplicit = true)
+        }
     }
     fun setAccentColorPreset(preset: String) = viewModelScope.launch {
         withContext(kotlinx.coroutines.NonCancellable) {
@@ -1773,6 +1795,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Upgrade legacy Modern Bento default (Sleek Line) to Wave unless user explicitly chose a waveform
+                if (!preferences.isWaveformUserOverriddenSync() &&
+                    com.example.ui.theme.NowPlayingLayout.fromId(preferences.getNowPlayingLayoutSync()) ==
+                    com.example.ui.theme.NowPlayingLayout.MODERN_BENTO &&
+                    com.example.ui.components.normalizeWaveformStyleId(preferences.getWaveformStyleSync()) == "SLEEK_LINE"
+                ) {
+                    preferences.setWaveformStyle("WAVY", isUserExplicit = false)
+                }
+            } catch (_: Throwable) {}
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val hasKey = secureApiKeyStore.hasApiKey()
@@ -2516,7 +2551,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (!preferences.isNowPlayingUserOverriddenSync()) {
                 val pairedNowPlaying = defaultNowPlayingLayoutForTheme(themeMode.value, isSystemDark)
                 preferences.setNowPlayingLayout(pairedNowPlaying, isUserExplicit = false)
-                preferences.setWaveformStyle("SNAKE")
+                if (!preferences.isWaveformUserOverriddenSync()) {
+                    preferences.setWaveformStyle(defaultWaveformForNowPlayingLayout(pairedNowPlaying), isUserExplicit = false)
+                }
             }
             preferences.setOnboardingCompleted(true)
             scanner.startAutoDetection()

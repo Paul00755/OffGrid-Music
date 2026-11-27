@@ -59,7 +59,7 @@ fun MiniPlayer(
     showFavorite: Boolean = true,
     onSkipPrevious: (() -> Unit)? = null,
     onFavoriteToggle: (() -> Unit)? = null,
-    style: String = "FLOATING",
+    style: String = "ARTWORK_GLASS",
     swipeToSkip: Boolean = true,
     swipeUpToOpen: Boolean = true,
     swipeDownToDismiss: Boolean = false,

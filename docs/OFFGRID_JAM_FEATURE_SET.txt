@@ -1,0 +1,363 @@
+OFFGRID MUSIC — OFFGRID JAM
+COMPLETE IMPLEMENTED FEATURE INVENTORY
+
+Purpose
+-------
+OffGrid Jam lets signed-in OffGrid Music users create a room, join before it
+starts, and listen to one synchronized queue using audio already on their own
+devices. Jam coordinates accounts, room state, queue, voting, permissions,
+presence, and signaling through Firebase Authentication and Cloud Firestore.
+Audio files are not uploaded to Firebase Storage: approved local-song transfers
+use a direct WebRTC data channel between devices and are saved locally by each
+recipient.
+
+This file describes the implementation currently present in the Android app
+and the deployed-source configuration. Source files can contain older backend
+implementations; see IMPLEMENTATION NOTES AND LIMITS near the end.
+
+
+1. ACCESS, NAVIGATION, AND SIGN-IN
+----------------------------------
+- Jam is a destination in the app's bottom navigation, placed after Search.
+- Jam requires a signed-in OffGrid account. The landing page keeps its
+  explanatory content and How it works? guide visible even while signed out;
+  creating or joining a room requires authentication.
+- Participant display name and profile photo are taken from the signed-in
+  account and shown in the room. The controller resolves a usable account name
+  instead of always displaying a generic Music Lover label.
+- Jam UI uses the app's existing theme color tokens, so its surfaces and
+  accents follow the selected app appearance/theme configuration.
+- On Android versions that require notification permission, the app can ask
+  whether the user wants background Jam recommendation notifications. This is
+  optional; room playback and voting while the Jam screen is open still work
+  when notifications are declined or disabled.
+- Camera permission is requested only when the user chooses QR scanning.
+- On Android 12+, when the configured verified-link domain is not enabled for
+  the app, Jam can open the Android supported-links settings page. This is an
+  app-link setting, not a runtime permission. Invite codes remain usable
+  without enabling links.
+
+
+2. HOW-IT-WORKS GUIDE
+---------------------
+The landing screen has a compact How it works? entry that opens a flashcard-
+style guide. The cards explain:
+- The host configures room size and playback permissions; at least one guest
+  must join before the room can start.
+- Everyone joins before playback starts; the app blocks late joining after
+  start.
+- Jam uses one shared queue and synchronizes play, pause, seeking, and track
+  changes.
+- Shared-library matching checks each device locally. Songs that match across
+  the connected libraries can be recommended without transferring audio.
+- Optional local-song sharing accepts supported audio files up to 25 MB.
+  After approval, audio is transferred device-to-device and is not stored in
+  Firebase.
+- Internet is required for Firebase room coordination. A direct audio transfer
+  can use a reachable local network or direct internet route; strict NATs may
+  prevent direct transfer unless an optional TURN relay is configured.
+
+
+3. CREATE A JAM ROOM
+--------------------
+- The host chooses a room capacity from 2 through 10 participants (including
+  the host).
+- The create flow exposes playback/queue permissions and independent toggles
+  for shared-library recommendations and local-song sharing.
+- Permission presets are available and their individual rules can be reviewed
+  or adjusted before creation.
+- A newly created Jam starts as an invite/waiting room and is not yet playing.
+- The invite screen shows the code, a copy-code action, and the joined people
+  preview. If link hosting is configured, it also shows a shareable HTTPS URL,
+  QR code, and Android share action.
+- The host can close/cancel the waiting room from the invite screen.
+- The host can open/start the listening room only after at least one other
+  participant has joined.
+- The host can revoke the invitation. Revocation makes the old invitation
+  unusable; the waiting room can still be closed.
+
+
+4. JOIN A ROOM AND INVITATION HANDLING
+--------------------------------------
+- A user can enter a formatted invitation code manually.
+- The code parser also extracts codes from /jam/<code> URLs, code query
+  parameters, and QR payload text; it normalizes codes to uppercase
+  alphanumeric form.
+- The Join flow can scan a Jam QR code using the camera.
+- HTTPS links use the configured invitation host (currently
+  offgrid-music.web.app in the project setup). Android verified links can open
+  the Jam destination directly; a web fallback page displays the code and
+  provides an app-opening path.
+- Invite codes work without an HTTPS domain; links and QR code require the
+  Hosting/domain setup.
+- A participant can join only while the room is active, not started, and below
+  its participant limit. Participants who were removed, or who previously
+  handed off host and are recorded as former hosts, cannot rejoin that same
+  invitation/session.
+- The invite UI updates the joined participant preview and the host can see
+  who is present before starting.
+- No one can join midway through an already-started Jam. They must be invited
+  to a new room/session before playback begins.
+
+
+5. ROOM MEMBERS, PRESENCE, AND ROOM LIFECYCLE
+---------------------------------------------
+- The room shows participant names, profile pictures where available, host
+  designation, and connected/reconnecting state.
+- Participants are ordered by join time. Heartbeats refresh identity/presence;
+  a participant is treated as connected for a short grace window and then as
+  reconnecting/stale.
+- The host can transfer host ownership to a participant. The new host is
+  promoted, the previous host is demoted/recorded as former host, and the room
+  announces the change to participants.
+- The host can remove a participant. A warning explains they cannot rejoin the
+  current Jam. If removing the final guest would leave only the host, the UI
+  warns that the room will close and offers remove-and-close or keep-and-
+  continue choices.
+- Removed participant IDs are retained for the session so the same user cannot
+  rejoin through that session's invitation.
+- Back navigation from a room asks for confirmation before leaving. The host
+  flow offers host handoff or closing/disbanding the room; participants can
+  leave. The screen avoids presenting duplicate back buttons.
+- Closing a waiting room closes it for everyone. A started session also closes
+  when participant departures leave fewer than two people. The remaining user
+  receives a notice when applicable.
+- On leaving/closing/being removed or losing access, listeners are stopped and
+  the user's pre-Jam playback state is restored (prior queue/song/position and
+  playback state as captured by the player integration).
+- If the app is reopened with a saved Jam session, the controller restores
+  observation and validates the room state; an ended/invalid session returns
+  the user to normal app playback rather than treating a stale invite as a
+  live room.
+
+
+6. SHARED LISTENING AND PLAYBACK
+--------------------------------
+- All members observe one Firestore-backed shared queue and playback state.
+- Supported shared controls are play/pause, seek, previous/next track, and
+  queue changes according to the host's permission rules.
+- Playback state carries the selected queue item/track, playing state,
+  position, playback speed, revision, command type/ID, and actor identity.
+- Clients estimate current playback position from the last synchronized
+  position/time, apply snapshots to their local player, and periodically
+  correct playback drift. Seeking and track changes trigger appropriate local
+  repositioning.
+- Tracks play from the participant's local library when the track is available
+  there. For an approved local-song transfer, the received song is installed
+  into that participant's local library and then becomes available to Jam
+  playback.
+- Jam takes over the app's existing player while active and restores the
+  captured local playback state when Jam ends.
+- Jam playback is intended to use normal playback behavior; personal fade-in,
+  fade-out, crossfade, and gapless preferences are not Jam synchronization
+  controls. The Jam UI does not expose those effects as room features.
+
+
+7. SHARED QUEUE
+---------------
+- Queue entries show track metadata and are synchronized live to all members.
+- Members can add tracks if the host allows Add to queue.
+- Queue removal and reordering are governed separately by Manage queue.
+- The queue is ordered by its position field; the UI supports moving entries
+  up/down and removing entries where permission allows.
+- Track completion advances the shared queue to the next item.
+- An empty queue shows a prompt to add a track from the local library.
+- Queue size is bounded in the repository/backend implementation; operations
+  report errors through the Jam status UI rather than silently changing the
+  user's normal library.
+
+
+8. PLAYBACK AND QUEUE PERMISSIONS
+---------------------------------
+Each permission has one of these modes:
+- Host only: only the host can perform the action.
+- Everyone: all Jam members can perform it.
+- Selected: the host and explicitly selected participants can perform it.
+
+The independently controlled actions are:
+- Play/pause.
+- Seek.
+- Skip track (previous/next).
+- Add to queue.
+- Manage queue (reorder/remove).
+
+The host can open the room permissions page, select/edit permissions, and save
+them. Non-hosts can inspect the permissions but cannot save host settings.
+Participants cannot directly edit host-owned settings in Firestore rules.
+
+
+9. SHARED-LIBRARY MATCHING
+--------------------------
+- The screen label is “Add from shared library with matching songs”.
+- Each participant indexes eligible local songs on that device. The app does
+  not upload the full library, filenames, paths, or audio bytes for matching.
+- Matching prefers a tag-independent fingerprint generated from encoded audio
+  frames. The fingerprint samples multiple points in the file, hashes the
+  sampled data, and caches the result locally.
+- Matching keys are salted with the Jam session ID and published as compact,
+  opaque hash chunks plus a manifest (counts/readiness). The shared index does
+  not contain raw audio or filenames.
+- If audio-frame fingerprinting is unavailable, matching falls back to
+  normalized metadata: title, artist, optional album, and a duration bucket.
+  Normalization handles case, Unicode marks, common file extensions and common
+  trailing release/format tags. The duration fallback checks neighboring
+  buckets to tolerate small duration differences.
+- This lets differently named copies of the same audio match when their
+  audio-frame fingerprints agree; metadata fallback can still miss renamed or
+  poorly tagged tracks and can produce ambiguous metadata, so it is not a
+  guarantee of identical recording detection.
+- Only tracks matched across every currently indexed/ready participant are
+  shown as shared-library matches. Local-only tracks are excluded from this
+  matching list.
+- The UI can recommend a matched song. If no matches exist, it shows the
+  empty-state explanation and the local-song-sharing/request path appropriate
+  to the current host permissions.
+
+
+10. SONG RECOMMENDATIONS AND VOTING
+----------------------------------
+- Shared-library recommendations and local-song sharing are independent
+  permissions. Turning one off does not turn off, hide, or break the other.
+- The host retains controls to manage either permission. For participants,
+  unavailable actions are hidden and replaced with a small contextual prompt
+  and a Request action.
+- Recommendation prompts explain that the host must enable that feature.
+- At most one active enable request exists per feature in a Jam at a time;
+  recommendation requests and local-sharing requests are independent.
+- A feature request has a two-minute expiry window. Participants and host can
+  see who requested which feature and the remaining time. A new request becomes
+  available after expiry or resolution.
+- The host can respond by enabling the feature immediately or keeping the
+  current disabled setting. The host can ignore/resolve the request and can
+  optionally block that specific requester from requesting that feature again
+  for the current Jam. A block is scoped to the user, feature, and session.
+- Creating a song recommendation starts a short voting window (30 seconds in
+  the UI/backend configuration). Members eligible for that proposal can
+  accept or reject it; the proposer is counted as approved automatically and
+  is not asked to approve their own proposal again.
+- Recommendation cards show the song, proposer, approval/rejection/pending
+  counts, required approvals, per-participant decision state, and time/status.
+- A proposal is ready when its approval requirement is met; rejection,
+  expiry, failure, permission disablement, and cancellation are represented as
+  terminal statuses.
+- Shared-library recommendations do not transfer audio because the matched
+  song already exists locally on all participants' devices.
+
+
+11. LOCAL SONG SHARING AND DIRECT TRANSFER
+------------------------------------------
+- When enabled by the host, a participant can choose a local audio file and
+  propose it to the room. If disabled, participants see the request prompt;
+  they do not see an unusable share control.
+- The file picker accepts the app's supported audio types: MP3, M4A, AAC,
+  FLAC, OGG, and WAV (as represented by supported MIME types/extensions).
+- Files must be at least a few bytes and no larger than 25 MiB (shown as 25 MB
+  in the UI). Non-audio/unsupported types and oversized files are rejected.
+- The proposer is auto-approved for their own proposal. Other eligible members
+  vote; transfer begins when the required approval condition is satisfied.
+- Transfer uses WebRTC data channels. Firestore carries only peer handshake
+  descriptions and short-lived transfer metadata/state, not the audio bytes.
+- The client tries direct connectivity that can work over a reachable local
+  network or internet route. The project provides STUN configuration; no TURN
+  relay is required when a direct route succeeds. Some NAT/firewall networks
+  can block direct peer-to-peer connections; TURN is an optional separately
+  configured relay, which may have its own cost.
+- Each recipient receives a temporary file, verifies the expected SHA-256
+  checksum and audio metadata/duration, then installs it to app-local storage
+  and registers it in that recipient's library.
+- Upload/download state includes progress and failure/readiness information.
+  Retry actions exist for failed sends and downloads where applicable.
+- Temporary cache/partial transfer files are removed after use/failure paths.
+- Devices must be online and available during the transfer. If a recipient
+  app is stopped or background-restricted, the transfer can wait/fail and be
+  retried from the Jam screen.
+
+
+12. HOST FEATURE-REQUEST PANEL
+------------------------------
+- A compact panel shows active requests to enable song recommendations or
+  local-song sharing.
+- It shows requester identity, requested feature, brief explanation, remaining
+  lifetime, and Respond/Ignore actions.
+- Respond offers Enable feature or Keep current setting. Enabling updates the
+  Jam permission so the feature becomes available to participants immediately.
+- Optional blocking applies only to the requester and feature for that room.
+- Expired requests disappear and do not keep a feature disabled or prevent a
+  later request.
+
+
+13. INVITE LINKS, QR, AND HOSTING
+---------------------------------
+- Invitation codes are generated from a random code and stored/compared as a
+  digest rather than a raw public lookup value.
+- HTTPS links use `/jam/<code>` and can be routed by Firebase Hosting to the
+  Jam fallback page.
+- Android's configured invite host comes from the JAM_INVITE_HOST Gradle
+  property/environment variable; the GitHub build workflow configures
+  offgrid-music.web.app for its APKs.
+- Digital Asset Links at `public/.well-known/assetlinks.json` associate the
+  Hosting domain with the Android package/signing certificate so supported
+  links can be verified.
+- A user can share a code even when no domain is configured. Domain/Hosting
+  setup is only required for web links and QR links.
+
+
+14. DATA AND SECURITY BOUNDARIES
+-------------------------------
+- Firebase Authentication identifies the host and participants.
+- Firestore contains session metadata, permissions, participant profiles and
+  presence, queue metadata, playback state, votes, hashed library matching
+  keys, feature requests, and peer handshake/transfer state.
+- Shared audio bytes are transferred peer-to-peer; audio is not put in
+  Firestore or Firebase Storage by this Spark-compatible app path.
+- Firestore rules restrict session access to signed-in users and members,
+  constrain host-only settings/actions, enforce invite/session state and
+  participant limits, and gate proposal creation by feature settings.
+- Jam changes are synchronized through Firestore listeners while the devices
+  are online. Firestore quotas and network availability therefore affect
+  coordination.
+- The active Spark implementation performs room operations from authenticated
+  app clients plus Firestore rules/transactions. This is less tamper-resistant
+  than a trusted server authorizing every operation.
+- App Check is part of the broader app setup; production Play Integrity
+  configuration depends on the Firebase project/build distribution setup.
+
+
+15. IMPLEMENTATION NOTES AND LIMITS
+-----------------------------------
+- The Android JamRepository currently routes its operations through its local
+  Spark-compatible client implementation and direct Firestore writes. Older
+  callable Cloud Functions source remains in `functions/src/index.ts`; it is
+  not the active Jam call path described here. The setup document and source
+  comments contain stale statements that still mention callable functions.
+- Firebase Hosting and Firestore rules/indexes are separate deployment
+  concerns. This document does not claim that a particular user's Firebase
+  console has every required configuration deployed.
+- Invitation codes work without a domain. Verified HTTPS links require the
+  Hosting site, deployed `assetlinks.json`, and a matching signing certificate
+  on the APK.
+- Peer transfer can fail when direct WebRTC connectivity is blocked. Without
+  a configured TURN relay, those network paths have no relay fallback.
+- Matching is best-effort and intentionally shares only opaque hashes. Audio
+  fingerprints improve detection across different filenames/tags, while
+  metadata fallback is not proof that two files are byte-for-byte identical.
+- Room coordination requires internet access to Firebase even when two phones
+  transfer audio over their local network.
+- Exact behavior can vary with Android background restrictions, network/NAT,
+  Firebase quota/configuration, and current source revision.
+
+
+KEY SOURCE AREAS
+----------------
+- Android screen and flows: app/src/main/java/com/example/ui/screens/JamScreen.kt
+- Jam state/controller and playback bridge: app/src/main/java/com/example/jam/JamFeatureController.kt
+- Spark-compatible repository and Firestore listeners/writes: app/src/main/java/com/example/jam/JamRepository.kt
+- Room/permission/recommendation models: app/src/main/java/com/example/jam/JamModels.kt
+- Audio identity and shared-library matching: app/src/main/java/com/example/jam/JamLibraryFingerprint.kt
+- WebRTC transfer: app/src/main/java/com/example/jam/JamPeerTransfer.kt
+- Transfer workers/local installation: app/src/main/java/com/example/jam/JamTransferWorkers.kt
+- Firestore rules and indexes: firestore.rules and firestore.indexes.json
+- Invite fallback and asset links: public/jam/index.html and public/.well-known/assetlinks.json
+- Firebase setup notes (some backend statements are stale): docs/offgrid-jam-setup.md
+
+END OF FEATURE INVENTORY

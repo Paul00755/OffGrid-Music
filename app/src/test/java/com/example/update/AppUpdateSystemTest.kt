@@ -749,4 +749,111 @@ class AppUpdateSystemTest {
             doc.sections.count { it.heading.equals("Highlights", ignoreCase = true) }
         )
     }
+
+    // =========================================================================
+    // D. Production vs Test Branch Isolation Tests
+    // =========================================================================
+
+    @Test
+    fun testTestBranchBuildsArePreReleaseAndIgnoreEqualBaseProductionRelease() = runBlocking {
+        val prodBase = AppVersion.parse("v1.0.15")
+        val testBuild = AppVersion.parse("1.0.15-test.42")
+        val nextProd = AppVersion.parse("v1.0.16")
+
+        assertTrue("Test build version must parse validly", testBuild.isValid)
+        assertTrue("Test build version must be flagged as pre-release", testBuild.isPreRelease)
+        assertTrue("Test build version must be flagged as a test build", testBuild.isTestBuild)
+
+        assertFalse(
+            "Production users must never treat a -test build as an available upgrade",
+            testBuild.isNewerThan(prodBase)
+        )
+        assertFalse(
+            "Test build branched from v1.0.15 must not downgrade or prompt back to equal-base v1.0.15",
+            prodBase.isNewerThan(testBuild)
+        )
+        assertTrue(
+            "Test build must still upgrade cleanly once main publishes v1.0.16",
+            nextProd.isNewerThan(testBuild)
+        )
+
+        // Production install ignores -test peer versions in Jam & remote notifications
+        repo.recordObservedPeerVersion("1.0.15-test.42")
+        assertFalse(
+            "recordObservedPeerVersion must ignore -test build strings",
+            repo.updateState.value is UpdateCheckResult.UpdateAvailable
+        )
+        assertFalse(
+            "FCM handler must reject -test release tags",
+            repo.onRemoteReleaseNotification(
+                tagName = "v1.0.15-test.42",
+                title = "OffGrid Music Test",
+                notes = "• Test build",
+                releaseUrl = "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.15-test.42"
+            )
+        )
+
+        // Running a test build must not block Jam preflight against the equal-base v1.0.15 release
+        repo.installedVersionOverrideForTest = testBuild
+        repo.setHttpClientForTesting(
+            fakeHttpClient { req ->
+                buildJsonResponse(
+                    req,
+                    200,
+                    """
+                    [
+                      {
+                        "tag_name": "v1.0.15",
+                        "name": "OffGrid Music v1.0.15",
+                        "body": "### Highlights\n- Cast support",
+                        "published_at": "2026-11-26T12:00:00Z",
+                        "html_url": "https://github.com/Paul00755/OffGrid-Music/releases/tag/v1.0.15",
+                        "draft": false,
+                        "prerelease": false
+                      }
+                    ]
+                    """.trimIndent()
+                )
+            }
+        )
+        val jamCheck = repo.verifyLatestVersionForJam()
+        assertTrue(
+            "Equal-base production v1.0.15 must not block Jam on 1.0.15-test.42",
+            jamCheck is UpdateCheckResult.UpToDate
+        )
+    }
+
+    @Test
+    fun testBranchIsolationInWorkflowsAndReleaseScripts() {
+        val rootDir = File("..").canonicalFile
+        val buildWorkflowText = File(rootDir, ".github/workflows/build-apk.yml").readText()
+        val releaseWorkflowText = File(rootDir, ".github/workflows/release-notification.yml").readText()
+        val notesScriptText = File(rootDir, ".github/scripts/generate_release_notes.py").readText()
+        val publishScriptText = File(rootDir, ".github/scripts/publish_github_release.py").readText()
+        val fcmScriptText = File(rootDir, ".github/scripts/send_fcm_release_notification.py").readText()
+
+        assertTrue(
+            "build-apk.yml must listen to test branch pushes",
+            buildWorkflowText.contains("branches: [ main, master, test ]")
+        )
+        assertTrue(
+            "build-apk.yml must gate Releases and FCM strictly to main/master",
+            buildWorkflowText.contains("(github.ref_name == 'main' || github.ref_name == 'master')")
+        )
+        assertTrue(
+            "build-apk.yml must upload test APKs exclusively via Actions artifacts with optional passcode support",
+            buildWorkflowText.contains("OffGrid-Music-Test-APK") &&
+                buildWorkflowText.contains("TEST_APK_PASSCODE")
+        )
+        assertTrue(
+            "release-notification.yml must block -test release tags",
+            releaseWorkflowText.contains("-test")
+        )
+        assertTrue(
+            "Release and FCM Python scripts must enforce production branch guards",
+            notesScriptText.contains("IS_PRODUCTION_RELEASE") &&
+                publishScriptText.contains("PRODUCTION_BRANCHES") &&
+                fcmScriptText.contains("PRODUCTION_BRANCHES")
+        )
+    }
 }

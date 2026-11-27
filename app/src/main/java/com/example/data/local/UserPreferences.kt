@@ -165,6 +165,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // Expanded Customization Settings
         val WAVEFORM_STYLE = stringPreferencesKey("waveform_style") // "SNAKE", "CLASSIC", "SMOOTH_WAVE", "BARS", "DOTS", "MINIMAL"
+        val WAVEFORM_USER_OVERRIDDEN = booleanPreferencesKey("waveform_user_overridden")
         val AMOLED_MODE = booleanPreferencesKey("amoled_mode") // Extra Dark Mode
         val ACCENT_COLOR_PRESET = stringPreferencesKey("accent_color_preset") // "PURPLE", "PINK", "CYAN", "GREEN", "ORANGE"
         val CORNER_RADIUS_DP = intPreferencesKey("corner_radius_dp") // 12, 16, 20, 24
@@ -470,7 +471,7 @@ class UserPreferencesRepository(private val context: Context) {
             showAlbum = prefs[PreferenceKeys.SHOW_ALBUM] ?: readBoolCached("show_album", true),
             showAudioOutput = prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] ?: readBoolCached("show_audio_output", true),
             showRemainingTime = prefs[PreferenceKeys.SHOW_REMAINING_TIME] ?: readBoolCached("show_remaining_time", false),
-            miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING"),
+            miniPlayerStyle = prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "ARTWORK_GLASS"),
             miniPlayerShowPrevious = prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: readBoolCached("mini_player_show_previous", true),
             miniPlayerShowNext = prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] ?: readBoolCached("mini_player_show_next", true),
             miniPlayerShowFavorite = prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] ?: readBoolCached("mini_player_show_favorite", true),
@@ -515,7 +516,7 @@ class UserPreferencesRepository(private val context: Context) {
             addToQueuePosition = prefs[PreferenceKeys.ADD_TO_QUEUE_POSITION] ?: readStringCached("add_to_queue_position", "BOTTOM"),
             playlistAddSongPosition = prefs[PreferenceKeys.PLAYLIST_ADD_SONG_POSITION] ?: readStringCached("playlist_add_song_position", "BOTTOM"),
             playlistViewMode = prefs[PreferenceKeys.PLAYLIST_VIEW_MODE] ?: readStringCached("playlist_view_mode", "GRID"),
-            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", "continue_listening,quick_actions,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"),
+            homeSections = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", defaultHomeSectionsRaw),
             databaseStorageTier = prefs[PreferenceKeys.DATABASE_STORAGE_TIER] ?: readStringCached("database_storage_tier", "EXPANDED"),
             customDisplayName = prefs[PreferenceKeys.CUSTOM_DISPLAY_NAME],
             customAvatarUri = prefs[PreferenceKeys.CUSTOM_AVATAR_URI],
@@ -583,6 +584,10 @@ class UserPreferencesRepository(private val context: Context) {
                 prefs[PreferenceKeys.MINI_PLAYER_SHOW_PROGRESS] = cloud.miniPlayerShowProgress
                 prefs[PreferenceKeys.MINI_PLAYER_CIRCULAR_ART] = cloud.miniPlayerCircularArt
                 prefs[PreferenceKeys.WAVEFORM_STYLE] = cloud.waveformStyle
+                val cloudWaveNorm = com.example.ui.components.normalizeWaveformStyleId(cloud.waveformStyle)
+                val cloudWaveOverridden = (prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] == true) ||
+                    (cloudWaveNorm !in setOf("SNAKE", "SLEEK_LINE"))
+                prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] = cloudWaveOverridden
                 prefs[PreferenceKeys.LYRICS_FETCH_MODE] = cloud.lyricsFetchMode
                 prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = cloud.lyricsAutoScroll
                 prefs[PreferenceKeys.LYRICS_FONT_SIZE] = cloud.lyricsFontSize
@@ -689,6 +694,13 @@ class UserPreferencesRepository(private val context: Context) {
                         .putBoolean("pref_mini_player_show_progress", cloud.miniPlayerShowProgress)
                         .putBoolean("pref_mini_player_circular_art", cloud.miniPlayerCircularArt)
                         .putString("pref_waveform_style", cloud.waveformStyle)
+                        .putBoolean(
+                            "pref_waveform_user_overridden",
+                            bootCachePrefs.getBoolean(
+                                "pref_waveform_user_overridden",
+                                com.example.ui.components.normalizeWaveformStyleId(cloud.waveformStyle) !in setOf("SNAKE", "SLEEK_LINE")
+                            )
+                        )
                         .putString("pref_lyrics_fetch_mode", cloud.lyricsFetchMode)
                         .putBoolean("pref_lyrics_auto_scroll", cloud.lyricsAutoScroll)
                         .putString("pref_lyrics_font_size", cloud.lyricsFontSize)
@@ -914,7 +926,7 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getGesturePlaybackEnabledSync(): Boolean = readBoolCached("gesture_playback_enabled", true)
 
-    private val defaultHomeSectionsRaw = "continue_listening,quick_actions,suggestions_mix,listening_stats,most_played,most_played_playlists,recently_played,recently_added,top_artists,top_albums"
+    private val defaultHomeSectionsRaw = "continue_listening,quick_actions,suggestions_mix,listening_stats,recently_played,most_played_playlists,most_played,top_artists"
 
     val homeSections: Flow<List<String>> = safeData.map { prefs ->
         val raw = prefs[PreferenceKeys.HOME_SECTIONS] ?: readStringCached("home_sections", defaultHomeSectionsRaw)
@@ -1443,6 +1455,18 @@ class UserPreferencesRepository(private val context: Context) {
     }
     fun getWaveformStyleSync(): String = readStringCached("waveform_style", "SNAKE")
 
+    val isWaveformUserOverridden: Flow<Boolean> = safeData.map { prefs ->
+        prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] ?: isWaveformUserOverriddenSync()
+    }
+    fun isWaveformUserOverriddenSync(): Boolean {
+        if (bootCachePrefs.contains("pref_waveform_user_overridden")) {
+            return bootCachePrefs.getBoolean("pref_waveform_user_overridden", false)
+        }
+        val cachedStyle = bootCachePrefs.getString("pref_waveform_style", null) ?: return false
+        val norm = com.example.ui.components.normalizeWaveformStyleId(cachedStyle)
+        return norm !in setOf("SNAKE", "SLEEK_LINE")
+    }
+
     /** Compatibility projection for old callers; the saved theme mode is the source of truth. */
     val amoledMode: Flow<Boolean> = themeMode.map { it.equals("AMOLED", ignoreCase = true) }
 
@@ -1487,9 +1511,9 @@ class UserPreferencesRepository(private val context: Context) {
     fun getShowRemainingTimeSync(): Boolean = readBoolCached("show_remaining_time", false)
 
     val miniPlayerStyle: Flow<String> = safeData.map { prefs ->
-        prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "FLOATING")
+        prefs[PreferenceKeys.MINI_PLAYER_STYLE] ?: readStringCached("mini_player_style", "ARTWORK_GLASS")
     }
-    fun getMiniPlayerStyleSync(): String = readStringCached("mini_player_style", "FLOATING")
+    fun getMiniPlayerStyleSync(): String = readStringCached("mini_player_style", "ARTWORK_GLASS")
 
     val miniPlayerShowPrevious: Flow<Boolean> = safeData.map { prefs ->
         prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] ?: readBoolCached("mini_player_show_previous", true)
@@ -1861,11 +1885,22 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun setWaveformStyle(style: String) {
+    suspend fun setWaveformStyle(style: String, isUserExplicit: Boolean = true) {
         val now = System.currentTimeMillis()
         writeStringCached("waveform_style", style, now)
+        writeBoolCached("waveform_user_overridden", isUserExplicit, now)
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.WAVEFORM_STYLE] = style
+            prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] = isUserExplicit
+            prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
+        }
+    }
+
+    suspend fun setWaveformUserOverridden(overridden: Boolean) {
+        val now = System.currentTimeMillis()
+        writeBoolCached("waveform_user_overridden", overridden, now)
+        context.dataStore.edit { prefs ->
+            prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] = overridden
             prefs[PreferenceKeys.SETTINGS_LAST_UPDATED_AT] = now
         }
     }
@@ -2937,11 +2972,12 @@ class UserPreferencesRepository(private val context: Context) {
                 .putBoolean("pref_show_artist", true)
                 .putBoolean("pref_show_album", true)
                 .putBoolean("pref_show_audio_output", true)
-                .putString("pref_mini_player_style", "FLOATING")
+                .putString("pref_mini_player_style", "ARTWORK_GLASS")
                 .putBoolean("pref_mini_player_show_previous", true)
                 .putBoolean("pref_mini_player_show_next", true)
                 .putBoolean("pref_mini_player_show_favorite", true)
                 .putString("pref_waveform_style", "SNAKE")
+                .putBoolean("pref_waveform_user_overridden", false)
                 .putString("pref_lyrics_fetch_mode", "WIFI_ONLY")
                 .putBoolean("pref_lyrics_auto_scroll", true)
                 .putString("pref_lyrics_font_size", "MEDIUM")
@@ -3034,11 +3070,12 @@ class UserPreferencesRepository(private val context: Context) {
             prefs[PreferenceKeys.SHOW_ARTIST] = true
             prefs[PreferenceKeys.SHOW_ALBUM] = true
             prefs[PreferenceKeys.SHOW_AUDIO_OUTPUT] = true
-            prefs[PreferenceKeys.MINI_PLAYER_STYLE] = "FLOATING"
+            prefs[PreferenceKeys.MINI_PLAYER_STYLE] = "ARTWORK_GLASS"
             prefs[PreferenceKeys.MINI_PLAYER_SHOW_PREVIOUS] = true
             prefs[PreferenceKeys.MINI_PLAYER_SHOW_NEXT] = true
             prefs[PreferenceKeys.MINI_PLAYER_SHOW_FAVORITE] = true
             prefs[PreferenceKeys.WAVEFORM_STYLE] = "SNAKE"
+            prefs[PreferenceKeys.WAVEFORM_USER_OVERRIDDEN] = false
             prefs[PreferenceKeys.LYRICS_FETCH_MODE] = "WIFI_ONLY"
             prefs[PreferenceKeys.LYRICS_AUTO_SCROLL] = true
             prefs[PreferenceKeys.LYRICS_FONT_SIZE] = "MEDIUM"

@@ -109,6 +109,7 @@ fun OnboardingScreen(
             currentPlaylistsLayout = playlistsLayout,
             currentLyricsLayout = lyricsLayout,
             waveformStyle = "SNAKE",
+            isWaveformUserOverridden = false,
             themeMode = selectedThemeMode,
             isGradientEffect = true,
             isGlassEffect = true,

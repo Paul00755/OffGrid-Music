@@ -158,6 +158,7 @@ fun HomeScreenSectionsManagerCard(
 
     val builtInPresets = remember {
         listOf(
+            "Classic 8" to listOf("continue_listening", "quick_actions", "suggestions_mix", "listening_stats", "recently_played", "most_played_playlists", "most_played", "top_artists"),
             "Default Full" to listOf("continue_listening", "quick_actions", "suggestions_mix", "listening_stats", "most_played", "most_played_playlists", "recently_played", "recently_added", "top_artists", "top_albums"),
             "Minimalist" to listOf("suggestions_mix", "recently_played", "most_played_playlists"),
             "Discovery & Stats" to listOf("suggestions_mix", "listening_stats", "most_played", "top_artists", "top_albums"),
@@ -712,6 +713,7 @@ fun SettingsScreen(
     folders: List<FolderInfo>,
     sleepTimerState: SleepTimerState,
     waveformStyle: String = "SNAKE",
+    isWaveformUserOverridden: Boolean = true,
     onSetWaveformStyle: (String) -> Unit = {},
     themeMode: String = "DARK",
     onSetThemeMode: (String) -> Unit = {},
@@ -780,7 +782,7 @@ fun SettingsScreen(
     onSetCustomAccentColor: (Int) -> Unit = {},
     accentColorPreset: String = "CYAN",
     onSetAccentColorPreset: (String) -> Unit = {},
-    miniPlayerStyle: String = "FLOATING",
+    miniPlayerStyle: String = "ARTWORK_GLASS",
     onSetMiniPlayerStyle: (String) -> Unit = {},
     miniPlayerShowPrevious: Boolean = true,
     onSetMiniPlayerShowPrevious: (Boolean) -> Unit = {},
@@ -1708,6 +1710,7 @@ fun SettingsScreen(
             currentPlaylistsLayout = playlistsLayout,
             currentLyricsLayout = lyricsLayout,
             waveformStyle = waveformStyle,
+            isWaveformUserOverridden = isWaveformUserOverridden,
             themeMode = themeMode,
             isGradientEffect = isGradientEffect,
             isGlassEffect = isGlassEffect,

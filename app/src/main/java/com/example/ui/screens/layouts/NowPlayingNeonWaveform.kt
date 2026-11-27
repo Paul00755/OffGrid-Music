@@ -72,7 +72,7 @@ fun NowPlayingNeonWaveform(
     onOpenLyricsSheet: () -> Unit,
     onOpenSleepTimer: () -> Unit,
     onOpenOptionsMenu: () -> Unit = {},
-    waveformStyle: String = "SLEEK_LINE",
+    waveformStyle: String = "SNAKE",
     gesturePlaybackEnabled: Boolean = true,
     playbackPositionFlow: StateFlow<Long>? = null,
     showVolumeBar: Boolean = false,

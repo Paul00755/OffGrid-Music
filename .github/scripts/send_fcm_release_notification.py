@@ -19,6 +19,10 @@ import urllib.request
 
 FCM_TOPIC = "offgrid_updates"
 RECEIPT_ASSET_NAME = "fcm-notification-receipt.json"
+PRODUCTION_BRANCHES = {"main", "master"}
+PRERELEASE_TAG_RE = re.compile(
+    r"(?i)(?:^|[-._])(alpha|beta|rc\d*|dev|nightly|canary|prerelease|test)(?:$|[-._\d])"
+)
 
 
 def b64url_encode(data: bytes) -> str:
@@ -296,6 +300,36 @@ def upload_dedup_receipt(tag: str, message_name: str) -> None:
 
 
 def main() -> int:
+    is_prod_env = (os.environ.get("IS_PRODUCTION_RELEASE") or "").strip().lower()
+    event_name = (os.environ.get("GITHUB_EVENT_NAME") or "").strip().lower()
+    full_ref = (os.environ.get("GITHUB_REF") or "").strip()
+    ref_name = (os.environ.get("GITHUB_REF_NAME") or "").strip()
+    if ref_name.startswith("refs/heads/"):
+        ref_name = ref_name[len("refs/heads/"):]
+
+    if is_prod_env == "false" or event_name == "pull_request":
+        print(
+            f"Skipping FCM notification for non-production context "
+            f"(event='{event_name}', IS_PRODUCTION_RELEASE='{is_prod_env}')."
+        )
+        return 0
+
+    if full_ref.startswith("refs/heads/"):
+        branch_name = full_ref[len("refs/heads/"):]
+        if branch_name not in PRODUCTION_BRANCHES:
+            print(f"Skipping FCM notification for non-production branch '{branch_name}'.")
+            return 0
+    elif full_ref.startswith("refs/pull/"):
+        print(f"Skipping FCM notification for pull request ref '{full_ref}'.")
+        return 0
+    elif (
+        event_name in ("push", "workflow_dispatch")
+        and ref_name
+        and ref_name not in PRODUCTION_BRANCHES
+    ):
+        print(f"Skipping FCM notification for non-production branch '{ref_name}'.")
+        return 0
+
     tag = os.environ.get("TAG", "").strip()
     repo = os.environ.get("GITHUB_REPOSITORY", "Paul00755/OffGrid-Music").strip()
     sa_raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -306,6 +340,10 @@ def main() -> int:
 
     if tag.lower() == "latest":
         print("Skipping FCM notification for rolling 'latest' alias tag.")
+        return 0
+
+    if PRERELEASE_TAG_RE.search(tag):
+        print(f"Skipping FCM notification for pre-release/test tag '{tag}'.")
         return 0
 
     if not sa_raw:

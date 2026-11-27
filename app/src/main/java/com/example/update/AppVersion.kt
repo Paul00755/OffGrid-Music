@@ -26,7 +26,22 @@ data class AppVersion(
         return buildNumber.compareTo(other.buildNumber)
     }
 
-    fun isNewerThan(other: AppVersion): Boolean = this.isValid && !this.isPreRelease && this > other
+    val isTestBuild: Boolean
+        get() = isPreRelease && TEST_BUILD_REGEX.containsMatchIn(raw)
+
+    fun isNewerThan(other: AppVersion): Boolean {
+        if (!this.isValid || this.isPreRelease) return false
+        // Test channel builds (e.g. "1.0.15-test.42") branch after their base release (e.g. "1.0.15"),
+        // so do not treat the equal-base stable release as an upgrade/downgrade over a test build.
+        if (other.isTestBuild &&
+            major == other.major &&
+            minor == other.minor &&
+            patch == other.patch
+        ) {
+            return false
+        }
+        return this > other
+    }
 
     val displayString: String get() = toDisplayString()
 
@@ -43,7 +58,8 @@ data class AppVersion(
     companion object {
         private val BUILD_REGEX = Regex("(?i)(?:build|run)[.#\\s_-]*(\\d+)")
         private val SEMVER_REGEX = Regex("(?i)v?(\\d+)\\.(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?")
-        private val PRERELEASE_REGEX = Regex("(?i)(?:^|[-._\\s])(alpha|beta|rc\\d*|dev|nightly|canary|prerelease)(?:$|[-._\\s\\d])")
+        private val PRERELEASE_REGEX = Regex("(?i)(?:^|[-._\\s])(alpha|beta|rc\\d*|dev|nightly|canary|prerelease|test)(?:$|[-._\\s\\d])")
+        private val TEST_BUILD_REGEX = Regex("(?i)(?:^|[-._\\s])test(?:$|[-._\\s\\d])")
 
         fun parse(versionString: String?, fallbackBuildNumber: Long = 0L): AppVersion {
             val clean = versionString?.trim().orEmpty()

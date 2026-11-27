@@ -432,5 +432,65 @@ class NowPlayingAndLyricsLayoutsTest {
         composeTestRule.onNodeWithTag("sleep_timer_add_song_1").assertIsNotEnabled()
         composeTestRule.onNodeWithTag("sleep_timer_add_song_2").assertIsNotEnabled()
     }
+
+    @Test
+    fun testNewUiDefaultsMiniPlayerArtworkGlassAndClassicEightHomeOrder() = runBlocking {
+        val repo = UserPreferencesRepository.getInstance(context)
+
+        // Default mini-player must be ARTWORK_GLASS and default home feed must be the 8-section Classic order
+        assertEquals("ARTWORK_GLASS", repo.miniPlayerStyle.first())
+        assertEquals("ARTWORK_GLASS", repo.getMiniPlayerStyleSync())
+        assertEquals(
+            listOf(
+                "continue_listening",
+                "quick_actions",
+                "suggestions_mix",
+                "listening_stats",
+                "recently_played",
+                "most_played_playlists",
+                "most_played",
+                "top_artists"
+            ),
+            repo.homeSections.first()
+        )
+        assertEquals(
+            repo.homeSections.first(),
+            repo.getHomeSectionsSync()
+        )
+
+        val cloudDefaults = CloudUserSettings()
+        assertEquals("ARTWORK_GLASS", cloudDefaults.miniPlayerStyle)
+        assertEquals(
+            "continue_listening,quick_actions,suggestions_mix,listening_stats,recently_played,most_played_playlists,most_played,top_artists",
+            cloudDefaults.homeSections
+        )
+        val roundTripped = CloudUserSettings.fromMap(emptyMap())
+        assertEquals("ARTWORK_GLASS", roundTripped.miniPlayerStyle)
+        assertEquals(cloudDefaults.homeSections, roundTripped.homeSections)
+
+        // Verify resetToDefaultSettings restores ARTWORK_GLASS, Classic 8 order, and un-overrides waveform
+        repo.setMiniPlayerStyle("FLOATING")
+        repo.setHomeSections(listOf("recently_played"))
+        repo.setWaveformStyle("BARS", isUserExplicit = true)
+        assertTrue(repo.isWaveformUserOverriddenSync())
+
+        repo.resetToDefaultSettings()
+        assertEquals("ARTWORK_GLASS", repo.miniPlayerStyle.first())
+        assertEquals(
+            listOf(
+                "continue_listening",
+                "quick_actions",
+                "suggestions_mix",
+                "listening_stats",
+                "recently_played",
+                "most_played_playlists",
+                "most_played",
+                "top_artists"
+            ),
+            repo.homeSections.first()
+        )
+        assertFalse(repo.isWaveformUserOverriddenSync())
+        assertEquals("SNAKE", repo.waveformStyle.first())
+    }
 }
 

@@ -18,6 +18,7 @@ draft->publish + make_latest PATCH requests) by:
 import http.client
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -29,6 +30,10 @@ from typing import Any, Dict, List, Optional, Tuple
 RETRYABLE_HTTP_CODES = {408, 429, 500, 502, 503, 504}
 DEFAULT_RETRY_DELAYS = (3, 6, 12, 20)
 CANONICAL_APK_NAME = "OffGrid-Music.apk"
+PRODUCTION_BRANCHES = {"main", "master"}
+PRERELEASE_TAG_RE = re.compile(
+    r"(?i)(?:^|[-._])(alpha|beta|rc\d*|dev|nightly|canary|prerelease|test)(?:$|[-._\d])"
+)
 
 
 class GitHubApiError(RuntimeError):
@@ -351,6 +356,25 @@ def update_git_tag(tag: str, commit_sha: str) -> None:
 
 
 def main() -> int:
+    is_prod_env = (os.environ.get("IS_PRODUCTION_RELEASE") or "").strip().lower()
+    event_name = (os.environ.get("GITHUB_EVENT_NAME") or "").strip().lower()
+    ref_name = (os.environ.get("GITHUB_REF_NAME") or "").strip()
+    if ref_name.startswith("refs/heads/"):
+        ref_name = ref_name[len("refs/heads/"):]
+
+    if (
+        is_prod_env == "false"
+        or event_name == "pull_request"
+        or (ref_name and ref_name not in PRODUCTION_BRANCHES)
+    ):
+        print(
+            f"Refusing to publish GitHub Release for non-production context "
+            f"(event='{event_name or 'unset'}', ref='{ref_name or 'unset'}', "
+            f"IS_PRODUCTION_RELEASE='{is_prod_env or 'unset'}').",
+            file=sys.stderr,
+        )
+        return 1
+
     token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
     repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
     commit_sha = os.environ.get("GITHUB_SHA", "").strip()
@@ -363,6 +387,13 @@ def main() -> int:
         print(
             "Error: Missing required environment variables "
             "(GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, VERSION_TAG).",
+            file=sys.stderr,
+        )
+        return 1
+
+    if PRERELEASE_TAG_RE.search(version_tag) or version_tag.lower() == "latest":
+        print(
+            f"Refusing to publish non-production or invalid release tag '{version_tag}'.",
             file=sys.stderr,
         )
         return 1

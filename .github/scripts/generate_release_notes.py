@@ -806,6 +806,29 @@ def fetch_latest_published_release_tag() -> Tuple[Optional[Tuple[int, int, int]]
     return None, ""
 
 
+PRODUCTION_BRANCHES = {"main", "master"}
+
+
+def normalize_branch_name(raw_ref: Optional[str] = None) -> str:
+    ref = (raw_ref if raw_ref is not None else os.environ.get("GITHUB_REF_NAME", "")).strip()
+    if ref.startswith("refs/heads/"):
+        ref = ref[len("refs/heads/"):]
+    return ref
+
+
+def is_production_build_context() -> bool:
+    """Only pushes/dispatches targeting main or master count as production release builds."""
+    event_name = (os.environ.get("GITHUB_EVENT_NAME") or "").strip().lower()
+    if event_name == "pull_request":
+        return False
+    ref_name = normalize_branch_name()
+    if ref_name:
+        return ref_name in PRODUCTION_BRANCHES
+    if (os.environ.get("GITHUB_ACTIONS") or "").strip().lower() == "true":
+        return False
+    return True
+
+
 def determine_version_and_base() -> Tuple[str, str, str, str]:
     """
     Returns (next_version_str, version_tag, prev_tag, diff_base_ref).
@@ -852,7 +875,10 @@ def determine_version_and_base() -> Tuple[str, str, str, str]:
     elif git_ref_exists("HEAD~1"):
         diff_base_ref = "HEAD~1"
 
-    # 3. Determine next semantic version
+    # 3. Determine next semantic version (production branches only)
+    is_prod = is_production_build_context()
+    event_name = (os.environ.get("GITHUB_EVENT_NAME") or "").strip().lower()
+    ref_name = normalize_branch_name()
     explicit = os.environ.get("INPUT_EXPLICIT_VERSION", "").strip().lstrip("vV")
     bump_type = os.environ.get("INPUT_BUMP_TYPE", "").strip().lower()
     range_commits_msg = (
@@ -862,24 +888,38 @@ def determine_version_and_base() -> Tuple[str, str, str, str]:
     )
     msg_lower = range_commits_msg.lower()
 
-    explicit_parsed = parse_semver(explicit) if explicit else None
-    if explicit_parsed:
-        next_ver = explicit_parsed
-    else:
-        major, minor, patch = highest_ver
-        if bump_type == "major" or "[major]" in msg_lower or "breaking change" in msg_lower:
-            next_ver = (major + 1, 0, 0)
-        elif bump_type == "minor" or "[minor]" in msg_lower:
-            next_ver = (major, minor + 1, 0)
+    if is_prod:
+        explicit_parsed = parse_semver(explicit) if explicit else None
+        if explicit_parsed:
+            next_ver = explicit_parsed
         else:
-            next_ver = (major, minor, patch + 1)
+            major, minor, patch = highest_ver
+            if bump_type == "major" or "[major]" in msg_lower or "breaking change" in msg_lower:
+                next_ver = (major + 1, 0, 0)
+            elif bump_type == "minor" or "[minor]" in msg_lower:
+                next_ver = (major, minor + 1, 0)
+            else:
+                next_ver = (major, minor, patch + 1)
 
-    next_version_str = f"{next_ver[0]}.{next_ver[1]}.{next_ver[2]}"
-    version_tag = f"v{next_version_str}"
+        next_version_str = f"{next_ver[0]}.{next_ver[1]}.{next_ver[2]}"
+        version_tag = f"v{next_version_str}"
+    else:
+        # Test branches / PRs must never increment the production semantic version number.
+        major, minor, patch = highest_ver
+        run_number = re.sub(r"[^0-9]", "", (os.environ.get("GITHUB_RUN_NUMBER") or "0").strip()) or "0"
+        if event_name == "pull_request":
+            channel_label = "dev"
+        else:
+            slug = re.sub(r"[^a-z0-9]+", "-", ref_name.lower()).strip("-")
+            channel_label = "test" if slug in ("", "test") else f"test-{slug}"
+        next_version_str = f"{major}.{minor}.{patch}-{channel_label}.{run_number}"
+        version_tag = f"v{next_version_str}"
+
     return next_version_str, version_tag, prev_tag, diff_base_ref
 
 
 def main() -> int:
+    is_prod = is_production_build_context()
     next_version_str, version_tag, prev_tag, diff_base_ref = determine_version_and_base()
 
     commit_notes = collect_commit_notes(diff_base_ref)
@@ -887,7 +927,11 @@ def main() -> int:
     changed_files, _ = get_diff_stats(diff_base_ref)
 
     all_items = commit_notes + diff_notes
-    gemini_markdown = try_gemini_summary(diff_base_ref, commit_notes, diff_notes, changed_files)
+    gemini_markdown = (
+        try_gemini_summary(diff_base_ref, commit_notes, diff_notes, changed_files)
+        if is_prod
+        else None
+    )
     final_markdown = gemini_markdown if gemini_markdown else format_categorized_markdown(all_items)
 
     output_path = os.environ.get("RELEASE_NOTES_OUTPUT", "plain_release_changes.md")
@@ -900,9 +944,11 @@ def main() -> int:
             env_file.write(f"NEXT_VERSION={next_version_str}\n")
             env_file.write(f"VERSION_TAG={version_tag}\n")
             env_file.write(f"PREVIOUS_TAG={prev_tag}\n")
+            env_file.write(f"IS_PRODUCTION_RELEASE={'true' if is_prod else 'false'}\n")
 
+    channel_desc = "production" if is_prod else "non-production/test (version anchored)"
     print(
-        f"Computed semantic version: {next_version_str} "
+        f"Computed {channel_desc} version: {next_version_str} "
         f"(tag: {version_tag}, previous: {prev_tag or 'none'}, diff_base: {diff_base_ref or 'none'})"
     )
     print("Generated release changes:")
