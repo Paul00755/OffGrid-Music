@@ -89,38 +89,121 @@ object JamLibraryFingerprint {
     }
 }
 
-/** Matching keys prefer audio-frame identity and use normalized tags as a lightweight fallback. */
+/** Matching keys prefer audio-frame identity and use multi-tier normalized tags for high cross-device recall. */
 fun jamLibraryMatchKeys(track: JamTrack, audioFingerprint: String?, sessionSalt: String): List<String> {
     val keys = LinkedHashSet<String>()
     audioFingerprint?.takeIf(String::isNotBlank)?.let { keys += "audio:${sha256("$sessionSalt\u001f$it")}" }
 
-    val title = normalizeMatchText(track.title, stripTrailingTags = true)
-    val artist = normalizeMatchText(track.artist, stripTrailingTags = false)
-    val album = normalizeMatchText(track.album, stripTrailingTags = false)
-    if (title.isBlank() || artist.isBlank() || track.durationMs <= 0L) return keys.toList()
+    val title = normalizeJamMatchTitle(track.title)
+    if (title.isBlank() || track.durationMs <= 0L) return keys.toList()
 
-    val bucket = track.durationMs / 3_000L
+    val compactTitle = title.replace(" ", "")
+    val artistTokens = extractJamArtistTokens(track.artist)
+    val fullArtist = normalizeJamMatchArtist(track.artist)
+    val sortedArtist = artistTokens.sorted().joinToString(" ")
+    val primaryArtist = artistTokens.firstOrNull().orEmpty()
+    val album = normalizeJamMatchText(track.album, stripTrailingTags = true)
+
+    val bucket = track.durationMs / 4_000L
     for (durationBucket in (bucket - 1L).coerceAtLeast(0L)..(bucket + 1L)) {
-        keys += "meta:${sha256("$sessionSalt\u001f$title\u001f$artist\u001f$album\u001f$durationBucket")}"
-        keys += "meta:${sha256("$sessionSalt\u001f$title\u001f$artist\u001f$durationBucket")}"
+        if (fullArtist.isNotBlank()) {
+            if (album.isNotBlank() && !album.contains("unknown")) {
+                keys += "meta:${sha256("$sessionSalt\u001f$title\u001f$fullArtist\u001f$album\u001f$durationBucket")}"
+            }
+            keys += "meta:${sha256("$sessionSalt\u001f$title\u001f$fullArtist\u001f$durationBucket")}"
+        }
+        if (sortedArtist.isNotBlank() && sortedArtist != fullArtist) {
+            keys += "meta:${sha256("$sessionSalt\u001f$title\u001fsa:$sortedArtist\u001f$durationBucket")}"
+        }
+        if (primaryArtist.isNotBlank()) {
+            keys += "meta:${sha256("$sessionSalt\u001f$title\u001fpa:$primaryArtist\u001f$durationBucket")}"
+            if (compactTitle != title && compactTitle.length >= 4) {
+                keys += "meta:${sha256("$sessionSalt\u001fct:$compactTitle\u001fpa:$primaryArtist\u001f$durationBucket")}"
+            }
+        }
+    }
+
+    // High-specificity title + tight duration bucket (2.5s) handles devices with Unknown Artist or composer/singer differences
+    if (compactTitle.length >= 5) {
+        val tightBucket = track.durationMs / 2_500L
+        for (tb in (tightBucket - 1L).coerceAtLeast(0L)..(tightBucket + 1L)) {
+            keys += "meta:${sha256("$sessionSalt\u001ftd:$compactTitle\u001f$tb")}"
+        }
     }
     return keys.toList()
 }
 
-private val removableTitleSuffixes = setOf(
-    "audio", "video", "song", "lyrics", "lyric", "official", "full", "hd", "tamil",
-    "telugu", "malayalam", "hindi", "mp3", "mp4", "aac", "flac", "wav", "remastered"
+private val jamSiteWatermarkRegex = Regex(
+    "(?i)\\b(masstamilan|massstamilan|pagalworld|isaimini|starmusiq|kuttyweb|mp3juices|pendujatt|djpunjab|mrjatt|songspk|sensongs|naasongs|jiosaavn|spotify|wynk|gaana|tamildada|tamilprint|wapking|downloadming|djmaza|songsweb|tamilwire|raagtune|pagalnew|mrjatt|highresaudio)\\b(?:\\.[a-z]{2,5})?"
 )
 
-private fun normalizeMatchText(value: String, stripTrailingTags: Boolean): String {
+private val jamDomainTldRegex = Regex("(?i)\\b[a-z0-9-]+\\.(fm|dev|com|org|net|in|co|cc|info|me|io|xyz|top|live)\\b")
+private val jamTrackPrefixRegex = Regex("^\\s*\\d{1,3}\\s*[-._)]\\s+")
+private val jamBracketNoiseRegex = Regex(
+    "(?i)[(\\[](?:from\\s+[^)\\]]*|official[^)\\]]*|lyric[^)\\]]*|audio[^)\\]]*|video[^)\\]]*|full\\s+song[^)\\]]*|feat\\.?[^)\\]]*|ft\\.?[^)\\]]*|\\d{2,4}\\s*kbps[^)\\]]*|masstamilan[^)\\]]*|pagalworld[^)\\]]*|isaimini[^)\\]]*|starmusiq[^)\\]]*|original\\s+motion[^)\\]]*|remaster(?:ed)?[^)\\]]*|hd|4k|hq|mp3|flac)[)\\]]"
+)
+
+private val removableTitleSuffixes = setOf(
+    "audio", "video", "song", "songs", "lyrics", "lyric", "official", "full", "hd", "hq", "4k",
+    "tamil", "telugu", "malayalam", "hindi", "english", "kannada", "mp3", "mp4", "aac", "flac",
+    "wav", "m4a", "ogg", "remastered", "remaster", "version", "single", "original", "kbps",
+    "fm", "dev", "com", "org", "net", "in", "indie", "masstamilan", "pagalworld", "isaimini",
+    "starmusiq", "naasongs", "sensongs", "jiosaavn", "wynk", "gaana"
+)
+
+private val ignoredArtistTokens = setOf(
+    "unknown", "artist", "unknown artist", "various", "various artists", "feat", "ft", "featuring",
+    "and", "with", "masstamilan", "pagalworld", "isaimini", "starmusiq", "naasongs", "sensongs",
+    "fm", "dev", "com", "org", "net", "in", "320kbps", "128kbps", "kbps", "mp3"
+)
+
+internal fun normalizeJamMatchTitle(value: String): String {
+    val withoutPrefix = value.replace(jamTrackPrefixRegex, "")
+    val withoutSites = withoutPrefix
+        .replace(jamSiteWatermarkRegex, " ")
+        .replace(jamDomainTldRegex, " ")
+    val strippedBrackets = withoutSites.replace(jamBracketNoiseRegex, " ")
+    val preferred = normalizeJamMatchText(strippedBrackets, stripTrailingTags = true)
+    return preferred.ifBlank { normalizeJamMatchText(withoutSites, stripTrailingTags = true) }
+}
+
+internal fun normalizeJamMatchArtist(value: String): String {
+    val cleaned = value
+        .replace(jamSiteWatermarkRegex, " ")
+        .replace(jamDomainTldRegex, " ")
+    val normalized = normalizeJamMatchText(cleaned, stripTrailingTags = true)
+    return if (normalized in ignoredArtistTokens) "" else normalized
+}
+
+internal fun extractJamArtistTokens(value: String): List<String> {
+    val cleaned = value
+        .replace(jamSiteWatermarkRegex, " ")
+        .replace(jamDomainTldRegex, " ")
+        .replace(Regex("(?i)\\b(feat\\.?|ft\\.?|featuring|with)\\b"), ",")
+    val rawParts = cleaned.split(Regex("[,&;/+|]+"))
+    val tokens = LinkedHashSet<String>()
+    for (part in rawParts) {
+        val norm = normalizeJamMatchText(part, stripTrailingTags = true)
+        if (norm.isNotBlank() && norm !in ignoredArtistTokens && norm.length >= 2) {
+            tokens += norm
+        }
+    }
+    if (tokens.isEmpty()) {
+        val whole = normalizeJamMatchArtist(value)
+        if (whole.isNotBlank()) tokens += whole
+    }
+    return tokens.toList()
+}
+
+internal fun normalizeJamMatchText(value: String, stripTrailingTags: Boolean): String {
     val decomposed = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFKD)
         .replace(Regex("\\p{Mn}+"), "")
         .replace(Regex("\\.(mp3|m4a|mp4|aac|flac|ogg|wav)$"), " ")
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
         .trim()
-    if (!stripTrailingTags) return decomposed
+    if (!stripTrailingTags || decomposed.isBlank()) return decomposed
     val tokens = decomposed.split(Regex("\\s+")).toMutableList()
-    while (tokens.isNotEmpty() && (tokens.last() in removableTitleSuffixes || tokens.last().matches(Regex("\\d{2,4}kbps")))) {
+    while (tokens.size > 1 && (tokens.last() in removableTitleSuffixes || tokens.last().matches(Regex("\\d{2,4}kbps")))) {
         tokens.removeAt(tokens.lastIndex)
     }
     return tokens.joinToString(" ")

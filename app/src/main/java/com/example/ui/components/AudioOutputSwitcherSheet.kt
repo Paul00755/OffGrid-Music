@@ -12,13 +12,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.SpeakerGroup
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -39,9 +42,13 @@ fun AudioOutputSwitcherSheet(
     availableDevices: List<AudioRouteDevice>,
     onSelectDevice: (AudioRouteDevice) -> Unit,
     onLaunchSystemSwitcher: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isCastingToTv: Boolean = false,
+    castDeviceName: String? = null
 ) {
     val context = LocalContext.current
+    val effectiveCastingLocked = isCastingToTv ||
+        audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -92,7 +99,7 @@ fun AudioOutputSwitcherSheet(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.SpeakerGroup,
+                                imageVector = if (effectiveCastingLocked) Icons.Default.Tv else Icons.Default.SpeakerGroup,
                                 contentDescription = null,
                                 tint = BentoPrimary,
                                 modifier = Modifier.size(20.dp)
@@ -108,7 +115,11 @@ fun AudioOutputSwitcherSheet(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Playing on ${audioRouteInfo.name}",
+                                text = if (effectiveCastingLocked) {
+                                    if (!castDeviceName.isNullOrBlank()) "Playing in TV · $castDeviceName" else "Playing in TV"
+                                } else {
+                                    "Playing on ${audioRouteInfo.name}"
+                                },
                                 fontSize = 12.sp,
                                 color = BentoPrimary,
                                 fontWeight = FontWeight.Medium,
@@ -134,12 +145,68 @@ fun AudioOutputSwitcherSheet(
                     }
                 }
 
+                if (effectiveCastingLocked) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = BentoPrimary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.42f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("audio_output_locked_tv_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(BentoPrimary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tv,
+                                    contentDescription = "Playing in TV",
+                                    tint = BentoOnPrimary,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Playing in TV",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BentoTextPrimary
+                                )
+                                Text(
+                                    text = "Audio output is locked while casting${if (!castDeviceName.isNullOrBlank()) " to $castDeviceName" else ""}. Disconnect Cast to switch phone speakers or Bluetooth.",
+                                    fontSize = 11.5.sp,
+                                    color = BentoTextSecondary,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Output locked while casting",
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
                 // Clean Grouped Device Surface (non-boxy unified list with hairline dividers)
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = BentoCardPurple.copy(alpha = 0.55f),
                     border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(if (effectiveCastingLocked) 0.52f else 1f)
                 ) {
                     if (availableDevices.isEmpty()) {
                         Box(
@@ -161,8 +228,10 @@ fun AudioOutputSwitcherSheet(
                                 .heightIn(max = 320.dp)
                         ) {
                             itemsIndexed(availableDevices, key = { _, d -> d.id }) { idx, device ->
-                                val isCurrent = device.isSelected ||
-                                    (device.name.equals(audioRouteInfo.name, ignoreCase = true) && device.type == audioRouteInfo.type)
+                                val isCurrent = !effectiveCastingLocked && (
+                                    device.isSelected ||
+                                        (device.name.equals(audioRouteInfo.name, ignoreCase = true) && device.type == audioRouteInfo.type)
+                                    )
 
                                 val rowBg by animateColorAsState(
                                     targetValue = if (isCurrent) BentoPrimary.copy(alpha = 0.13f) else Color.Transparent,
@@ -173,9 +242,12 @@ fun AudioOutputSwitcherSheet(
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     Surface(
                                         onClick = {
-                                            HapticUtils.performClickHaptic(context)
-                                            onSelectDevice(device)
+                                            if (!effectiveCastingLocked) {
+                                                HapticUtils.performClickHaptic(context)
+                                                onSelectDevice(device)
+                                            }
                                         },
+                                        enabled = !effectiveCastingLocked,
                                         color = rowBg,
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -216,7 +288,11 @@ fun AudioOutputSwitcherSheet(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
-                                                    text = if (isCurrent) "Active output" else device.description,
+                                                    text = when {
+                                                        effectiveCastingLocked -> "Locked while playing in TV"
+                                                        isCurrent -> "Active output"
+                                                        else -> device.description
+                                                    },
                                                     fontSize = 12.sp,
                                                     color = if (isCurrent) BentoPrimary.copy(alpha = 0.82f) else BentoTextSecondary,
                                                     maxLines = 1,
@@ -224,7 +300,14 @@ fun AudioOutputSwitcherSheet(
                                                 )
                                             }
 
-                                            if (isCurrent) {
+                                            if (effectiveCastingLocked) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Lock,
+                                                    contentDescription = "Locked",
+                                                    tint = BentoTextSecondary.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            } else if (isCurrent) {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(24.dp)
@@ -266,14 +349,19 @@ fun AudioOutputSwitcherSheet(
                 // Sleek Pill System Output Switcher Action
                 Button(
                     onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        onLaunchSystemSwitcher()
-                        onDismiss()
+                        if (!effectiveCastingLocked) {
+                            HapticUtils.performClickHaptic(context)
+                            onLaunchSystemSwitcher()
+                            onDismiss()
+                        }
                     },
+                    enabled = !effectiveCastingLocked,
                     shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = BentoPrimary.copy(alpha = 0.14f),
-                        contentColor = BentoPrimary
+                        contentColor = BentoPrimary,
+                        disabledContainerColor = BentoTextSecondary.copy(alpha = 0.10f),
+                        disabledContentColor = BentoTextSecondary.copy(alpha = 0.55f)
                     ),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 13.dp),
@@ -283,13 +371,13 @@ fun AudioOutputSwitcherSheet(
                         .testTag("btn_system_audio_switcher")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.OpenInNew,
+                        imageVector = if (effectiveCastingLocked) Icons.Default.Lock else Icons.Default.OpenInNew,
                         contentDescription = null,
                         modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "System Media Output & Bluetooth",
+                        text = if (effectiveCastingLocked) "Output Locked · Playing in TV" else "System Media Output & Bluetooth",
                         fontSize = 13.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,

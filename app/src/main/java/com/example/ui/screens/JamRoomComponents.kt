@@ -332,18 +332,18 @@ private fun BentoFeatureTile(
     val glass = LocalGlassThemeConfig.current
     Card(
         modifier = modifier.then(
-            if (isInteractive) Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onToggle) else Modifier
+            if (isInteractive) Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onToggle) else Modifier
         ),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (enabled) BentoCardPurple.copy(alpha = 0.65f) else BentoCardSurface
+            containerColor = if (enabled) BentoCardPurple.copy(alpha = 0.72f) else BentoCardSurface
         ),
-        border = BorderStroke(1.dp, if (enabled) BentoPrimary.copy(alpha = 0.55f) else BentoCardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (glass.glassEnabled) 0.dp else 1.dp)
+        border = BorderStroke(1.dp, if (enabled) BentoPrimary.copy(alpha = 0.58f) else BentoCardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (glass.glassEnabled) 0.dp else 1.5.dp)
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -351,9 +351,9 @@ private fun BentoFeatureTile(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (enabled) BentoPrimary.copy(alpha = 0.2f) else BentoCardBorder.copy(alpha = 0.35f),
-                    modifier = Modifier.size(32.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (enabled) BentoPrimary.copy(alpha = 0.22f) else BentoCardBorder.copy(alpha = 0.35f),
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(

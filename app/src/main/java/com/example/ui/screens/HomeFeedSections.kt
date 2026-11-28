@@ -3086,7 +3086,8 @@ private fun SuggestionsNewMusicMixSection(
                             AlbumArtView(
                                 song = rightHeroSong,
                                 modifier = Modifier.fillMaxSize(),
-                                cornerRadius = 20
+                                cornerRadius = 20,
+                                forceHighResOnline = true
                             )
                         }
                     }

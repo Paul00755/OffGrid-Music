@@ -84,6 +84,24 @@ object WidgetUpdateManager {
     private var cachedIsFavorite: Boolean = false
 
     @Volatile
+    private var activeFavAnimToken: Long = 0L
+    @Volatile
+    private var activeFavAnimSongId: Long = -1L
+    @Volatile
+    private var activeFavAnimFrame: WidgetBitmapRenderer.FavoriteAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+    @Volatile
+    private var activeFavAnimUntilMs: Long = 0L
+
+    internal fun resolveFavoriteAnimFrame(songId: Long?): WidgetBitmapRenderer.FavoriteAnimFrame {
+        if (songId == null || songId <= 0L) return WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+        return if (songId == activeFavAnimSongId && android.os.SystemClock.elapsedRealtime() < activeFavAnimUntilMs) {
+            activeFavAnimFrame
+        } else {
+            WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+        }
+    }
+
+    @Volatile
     private var lastRenderedTrackIdentity: String = ""
     @Volatile
     private var lastRenderedIsPlaying: Boolean = false
@@ -688,17 +706,111 @@ object WidgetUpdateManager {
     }
 
     /**
-     * 0ms synchronous partial widget update for the Favorite heart button across all 4 widget variants.
+     * Plays a crisp burst (favorite) or 2-stage breaking-heart (unfavorite) animation across all 5
+     * widget variants (Full Artwork, Small, Medium, Secondary, Lyrics), protected against concurrent
+     * full-widget refreshes until the final frame settles.
+     */
+    fun playFavoriteTransitionAnimation(
+        context: Context,
+        songId: Long,
+        isFavorite: Boolean
+    ) {
+        if (songId <= 0L) return
+        val appContext = context.applicationContext
+        val token = ++activeFavAnimToken
+        activeFavAnimSongId = songId
+        cachedFavSongId = songId
+        cachedIsFavorite = isFavorite
+
+        if (!isFavorite) {
+            // Stage 1: sharp cracked & separating heart
+            activeFavAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN
+            activeFavAnimUntilMs = android.os.SystemClock.elapsedRealtime() + 420L
+            setFavoriteStateImmediate(
+                appContext,
+                songId,
+                false,
+                animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN,
+                bypassAnimGuard = true
+            )
+            widgetScope.launch {
+                kotlinx.coroutines.delay(150L)
+                if (activeFavAnimToken != token) return@launch
+                // Stage 2: wider falling halves + shatter shards
+                activeFavAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN_SPLIT
+                setFavoriteStateImmediate(
+                    appContext,
+                    songId,
+                    false,
+                    animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN_SPLIT,
+                    bypassAnimGuard = true
+                )
+                kotlinx.coroutines.delay(220L)
+                if (activeFavAnimToken != token) return@launch
+                activeFavAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+                activeFavAnimUntilMs = 0L
+                setFavoriteStateImmediate(
+                    appContext,
+                    songId,
+                    false,
+                    animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL,
+                    bypassAnimGuard = true
+                )
+                val pm = PlaybackManager.activeInstance
+                val authState = getAuthoritativeState(appContext, pm?.playbackState?.value)
+                updateMutex.withLock {
+                    performFullWidgetUpdateInternal(appContext, authState)
+                }
+            }
+        } else {
+            activeFavAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BURST
+            activeFavAnimUntilMs = android.os.SystemClock.elapsedRealtime() + 300L
+            setFavoriteStateImmediate(
+                appContext,
+                songId,
+                true,
+                animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.BURST,
+                bypassAnimGuard = true
+            )
+            widgetScope.launch {
+                kotlinx.coroutines.delay(240L)
+                if (activeFavAnimToken != token) return@launch
+                activeFavAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+                activeFavAnimUntilMs = 0L
+                setFavoriteStateImmediate(
+                    appContext,
+                    songId,
+                    true,
+                    animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL,
+                    bypassAnimGuard = true
+                )
+                val pm = PlaybackManager.activeInstance
+                val authState = getAuthoritativeState(appContext, pm?.playbackState?.value)
+                updateMutex.withLock {
+                    performFullWidgetUpdateInternal(appContext, authState)
+                }
+            }
+        }
+    }
+
+    /**
+     * 0ms synchronous partial widget update for the Favorite heart button across all 5 widget variants.
      */
     fun setFavoriteStateImmediate(
         context: Context,
         songId: Long,
         isFavorite: Boolean,
-        animFrame: WidgetBitmapRenderer.FavoriteAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL
+        animFrame: WidgetBitmapRenderer.FavoriteAnimFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL,
+        bypassAnimGuard: Boolean = false
     ) {
         if (songId <= 0L) return
         cachedFavSongId = songId
         cachedIsFavorite = isFavorite
+        val effectiveFrame = if (bypassAnimGuard || animFrame != WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL) {
+            animFrame
+        } else {
+            resolveFavoriteAnimFrame(songId)
+        }
         try {
             val appContext = context.applicationContext
             val appWidgetManager = AppWidgetManager.getInstance(appContext)
@@ -710,21 +822,21 @@ object WidgetUpdateManager {
                 isFavorite = isFavorite,
                 accentColor = accent,
                 isLightSurface = false,
-                animFrame = animFrame
+                animFrame = effectiveFrame
             )
             val favBmp30Themed = WidgetBitmapRenderer.renderFavoriteChipButton(
                 sizePx = (30 * density).toInt(),
                 isFavorite = isFavorite,
                 accentColor = accent,
                 isLightSurface = isLight,
-                animFrame = animFrame
+                animFrame = effectiveFrame
             )
             val favBmp28 = WidgetBitmapRenderer.renderFavoriteChipButton(
                 sizePx = (28 * density).toInt(),
                 isFavorite = isFavorite,
                 accentColor = accent,
                 isLightSurface = isLight,
-                animFrame = animFrame
+                animFrame = effectiveFrame
             )
 
             val fullIds = appWidgetManager.getAppWidgetIds(ComponentName(appContext, FullArtworkMusicWidgetProvider::class.java))
@@ -762,7 +874,7 @@ object WidgetUpdateManager {
                     isFavorite = isFavorite,
                     accentColor = accent,
                     isLightSurface = isLight,
-                    animFrame = animFrame
+                    animFrame = effectiveFrame
                 )
                 for (id in lyricsIds) {
                     val views = RemoteViews(appContext.packageName, R.layout.widget_lyrics)
@@ -1006,49 +1118,36 @@ object WidgetUpdateManager {
             else -> true
         }
 
-        // 1. Show brief transient burst / breaking-heart frame synchronously on caller thread
-        val transientFrame = if (optimisticNewFav) {
-            WidgetBitmapRenderer.FavoriteAnimFrame.BURST
-        } else {
-            WidgetBitmapRenderer.FavoriteAnimFrame.BROKEN
-        }
-        setFavoriteStateImmediate(appContext, songId, optimisticNewFav, animFrame = transientFrame)
+        // 1. Trigger protected burst / 2-stage breaking-heart animation across ALL 5 widgets immediately
+        playFavoriteTransitionAnimation(appContext, songId, optimisticNewFav)
         if (pm != null) {
-            pm.syncFavoriteStateInMemory(songId, optimisticNewFav)
+            pm.syncFavoriteStateInMemory(songId, optimisticNewFav, preserveWidgetFavAnim = true)
         }
 
-        // 2. Persist in Room DB, allow the brief burst/broken frame to display, then settle cleanly
+        // 2. Persist in Room DB while preserving the in-flight animation frame
         widgetScope.launch {
-            updateMutex.withLock {
-                try {
-                    val db = AppDatabase.getInstance(appContext)
-                    val dbSong = db.songDao().getSongById(songId)
-                    val newFav = if (currentSong != null && currentSong.id == songId) {
-                        optimisticNewFav
-                    } else if (dbSong != null) {
-                        !dbSong.isFavorite
-                    } else {
-                        optimisticNewFav
-                    }
-                    if (dbSong != null) {
-                        db.songDao().setFavoriteBySong(songId, dbSong.path, newFav)
-                    } else {
-                        db.songDao().setFavorite(songId, newFav)
-                    }
-                    cachedFavSongId = songId
-                    cachedIsFavorite = newFav
+            try {
+                val db = AppDatabase.getInstance(appContext)
+                val dbSong = db.songDao().getSongById(songId)
+                val newFav = if (currentSong != null && currentSong.id == songId) {
+                    optimisticNewFav
+                } else if (dbSong != null) {
+                    !dbSong.isFavorite
+                } else {
+                    optimisticNewFav
+                }
+                if (dbSong != null) {
+                    db.songDao().setFavoriteBySong(songId, dbSong.path, newFav)
+                } else {
+                    db.songDao().setFavorite(songId, newFav)
+                }
+                cachedFavSongId = songId
+                cachedIsFavorite = newFav
 
-                    if (pm != null) {
-                        pm.syncFavoriteStateInMemory(songId, newFav)
-                    }
-
-                    kotlinx.coroutines.delay(240L)
-                    setFavoriteStateImmediate(appContext, songId, newFav, animFrame = WidgetBitmapRenderer.FavoriteAnimFrame.NORMAL)
-
-                    val authState = getAuthoritativeState(appContext, pm?.playbackState?.value)
-                    performFullWidgetUpdateInternal(appContext, authState)
-                } catch (_: Exception) {}
-            }
+                if (pm != null) {
+                    pm.syncFavoriteStateInMemory(songId, newFav, preserveWidgetFavAnim = true)
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -1525,7 +1624,8 @@ object WidgetUpdateManager {
         val favBmp = WidgetBitmapRenderer.renderFavoriteChipButton(
             sizePx = (30 * density).toInt(),
             isFavorite = isFavorite,
-            accentColor = themeColors.accentColor
+            accentColor = themeColors.accentColor,
+            animFrame = resolveFavoriteAnimFrame(song?.id)
         )
         val prevBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
@@ -1605,7 +1705,8 @@ object WidgetUpdateManager {
             sizePx = (30 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor,
-            isLightSurface = isLight
+            isLightSurface = isLight,
+            animFrame = resolveFavoriteAnimFrame(song?.id)
         )
         val prevBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,
@@ -1692,7 +1793,8 @@ object WidgetUpdateManager {
             sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor,
-            isLightSurface = isLight
+            isLightSurface = isLight,
+            animFrame = resolveFavoriteAnimFrame(song?.id)
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
@@ -1814,7 +1916,8 @@ object WidgetUpdateManager {
             sizePx = (28 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor,
-            isLightSurface = isLight
+            isLightSurface = isLight,
+            animFrame = resolveFavoriteAnimFrame(song?.id)
         )
         val progBmp = WidgetBitmapRenderer.renderStraightProgressBar(
             context = context,
@@ -2309,7 +2412,8 @@ object WidgetUpdateManager {
             sizePx = (26 * density).toInt(),
             isFavorite = isFavorite,
             accentColor = themeColors.accentColor,
-            isLightSurface = isLight
+            isLightSurface = isLight,
+            animFrame = resolveFavoriteAnimFrame(song?.id)
         )
         val prevBmp = WidgetBitmapRenderer.renderCircularButton(
             context = context,

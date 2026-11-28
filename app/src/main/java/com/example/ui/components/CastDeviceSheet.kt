@@ -505,11 +505,13 @@ private fun CastDevicesMainContent(
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 externalAudioDevices.forEach { dev ->
-                    val isActive = dev.isSelected && !castState.isConnected
+                    val isCastingLocked = castState.isActiveSession
+                    val isActive = dev.isSelected && !isCastingLocked
                     Surface(
-                        onClick = { onSelectAudioDevice(dev) },
+                        onClick = { if (!isCastingLocked) onSelectAudioDevice(dev) },
+                        enabled = !isCastingLocked,
                         shape = RoundedCornerShape(14.dp),
-                        color = if (isActive) BentoPrimary.copy(alpha = 0.10f) else BentoCardPurple.copy(alpha = 0.45f),
+                        color = if (isActive) BentoPrimary.copy(alpha = 0.10f) else BentoCardPurple.copy(alpha = if (isCastingLocked) 0.28f else 0.45f),
                         border = BorderStroke(
                             1.dp,
                             if (isActive) BentoPrimary.copy(alpha = 0.35f) else BentoBorder.copy(alpha = 0.22f)
@@ -525,7 +527,7 @@ private fun CastDevicesMainContent(
                             Icon(
                                 imageVector = dev.icon,
                                 contentDescription = dev.name,
-                                tint = if (isActive) BentoPrimary else BentoTextSecondary,
+                                tint = if (isActive) BentoPrimary else BentoTextSecondary.copy(alpha = if (isCastingLocked) 0.55f else 1f),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -534,12 +536,12 @@ private fun CastDevicesMainContent(
                                     text = dev.name,
                                     fontSize = 13.5.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = BentoTextPrimary,
+                                    color = if (isCastingLocked) BentoTextPrimary.copy(alpha = 0.6f) else BentoTextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = if (castState.isConnected) "Controls TV when casting" else if (isActive) "Active audio output" else "Tap to switch audio",
+                                    text = if (isCastingLocked) "Output locked · Playing in TV" else if (isActive) "Active audio output" else "Tap to switch audio",
                                     fontSize = 11.5.sp,
                                     color = BentoTextSecondary
                                 )
@@ -589,7 +591,7 @@ private fun CastDevicesMainContent(
                         color = BentoTextPrimary
                     )
                     Text(
-                        text = "Current phone output: ${audioRouteInfo.name}",
+                        text = if (castState.isActiveSession) "Current output: Playing in TV" else "Current phone output: ${audioRouteInfo.name}",
                         fontSize = 11.sp,
                         color = BentoTextSecondary,
                         maxLines = 1,
@@ -705,42 +707,6 @@ private fun ActiveCastRemoteCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-                    if (device.protocol == CastProtocol.GOOGLE_CAST) {
-                        val lyricsActive = castState.tvLyricsEnabled && castState.hasSyncedLyricsOnTv
-                        Surface(
-                            onClick = { onToggleTvLyrics(!castState.tvLyricsEnabled) },
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (lyricsActive) BentoPrimary.copy(alpha = 0.16f) else BentoCardPurple.copy(alpha = 0.65f),
-                            border = BorderStroke(
-                                1.dp,
-                                if (lyricsActive) BentoPrimary.copy(alpha = 0.45f) else BentoBorder.copy(alpha = 0.3f)
-                            ),
-                            modifier = Modifier.testTag("btn_toggle_tv_lyrics")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Subtitles,
-                                    contentDescription = "TV Lyrics",
-                                    tint = if (lyricsActive) BentoPrimary else BentoTextSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = when {
-                                        !castState.hasSyncedLyricsOnTv -> "No Lyrics"
-                                        castState.tvLyricsEnabled -> "TV Lyrics"
-                                        else -> "Lyrics Off"
-                                    },
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (lyricsActive) BentoPrimary else BentoTextSecondary
-                                )
-                            }
-                        }
                     }
                 }
 

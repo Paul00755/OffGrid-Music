@@ -32,6 +32,8 @@ fun AlbumDetailSheet(
     playbackState: PlaybackState,
     onDismiss: () -> Unit,
     onPlayAll: (Song, List<Song>) -> Unit,
+    onPlayOrdered: ((List<Song>) -> Unit)? = null,
+    onShufflePlay: ((List<Song>) -> Unit)? = null,
     onFavoriteToggle: (Song) -> Unit,
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
@@ -175,7 +177,13 @@ fun AlbumDetailSheet(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Button(
-                                onClick = { onPlayAll(albumSongs.first(), albumSongs) },
+                                onClick = {
+                                    if (onPlayOrdered != null) {
+                                        onPlayOrdered(albumSongs)
+                                    } else {
+                                        onPlayAll(albumSongs.first(), albumSongs)
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(containerColor = BentoPrimary)
                             ) {
@@ -191,8 +199,12 @@ fun AlbumDetailSheet(
                             OutlinedButton(
                                 onClick = {
                                     if (albumSongs.isNotEmpty()) {
-                                        val shuffled = albumSongs.shuffled()
-                                        onPlayAll(shuffled.first(), shuffled)
+                                        if (onShufflePlay != null) {
+                                            onShufflePlay(albumSongs)
+                                        } else {
+                                            val shuffled = albumSongs.shuffled()
+                                            onPlayAll(shuffled.first(), shuffled)
+                                        }
                                     }
                                 },
                                 modifier = Modifier.weight(1f),

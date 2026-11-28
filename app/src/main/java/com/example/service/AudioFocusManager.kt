@@ -27,6 +27,7 @@ class AudioFocusManager(
     var callActiveProvider: (() -> Boolean)? = null,
     var onPauseRequested: () -> Unit = {},
     var onResumeRequested: () -> Unit = {},
+    var onResumeAfterCallRequested: (() -> Unit)? = null,
     var onDuckRequested: (Float) -> Unit = {},
     var onRestoreVolumeRequested: () -> Unit = {}
 ) {
@@ -59,10 +60,13 @@ class AudioFocusManager(
     private val pendingTransientCheckRunnables = mutableListOf<Runnable>()
     private var pendingPlaybackDuckRestoreRunnable: Runnable? = null
     private var pendingInterruptionMonitorRunnable: Runnable? = null
+    private var pendingPostCallResumeRunnable: Runnable? = null
+    private var postCallResumePollCount: Int = 0
     private var interruptionMonitorPollCount: Int = 0
 
     @Volatile var wasPlayingBeforeInterruption: Boolean = false
         private set
+    @Volatile private var wasInterruptedByPhoneCall: Boolean = false
     @Volatile var userManuallyPausedOrStopped: Boolean = false
         private set
     @Volatile var userOverrodeInterruption: Boolean = false
@@ -557,6 +561,7 @@ class AudioFocusManager(
     fun unregisterCameraCallback() {
         cancelTransientVerificationChecksLocked()
         cancelInterruptionMonitorLocked()
+        cancelPostCallSettledResumeLocked()
         cancelPendingPlaybackDuckRestoreLocked()
         unregisterPlaybackCallback()
         unregisterRecordingCallback()
@@ -581,6 +586,55 @@ class AudioFocusManager(
         pendingInterruptionMonitorRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingInterruptionMonitorRunnable = null
         interruptionMonitorPollCount = 0
+    }
+
+    private fun cancelPostCallSettledResumeLocked() {
+        pendingPostCallResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingPostCallResumeRunnable = null
+        postCallResumePollCount = 0
+    }
+
+    private fun isBluetoothScoOrCommRouteActive(): Boolean {
+        val mgr = audioManager ?: return false
+        try {
+            @Suppress("DEPRECATION")
+            if (mgr.isBluetoothScoOn) return true
+        } catch (_: Throwable) {}
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                val commType = mgr.communicationDevice?.type
+                if (commType == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    commType == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    commType == android.media.AudioDeviceInfo.TYPE_HEARING_AID
+                ) {
+                    return true
+                }
+            } catch (_: Throwable) {}
+        }
+        return false
+    }
+
+    private fun isBluetoothAudioConnected(): Boolean {
+        val mgr = audioManager ?: return false
+        try {
+            @Suppress("DEPRECATION")
+            if (mgr.isBluetoothA2dpOn || mgr.isBluetoothScoOn) return true
+        } catch (_: Throwable) {}
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val outputs = mgr.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                if (outputs.any {
+                        it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                            it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET)
+                    }
+                ) {
+                    return true
+                }
+            } catch (_: Throwable) {}
+        }
+        return false
     }
 
     private fun cancelPendingPlaybackDuckRestoreLocked() {
@@ -1084,6 +1138,7 @@ class AudioFocusManager(
                     if (!activeInterruptions.contains(InterruptionSource.PHONE_CALL)) {
                         activeInterruptions.add(InterruptionSource.PHONE_CALL)
                     }
+                    wasInterruptedByPhoneCall = true
                     scheduleInterruptionMonitorLocked(600L)
                     return@synchronized
                 }
@@ -1280,6 +1335,7 @@ class AudioFocusManager(
                     if (!activeInterruptions.contains(InterruptionSource.PHONE_CALL)) {
                         activeInterruptions.add(InterruptionSource.PHONE_CALL)
                     }
+                    wasInterruptedByPhoneCall = true
                     activeInterruptions.remove(InterruptionSource.SYSTEM_AUDIO_TRANSIENT)
                     activeInterruptions.remove(InterruptionSource.SYSTEM_AUDIO_LOSS)
                     scheduleInterruptionMonitorLocked(600L)
@@ -1293,17 +1349,24 @@ class AudioFocusManager(
     }
 
     private fun beginInterruptionLocked(source: InterruptionSource) {
+        cancelPostCallSettledResumeLocked()
         val currentlyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
         val sleepStopped = try { isSleepTimerStoppedProvider() } catch (_: Throwable) { false }
 
         if (activeInterruptions.isEmpty()) {
             // First interruption in a potential sequence: record whether we were genuinely playing
             wasPlayingBeforeInterruption = currentlyPlaying && !userManuallyPausedOrStopped && !sleepStopped
+            wasInterruptedByPhoneCall = (source == InterruptionSource.PHONE_CALL)
             observedExternalAudioDuringInterruption = isCallOrRingtoneActive() || hasExternalVideoOrMediaPlaying()
             externalAudioSilentSinceMs = 0L
-        } else if (isCallOrRingtoneActive() || hasExternalVideoOrMediaPlaying()) {
-            observedExternalAudioDuringInterruption = true
-            externalAudioSilentSinceMs = 0L
+        } else {
+            if (source == InterruptionSource.PHONE_CALL) {
+                wasInterruptedByPhoneCall = true
+            }
+            if (isCallOrRingtoneActive() || hasExternalVideoOrMediaPlaying()) {
+                observedExternalAudioDuringInterruption = true
+                externalAudioSilentSinceMs = 0L
+            }
         }
         activeInterruptions.add(source)
         if (source == InterruptionSource.SYSTEM_AUDIO_TRANSIENT) {
@@ -1349,24 +1412,83 @@ class AudioFocusManager(
         externalAudioSilentSinceMs = 0L
         val sleepStopped = try { isSleepTimerStoppedProvider() } catch (_: Throwable) { false }
         val shouldResume = wasPlayingBeforeInterruption && !userManuallyPausedOrStopped && !sleepStopped
+        val resumeAfterPhoneCall = wasInterruptedByPhoneCall
         wasPlayingBeforeInterruption = false
+        wasInterruptedByPhoneCall = false
 
         if (shouldResume) {
             val alreadyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
             if (!alreadyPlaying) {
-                Log.d(TAG, "All interruptions ended; automatically resuming playback once")
-                runUrgentOnMain {
-                    val allowed = synchronized(this@AudioFocusManager) {
-                        activeInterruptions.isEmpty() && !userManuallyPausedOrStopped &&
-                            !(try { isSleepTimerStoppedProvider() } catch (_: Throwable) { false })
-                    }
-                    if (allowed) {
-                        onResumeRequested()
+                if (resumeAfterPhoneCall && onResumeAfterCallRequested != null) {
+                    // Phone/VoIP call teardown takes 350-900ms across Android Telecom HAL & Bluetooth SCO->A2DP.
+                    // Wait for route settlement before resuming so audio never flickers/stutters.
+                    val settleDelayMs = if (isBluetoothAudioConnected()) 850L else 550L
+                    Log.d(TAG, "Phone call ended; scheduling route-settled smooth resume in ${settleDelayMs}ms")
+                    schedulePostCallSettledResumeLocked(settleDelayMs)
+                } else {
+                    Log.d(TAG, "All interruptions ended; automatically resuming playback once")
+                    runUrgentOnMain {
+                        val allowed = synchronized(this@AudioFocusManager) {
+                            activeInterruptions.isEmpty() && !userManuallyPausedOrStopped &&
+                                !(try { isSleepTimerStoppedProvider() } catch (_: Throwable) { false })
+                        }
+                        if (allowed) {
+                            onResumeRequested()
+                        }
                     }
                 }
             }
         }
     }
+
+    private fun schedulePostCallSettledResumeLocked(delayMs: Long) {
+        cancelPostCallSettledResumeLocked()
+        val runnable = object : Runnable {
+            override fun run() {
+                val shouldDispatch = synchronized(this@AudioFocusManager) {
+                    pendingPostCallResumeRunnable = null
+                    val sleepStopped = try { isSleepTimerStoppedProvider() } catch (_: Throwable) { false }
+                    val alreadyPlaying = try { isPlayingProvider() } catch (_: Throwable) { false }
+                    if (activeInterruptions.isNotEmpty() || userManuallyPausedOrStopped || sleepStopped || alreadyPlaying) {
+                        postCallResumePollCount = 0
+                        return@synchronized false
+                    }
+
+                    val modeNow = try { audioManager?.mode ?: AudioManager.MODE_NORMAL } catch (_: Throwable) { AudioManager.MODE_NORMAL }
+                    val routeStillTearingDown =
+                        modeNow != AudioManager.MODE_NORMAL ||
+                            isCallOrRingtoneActive() ||
+                            isBluetoothScoOrCommRouteActive()
+
+                    if (routeStillTearingDown && postCallResumePollCount < 6) {
+                        postCallResumePollCount++
+                        Log.d(TAG, "Post-call audio route still settling (mode=$modeNow, poll=$postCallResumePollCount); deferring 250ms")
+                        pendingPostCallResumeRunnable = this
+                        mainHandler.postDelayed(this, 250L)
+                        return@synchronized false
+                    }
+
+                    postCallResumePollCount = 0
+                    if (!hasAudioFocus) {
+                        requestAudioFocus()
+                    }
+                    true
+                }
+
+                if (shouldDispatch) {
+                    try {
+                        val callback = onResumeAfterCallRequested ?: onResumeRequested
+                        callback.invoke()
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+        pendingPostCallResumeRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs.coerceAtLeast(100L))
+    }
+
+    @Synchronized
+    fun hasPendingPostCallResume(): Boolean = pendingPostCallResumeRunnable != null
 
     @Synchronized
     fun hasActiveInterruption(): Boolean = activeInterruptions.isNotEmpty()
@@ -1411,6 +1533,7 @@ class AudioFocusManager(
     fun abandonAudioFocus() {
         cancelTransientVerificationChecksLocked()
         cancelInterruptionMonitorLocked()
+        cancelPostCallSettledResumeLocked()
         cancelPendingPlaybackDuckRestoreLocked()
         val mgr = audioManager ?: return
         if (!hasAudioFocus && activeInterruptions.isEmpty()) return
@@ -1429,6 +1552,7 @@ class AudioFocusManager(
             userOverrodeInterruption = false
             activeInterruptions.clear()
             wasPlayingBeforeInterruption = false
+            wasInterruptedByPhoneCall = false
             observedExternalAudioDuringInterruption = false
             externalAudioSilentSinceMs = 0L
             wasDuckedByTransientFocus = false
@@ -1442,10 +1566,12 @@ class AudioFocusManager(
     fun cancelPendingResume() {
         cancelTransientVerificationChecksLocked()
         cancelInterruptionMonitorLocked()
+        cancelPostCallSettledResumeLocked()
         userManuallyPausedOrStopped = true
         userOverrodeInterruption = false
         activeInterruptions.clear()
         wasPlayingBeforeInterruption = false
+        wasInterruptedByPhoneCall = false
         observedExternalAudioDuringInterruption = false
         externalAudioSilentSinceMs = 0L
     }
@@ -1462,12 +1588,14 @@ class AudioFocusManager(
                 hasExternalVideoOrMediaPlaying()
         cancelTransientVerificationChecksLocked()
         cancelInterruptionMonitorLocked()
+        cancelPostCallSettledResumeLocked()
         clearDuckStateAndRestoreLocked()
         userManuallyPausedOrStopped = false
         userOverrodeInterruption = hadActiveInterruptionOrExternalAudio
         lastUserPlayRequestAtMs = SystemClock.elapsedRealtime()
         activeInterruptions.clear()
         wasPlayingBeforeInterruption = false
+        wasInterruptedByPhoneCall = false
         observedExternalAudioDuringInterruption = false
         externalAudioSilentSinceMs = 0L
     }

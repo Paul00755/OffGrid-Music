@@ -70,6 +70,8 @@ fun NowPlayingVinylTurntable(
     positionMs: Long = playbackState.positionMs,
     currentLyrics: Lyrics?,
     audioRouteInfo: AudioRouteInfo,
+    isCastingToTv: Boolean = false,
+    castDeviceName: String? = null,
     onDismiss: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
@@ -263,51 +265,83 @@ fun NowPlayingVinylTurntable(
                     }
                 }
 
-                // Floating live status + output device pill
+                val effectiveCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
+                // Floating live status + output device pill (locked to Playing in TV while casting)
                 Surface(
                     onClick = {
-                        HapticUtils.performClickHaptic(context)
-                        onOpenAudioOutputSwitcher()
+                        if (!effectiveCasting) {
+                            HapticUtils.performClickHaptic(context)
+                            onOpenAudioOutputSwitcher()
+                        }
                     },
+                    enabled = !effectiveCasting,
                     shape = RoundedCornerShape(999.dp),
-                    color = frostedSurface,
-                    border = BorderStroke(1.dp, frostedBorder),
+                    color = if (effectiveCasting) luminousAccent.copy(alpha = 0.16f) else frostedSurface,
+                    border = BorderStroke(
+                        1.dp,
+                        if (effectiveCasting) luminousAccent.copy(alpha = 0.45f) else frostedBorder
+                    ),
                     modifier = Modifier
                         .weight(1f, fill = false)
                         .padding(horizontal = 10.dp)
                         .heightIn(min = 42.dp)
-                        .testTag("vinyl_audio_output_pill")
+                        .testTag(if (effectiveCasting) "now_playing_casting_tv_status" else "vinyl_audio_output_pill")
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Subtle glowing status LED
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (playbackState.isPlaying) luminousAccent else inkSubtle
-                                )
-                        )
+                        if (effectiveCasting) {
+                            Icon(
+                                imageVector = Icons.Default.Tv,
+                                contentDescription = "Playing in TV",
+                                tint = luminousAccent,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        } else {
+                            // Subtle glowing status LED
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (playbackState.isPlaying) luminousAccent else inkSubtle
+                                    )
+                            )
+                        }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = if (playbackState.isPlaying) "33⅓ RPM · SPINNING" else "33⅓ RPM · STANDBY",
+                                text = when {
+                                    effectiveCasting -> "PLAYING IN TV"
+                                    playbackState.isPlaying -> "33⅓ RPM · SPINNING"
+                                    else -> "33⅓ RPM · STANDBY"
+                                },
                                 fontSize = 9.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.2.sp,
-                                color = if (playbackState.isPlaying) luminousAccent else inkSubtle,
+                                color = if (effectiveCasting || playbackState.isPlaying) luminousAccent else inkSubtle,
                                 maxLines = 1
                             )
                             Text(
-                                text = audioRouteInfo.name,
+                                text = if (effectiveCasting) {
+                                    castDeviceName?.takeIf { it.isNotBlank() } ?: "Playing in TV"
+                                } else {
+                                    audioRouteInfo.name
+                                },
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = inkPrimary.copy(alpha = 0.88f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (effectiveCasting) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Output locked while casting",
+                                tint = inkSecondary,
+                                modifier = Modifier.size(12.dp)
                             )
                         }
                     }
@@ -1012,13 +1046,17 @@ fun NowPlayingVinylTurntable(
                             .height(20.dp)
                             .background(frostedBorder)
                     )
+                    val bottomCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
                     VinylBottomUtilityAction(
-                        icon = audioRouteInfo.icon,
-                        label = "Output",
-                        tint = inkPrimary,
+                        icon = if (bottomCasting) Icons.Default.Tv else audioRouteInfo.icon,
+                        label = if (bottomCasting) "Playing in TV" else "Output",
+                        tint = if (bottomCasting) inkPrimary.copy(alpha = 0.62f) else inkPrimary,
+                        enabled = !bottomCasting,
                         onClick = {
-                            HapticUtils.performClickHaptic(context)
-                            onOpenAudioOutputSwitcher()
+                            if (!bottomCasting) {
+                                HapticUtils.performClickHaptic(context)
+                                onOpenAudioOutputSwitcher()
+                            }
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -1054,12 +1092,13 @@ private fun VinylBottomUtilityAction(
     label: String,
     tint: Color,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .heightIn(min = 42.dp)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,
@@ -1077,7 +1116,8 @@ private fun VinylBottomUtilityAction(
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = tint.copy(alpha = 0.90f),
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

@@ -112,9 +112,14 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
+            val largeLogo = try {
+                android.graphics.BitmapFactory.decodeResource(context.resources, R.drawable.app_logo)
+            } catch (_: Throwable) { null }
             val notificationId = (sessionId + recommendationId).hashCode()
             manager.notify(JAM_NOTIFICATION_TAG, notificationId, NotificationCompat.Builder(context, JAM_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
+                .apply { if (largeLogo != null) setLargeIcon(largeLogo) }
+                .setColor(0xFF7C4DFF.toInt())
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -318,8 +323,13 @@ class OffGridFirebaseMessagingService : FirebaseMessagingService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            val largeLogo = try {
+                android.graphics.BitmapFactory.decodeResource(context.resources, R.drawable.app_logo)
+            } catch (_: Throwable) { null }
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
+                .apply { if (largeLogo != null) setLargeIcon(largeLogo) }
+                .setColor(0xFF7C4DFF.toInt())
                 .setContentTitle("Update available")
                 .setContentText(cleanVersionTag)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)

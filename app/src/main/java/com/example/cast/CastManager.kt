@@ -1,14 +1,18 @@
 package com.example.cast
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
+import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.example.data.local.AppDatabase
@@ -32,6 +36,7 @@ import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.common.images.WebImage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +50,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
@@ -93,6 +99,7 @@ class CastManager(context: Context) {
     var currentLyricsProvider: ((songId: Long) -> Pair<Lyrics?, Long>?)? = null
 
     private var castContext: CastContext? = null
+    private var castContextDeferred: CompletableDeferred<CastContext?> = CompletableDeferred()
     private var mediaRouter: MediaRouter? = null
     private var routeSelector: MediaRouteSelector? = null
     private var isMediaRouterCallbackRegistered = false
@@ -104,10 +111,13 @@ class CastManager(context: Context) {
     private var pendingGoogleCastSong: Song? = null
     private var pendingGoogleCastStartPosMs: Long = 0L
     private var pendingGoogleCastDevice: CastDevice? = null
+    private var googleCastRetryCount: Int = 0
+    private var googleCastConnectTimeoutJob: Job? = null
 
     private var dlnaScanJob: Job? = null
     private var progressPollJob: Job? = null
     private var castLoadJob: Job? = null
+    private var preQueueJob: Job? = null
     private var hasNotifiedFinishForSongId: Long? = null
     private var dlnaWasPlayingSinceLoad: Boolean = false
     private var googleCastWasPlayingSinceLoad: Boolean = false
@@ -117,8 +127,41 @@ class CastManager(context: Context) {
     private var currentSongUsingHlsVideo: Boolean = false
     private val hlsFallbackSongIds = HashSet<Long>()
 
+    // Sync-guard state: prevents stale Cast status callbacks during a track switch or seek from reverting the app
+    private var expectedLoadSongId: Long? = null
+    private var lastLoadDispatchedAtMs: Long = 0L
+    private var lastSeekDispatchedAtMs: Long = 0L
+    private var lastPlayPauseDispatchedAtMs: Long = 0L
+    private var lastDispatchedPlayState: Boolean? = null
+
     private var castWakeLock: PowerManager.WakeLock? = null
     private var castWifiLock: WifiManager.WifiLock? = null
+
+    // Captures notification Media Player slider drags on OEM ROMs (ColorOS/OxygenOS/MIUI/OneUI) that route to STREAM_MUSIC
+    private var isSystemVolumeReceiverRegistered = false
+    private var lastRemoteVolumeSyncedAtMs = 0L
+    private val systemVolumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != "android.media.VOLUME_CHANGED_ACTION") return
+            if (!_sessionState.value.isConnected) return
+            val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
+            if (streamType != AudioManager.STREAM_MUSIC) return
+            val newVol = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+            val prevVol = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
+            if (newVol < 0 || newVol == prevVol) return
+            val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val ratio = (newVol.toFloat() / maxVol.toFloat()).coerceIn(0f, 1f)
+            // Avoid feedback if we just updated volume via MediaSession remote callback in the last 120ms
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRemoteVolumeSyncedAtMs < 120L &&
+                kotlin.math.abs(ratio - _sessionState.value.remoteVolume) < 0.04f
+            ) {
+                return
+            }
+            setRemoteVolume(ratio)
+        }
+    }
 
     private val mediaRouterCallback = object : MediaRouter.Callback() {
         override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) {
@@ -176,13 +219,41 @@ class CastManager(context: Context) {
     private fun processGoogleCastStatus(session: CastSession, client: RemoteMediaClient) {
         try {
             val status = client.mediaStatus
+            val nowElapsed = SystemClock.elapsedRealtime()
+            val inLoadGraceWindow = expectedLoadSongId != null && (nowElapsed - lastLoadDispatchedAtMs) < 4_000L
+            val inSeekGraceWindow = (nowElapsed - lastSeekDispatchedAtMs) < 1_800L
+            val inPlayPauseGraceWindow = (nowElapsed - lastPlayPauseDispatchedAtMs) < 1_500L
+
             val playerState = status?.playerState ?: MediaStatus.PLAYER_STATE_UNKNOWN
-            val isPlaying = client.isPlaying || playerState == MediaStatus.PLAYER_STATE_PLAYING
-            if (isPlaying) {
+            val remoteSongId = extractRemoteSongId(status)
+            val stateBefore = _sessionState.value
+            val currentCastingId = stateBefore.castingSong?.id
+
+            // If we just requested a new song load and TV is still emitting status for the PREVIOUS song, ignore stale status!
+            if (inLoadGraceWindow && remoteSongId != null && remoteSongId != expectedLoadSongId) {
+                return
+            }
+            if (remoteSongId != null && remoteSongId == expectedLoadSongId) {
+                expectedLoadSongId = null
+            }
+
+            val rawIsPlaying = client.isPlaying || playerState == MediaStatus.PLAYER_STATE_PLAYING
+            val isBufferingOrLoading = playerState == MediaStatus.PLAYER_STATE_BUFFERING ||
+                playerState == MediaStatus.PLAYER_STATE_LOADING
+            val effectiveIsPlaying = when {
+                inPlayPauseGraceWindow && lastDispatchedPlayState != null -> lastDispatchedPlayState!!
+                inLoadGraceWindow && isBufferingOrLoading -> true
+                else -> rawIsPlaying
+            }
+            if (rawIsPlaying) {
                 googleCastWasPlayingSinceLoad = true
             }
-            val pos = client.approximateStreamPosition.coerceAtLeast(0L)
-            val stateBefore = _sessionState.value
+            val rawPos = client.approximateStreamPosition.coerceAtLeast(0L)
+            val pos = if (inSeekGraceWindow || (inLoadGraceWindow && rawPos == 0L && stateBefore.remotePositionMs > 0L)) {
+                stateBefore.remotePositionMs
+            } else {
+                rawPos
+            }
             val dur = client.streamDuration.takeIf { it > 0L }
                 ?: stateBefore.castingSong?.durationMs
                 ?: stateBefore.remoteDurationMs
@@ -190,16 +261,17 @@ class CastManager(context: Context) {
             // Sync remote volume if changed on TV remote or Google Home
             try {
                 val tvVol = session.volume.toFloat().coerceIn(0f, 1f)
-                if (kotlin.math.abs(tvVol - stateBefore.remoteVolume) >= 0.02f) {
+                if (nowElapsed - lastRemoteVolumeSyncedAtMs > 800L &&
+                    kotlin.math.abs(tvVol - stateBefore.remoteVolume) >= 0.02f
+                ) {
                     _sessionState.update { it.copy(remoteVolume = tvVol) }
                     onRemoteVolumeChanged?.invoke(tvVol)
                 }
             } catch (_: Throwable) {}
 
-            // Detect seamless TV-side queue auto-advance to pre-queued next song
-            val remoteSongId = extractRemoteSongId(status)
-            val currentCastingId = stateBefore.castingSong?.id
-            if (remoteSongId != null &&
+            // Detect seamless TV-side queue auto-advance to pre-queued next song (only outside load grace window)
+            if (!inLoadGraceWindow &&
+                remoteSongId != null &&
                 currentCastingId != null &&
                 remoteSongId != currentCastingId &&
                 playerState != MediaStatus.PLAYER_STATE_IDLE
@@ -210,23 +282,23 @@ class CastManager(context: Context) {
                 onRemoteAutoAdvancedToSong?.invoke(remoteSongId)
             }
 
-            if (stateBefore.isRemotePlaying != isPlaying ||
+            if (stateBefore.isRemotePlaying != effectiveIsPlaying ||
                 kotlin.math.abs(stateBefore.remotePositionMs - pos) >= 400L ||
                 stateBefore.remoteDurationMs != dur
             ) {
                 _sessionState.update { s ->
                     s.copy(
-                        isRemotePlaying = isPlaying,
+                        isRemotePlaying = effectiveIsPlaying,
                         remotePositionMs = pos,
                         remoteDurationMs = dur
                     )
                 }
             }
-            onRemotePlaybackTick?.invoke(pos, isPlaying)
+            onRemotePlaybackTick?.invoke(pos, effectiveIsPlaying)
 
             val activeSong = _sessionState.value.castingSong
             val songId = activeSong?.id
-            if (status != null && playerState == MediaStatus.PLAYER_STATE_IDLE && songId != null) {
+            if (!inLoadGraceWindow && status != null && playerState == MediaStatus.PLAYER_STATE_IDLE && songId != null) {
                 val idleReason = status.idleReason
                 // If HLS video failed on this specific track/device, immediately fall back to direct audio seamlessly
                 if (idleReason == MediaStatus.IDLE_REASON_ERROR && currentSongUsingHlsVideo && songId !in hlsFallbackSongIds) {
@@ -270,10 +342,14 @@ class CastManager(context: Context) {
         }
 
         override fun onSessionStarted(session: CastSession, sessionId: String) {
+            googleCastConnectTimeoutJob?.cancel()
+            googleCastConnectTimeoutJob = null
+            googleCastRetryCount = 0
             onEnsureLocalPlaybackSilenced?.invoke()
             // Immediately stop active MediaRouter scanning once connected to eliminate phone lag
             unregisterMediaRouterDiscovery()
             acquireCastLocks()
+            registerSystemVolumeReceiver()
 
             val device = buildDeviceFromCastSession(session)
             pendingGoogleCastDevice = null
@@ -308,8 +384,41 @@ class CastManager(context: Context) {
         }
 
         override fun onSessionStartFailed(session: CastSession, error: Int) {
+            googleCastConnectTimeoutJob?.cancel()
+            googleCastConnectTimeoutJob = null
+            val retryDevice = pendingGoogleCastDevice
+            val retrySong = pendingGoogleCastSong
+            val retryPos = pendingGoogleCastStartPosMs
+
+            // Auto-retry up to 2 times seamlessly on transient Cast handshake errors before surfacing failure
+            if (retryDevice != null && googleCastRetryCount < 2) {
+                googleCastRetryCount++
+                _sessionState.update {
+                    it.copy(
+                        connectionState = CastConnectionState.CONNECTING,
+                        connectedDevice = retryDevice,
+                        statusMessage = "Retrying connection to ${retryDevice.name}…",
+                        errorMessage = null
+                    )
+                }
+                scope.launch {
+                    try {
+                        mediaRouter?.let { r -> r.selectRoute(r.defaultRoute) }
+                    } catch (_: Throwable) {}
+                    delay(550L)
+                    if (_sessionState.value.connectionState == CastConnectionState.CONNECTING &&
+                        pendingGoogleCastDevice?.id == retryDevice.id
+                    ) {
+                        connectGoogleCast(retryDevice, retrySong, retryPos, isRetry = true)
+                    }
+                }
+                return
+            }
+
+            googleCastRetryCount = 0
             pendingGoogleCastDevice = null
             pendingGoogleCastSong = null
+            unregisterSystemVolumeReceiver()
             releaseCastLocks()
             mediaServer.stop()
             _sessionState.update {
@@ -333,13 +442,18 @@ class CastManager(context: Context) {
         }
 
         override fun onSessionEnded(session: CastSession, error: Int) {
+            googleCastConnectTimeoutJob?.cancel()
+            googleCastConnectTimeoutJob = null
             val lastPos = _sessionState.value.remotePositionMs
             stopProgressPolling()
             castLoadJob?.cancel()
+            preQueueJob?.cancel()
+            unregisterSystemVolumeReceiver()
             releaseCastLocks()
             mediaServer.stop()
             lastPreQueuedNextSongId = null
             hasNotifiedFinishForSongId = null
+            expectedLoadSongId = null
             googleCastWasPlayingSinceLoad = false
             currentSongUsingHlsVideo = false
             hlsFallbackSongIds.clear()
@@ -373,9 +487,12 @@ class CastManager(context: Context) {
         }
 
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            googleCastConnectTimeoutJob?.cancel()
+            googleCastConnectTimeoutJob = null
             onEnsureLocalPlaybackSilenced?.invoke()
             unregisterMediaRouterDiscovery()
             acquireCastLocks()
+            registerSystemVolumeReceiver()
             val device = buildDeviceFromCastSession(session)
             ensureRemoteMediaCallbackRegistered(session)
             _sessionState.update {
@@ -391,6 +508,7 @@ class CastManager(context: Context) {
         }
 
         override fun onSessionResumeFailed(session: CastSession, error: Int) {
+            unregisterSystemVolumeReceiver()
             releaseCastLocks()
             mediaServer.stop()
             _sessionState.update {
@@ -471,8 +589,10 @@ class CastManager(context: Context) {
     fun stopDiscovery() {
         dlnaScanJob?.cancel()
         dlnaScanJob = null
-        // Always unregister active MediaRouter scanning when the sheet closes to save CPU/Wi-Fi and prevent lag
-        unregisterMediaRouterDiscovery()
+        // Keep MediaRouter discovery alive while CONNECTING so closing the sheet right after tapping a TV never breaks the Cast handshake!
+        if (_sessionState.value.connectionState != CastConnectionState.CONNECTING) {
+            unregisterMediaRouterDiscovery()
+        }
         _sessionState.update { it.copy(isScanning = false) }
     }
 
@@ -503,24 +623,49 @@ class CastManager(context: Context) {
             }
 
             when (device.protocol) {
-                CastProtocol.GOOGLE_CAST -> connectGoogleCast(device, song, startPositionMs)
+                CastProtocol.GOOGLE_CAST -> {
+                    googleCastRetryCount = 0
+                    connectGoogleCast(device, song, startPositionMs, isRetry = false)
+                }
                 CastProtocol.DLNA_UPNP -> connectDlna(device, song, startPositionMs)
             }
         }
     }
 
-    private fun connectGoogleCast(device: CastDevice, song: Song?, startPositionMs: Long) {
+    private suspend fun connectGoogleCast(
+        device: CastDevice,
+        song: Song?,
+        startPositionMs: Long,
+        isRetry: Boolean = false
+    ) {
         ensureCastSdkInitialized()
-        // Ensure route table is fresh if user tapped quickly
+        // Wait briefly for async CastContext + SessionManagerListener registration BEFORE selecting route!
+        withTimeoutOrNull(2_500L) { castContextDeferred.await() }
+        registerMediaRouterDiscovery()
+
         val router = mediaRouter
-        val targetRoute = router?.routes?.firstOrNull { it.id == device.mediaRouteId }
+        var targetRoute = router?.routes?.firstOrNull {
+            it.id == device.mediaRouteId ||
+                (!it.isDefault && it.isEnabled && it.name.equals(device.name, ignoreCase = true))
+        }
+        if (router != null && targetRoute == null) {
+            // Brief discovery wait in case routes just refreshed
+            delay(350L)
+            refreshGoogleCastRoutes(router)
+            targetRoute = router.routes.firstOrNull {
+                it.id == device.mediaRouteId ||
+                    (!it.isDefault && it.isEnabled && it.name.equals(device.name, ignoreCase = true))
+            }
+        }
         if (router == null || targetRoute == null) {
             _sessionState.update {
                 it.copy(
                     connectionState = CastConnectionState.ERROR,
+                    connectedDevice = null,
                     errorMessage = "${device.name} is no longer reachable. Tap Refresh and make sure your TV is on."
                 )
             }
+            onCastConnectionChanged?.invoke(false, null)
             return
         }
 
@@ -532,7 +677,7 @@ class CastManager(context: Context) {
             it.copy(
                 connectionState = CastConnectionState.CONNECTING,
                 connectedDevice = device,
-                statusMessage = "Connecting to ${device.name}…",
+                statusMessage = if (isRetry) "Retrying connection to ${device.name}…" else "Connecting to ${device.name}…",
                 errorMessage = null
             )
         }
@@ -540,8 +685,10 @@ class CastManager(context: Context) {
 
         val existingSession = currentGoogleCastSession()
         if (existingSession != null && existingSession.isConnected && targetRoute.isSelected) {
+            googleCastConnectTimeoutJob?.cancel()
             unregisterMediaRouterDiscovery()
             acquireCastLocks()
+            registerSystemVolumeReceiver()
             ensureRemoteMediaCallbackRegistered(existingSession)
             _sessionState.update {
                 it.copy(
@@ -559,9 +706,53 @@ class CastManager(context: Context) {
             return
         }
 
+        // Clear any zombie/disconnected session so Google Cast performs a clean first-try handshake
+        if (existingSession != null && !existingSession.isConnected) {
+            try {
+                castContext?.sessionManager?.endCurrentSession(true)
+            } catch (_: Throwable) {}
+            delay(180L)
+        } else if (targetRoute.isSelected && existingSession == null) {
+            // Route was left selected without a CastSession — bounce via default route cleanly
+            try {
+                router.selectRoute(router.defaultRoute)
+            } catch (_: Throwable) {}
+            delay(180L)
+        }
+
+        // Connection timeout guard so UI never hangs indefinitely on CONNECTING
+        googleCastConnectTimeoutJob?.cancel()
+        googleCastConnectTimeoutJob = scope.launch {
+            delay(13_000L)
+            if (_sessionState.value.connectionState == CastConnectionState.CONNECTING &&
+                pendingGoogleCastDevice?.id == device.id
+            ) {
+                if (googleCastRetryCount < 1) {
+                    googleCastRetryCount++
+                    try { router.selectRoute(router.defaultRoute) } catch (_: Throwable) {}
+                    delay(450L)
+                    connectGoogleCast(device, pendingGoogleCastSong, pendingGoogleCastStartPosMs, isRetry = true)
+                } else {
+                    pendingGoogleCastDevice = null
+                    pendingGoogleCastSong = null
+                    unregisterMediaRouterDiscovery()
+                    _sessionState.update {
+                        it.copy(
+                            connectionState = CastConnectionState.ERROR,
+                            connectedDevice = null,
+                            statusMessage = null,
+                            errorMessage = "Timed out connecting to ${device.name}. Make sure your TV is awake on the same Wi-Fi and try again."
+                        )
+                    }
+                    onCastConnectionChanged?.invoke(false, null)
+                }
+            }
+        }
+
         try {
             router.selectRoute(targetRoute)
         } catch (e: Throwable) {
+            googleCastConnectTimeoutJob?.cancel()
             _sessionState.update {
                 it.copy(
                     connectionState = CastConnectionState.ERROR,
@@ -592,6 +783,7 @@ class CastManager(context: Context) {
                 if (song != null) {
                     val result = pushSongToDlna(device, song, startPositionMs)
                     if (result.isSuccess) {
+                        registerSystemVolumeReceiver()
                         _sessionState.update {
                             it.copy(
                                 connectionState = CastConnectionState.CONNECTED,
@@ -609,6 +801,7 @@ class CastManager(context: Context) {
                         onRemotePlaybackTick?.invoke(startPositionMs.coerceAtLeast(0L), true)
                         startProgressPolling()
                     } else {
+                        unregisterSystemVolumeReceiver()
                         releaseCastLocks()
                         mediaServer.stop()
                         _sessionState.update {
@@ -673,8 +866,13 @@ class CastManager(context: Context) {
         dlnaWasPlayingSinceLoad = false
         googleCastWasPlayingSinceLoad = false
         lastPreQueuedNextSongId = null
+        expectedLoadSongId = song.id
+        lastLoadDispatchedAtMs = SystemClock.elapsedRealtime()
+        lastDispatchedPlayState = true
+        lastPlayPauseDispatchedAtMs = lastLoadDispatchedAtMs
 
         castLoadJob?.cancel()
+        preQueueJob?.cancel()
         castLoadJob = scope.launch {
             val localIp = resolveLocalIpOnIo()
             if (localIp.isNullOrBlank()) {
@@ -689,9 +887,10 @@ class CastManager(context: Context) {
                     val lyricsEnabled = _sessionState.value.tvLyricsEnabled
                     val useTvVideoHls = device.kind != CastDeviceKind.SPEAKER && song.id !in hlsFallbackSongIds
 
-                    val prepared = withContext(Dispatchers.IO) {
+                    // Prepare ONLY the current song first so TV starts playing immediately without waiting on next-song prep!
+                    val (urls, hasLyrics) = withContext(Dispatchers.IO) {
                         val resolvedLyrics = resolveSyncedLyricsForSong(song)
-                        val urls = mediaServer.prepareMediaForSong(
+                        val preparedUrls = mediaServer.prepareMediaForSong(
                             song = song,
                             localIp = localIp,
                             syncedLyricsLines = resolvedLyrics.lines,
@@ -699,28 +898,8 @@ class CastManager(context: Context) {
                             tvLyricsEnabled = lyricsEnabled,
                             enableTvVideoHls = useTvVideoHls
                         )
-                        // Also prepare the next song for seamless gapless TV queue transitions
-                        val upcomingSong = try { nextSongProvider?.invoke() } catch (_: Throwable) { null }
-                        val upcomingUrls = if (upcomingSong != null && upcomingSong.id != song.id) {
-                            val nextLyrics = resolveSyncedLyricsForSong(upcomingSong)
-                            val nextUseHls = device.kind != CastDeviceKind.SPEAKER && upcomingSong.id !in hlsFallbackSongIds
-                            mediaServer.prepareMediaForSong(
-                                song = upcomingSong,
-                                localIp = localIp,
-                                syncedLyricsLines = nextLyrics.lines,
-                                syncOffsetMs = nextLyrics.offsetMs,
-                                tvLyricsEnabled = lyricsEnabled,
-                                enableTvVideoHls = nextUseHls
-                            )?.let { upcomingSong to it }
-                        } else {
-                            null
-                        }
-                        Triple(urls, upcomingUrls, resolvedLyrics.lines.isNotEmpty())
+                        preparedUrls to resolvedLyrics.lines.isNotEmpty()
                     }
-
-                    val urls = prepared.first
-                    val upcomingPair = prepared.second
-                    val hasLyrics = prepared.third
 
                     if (urls == null) {
                         _sessionState.update { it.copy(errorMessage = "Could not prepare local stream for ${song.displayTitle}") }
@@ -751,58 +930,23 @@ class CastManager(context: Context) {
                             longArrayOf()
                         }
 
-                        if (upcomingPair != null) {
-                            val (nextSong, nextUrls) = upcomingPair
-                            val nextUsingHls = device.kind != CastDeviceKind.SPEAKER &&
-                                nextSong.id !in hlsFallbackSongIds &&
-                                !nextUrls.hlsVideoUrl.isNullOrBlank()
-                            val nextMediaInfo = buildGoogleCastMediaInfo(
-                                song = nextSong,
-                                urls = nextUrls,
-                                style = style,
-                                preferHlsVideo = nextUsingHls
-                            )
-                            val nextActiveTracks = if (!nextUsingHls && lyricsEnabled && nextUrls.hasSyncedLyrics) {
-                                longArrayOf(LYRICS_TRACK_ID)
-                            } else {
-                                longArrayOf()
+                        val currentItem = MediaQueueItem.Builder(currentMediaInfo)
+                            .setAutoplay(true)
+                            .setCustomData(JSONObject().put("songId", song.id))
+                            .apply {
+                                if (activeTrackIds.isNotEmpty()) setActiveTrackIds(activeTrackIds)
                             }
+                            .build()
 
-                            val currentItem = MediaQueueItem.Builder(currentMediaInfo)
-                                .setAutoplay(true)
-                                .setCustomData(JSONObject().put("songId", song.id))
-                                .apply {
-                                    if (activeTrackIds.isNotEmpty()) setActiveTrackIds(activeTrackIds)
-                                }
-                                .build()
-                            val nextItem = MediaQueueItem.Builder(nextMediaInfo)
-                                .setAutoplay(true)
-                                .setPreloadTime(10.0)
-                                .setCustomData(JSONObject().put("songId", nextSong.id))
-                                .apply {
-                                    if (nextActiveTracks.isNotEmpty()) setActiveTrackIds(nextActiveTracks)
-                                }
-                                .build()
-
-                            lastPreQueuedNextSongId = nextSong.id
-                            client.queueLoad(
-                                arrayOf(currentItem, nextItem),
-                                0,
-                                MediaStatus.REPEAT_MODE_REPEAT_OFF,
-                                startPositionMs.coerceAtLeast(0L),
-                                null
-                            )
-                        } else {
-                            val requestData = MediaLoadRequestData.Builder()
-                                .setMediaInfo(currentMediaInfo)
-                                .setAutoplay(true)
-                                .setCurrentTime(startPositionMs.coerceAtLeast(0L))
-                                .apply {
-                                    if (activeTrackIds.isNotEmpty()) setActiveTrackIds(activeTrackIds)
-                                }
-                                .build()
-                            client.load(requestData)
-                        }
+                        expectedLoadSongId = song.id
+                        lastLoadDispatchedAtMs = SystemClock.elapsedRealtime()
+                        client.queueLoad(
+                            arrayOf(currentItem),
+                            0,
+                            MediaStatus.REPEAT_MODE_REPEAT_OFF,
+                            startPositionMs.coerceAtLeast(0L),
+                            null
+                        )
 
                         if (!usingHls) {
                             try {
@@ -826,6 +970,55 @@ class CastManager(context: Context) {
                         }
                         onRemotePlaybackTick?.invoke(startPositionMs.coerceAtLeast(0L), true)
                         startProgressPolling()
+
+                        // Asynchronously pre-queue the next track AFTER current song has started loading on TV
+                        preQueueJob?.cancel()
+                        preQueueJob = scope.launch {
+                            delay(900L)
+                            if (_sessionState.value.castingSong?.id != song.id || !_sessionState.value.isConnected) return@launch
+                            val upcomingSong = try { nextSongProvider?.invoke() } catch (_: Throwable) { null }
+                            if (upcomingSong == null || upcomingSong.id == song.id || upcomingSong.id == lastPreQueuedNextSongId) return@launch
+                            val nextPrepared = withContext(Dispatchers.IO) {
+                                val nextLyrics = resolveSyncedLyricsForSong(upcomingSong)
+                                val nextUseHls = device.kind != CastDeviceKind.SPEAKER && upcomingSong.id !in hlsFallbackSongIds
+                                mediaServer.prepareMediaForSong(
+                                    song = upcomingSong,
+                                    localIp = localIp,
+                                    syncedLyricsLines = nextLyrics.lines,
+                                    syncOffsetMs = nextLyrics.offsetMs,
+                                    tvLyricsEnabled = _sessionState.value.tvLyricsEnabled,
+                                    enableTvVideoHls = nextUseHls
+                                )
+                            } ?: return@launch
+                            if (_sessionState.value.castingSong?.id != song.id || !_sessionState.value.isConnected) return@launch
+                            val activeClient = currentGoogleCastSession()?.remoteMediaClient ?: return@launch
+                            val nextUsingHls = device.kind != CastDeviceKind.SPEAKER &&
+                                upcomingSong.id !in hlsFallbackSongIds &&
+                                !nextPrepared.hlsVideoUrl.isNullOrBlank()
+                            val nextMediaInfo = buildGoogleCastMediaInfo(
+                                song = upcomingSong,
+                                urls = nextPrepared,
+                                style = style,
+                                preferHlsVideo = nextUsingHls
+                            )
+                            val nextActiveTracks = if (!nextUsingHls && _sessionState.value.tvLyricsEnabled && nextPrepared.hasSyncedLyrics) {
+                                longArrayOf(LYRICS_TRACK_ID)
+                            } else {
+                                longArrayOf()
+                            }
+                            val nextItem = MediaQueueItem.Builder(nextMediaInfo)
+                                .setAutoplay(true)
+                                .setPreloadTime(10.0)
+                                .setCustomData(JSONObject().put("songId", upcomingSong.id))
+                                .apply {
+                                    if (nextActiveTracks.isNotEmpty()) setActiveTrackIds(nextActiveTracks)
+                                }
+                                .build()
+                            try {
+                                activeClient.queueAppendItem(nextItem, null)
+                                lastPreQueuedNextSongId = upcomingSong.id
+                            } catch (_: Throwable) {}
+                        }
                     } catch (e: Throwable) {
                         _sessionState.update {
                             it.copy(errorMessage = "Failed to load track on ${device.name}: ${e.message ?: "Unknown error"}")
@@ -1222,6 +1415,8 @@ class CastManager(context: Context) {
         val state = _sessionState.value
         val device = state.connectedDevice ?: return
         onEnsureLocalPlaybackSilenced?.invoke()
+        lastDispatchedPlayState = play
+        lastPlayPauseDispatchedAtMs = SystemClock.elapsedRealtime()
 
         when (device.protocol) {
             CastProtocol.GOOGLE_CAST -> {
@@ -1252,6 +1447,7 @@ class CastManager(context: Context) {
         val state = _sessionState.value
         val device = state.connectedDevice ?: return
         val safePos = positionMs.coerceAtLeast(0L)
+        lastSeekDispatchedAtMs = SystemClock.elapsedRealtime()
 
         _sessionState.update { it.copy(remotePositionMs = safePos) }
         onRemotePlaybackTick?.invoke(safePos, state.isRemotePlaying)
@@ -1281,6 +1477,7 @@ class CastManager(context: Context) {
     fun setRemoteVolume(volume01: Float) {
         val clamped = volume01.coerceIn(0f, 1f)
         val device = _sessionState.value.connectedDevice ?: return
+        lastRemoteVolumeSyncedAtMs = SystemClock.elapsedRealtime()
         _sessionState.update { it.copy(remoteVolume = clamped) }
         onRemoteVolumeChanged?.invoke(clamped)
 
@@ -1305,8 +1502,14 @@ class CastManager(context: Context) {
     private fun disconnectInternal(notifyCallback: Boolean) {
         val lastPos = _sessionState.value.remotePositionMs
         val device = _sessionState.value.connectedDevice
+        googleCastConnectTimeoutJob?.cancel()
+        googleCastConnectTimeoutJob = null
+        googleCastRetryCount = 0
         stopProgressPolling()
         castLoadJob?.cancel()
+        preQueueJob?.cancel()
+        unregisterSystemVolumeReceiver()
+        unregisterMediaRouterDiscovery()
         releaseCastLocks()
 
         if (device?.protocol == CastProtocol.GOOGLE_CAST) {
@@ -1327,6 +1530,8 @@ class CastManager(context: Context) {
         pendingGoogleCastDevice = null
         pendingGoogleCastSong = null
         hasNotifiedFinishForSongId = null
+        expectedLoadSongId = null
+        lastDispatchedPlayState = null
         dlnaWasPlayingSinceLoad = false
         googleCastWasPlayingSinceLoad = false
         currentSongUsingHlsVideo = false
@@ -1512,6 +1717,28 @@ class CastManager(context: Context) {
         progressPollJob = null
     }
 
+    private fun registerSystemVolumeReceiver() {
+        if (isSystemVolumeReceiverRegistered) return
+        try {
+            val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+            ContextCompat.registerReceiver(
+                appContext,
+                systemVolumeReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            isSystemVolumeReceiverRegistered = true
+        } catch (_: Throwable) {}
+    }
+
+    private fun unregisterSystemVolumeReceiver() {
+        if (!isSystemVolumeReceiverRegistered) return
+        try {
+            appContext.unregisterReceiver(systemVolumeReceiver)
+        } catch (_: Throwable) {}
+        isSystemVolumeReceiverRegistered = false
+    }
+
     private fun ensureCastSdkInitialized() {
         if (isCastContextInitialized) return
         isCastContextInitialized = true
@@ -1536,6 +1763,7 @@ class CastManager(context: Context) {
                         if (active != null && active.isConnected) {
                             onEnsureLocalPlaybackSilenced?.invoke()
                             acquireCastLocks()
+                            registerSystemVolumeReceiver()
                             ensureRemoteMediaCallbackRegistered(active)
                             val dev = buildDeviceFromCastSession(active)
                             _sessionState.update {
@@ -1549,11 +1777,20 @@ class CastManager(context: Context) {
                             startProgressPolling()
                         }
                     } catch (_: Throwable) {}
+                    if (!castContextDeferred.isCompleted) {
+                        castContextDeferred.complete(ctx)
+                    }
                 }
                 .addOnFailureListener {
-                    // Play Services Cast unavailable on this device; DLNA & Bluetooth remain available
+                    if (!castContextDeferred.isCompleted) {
+                        castContextDeferred.complete(null)
+                    }
                 }
-        } catch (_: Throwable) {}
+        } catch (_: Throwable) {
+            if (!castContextDeferred.isCompleted) {
+                castContextDeferred.complete(null)
+            }
+        }
     }
 
     private fun registerMediaRouterDiscovery() {
@@ -1645,9 +1882,12 @@ class CastManager(context: Context) {
     }
 
     fun release() {
+        googleCastConnectTimeoutJob?.cancel()
         stopDiscovery()
         stopProgressPolling()
         castLoadJob?.cancel()
+        preQueueJob?.cancel()
+        unregisterSystemVolumeReceiver()
         unregisterMediaRouterDiscovery()
         releaseCastLocks()
         try {

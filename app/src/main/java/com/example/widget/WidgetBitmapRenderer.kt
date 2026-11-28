@@ -675,7 +675,8 @@ object WidgetBitmapRenderer {
     enum class FavoriteAnimFrame {
         NORMAL,
         BURST,
-        BROKEN
+        BROKEN,
+        BROKEN_SPLIT
     }
 
     @Synchronized
@@ -720,15 +721,16 @@ object WidgetBitmapRenderer {
         }
 
         when (animFrame) {
-            FavoriteAnimFrame.BROKEN -> {
-                // Split heart into two tilting halves with a jagged crack for unfavorite animation
+            FavoriteAnimFrame.BROKEN, FavoriteAnimFrame.BROKEN_SPLIT -> {
+                // Stage 1 (BROKEN): crisp crack & initial split; Stage 2 (BROKEN_SPLIT): wider split, downward fall & micro-shards
+                val isSplitStage = animFrame == FavoriteAnimFrame.BROKEN_SPLIT
                 val leftClip = Path().apply {
                     moveTo(0f, 0f)
                     lineTo(x, 0f)
                     lineTo(x, y - h * 0.36f)
-                    lineTo(x - w * 0.16f, y - h * 0.04f)
-                    lineTo(x + w * 0.14f, y + h * 0.24f)
-                    lineTo(x - w * 0.08f, y + h * 0.52f)
+                    lineTo(x - w * 0.18f, y - h * 0.04f)
+                    lineTo(x + w * 0.16f, y + h * 0.24f)
+                    lineTo(x - w * 0.10f, y + h * 0.52f)
                     lineTo(x, sizePx.toFloat())
                     lineTo(0f, sizePx.toFloat())
                     close()
@@ -738,30 +740,53 @@ object WidgetBitmapRenderer {
                     lineTo(sizePx.toFloat(), 0f)
                     lineTo(sizePx.toFloat(), sizePx.toFloat())
                     lineTo(x, sizePx.toFloat())
-                    lineTo(x - w * 0.08f, y + h * 0.52f)
-                    lineTo(x + w * 0.14f, y + h * 0.24f)
-                    lineTo(x - w * 0.16f, y - h * 0.04f)
+                    lineTo(x - w * 0.10f, y + h * 0.52f)
+                    lineTo(x + w * 0.16f, y + h * 0.24f)
+                    lineTo(x - w * 0.18f, y - h * 0.04f)
                     lineTo(x, y - h * 0.36f)
                     close()
                 }
-                val splitDx = sizePx * 0.06f
-                val splitDy = sizePx * 0.03f
+                val splitDx = sizePx * (if (isSplitStage) 0.105f else 0.062f)
+                val splitDy = sizePx * (if (isSplitStage) 0.075f else 0.025f)
+                val tiltDeg = if (isSplitStage) 21f else 12f
+                val alphaVal = if (isSplitStage) 180 else 245
+
                 paint.style = Paint.Style.FILL
-                paint.color = accentColor
+                paint.color = Color.argb(
+                    alphaVal,
+                    Color.red(accentColor),
+                    Color.green(accentColor),
+                    Color.blue(accentColor)
+                )
 
                 canvas.save()
                 canvas.translate(-splitDx, splitDy)
-                canvas.rotate(-14f, x, y + h * 0.2f)
+                canvas.rotate(-tiltDeg, x, y + h * 0.25f)
                 canvas.clipPath(leftClip)
                 canvas.drawPath(path, paint)
                 canvas.restore()
 
                 canvas.save()
                 canvas.translate(splitDx, splitDy)
-                canvas.rotate(14f, x, y + h * 0.2f)
+                canvas.rotate(tiltDeg, x, y + h * 0.25f)
                 canvas.clipPath(rightClip)
                 canvas.drawPath(path, paint)
                 canvas.restore()
+
+                // Tiny shattered fragment particles near the crack line so the break pops cleanly at small widget sizes
+                val shardR = (sizePx * 0.032f).coerceAtLeast(1.1f)
+                paint.color = Color.argb(
+                    if (isSplitStage) 150 else 210,
+                    Color.red(accentColor),
+                    Color.green(accentColor),
+                    Color.blue(accentColor)
+                )
+                val shardSpread = if (isSplitStage) sizePx * 0.14f else sizePx * 0.07f
+                canvas.drawCircle(x - shardSpread * 0.45f, y - h * 0.55f - shardSpread * 0.3f, shardR, paint)
+                canvas.drawCircle(x + shardSpread * 0.50f, y - h * 0.45f - shardSpread * 0.2f, shardR * 0.85f, paint)
+                if (isSplitStage) {
+                    canvas.drawCircle(x, y + h * 0.72f + shardSpread * 0.25f, shardR * 0.9f, paint)
+                }
             }
             FavoriteAnimFrame.BURST -> {
                 // 6 minimal radial pastel burst dots around the popping heart

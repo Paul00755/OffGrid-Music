@@ -14,6 +14,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.HowToVote
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -62,6 +64,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
@@ -79,6 +82,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -1326,256 +1330,320 @@ private fun ActivePage(
             }
         }
 
-        // Synchronized Now Playing Card
+        // Synchronized Now Playing Stage Card
         item {
-            JamCard {
-                // Top live status strip: playback state + real-time clock sync + control lock indicator
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = BentoCardSurface,
+                border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.24f)),
+                tonalElevation = 2.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    BentoPrimary.copy(alpha = 0.12f),
+                                    BentoCardSurface.copy(alpha = 0.96f)
+                                )
+                            )
+                        )
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    val liveDotColor = when {
-                        currentItem != null && !localTrackAvailable -> MaterialTheme.colorScheme.error
-                        isPlayingNow && syncStatus.isClockSynced -> androidx.compose.ui.graphics.Color(0xFF1DB954)
-                        isPlayingNow -> BentoPrimary
-                        else -> BentoTextSecondary
-                    }
-                    val statusLabel = when {
-                        !roomStarted -> "Waiting for host"
-                        currentItem == null -> "Queue ready"
-                        !localTrackAvailable -> "Track unavailable locally"
-                        isPlayingNow && syncStatus.isClockSynced -> {
-                            val absDrift = kotlin.math.abs(syncStatus.lastDriftMs)
-                            if (absDrift in 1L..99L) "Playing · Synced (±${absDrift}ms)"
-                            else "Playing · Synced live"
-                        }
-                        isPlayingNow -> "Playing · Syncing…"
-                        else -> "Paused · Ready"
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = liveDotColor.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, liveDotColor.copy(alpha = 0.35f))
+                    // Top live status strip: precision clock-sync badge + RTT / listen-only pill
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val absDrift = kotlin.math.abs(syncStatus.lastDriftMs)
+                        val liveDotColor = when {
+                            currentItem != null && !localTrackAvailable -> MaterialTheme.colorScheme.error
+                            isPlayingNow && syncStatus.isClockSynced && absDrift <= 15L -> androidx.compose.ui.graphics.Color(0xFF1DB954)
+                            isPlayingNow -> BentoPrimary
+                            else -> BentoTextSecondary
+                        }
+                        val statusLabel = when {
+                            !roomStarted -> "Waiting for host"
+                            currentItem == null -> "Queue ready"
+                            !localTrackAvailable -> "Track unavailable locally"
+                            isPlayingNow && syncStatus.isClockSynced -> {
+                                if (absDrift <= 15L) "Locked · ±${absDrift}ms"
+                                else if (absDrift < 100L) "Syncing · ±${absDrift}ms"
+                                else "Playing · Synced live"
+                            }
+                            isPlayingNow -> "Playing · Calibrating…"
+                            else -> "Paused · Ready"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = liveDotColor.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, liveDotColor.copy(alpha = 0.36f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(liveDotColor)
+                                )
+                                Text(
+                                    text = statusLabel,
+                                    color = if (currentItem != null && !localTrackAvailable) MaterialTheme.colorScheme.error else BentoTextPrimary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(liveDotColor)
-                            )
+                            if (syncStatus.isClockSynced && syncStatus.rttMs > 0L && !controlsLockedForUser) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = BentoCardPurple.copy(alpha = 0.55f),
+                                    border = BorderStroke(1.dp, BentoCardBorder)
+                                ) {
+                                    Text(
+                                        text = "${syncStatus.rttMs}ms RTT",
+                                        color = BentoTextSecondary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                            if (controlsLockedForUser) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = BentoCardPurple.copy(alpha = 0.7f),
+                                    border = BorderStroke(1.dp, BentoCardBorder)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Playback controls locked",
+                                            tint = BentoTextSecondary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Listen only",
+                                            color = BentoTextSecondary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        val stageArtSize = if (isCompactWidth) 74.dp else 82.dp
+                        val nowPlayingSong = remember(currentItem?.track, sharedLibraryMatches, songs) {
+                            currentItem?.track?.let { track ->
+                                controller?.resolveSongForTrack(track, songs)
+                                    ?: resolveSongForTrack(track, sharedLibraryMatches, songs)
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = BentoCardPurple,
+                            border = BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.25f)),
+                            shadowElevation = 4.dp,
+                            modifier = Modifier.size(stageArtSize)
+                        ) {
+                            if (nowPlayingSong != null) {
+                                AlbumArtView(
+                                    song = nowPlayingSong,
+                                    modifier = Modifier.fillMaxSize(),
+                                    cornerRadius = 18
+                                )
+                            } else {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(32.dp))
+                                }
+                            }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = statusLabel,
-                                color = if (currentItem != null && !localTrackAvailable) MaterialTheme.colorScheme.error else BentoTextPrimary,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
+                                text = currentItem?.track?.title ?: "Nothing queued yet",
+                                color = BentoTextPrimary,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        }
-                    }
-                    if (controlsLockedForUser) {
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = BentoCardPurple.copy(alpha = 0.7f),
-                            border = BorderStroke(1.dp, BentoCardBorder)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Playback controls locked",
-                                    tint = BentoTextSecondary,
-                                    modifier = Modifier.size(12.dp)
-                                )
+                            Text(
+                                text = currentItem?.track?.artist
+                                    ?: if (sharedLibraryMatches.isNotEmpty()) "${sharedLibraryMatches.size} matching songs ready to play" else "Add a track from your library",
+                                color = BentoTextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val actorUid = session?.playback?.actorUid
+                            val actorLabel = remember(actorUid, participants, currentUid) {
+                                if (actorUid.isNullOrBlank()) null
+                                else if (actorUid == currentUid) "You"
+                                else participants.firstOrNull { it.uid == actorUid }?.displayName?.takeIf(String::isNotBlank)
+                            }
+                            if (currentItem != null && actorLabel != null && roomStarted) {
                                 Text(
-                                    text = "Listen only",
-                                    color = BentoTextSecondary,
+                                    text = "Last controlled by $actorLabel",
+                                    color = BentoPrimary.copy(alpha = 0.85f),
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                     }
-                }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val nowPlayingSong = remember(currentItem?.track, sharedLibraryMatches, songs) {
-                        currentItem?.track?.let { track ->
-                            controller?.resolveSongForTrack(track, songs)
-                                ?: resolveSongForTrack(track, sharedLibraryMatches, songs)
-                        }
-                    }
-                    if (nowPlayingSong != null) {
-                        AlbumArtView(
-                            song = nowPlayingSong,
-                            modifier = Modifier.size(artSize),
-                            cornerRadius = 16
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Slider(
+                            value = sliderPosition.coerceIn(0f, durationMs.toFloat()),
+                            onValueChange = { isSeeking = true; sliderPosition = it },
+                            onValueChangeFinished = { controller?.seek(sliderPosition.toLong()); isSeeking = false },
+                            valueRange = 0f..durationMs.toFloat(),
+                            enabled = roomStarted && currentItem != null && localTrackAvailable && canSeek,
+                            colors = SliderDefaults.colors(
+                                thumbColor = BentoPrimary,
+                                activeTrackColor = BentoPrimary,
+                                inactiveTrackColor = BentoCardBorder.copy(alpha = 0.55f)
+                            ),
+                            modifier = Modifier.testTag("jam_playback_slider")
                         )
-                    } else {
-                        Box(
-                            Modifier.size(artSize).clip(RoundedCornerShape(16.dp)).background(BentoCardPurple),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(Icons.Default.MusicNote, null, tint = BentoPrimary, modifier = Modifier.size(30.dp))
-                        }
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            text = currentItem?.track?.title ?: "Nothing queued",
-                            color = BentoTextPrimary,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = currentItem?.track?.artist
-                                ?: if (sharedLibraryMatches.isNotEmpty()) "${sharedLibraryMatches.size} matching songs ready to add" else "Add a track from your library",
-                            color = BentoTextSecondary,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        val actorUid = session?.playback?.actorUid
-                        val actorLabel = remember(actorUid, participants, currentUid) {
-                            if (actorUid.isNullOrBlank()) null
-                            else if (actorUid == currentUid) "You"
-                            else participants.firstOrNull { it.uid == actorUid }?.displayName?.takeIf(String::isNotBlank)
-                        }
-                        if (currentItem != null && actorLabel != null && roomStarted) {
                             Text(
-                                text = "Last controlled by $actorLabel",
-                                color = BentoTextSecondary.copy(alpha = 0.85f),
+                                text = if (currentItem != null) formatDurationMmSs(sliderPosition.toLong()) else "0:00",
+                                color = BentoTextSecondary,
                                 style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (currentItem != null) formatDurationMmSs(durationMs) else "0:00",
+                                color = BentoTextSecondary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
-                }
-                Slider(
-                    value = sliderPosition.coerceIn(0f, durationMs.toFloat()),
-                    onValueChange = { isSeeking = true; sliderPosition = it },
-                    onValueChangeFinished = { controller?.seek(sliderPosition.toLong()); isSeeking = false },
-                    valueRange = 0f..durationMs.toFloat(),
-                    enabled = roomStarted && currentItem != null && localTrackAvailable && canSeek,
-                    modifier = Modifier.testTag("jam_playback_slider")
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (currentItem != null) formatDurationMmSs(sliderPosition.toLong()) else "0:00",
-                        color = BentoTextSecondary,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    Text(
-                        text = if (currentItem != null) formatDurationMmSs(durationMs) else "0:00",
-                        color = BentoTextSecondary,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-                val shuffleEnabled = roomStarted && queue.size > 1 && canManageQueue
-                val skipEnabled = roomStarted && queue.isNotEmpty() && canSkip
-                val playPauseEnabled = roomStarted && (currentItem != null || queue.isNotEmpty()) && localTrackAvailable && canPlayPause
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    IconButton(
-                        onClick = { controller?.shuffleQueue() },
-                        enabled = shuffleEnabled,
-                        modifier = Modifier.size(48.dp).testTag("jam_shuffle_button")
+
+                    val shuffleEnabled = roomStarted && queue.size > 1 && canManageQueue
+                    val skipEnabled = roomStarted && queue.isNotEmpty() && canSkip
+                    val playPauseEnabled = roomStarted && (currentItem != null || queue.isNotEmpty()) && localTrackAvailable && canPlayPause
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Shuffle,
-                            contentDescription = "Shuffle shared queue",
-                            tint = if (shuffleEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
-                        )
-                    }
-                    IconButton(
-                        onClick = { controller?.skip(-1) },
-                        enabled = skipEnabled,
-                        modifier = Modifier.size(48.dp).testTag("jam_previous_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipPrevious,
-                            contentDescription = "Previous",
-                            tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
-                        )
-                    }
-                    Surface(
-                        modifier = Modifier
-                            .size(58.dp)
-                            .clip(CircleShape)
-                            .clickable(enabled = playPauseEnabled) { controller?.togglePlayback() }
-                            .testTag("jam_play_pause_button"),
-                        color = if (playPauseEnabled) BentoPrimary else BentoCardBorder.copy(alpha = 0.55f),
-                        shape = CircleShape
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        IconButton(
+                            onClick = { controller?.shuffleQueue() },
+                            enabled = shuffleEnabled,
+                            modifier = Modifier.size(48.dp).testTag("jam_shuffle_button")
+                        ) {
                             Icon(
-                                imageVector = if (isPlayingNow) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlayingNow) "Pause" else "Play",
-                                tint = if (playPauseEnabled) BentoOnPrimary else BentoTextSecondary.copy(alpha = 0.65f),
-                                modifier = Modifier.size(30.dp)
+                                imageVector = Icons.Default.Shuffle,
+                                contentDescription = "Shuffle shared queue",
+                                tint = if (shuffleEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
+                            )
+                        }
+                        IconButton(
+                            onClick = { controller?.skip(-1) },
+                            enabled = skipEnabled,
+                            modifier = Modifier.size(48.dp).testTag("jam_previous_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipPrevious,
+                                contentDescription = "Previous",
+                                tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Surface(
+                            modifier = Modifier
+                                .size(62.dp)
+                                .clip(CircleShape)
+                                .clickable(enabled = playPauseEnabled) { controller?.togglePlayback() }
+                                .testTag("jam_play_pause_button"),
+                            color = if (playPauseEnabled) BentoPrimary else BentoCardBorder.copy(alpha = 0.55f),
+                            shadowElevation = if (playPauseEnabled) 6.dp else 0.dp,
+                            shape = CircleShape
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (isPlayingNow) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlayingNow) "Pause" else "Play",
+                                    tint = if (playPauseEnabled) BentoOnPrimary else BentoTextSecondary.copy(alpha = 0.65f),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { controller?.skip(1) },
+                            enabled = skipEnabled,
+                            modifier = Modifier.size(48.dp).testTag("jam_next_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = "Next",
+                                tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { selectedRoomTab = 0 },
+                            modifier = Modifier.size(48.dp).testTag("jam_queue_shortcut_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QueueMusic,
+                                contentDescription = "Open shared queue",
+                                tint = if (selectedRoomTab == 0) BentoPrimary else BentoTextSecondary
                             )
                         }
                     }
-                    IconButton(
-                        onClick = { controller?.skip(1) },
-                        enabled = skipEnabled,
-                        modifier = Modifier.size(48.dp).testTag("jam_next_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SkipNext,
-                            contentDescription = "Next",
-                            tint = if (skipEnabled) BentoTextPrimary else BentoTextSecondary.copy(alpha = 0.32f)
+                    if (!roomStarted) {
+                        Text(
+                            text = "Playback starts when the host opens the room.",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else if (controlsLockedForUser) {
+                        Text(
+                            text = "Host controls playback. Headphone and media buttons are locked for listen-only mode.",
+                            color = BentoTextSecondary,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
-                    IconButton(
-                        onClick = { selectedRoomTab = 0 },
-                        modifier = Modifier.size(48.dp).testTag("jam_queue_shortcut_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.QueueMusic,
-                            contentDescription = "Open shared queue",
-                            tint = if (selectedRoomTab == 0) BentoPrimary else BentoTextSecondary
-                        )
-                    }
-                }
-                if (!roomStarted) {
-                    Text(
-                        text = "Playback starts when the host opens the room.",
-                        color = BentoTextSecondary,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else if (controlsLockedForUser) {
-                    Text(
-                        text = "Host controls playback. Headphone and media buttons are locked for listen-only mode.",
-                        color = BentoTextSecondary,
-                        style = MaterialTheme.typography.labelSmall
-                    )
                 }
             }
         }
 
-        // Listeners Accordion
+        // Listeners Accordion + Compact Presence Strip
         item {
             JamAccordion(
                 title = "Listeners",
-                summary = "${participants.size} / ${session?.maxParticipants ?: JamRepository.MAX_PARTICIPANTS}",
+                summary = "${participants.size} / ${session?.maxParticipants ?: JamRepository.MAX_PARTICIPANTS} active",
                 icon = Icons.Default.Groups,
                 expanded = participantsExpanded,
                 onToggle = { participantsExpanded = !participantsExpanded }
@@ -1585,6 +1653,50 @@ private fun ActivePage(
                         if (isHost && participant.uid != currentUid) {
                             IconButton(onClick = { onRemoveParticipant(participant.uid) }) {
                                 Icon(Icons.Default.RemoveCircleOutline, "Remove ${participant.displayName}", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+            if (!participantsExpanded && participants.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    participants.forEach { p ->
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (p.isHost) BentoPrimary.copy(alpha = 0.14f) else BentoCardSurface,
+                            border = BorderStroke(
+                                1.dp,
+                                if (p.isHost) BentoPrimary.copy(alpha = 0.36f) else BentoCardBorder
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (p.isConnected) androidx.compose.ui.graphics.Color(0xFF1DB954) else BentoTextSecondary
+                                        )
+                                )
+                                Text(
+                                    text = if (p.isHost) "${p.displayName} · Host" else p.displayName,
+                                    color = BentoTextPrimary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (p.isHost) FontWeight.SemiBold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -1609,6 +1721,7 @@ private fun ActivePage(
 
         // Room Navigation Segmented Pill Bar: Queue | Suggest | Local Share (adapts cleanly to any screen width)
         item {
+            val tabIcons = listOf(Icons.Default.QueueMusic, Icons.Default.HowToVote, Icons.Default.UploadFile)
             val tabItems = listOf(
                 Triple("Queue", if (queue.isNotEmpty()) "${queue.size}" else null, "jam_tab_queue"),
                 Triple(if (isCompactWidth) "Suggest" else "Recommendations", if (activeVotesBadgeCount > 0) "$activeVotesBadgeCount" else null, "jam_tab_recommendations"),
@@ -1616,7 +1729,7 @@ private fun ActivePage(
             )
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = BentoCardSurface,
                 border = BorderStroke(1.dp, BentoCardBorder)
             ) {
@@ -1631,18 +1744,25 @@ private fun ActivePage(
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
-                                .heightIn(min = 42.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .heightIn(min = 44.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .clickable { selectedRoomTab = index }
                                 .testTag(tag),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             color = if (selected) BentoPrimary else androidx.compose.ui.graphics.Color.Transparent
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
+                                Icon(
+                                    imageVector = tabIcons[index],
+                                    contentDescription = null,
+                                    tint = if (selected) BentoOnPrimary else BentoTextSecondary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
                                 Text(
                                     text = label,
                                     color = if (selected) BentoOnPrimary else BentoTextSecondary,

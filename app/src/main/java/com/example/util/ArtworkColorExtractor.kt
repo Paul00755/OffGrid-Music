@@ -14,7 +14,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 object ArtworkColorExtractor {
-    private const val PREFS_NAME = "artwork_palette_cache_v6"
+    private const val PREFS_NAME = "artwork_palette_cache_v7"
     private val colorCache = object : android.util.LruCache<String, Color>(500) {}
     private val dualGradientCache = object : android.util.LruCache<String, Pair<Color, Color>>(250) {}
     private val bottomStageColorCache = object : android.util.LruCache<String, Color>(250) {}
@@ -84,7 +84,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "song_v6_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "song_v7_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         getCachedColor(context, cacheKey)?.let { return it }
 
         return withContext(Dispatchers.IO) {
@@ -160,7 +160,7 @@ object ArtworkColorExtractor {
         val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v6_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v7_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -209,7 +209,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "dual_v6_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "dual_v7_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             dualGradientCache.get(cacheKey)?.let { return it }
         }
@@ -291,7 +291,7 @@ object ArtworkColorExtractor {
         val manualCover = com.example.ui.components.ArtworkResolutionCache.getManualCoverUri(context, song.id, song.path)
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: song.artworkUri ?: ""
-        val cacheKey = "bstage_v2_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "bstage_v3_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             bottomStageColorCache.get(cacheKey)?.let { return it }
         }
@@ -333,7 +333,7 @@ object ArtworkColorExtractor {
         val cachedMemUri = com.example.ui.components.ArtworkResolutionCache.getMemory(song.id, song.path)
         val cachedDisk = com.example.ui.components.ArtworkResolutionCache.getOrCheckDisk(context, song.id, song.path)
         val resolvedArtKey = manualCover ?: cachedMemUri ?: cachedDisk ?: song.artworkUri ?: ""
-        val cacheKey = "bstage_v2_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
+        val cacheKey = "bstage_v3_${song.trackIdentityKey}_${thumbImgBmp != null}_$resolvedArtKey"
         synchronized(this) {
             bottomStageColorCache.get(cacheKey)?.let { return it }
         }
@@ -406,7 +406,7 @@ object ArtworkColorExtractor {
 
     suspend fun extractPrimaryColor(context: Context, artworkUriStr: String?): Color? {
         if (artworkUriStr.isNullOrBlank()) return null
-        val uriCacheKey = "uri_v6_$artworkUriStr"
+        val uriCacheKey = "uri_v7_$artworkUriStr"
         synchronized(this) {
             if (failedCache.get(uriCacheKey) == true) return null
         }
@@ -514,7 +514,79 @@ object ArtworkColorExtractor {
             }
         }
 
+        if (isMonochromeArtwork(pixels, width, height)) {
+            return NEUTRAL_MONOCHROME_PRIMARY
+        }
+
         return findProminentColorInSlice(pixels, width, height, 0, height)
+    }
+
+    private val NEUTRAL_MONOCHROME_PRIMARY = Color(0xFFCCCCCC)
+    private val NEUTRAL_MONOCHROME_BOTTOM_STAGE = Color(0xFF222222)
+    private val NEUTRAL_MONOCHROME_DUAL_TOP = Color(0xFF525252)
+    private val NEUTRAL_MONOCHROME_DUAL_BOTTOM = Color(0xFF1F1F1F)
+
+    /**
+     * Detects genuinely black-and-white / grayscale artworks while ignoring small colored
+     * corner watermarks or bottom site banners (e.g., bottom 16% strip & 4% outer border).
+     */
+    internal fun isMonochromeArtwork(pixels: IntArray, width: Int, height: Int): Boolean {
+        if (width <= 0 || height <= 0 || pixels.isEmpty()) return false
+        val xStart = (width * 0.04f).toInt().coerceIn(0, width - 1)
+        val xEnd = (width * 0.96f).toInt().coerceIn(xStart + 1, width)
+        val yStart = (height * 0.04f).toInt().coerceIn(0, height - 1)
+        val yEnd = (height * 0.84f).toInt().coerceIn(yStart + 1, height)
+
+        var totalOpaque = 0
+        var chromaticPixels = 0
+        var nonBlackPixels = 0
+        val satHistogram = IntArray(101)
+
+        for (y in yStart until yEnd) {
+            val rowOffset = y * width
+            for (x in xStart until xEnd) {
+                val colorInt = pixels[rowOffset + x]
+                if (((colorInt ushr 24) and 0xFF) < 128) continue
+                totalOpaque++
+
+                val r = (colorInt ushr 16) and 0xFF
+                val g = (colorInt ushr 8) and 0xFF
+                val b = colorInt and 0xFF
+
+                val maxC = maxOf(r, g, b)
+                val minC = minOf(r, g, b)
+                val delta = maxC - minC
+
+                if (maxC >= 20) {
+                    val sat = delta.toFloat() / maxC.toFloat()
+                    val bin = (sat * 100f).toInt().coerceIn(0, 100)
+                    satHistogram[bin]++
+                    nonBlackPixels++
+                    if (delta >= 22 && sat >= 0.16f && maxC <= 248) {
+                        chromaticPixels++
+                    }
+                }
+            }
+        }
+
+        if (totalOpaque == 0) return false
+        val chromaticRatio = chromaticPixels.toFloat() / totalOpaque.toFloat()
+        if (chromaticRatio < 0.045f) return true
+
+        if (nonBlackPixels > 0) {
+            val targetRank = (nonBlackPixels * 0.92f).toInt().coerceAtLeast(1)
+            var cumulative = 0
+            var p92Bin = 0
+            for (bin in 0..100) {
+                cumulative += satHistogram[bin]
+                if (cumulative >= targetRank) {
+                    p92Bin = bin
+                    break
+                }
+            }
+            if (p92Bin < 13) return true
+        }
+        return false
     }
 
     private fun isBrownOrMuddyHue(hue: Float, saturation: Float, value: Float): Boolean {
@@ -756,73 +828,170 @@ object ArtworkColorExtractor {
             val h = scaled.height
             val pixels = IntArray(w * h)
             scaled.getPixels(pixels, 0, w, 0, 0, w, h)
-            val halfH = (h / 2).coerceAtLeast(1)
 
-            val fullDominant = findProminentColorInSlice(pixels, w, h, 0, h)
-            val rawTopCandidate = findProminentColorInSlice(pixels, w, h, 0, halfH)
-                ?: fullDominant
-                ?: return null
-            val rawBottomCandidate = findProminentColorInSlice(pixels, w, h, h - halfH, h)
-                ?: fullDominant
-                ?: rawTopCandidate
-
-            fun isWarmBrownColor(c: Color): Boolean {
-                val hArr = FloatArray(3)
-                android.graphics.Color.colorToHSV(c.toArgb(), hArr)
-                return hArr[0] in 10f..48f
+            // Monochrome / B&W artworks get a sleek neutral silver-to-charcoal studio gradient
+            if (isMonochromeArtwork(pixels, w, h)) {
+                return NEUTRAL_MONOCHROME_DUAL_TOP to NEUTRAL_MONOCHROME_DUAL_BOTTOM
             }
 
-            // If either half picked a brown/skin-tone patch while the full artwork has a vivid non-brown hue,
-            // anchor to the artwork's authentic non-brown hue and extract a secondary non-brown accent.
-            val fullIsNonBrown = fullDominant != null && !isWarmBrownColor(fullDominant)
-            val rawTopColor = if (isWarmBrownColor(rawTopCandidate) && fullIsNonBrown) {
-                fullDominant!!
-            } else {
-                rawTopCandidate
-            }
+            // Exclude bottom 12% watermark strip so site banners never pollute the gradient
+            val sampleEndY = (h * 0.88f).toInt().coerceIn(1, h)
+            val numBuckets = 24 // 15° per hue bucket
+            val bucketCount = IntArray(numBuckets)
+            val bucketWeight = FloatArray(numBuckets)
+            val bucketSumR = DoubleArray(numBuckets)
+            val bucketSumG = DoubleArray(numBuckets)
+            val bucketSumB = DoubleArray(numBuckets)
+            val bucketSumY = DoubleArray(numBuckets)
+            var totalChromatic = 0
 
-            val topHsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(rawTopColor.toArgb(), topHsv)
+            for (y in 0 until sampleEndY) {
+                val rowOffset = y * w
+                for (x in 0 until w) {
+                    val pixel = pixels[rowOffset + x]
+                    if (((pixel ushr 24) and 0xFF) < 128) continue
+                    val r = (pixel ushr 16) and 0xFF
+                    val g = (pixel ushr 8) and 0xFF
+                    val b = pixel and 0xFF
 
-            val rawBottomColor = if (isWarmBrownColor(rawBottomCandidate) && (!isWarmBrownColor(rawTopColor) || fullIsNonBrown)) {
-                findProminentColorInSlice(pixels, w, h, 0, h, excludeHueCenter = topHsv[0])
-                    ?.takeUnless { isWarmBrownColor(it) }
-                    ?: rawTopColor
-            } else {
-                rawBottomCandidate
-            }
+                    val maxC = maxOf(r, g, b)
+                    val minC = minOf(r, g, b)
+                    val delta = maxC - minC
+                    val value = maxC / 255f
+                    val sat = if (maxC == 0) 0f else delta.toFloat() / maxC.toFloat()
 
-            val botHsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(rawBottomColor.toArgb(), botHsv)
+                    // Include rich earth tones/browns as well as vibrant blues/reds/greens without bias
+                    if (delta < 18 || value < 0.14f || sat < 0.14f) continue
+                    if (value > 0.98f && sat < 0.08f) continue
 
-            if (topHsv[0] in 20f..48f) {
-                topHsv[0] = (topHsv[0] - 6f).coerceAtLeast(12f)
-            }
-            topHsv[1] = topHsv[1].coerceIn(0.36f, 0.58f)
-            topHsv[2] = topHsv[2].coerceIn(0.84f, 0.94f)
-            val softTopColor = Color(android.graphics.Color.HSVToColor(topHsv))
+                    var hue = when {
+                        delta == 0 -> 0f
+                        maxC == r -> 60f * (((g - b).toFloat() / delta.toFloat()) % 6f)
+                        maxC == g -> 60f * (((b - r).toFloat() / delta.toFloat()) + 2f)
+                        else -> 60f * (((r - g).toFloat() / delta.toFloat()) + 4f)
+                    }
+                    if (hue < 0f) hue += 360f
 
-            val rawDiff = kotlin.math.abs(topHsv[0] - botHsv[0])
-            val hueDiff = minOf(rawDiff, 360f - rawDiff)
-            val isTopWarmGoldOrAmber = topHsv[0] in 15f..58f
-            val isBotMuddyYellowGreen = botHsv[0] in 58f..102f
+                    val brightnessWeight = when {
+                        value in 0.24f..0.92f -> 1.25f
+                        else -> 0.85f
+                    }
+                    val weight = (0.65f + sat.coerceAtMost(0.90f) * 0.65f) * brightnessWeight
+                    val idx = ((hue / 15f).toInt()) % numBuckets
 
-            val bottomColor = if (hueDiff < 26f || (isTopWarmGoldOrAmber && isBotMuddyYellowGreen)) {
-                val hueShift = if (topHsv[0] in 12f..95f) -28f else 34f
-                botHsv[0] = (topHsv[0] + hueShift + 360f) % 360f
-                botHsv[1] = (topHsv[1] * 1.08f).coerceIn(0.38f, 0.62f)
-                botHsv[2] = (topHsv[2] * 0.98f).coerceIn(0.86f, 0.95f)
-                Color(android.graphics.Color.HSVToColor(botHsv))
-            } else {
-                if (botHsv[0] in 20f..48f) {
-                    botHsv[0] = (botHsv[0] - 6f).coerceAtLeast(12f)
+                    bucketCount[idx]++
+                    bucketWeight[idx] += weight
+                    bucketSumR[idx] += r * weight.toDouble()
+                    bucketSumG[idx] += g * weight.toDouble()
+                    bucketSumB[idx] += b * weight.toDouble()
+                    bucketSumY[idx] += y * weight.toDouble()
+                    totalChromatic++
                 }
-                botHsv[1] = botHsv[1].coerceIn(0.38f, 0.62f)
-                botHsv[2] = botHsv[2].coerceIn(0.86f, 0.95f)
-                Color(android.graphics.Color.HSVToColor(botHsv))
             }
 
-            softTopColor to bottomColor
+            if (totalChromatic == 0) {
+                return NEUTRAL_MONOCHROME_DUAL_TOP to NEUTRAL_MONOCHROME_DUAL_BOTTOM
+            }
+
+            fun smoothedWeight(idx: Int): Float {
+                val prev = (idx - 1 + numBuckets) % numBuckets
+                val next = (idx + 1) % numBuckets
+                return bucketWeight[idx] + bucketWeight[prev] * 0.45f + bucketWeight[next] * 0.45f
+            }
+
+            fun clusterStats(idx: Int): Pair<Color, Float> {
+                val prev = (idx - 1 + numBuckets) % numBuckets
+                val next = (idx + 1) % numBuckets
+                val wSum = bucketWeight[idx].toDouble() +
+                    bucketWeight[prev].toDouble() * 0.45 +
+                    bucketWeight[next].toDouble() * 0.45
+                if (wSum <= 0.0) return NEUTRAL_MONOCHROME_DUAL_TOP to (sampleEndY * 0.5f)
+                val r = ((bucketSumR[idx] + bucketSumR[prev] * 0.45 + bucketSumR[next] * 0.45) / wSum).toInt().coerceIn(0, 255)
+                val g = ((bucketSumG[idx] + bucketSumG[prev] * 0.45 + bucketSumG[next] * 0.45) / wSum).toInt().coerceIn(0, 255)
+                val b = ((bucketSumB[idx] + bucketSumB[prev] * 0.45 + bucketSumB[next] * 0.45) / wSum).toInt().coerceIn(0, 255)
+                val meanY = ((bucketSumY[idx] + bucketSumY[prev] * 0.45 + bucketSumY[next] * 0.45) / wSum).toFloat()
+                return Color(android.graphics.Color.rgb(r, g, b)) to meanY
+            }
+
+            fun hueOf(c: Color): Float {
+                val arr = FloatArray(3)
+                android.graphics.Color.colorToHSV(c.toArgb(), arr)
+                return arr[0]
+            }
+
+            fun angularDist(h1: Float, h2: Float): Float {
+                val d = kotlin.math.abs(h1 - h2)
+                return minOf(d, 360f - d)
+            }
+
+            // 1. Primary dominant cluster across the entire artwork
+            var primaryIdx = -1
+            var primarySmoothed = -1f
+            for (i in 0 until numBuckets) {
+                if (bucketCount[i] == 0) continue
+                val sw = smoothedWeight(i)
+                if (sw > primarySmoothed) {
+                    primarySmoothed = sw
+                    primaryIdx = i
+                }
+            }
+            if (primaryIdx < 0) return NEUTRAL_MONOCHROME_DUAL_TOP to NEUTRAL_MONOCHROME_DUAL_BOTTOM
+
+            val (primaryColor, primaryMeanY) = clusterStats(primaryIdx)
+            val primaryHue = hueOf(primaryColor)
+
+            // 2. Secondary distinct dominant cluster (>= 32° hue separation)
+            var secondaryIdx = -1
+            var secondarySmoothed = -1f
+            var secondaryClusterPixels = 0
+            for (i in 0 until numBuckets) {
+                if (bucketCount[i] == 0) continue
+                val bucketCenterHue = i * 15f + 7.5f
+                if (angularDist(bucketCenterHue, primaryHue) < 32f) continue
+                val prev = (i - 1 + numBuckets) % numBuckets
+                val next = (i + 1) % numBuckets
+                val sw = smoothedWeight(i)
+                val pxCount = bucketCount[i] + bucketCount[prev] + bucketCount[next]
+                if (sw > secondarySmoothed) {
+                    secondarySmoothed = sw
+                    secondaryIdx = i
+                    secondaryClusterPixels = pxCount
+                }
+            }
+
+            val hasDistinctSecondary = secondaryIdx >= 0 &&
+                (secondaryClusterPixels >= (totalChromatic * 0.055f).toInt().coerceAtLeast(6) ||
+                    secondarySmoothed >= primarySmoothed * 0.14f)
+
+            fun shapeVibrantStageColor(c: Color): Color {
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(c.toArgb(), hsv)
+                hsv[1] = hsv[1].coerceIn(0.36f, 0.86f)
+                hsv[2] = hsv[2].coerceIn(0.34f, 0.78f)
+                return Color(android.graphics.Color.HSVToColor(hsv))
+            }
+
+            if (hasDistinctSecondary) {
+                val (secondaryColor, secondaryMeanY) = clusterStats(secondaryIdx)
+                val c1 = shapeVibrantStageColor(primaryColor)
+                val c2 = shapeVibrantStageColor(secondaryColor)
+                // Respect the artwork's natural vertical layout (e.g. blue sky top -> brown ground bottom)
+                if (primaryMeanY <= secondaryMeanY) {
+                    c1 to c2
+                } else {
+                    c2 to c1
+                }
+            } else {
+                // Single-hue artwork: create a graceful tonal companion gradient
+                val top = shapeVibrantStageColor(primaryColor)
+                val botHsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(top.toArgb(), botHsv)
+                val hueShift = if (botHsv[0] in 12f..95f) -20f else 24f
+                botHsv[0] = (botHsv[0] + hueShift + 360f) % 360f
+                botHsv[1] = (botHsv[1] * 1.06f).coerceIn(0.38f, 0.84f)
+                botHsv[2] = (botHsv[2] * 0.72f).coerceIn(0.24f, 0.58f)
+                top to Color(android.graphics.Color.HSVToColor(botHsv))
+            }
         } catch (_: Throwable) {
             findProminentColor(bitmap)?.let { it to it }
         } finally {
@@ -833,9 +1002,8 @@ object ArtworkColorExtractor {
     }
 
     /**
-     * Samples the lower 36% of the album artwork for a velvety dark atmospheric stage color,
-     * while strongly avoiding muddy brown / skin-tone washes whenever the artwork itself
-     * carries a vibrant non-brown primary hue (green, teal, cyan, blue, purple, etc.).
+     * Samples the lower portion of the album artwork for a velvety dark atmospheric stage color,
+     * preserving pure monochrome graphite for B&W covers and excluding bottom watermark strips.
      */
     internal fun findBottomStageColor(bitmap: Bitmap): Color? {
         val rawWidth = bitmap.width
@@ -852,7 +1020,13 @@ object ArtworkColorExtractor {
             val pixels = IntArray(w * h)
             scaled.getPixels(pixels, 0, w, 0, 0, w, h)
 
-            val startY = (h * 0.64f).toInt().coerceIn(0, h - 1)
+            // Monochrome / B&W artworks always get a clean neutral dark graphite stage (never olive/green/blue)
+            if (isMonochromeArtwork(pixels, w, h)) {
+                return NEUTRAL_MONOCHROME_BOTTOM_STAGE
+            }
+
+            val startY = (h * 0.58f).toInt().coerceIn(0, h - 1)
+            val endY = (h * 0.88f).toInt().coerceIn(startY + 1, h)
             val numBuckets = 24
             val bucketWeight = FloatArray(numBuckets)
             val bucketSumR = DoubleArray(numBuckets)
@@ -864,9 +1038,9 @@ object ArtworkColorExtractor {
             var allCount = 0
             val hsv = FloatArray(3)
 
-            for (y in startY until h) {
+            for (y in startY until endY) {
                 val rowOffset = y * w
-                val rowProximity = 0.7f + 0.6f * ((y - startY).toFloat() / (h - startY).coerceAtLeast(1).toFloat())
+                val rowProximity = 0.7f + 0.6f * ((y - startY).toFloat() / (endY - startY).coerceAtLeast(1).toFloat())
                 for (x in 0 until w) {
                     val pixel = pixels[rowOffset + x]
                     val a = android.graphics.Color.alpha(pixel)
@@ -883,12 +1057,12 @@ object ArtworkColorExtractor {
                     val hue = hsv[0]
                     val sat = hsv[1]
                     val value = hsv[2]
-                    if (value < 0.05f || value > 0.92f || sat < 0.09f) continue
+                    if (value < 0.05f || value > 0.92f || sat < 0.14f) continue
 
                     val bucketIdx = ((hue / 15f).toInt()).coerceIn(0, numBuckets - 1)
                     val shadowAffinity = if (value in 0.10f..0.58f) 1.35f else 0.75f
-                    val coolOrGreenClarityBonus = if (hue in 85f..295f) 1.32f else 1.0f
-                    val muddyPenalty = if (isBrownOrMuddyHue(hue, sat, value)) 0.22f else 1.0f
+                    val coolOrGreenClarityBonus = if (hue in 85f..295f) 1.18f else 1.0f
+                    val muddyPenalty = if (isBrownOrMuddyHue(hue, sat, value)) 0.35f else 1.0f
                     val weight = rowProximity * shadowAffinity * coolOrGreenClarityBonus * muddyPenalty * (0.45f + sat)
 
                     bucketWeight[bucketIdx] += weight
@@ -933,34 +1107,29 @@ object ArtworkColorExtractor {
             val outHsv = FloatArray(3)
             android.graphics.Color.colorToHSV(android.graphics.Color.rgb(baseR, baseG, baseB), outHsv)
 
-            // If the bottom edge is muddy brown/skin-tone, check if the full cover has a rich non-brown hue
-            // (e.g., vibrant green/teal/blue top art with warm hands/skin in the lower third) and anchor to it.
+            if (outHsv[1] < 0.08f) {
+                return NEUTRAL_MONOCHROME_BOTTOM_STAGE
+            }
+
             val bottomLooksBrown = outHsv[0] in 8f..52f && (outHsv[1] < 0.78f || outHsv[2] < 0.72f)
             if (bottomLooksBrown) {
                 val fullPrimary = findProminentColorInSlice(pixels, w, h, 0, h)
                 if (fullPrimary != null) {
                     val fullHsv = FloatArray(3)
                     android.graphics.Color.colorToHSV(fullPrimary.toArgb(), fullHsv)
-                    if (fullHsv[0] !in 8f..52f) {
+                    if (fullHsv[0] !in 8f..52f && fullHsv[1] >= 0.14f) {
                         outHsv[0] = fullHsv[0]
-                        outHsv[1] = fullHsv[1].coerceIn(0.34f, 0.50f)
+                        outHsv[1] = fullHsv[1].coerceIn(0.32f, 0.48f)
                         outHsv[2] = 0.25f
                         return Color(android.graphics.Color.HSVToColor(outHsv))
                     }
                 }
             }
 
-            // Neutral or desaturated shadows refine cleanly into sleek twilight slate-indigo
-            if (outHsv[1] < 0.14f || (outHsv[0] in 15f..46f && outHsv[1] < 0.28f)) {
-                outHsv[0] = 222f
-                outHsv[1] = 0.36f
-            } else {
-                // Gently pull pink/magenta dark shadows slightly cooler toward plum-indigo so they stay velvety, never brown
-                if (outHsv[0] in 305f..352f && outHsv[2] < 0.45f) {
-                    outHsv[0] = (outHsv[0] - 28f).coerceAtLeast(245f)
-                }
-                outHsv[1] = outHsv[1].coerceIn(0.28f, 0.46f)
+            if (outHsv[0] in 305f..352f && outHsv[2] < 0.45f) {
+                outHsv[0] = (outHsv[0] - 28f).coerceAtLeast(245f)
             }
+            outHsv[1] = outHsv[1].coerceIn(0.24f, 0.46f)
             outHsv[2] = 0.25f
             Color(android.graphics.Color.HSVToColor(outHsv))
         } catch (_: Throwable) {

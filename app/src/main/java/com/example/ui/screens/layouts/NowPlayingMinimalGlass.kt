@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,6 +40,8 @@ fun NowPlayingMinimalGlass(
     positionMs: Long = playbackState.positionMs,
     currentLyrics: Lyrics?,
     audioRouteInfo: AudioRouteInfo,
+    isCastingToTv: Boolean = false,
+    castDeviceName: String? = null,
     onDismiss: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
@@ -115,6 +118,7 @@ fun NowPlayingMinimalGlass(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(if (isDenseGlass) 6.dp else 10.dp)
         ) {
+            val effectiveCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
             // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -124,13 +128,65 @@ fun NowPlayingMinimalGlass(
                 IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close", tint = BentoTextPrimary, modifier = Modifier.size(26.dp))
                 }
-                Text("MINIMAL GLASS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BentoPrimary, letterSpacing = 1.sp)
+                if (effectiveCasting) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = BentoPrimary.copy(alpha = 0.16f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, BentoPrimary.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(horizontal = 6.dp)
+                            .testTag("now_playing_casting_tv_status")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tv,
+                                contentDescription = "Playing in TV",
+                                tint = BentoPrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (!castDeviceName.isNullOrBlank()) "Playing in TV · $castDeviceName" else "Playing in TV",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Output locked while casting",
+                                tint = BentoPrimary.copy(alpha = 0.8f),
+                                modifier = Modifier.size(11.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Text("MINIMAL GLASS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BentoPrimary, letterSpacing = 1.sp)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(onClick = onOpenOptionsMenu, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = BentoTextPrimary, modifier = Modifier.size(20.dp))
                     }
-                    IconButton(onClick = onOpenAudioOutputSwitcher, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Default.SpeakerGroup, contentDescription = "Audio Output", tint = BentoPrimary, modifier = Modifier.size(20.dp))
+                    IconButton(
+                        onClick = {
+                            if (!effectiveCasting) onOpenAudioOutputSwitcher()
+                        },
+                        enabled = !effectiveCasting,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("audio_output_route_button")
+                    ) {
+                        Icon(
+                            imageVector = if (effectiveCasting) Icons.Default.Tv else Icons.Default.SpeakerGroup,
+                            contentDescription = if (effectiveCasting) "Playing in TV (Output locked)" else "Audio Output",
+                            tint = if (effectiveCasting) BentoPrimary.copy(alpha = 0.55f) else BentoPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -326,6 +382,42 @@ fun NowPlayingMinimalGlass(
                     accentColor = BentoPrimary,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
+            }
+
+            // Audio output status line (shows locked Playing in TV when casting)
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(enabled = !effectiveCasting) {
+                        HapticUtils.performClickHaptic(context)
+                        onOpenAudioOutputSwitcher()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = if (effectiveCasting) Icons.Default.Tv else audioRouteInfo.icon,
+                    contentDescription = if (effectiveCasting) "Playing in TV" else "Audio Output",
+                    tint = if (effectiveCasting) BentoPrimary else BentoTextSecondary,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = if (effectiveCasting) "Playing in TV" else audioRouteInfo.name,
+                    fontSize = 11.5.sp,
+                    fontWeight = if (effectiveCasting) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (effectiveCasting) BentoPrimary else BentoTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (effectiveCasting) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Output locked while casting",
+                        tint = BentoTextSecondary,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
             }
 
             // Bottom Actions (Swap: Sleep Timer in pos 2, Up-Next Queue in pos 3, Lyrics in pos 4)

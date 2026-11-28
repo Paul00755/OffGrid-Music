@@ -108,7 +108,9 @@ class MusicPlaybackService : MediaSessionService() {
             val defaultProvider = DefaultMediaNotificationProvider.Builder(this)
                 .setChannelId(CHANNEL_ID)
                 .setChannelName(com.example.R.string.app_name)
-                .build()
+                .build().apply {
+                    setSmallIcon(com.example.R.drawable.ic_notification)
+                }
 
             // Custom MediaNotification provider that enforces ongoing notification so it cannot be dismissed on lockscreen while active in RAM
             val persistentNotificationProvider = object : MediaNotification.Provider {

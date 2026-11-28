@@ -383,14 +383,18 @@ fun HomeScreen(
         coroutineScope.launch { drawerState.close() }
     }
 
-    val openSidebar: () -> Unit = {
-        com.example.util.HapticUtils.performClickHaptic(context)
-        coroutineScope.launch { drawerState.open() }
+    val openSidebar: () -> Unit = remember(drawerState, coroutineScope, context) {
+        {
+            com.example.util.HapticUtils.performClickHaptic(context)
+            coroutineScope.launch { drawerState.open() }
+        }
     }
-    val closeSidebarAndRun: (() -> Unit) -> Unit = { action ->
-        com.example.util.HapticUtils.performClickHaptic(context)
-        coroutineScope.launch { drawerState.snapTo(DrawerValue.Closed) }
-        action()
+    val closeSidebarAndRun: (() -> Unit) -> Unit = remember(drawerState, coroutineScope, context) {
+        { action ->
+            com.example.util.HapticUtils.performClickHaptic(context)
+            coroutineScope.launch { drawerState.snapTo(DrawerValue.Closed) }
+            action()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -447,16 +451,14 @@ fun HomeScreen(
         }
     }
 
-    var isDrawerClosedAnchorReady by remember { mutableStateOf(false) }
-    val isDrawerActiveOrAnchored = drawerState.isOpen ||
-        drawerState.isAnimationRunning ||
-        drawerState.targetValue == DrawerValue.Open ||
-        (isDrawerClosedAnchorReady && !drawerState.currentOffset.isNaN())
-
+    // Smooth, zero-flicker navigation drawer:
+    // NEVER read drawerState.currentOffset during composition (doing so recomposes the entire
+    // HomeScreen feed at 60-120fps on every drag/animation frame). Only guard the unmeasured
+    // initial NaN frame inside the draw-phase graphicsLayer block with GPU layer caching.
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = true,
-        scrimColor = if (isDrawerActiveOrAnchored) DrawerDefaults.scrimColor else Color.Transparent,
+        scrimColor = DrawerDefaults.scrimColor,
         drawerContent = {
             ModalDrawerSheet(
                 drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
@@ -468,28 +470,9 @@ fun HomeScreen(
                     .fillMaxWidth(0.78f)
                     .fillMaxHeight()
                     .graphicsLayer {
-                        val offset = drawerState.currentOffset
-                        if (!offset.isNaN() && offset < -1f) {
-                            isDrawerClosedAnchorReady = true
-                        }
-                        val isClosedAtRest = drawerState.currentValue == DrawerValue.Closed &&
-                            drawerState.targetValue == DrawerValue.Closed &&
-                            !drawerState.isAnimationRunning
-                        val shouldHide = if (isClosedAtRest) {
-                            !isDrawerClosedAnchorReady ||
-                                offset.isNaN() ||
-                                offset >= -1f ||
-                                (size.width > 0f && offset <= -(size.width - 2f))
-                        } else {
-                            false
-                        }
-                        if (shouldHide) {
-                            alpha = 0f
-                            translationX = -10000f
-                        } else {
-                            alpha = 1f
-                            translationX = 0f
-                        }
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                        // Hide solely before the first anchor measurement completes; never toggle during drags/animations
+                        alpha = if (drawerState.currentOffset.isNaN()) 0f else 1f
                     }
             ) {
                 val sleepBadgeText = if (sleepTimerState.isActive) {

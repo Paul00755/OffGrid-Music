@@ -65,6 +65,8 @@ fun SearchScreen(
     playbackState: PlaybackState,
     onSongClick: (Song) -> Unit,
     onPlaySongQueue: (Song, List<Song>) -> Unit = { song, _ -> onSongClick(song) },
+    onPlayAllOrdered: ((List<Song>) -> Unit)? = null,
+    onShuffleAll: ((List<Song>) -> Unit)? = null,
     onFavoriteToggle: (Song) -> Unit,
     recentSearches: List<String> = emptyList(),
     onAddRecentSearch: (String) -> Unit = {},
@@ -872,6 +874,16 @@ fun SearchScreen(
                     onPlaySongQueue(song, queue)
                     selectedAlbumForDetail = null
                 },
+                onPlayOrdered = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onPlayAllOrdered?.invoke(queue) ?: queue.firstOrNull()?.let { onPlaySongQueue(it, queue) }
+                    selectedAlbumForDetail = null
+                },
+                onShufflePlay = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onShuffleAll?.invoke(queue) ?: queue.shuffled().let { shuf -> shuf.firstOrNull()?.let { onPlaySongQueue(it, shuf) } }
+                    selectedAlbumForDetail = null
+                },
                 onFavoriteToggle = {
                     if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                     onFavoriteToggle(it)
@@ -906,6 +918,16 @@ fun SearchScreen(
                 onPlayAll = { song, queue ->
                     if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                     onPlaySongQueue(song, queue)
+                    selectedArtistForDetail = null
+                },
+                onPlayOrdered = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onPlayAllOrdered?.invoke(queue) ?: queue.firstOrNull()?.let { onPlaySongQueue(it, queue) }
+                    selectedArtistForDetail = null
+                },
+                onShufflePlay = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onShuffleAll?.invoke(queue) ?: queue.shuffled().let { shuf -> shuf.firstOrNull()?.let { onPlaySongQueue(it, shuf) } }
                     selectedArtistForDetail = null
                 },
                 onFavoriteToggle = {

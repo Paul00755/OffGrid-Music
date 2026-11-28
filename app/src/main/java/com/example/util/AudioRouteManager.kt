@@ -30,6 +30,7 @@ enum class AudioDeviceType {
     HEADPHONES,
     BLUETOOTH,
     USB,
+    TV_CAST,
     UNKNOWN
 }
 

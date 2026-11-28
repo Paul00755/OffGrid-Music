@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -59,6 +60,8 @@ fun NowPlayingNeonWaveform(
     positionMs: Long = playbackState.positionMs,
     currentLyrics: Lyrics?,
     audioRouteInfo: AudioRouteInfo,
+    isCastingToTv: Boolean = false,
+    castDeviceName: String? = null,
     onDismiss: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
@@ -207,7 +210,8 @@ fun NowPlayingNeonWaveform(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(if (isDenseNeon) 4.dp else 8.dp)
         ) {
-            // Subtle Top Handle & Collapse Affordance
+            val effectiveCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
+            // Subtle Top Handle & Collapse Affordance (+ Playing in TV status pill when casting)
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
@@ -226,13 +230,51 @@ fun NowPlayingNeonWaveform(
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(topBarInk.copy(alpha = 0.35f))
-                )
+                if (effectiveCasting) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Color.White.copy(alpha = 0.16f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                        modifier = Modifier
+                            .padding(horizontal = 52.dp)
+                            .testTag("now_playing_casting_tv_status")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tv,
+                                contentDescription = "Playing in TV",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (!castDeviceName.isNullOrBlank()) "Playing in TV · $castDeviceName" else "Playing in TV",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Output locked while casting",
+                                tint = Color.White.copy(alpha = 0.8f),
+                                modifier = Modifier.size(11.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp)
+                            .clip(CircleShape)
+                            .background(topBarInk.copy(alpha = 0.35f))
+                    )
+                }
             }
 
             // Large Centered Rounded-Square Album Art (scales smoothly to preserve space for seek & volume controls)
@@ -508,19 +550,25 @@ fun NowPlayingNeonWaveform(
                     ) {
                         IconButton(
                             onClick = {
-                                HapticUtils.performClickHaptic(context)
-                                onOpenAudioOutputSwitcher()
+                                if (!effectiveCasting) {
+                                    HapticUtils.performClickHaptic(context)
+                                    onOpenAudioOutputSwitcher()
+                                }
                             },
+                            enabled = !effectiveCasting,
                             modifier = Modifier
                                 .size(38.dp)
                                 .testTag("audio_output_route_button")
                         ) {
                             Icon(
-                                imageVector = if (audioRouteInfo.name.contains("Speaker", ignoreCase = true) ||
-                                    audioRouteInfo.name.contains("Phone", ignoreCase = true)
-                                ) Icons.Default.Podcasts else audioRouteInfo.icon,
-                                contentDescription = "Audio Output Device",
-                                tint = primaryInk.copy(alpha = 0.92f),
+                                imageVector = when {
+                                    effectiveCasting -> Icons.Default.Tv
+                                    audioRouteInfo.name.contains("Speaker", ignoreCase = true) ||
+                                        audioRouteInfo.name.contains("Phone", ignoreCase = true) -> Icons.Default.Podcasts
+                                    else -> audioRouteInfo.icon
+                                },
+                                contentDescription = if (effectiveCasting) "Playing in TV (Output locked)" else "Audio Output Device",
+                                tint = primaryInk.copy(alpha = if (effectiveCasting) 0.56f else 0.92f),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -593,35 +641,40 @@ fun NowPlayingNeonWaveform(
 }
 
 /**
- * Shapes extracted Neon Studio gradient stops into rich, moody-pastel studio tones
- * so pure white controls, waveforms, and typography always remain crisp and effortless to read.
+ * Shapes extracted Neon Studio gradient stops into rich studio tones while preserving
+ * each dominant color's authentic hue (e.g. blue top + warm brown bottom stay distinctly
+ * blue and warm brown) and preserving neutral charcoal/slate for black & white artworks.
  */
-private fun Color.ensureNeonPastelStage(minLuminance: Float = 0.14f, maxLuminance: Float = 0.36f): Color {
-    var current = this
-    var steps = 0
-    while (current.luminance() > maxLuminance && steps < 8) {
-        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF14121E), 0.22f)
-        steps++
+internal fun Color.ensureNeonPastelStage(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = hsv[2].coerceIn(0.18f, 0.36f)
+        return Color(android.graphics.Color.HSVToColor(hsv))
     }
-    steps = 0
-    while (current.luminance() < minLuminance && steps < 6) {
-        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF4A4460), 0.20f)
-        steps++
+    hsv[1] = hsv[1].coerceIn(0.32f, 0.84f)
+    val maxValue = when {
+        hsv[0] in 45f..168f -> 0.44f
+        else -> 0.58f
     }
-    return current
+    hsv[2] = hsv[2].coerceIn(0.28f, maxValue)
+    return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
-private fun Color.ensureNeonDarkStage(): Color {
-    var current = this.toRichDarkAccent(preserveExactIfAlreadyDark = true)
-    var steps = 0
-    while (current.luminance() > 0.16f && steps < 8) {
-        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF07070B), 0.26f)
-        steps++
+internal fun Color.ensureNeonDarkStage(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = hsv[2].coerceIn(0.10f, 0.24f)
+        return Color(android.graphics.Color.HSVToColor(hsv))
     }
-    steps = 0
-    while (current.luminance() < 0.045f && steps < 5) {
-        current = androidx.compose.ui.graphics.lerp(current, Color(0xFF221F2D), 0.20f)
-        steps++
+    hsv[1] = hsv[1].coerceIn(0.36f, 0.86f)
+    val maxValue = when {
+        hsv[0] in 45f..168f -> 0.30f
+        else -> 0.40f
     }
-    return current
+    hsv[2] = hsv[2].coerceIn(0.16f, maxValue)
+    return Color(android.graphics.Color.HSVToColor(hsv))
 }

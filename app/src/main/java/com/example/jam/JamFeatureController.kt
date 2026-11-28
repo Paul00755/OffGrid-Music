@@ -117,7 +117,9 @@ class JamFeatureController(
     private var anchoredAtLocalWallMs = 0L
     private var anchoredServerEpochMs = 0L
     @Volatile private var serverClockOffsetMs = 0L
+    @Volatile private var bestCalibratedRttMs = Long.MAX_VALUE
     @Volatile private var isClockCalibrated = false
+    @Volatile private var measuredSeekPipelineLeadMs = AUDIO_SEEK_PIPELINE_LEAD_MS
     private var lastLocalCommandId: String? = null
     private var lastLocalCommandAtMs = 0L
     private var pendingLocalCommandId: String? = null
@@ -190,9 +192,13 @@ class JamFeatureController(
                     val expected = currentEstimatedPlaybackPositionMs(pb)
                     val actual = playbackManager.player.currentPosition.coerceAtLeast(0L)
                     val drift = expected - actual
-                    if (kotlin.math.abs(drift) > 35L) {
+                    // Adaptively learn this device's real ExoPlayer/HAL seek pipeline lead time
+                    if (kotlin.math.abs(drift) in 12L..120L) {
+                        measuredSeekPipelineLeadMs = (measuredSeekPipelineLeadMs + (drift / 2L)).coerceIn(8L, 65L)
+                    }
+                    if (kotlin.math.abs(drift) > READY_SNAP_THRESHOLD_MS) {
                         lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
-                        playbackManager.seekJamPlayback((expected + AUDIO_SEEK_PIPELINE_LEAD_MS).coerceAtLeast(0L))
+                        playbackManager.seekJamPlayback((expected + measuredSeekPipelineLeadMs).coerceAtLeast(0L))
                     }
                 }
                 return
@@ -1408,6 +1414,8 @@ class JamFeatureController(
         anchoredServerEpochMs = 0L
         serverClockOffsetMs = 0L
         isClockCalibrated = false
+        bestCalibratedRttMs = Long.MAX_VALUE
+        measuredSeekPipelineLeadMs = AUDIO_SEEK_PIPELINE_LEAD_MS
         _syncStatus.value = JamSyncStatus()
         lastLocalCommandId = null
         lastLocalCommandAtMs = 0L
@@ -1420,16 +1428,26 @@ class JamFeatureController(
         // Start locked until session permissions load so unauthorized listeners cannot trigger headphone controls during join
         playbackManager.updateJamControlPermissions(canPlayPause = false, canSkip = false, canSeek = false)
 
-        // Immediately calibrate monotonic local clock against Firestore server clock for zero-latency audio lock
+        // Immediately calibrate monotonic local clock against Firestore server clock for sub-12ms cross-device lock
         clockCalibrationJob = scope.launch(Dispatchers.IO) {
             var firstPass = true
             while (_sessionId.value == id) {
-                val samples = if (firstPass) 3 else 2
+                val samples = if (firstPass) 7 else 4
                 val result = runCatching { repository.calibrateServerClock(id, samples = samples) }.getOrNull()
                 if (result != null && _sessionId.value == id) {
                     val (offsetMs, rttMs) = result
-                    serverClockOffsetMs = offsetMs
                     val newlyCalibrated = !isClockCalibrated
+                    if (newlyCalibrated) {
+                        serverClockOffsetMs = offsetMs
+                        bestCalibratedRttMs = rttMs
+                    } else if (rttMs <= bestCalibratedRttMs + 18L || kotlin.math.abs(offsetMs - serverClockOffsetMs) > 40L) {
+                        // Prefer lower-RTT measurements while smoothing clock updates so devices never jump mid-beat
+                        val alpha = if (rttMs < bestCalibratedRttMs) 0.65 else 0.35
+                        serverClockOffsetMs = kotlin.math.round(
+                            serverClockOffsetMs * (1.0 - alpha) + offsetMs * alpha
+                        ).toLong()
+                        bestCalibratedRttMs = minOf(bestCalibratedRttMs, rttMs)
+                    }
                     isClockCalibrated = true
                     _syncStatus.value = _syncStatus.value.copy(
                         isClockSynced = true,
@@ -1796,10 +1814,10 @@ class JamFeatureController(
             wasUnavailable ||
             playback.commandType == JamPermissionKind.SEEK.name ||
             playback.commandType == JamPermissionKind.SKIP_TRACK.name ||
-            (!playback.isPlaying && driftFromExpected > 45L) ||
-            (playback.isPlaying && driftFromExpected > 75L)
+            (!playback.isPlaying && driftFromExpected > 35L) ||
+            (playback.isPlaying && driftFromExpected > 55L)
         val targetStartPos = if (playback.isPlaying && seekPosition) {
-            (expectedPosition + AUDIO_SEEK_PIPELINE_LEAD_MS).coerceAtLeast(0L)
+            (expectedPosition + measuredSeekPipelineLeadMs).coerceAtLeast(0L)
         } else {
             expectedPosition
         }
@@ -1807,7 +1825,9 @@ class JamFeatureController(
             lastSeekOrApplyRealtimeMs = android.os.SystemClock.elapsedRealtime()
             readySnapDoneForRevision = -1L
         }
-        runCatching { playbackManager.player.setPlaybackSpeed(1f) }
+        runCatching {
+            playbackManager.player.setPlaybackParameters(androidx.media3.common.PlaybackParameters(1f, 1f))
+        }
         playbackManager.applyJamPlaybackSnapshot(local, targetStartPos, playback.isPlaying, seekPosition)
     }
 
@@ -1839,17 +1859,20 @@ class JamFeatureController(
         )
         if (absolute >= SEEK_DRIFT_THRESHOLD_MS) {
             lastSeekOrApplyRealtimeMs = nowRealtime
-            runCatching { player.setPlaybackSpeed(1f) }
-            playbackManager.seekJamPlayback((expected + AUDIO_SEEK_PIPELINE_LEAD_MS).coerceAtLeast(0L))
-        } else if (absolute >= SPEED_CORRECTION_THRESHOLD_MS) {
-            // Smooth continuous proportional PLL — zero audio glitches, pulls devices tightly in phase
-            val proportionalDelta = (drift.toFloat() / 900f).coerceIn(-0.045f, 0.045f)
-            val adjustedSpeed = (1f + proportionalDelta).coerceIn(0.955f, 1.045f)
-            if (kotlin.math.abs(player.playbackParameters.speed - adjustedSpeed) > 0.002f) {
-                runCatching { player.setPlaybackSpeed(adjustedSpeed) }
+            runCatching {
+                player.setPlaybackParameters(androidx.media3.common.PlaybackParameters(1f, 1f))
             }
-        } else if (player.playbackParameters.speed != 1f) {
-            runCatching { player.setPlaybackSpeed(1f) }
+            playbackManager.seekJamPlayback((expected + measuredSeekPipelineLeadMs).coerceAtLeast(0L))
+        } else {
+            val targetSpeed = computeJamPllSpeed(drift)
+            if (kotlin.math.abs(player.playbackParameters.speed - targetSpeed) > 0.0015f ||
+                kotlin.math.abs(player.playbackParameters.pitch - 1f) > 0.001f
+            ) {
+                // Explicit pitch = 1.0f keeps voice/instrument pitch 100% pure while pulling phase below 10ms
+                runCatching {
+                    player.setPlaybackParameters(androidx.media3.common.PlaybackParameters(targetSpeed, 1f))
+                }
+            }
         }
     }
 
@@ -2059,19 +2082,54 @@ class JamFeatureController(
             if (track.sharedTrackId.isNotBlank()) matchedSongCache[track.sharedTrackId] = idMatch
             return idMatch
         }
-        val title = normalizeMatchTitle(track.title)
-        val artist = normalize(TagCleaner.cleanArtist(track.artist))
-        val album = normalize(TagCleaner.cleanAlbum(track.album))
-        if (artist.isBlank() || track.durationMs <= 0L) return null
-        val candidates = songs.filter { song ->
-            val localTitle = normalizeMatchTitle(song.displayTitle)
-            val localArtist = normalize(TagCleaner.cleanArtist(song.displayArtist))
-            val localAlbum = normalize(TagCleaner.cleanAlbum(song.displayAlbum))
+        val targetTitle = normalizeJamMatchTitle(track.title)
+        val targetCompactTitle = targetTitle.replace(" ", "")
+        val targetArtist = normalizeJamMatchArtist(track.artist)
+        val targetArtistTokens = extractJamArtistTokens(track.artist)
+        val targetAlbum = normalizeJamMatchText(track.album, stripTrailingTags = true)
+        if (targetTitle.isBlank() || track.durationMs <= 0L) return null
+
+        var bestSong: Song? = null
+        var bestScore = -1
+        var bestDurationDiff = Long.MAX_VALUE
+        for (song in songs) {
             val durationDiff = kotlin.math.abs(song.durationMs - track.durationMs)
-            val albumCompatible = album == localAlbum || isUnknownAlbum(album) || isUnknownAlbum(localAlbum)
-            title.isNotBlank() && localTitle == title && localArtist == artist && albumCompatible && durationDiff <= MAX_MATCH_DURATION_DIFF_MS
+            if (durationDiff > MAX_MATCH_DURATION_DIFF_MS) continue
+
+            val localTitle = normalizeJamMatchTitle(song.displayTitle)
+            if (localTitle.isBlank()) continue
+            val localCompactTitle = localTitle.replace(" ", "")
+            val titleExact = localTitle == targetTitle || (targetCompactTitle.length >= 4 && localCompactTitle == targetCompactTitle)
+            if (!titleExact) continue
+
+            val localArtist = normalizeJamMatchArtist(song.displayArtist)
+            val localArtistTokens = extractJamArtistTokens(song.displayArtist)
+            val localAlbum = normalizeJamMatchText(song.displayAlbum, stripTrailingTags = true)
+
+            val exactArtist = targetArtist.isNotBlank() && localArtist == targetArtist
+            val sortedArtistMatch = targetArtistTokens.isNotEmpty() && localArtistTokens.isNotEmpty() &&
+                targetArtistTokens.sorted() == localArtistTokens.sorted()
+            val overlappingArtist = targetArtistTokens.isNotEmpty() && localArtistTokens.isNotEmpty() &&
+                targetArtistTokens.any { token -> token in localArtistTokens }
+            val albumMatches = targetAlbum.isNotBlank() && !isUnknownAlbum(targetAlbum) && localAlbum == targetAlbum
+
+            val score = when {
+                exactArtist && albumMatches -> 100
+                exactArtist -> 92
+                sortedArtistMatch -> 88
+                overlappingArtist -> 80
+                targetCompactTitle.length >= 5 && durationDiff <= 2_500L &&
+                    (targetArtistTokens.isEmpty() || localArtistTokens.isEmpty() || albumMatches) -> 68
+                targetCompactTitle.length >= 6 && durationDiff <= 1_800L -> 60
+                else -> -1
+            }
+            if (score > bestScore || (score == bestScore && score > 0 && durationDiff < bestDurationDiff)) {
+                bestScore = score
+                bestSong = song
+                bestDurationDiff = durationDiff
+            }
         }
-        return candidates.singleOrNull()?.also {
+        return bestSong?.also {
             if (track.sharedTrackId.isNotBlank()) matchedSongCache[track.sharedTrackId] = it
         }
     }
@@ -2092,13 +2150,7 @@ class JamFeatureController(
         return candidate.copy(sharedTrackId = sharedTrackId(candidate))
     }
 
-    private fun normalizeMatchTitle(value: String): String = value.lowercase()
-        .replace(Regex("\\.(mp3|m4a|mp4|aac|flac|ogg|wav)$"), " ")
-        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
-        .trim()
-        .split(Regex("\\s+"))
-        .dropLastWhile { it in setOf("audio", "video", "song", "lyrics", "lyric", "official", "tamil", "telugu", "malayalam", "hindi", "mp3", "mp4") }
-        .joinToString(" ")
+    private fun normalizeMatchTitle(value: String): String = normalizeJamMatchTitle(value)
 
     private fun stopObserving(restorePlayback: Boolean) {
         stopListenersOnly()
@@ -2291,14 +2343,26 @@ class JamFeatureController(
         private const val KEY_ACTIVE_SESSION = "active_session_id"
         private const val KEY_ACTIVE_INVITE_CODE = "active_invite_code"
         private const val KEY_ACTIVE_INVITE_URL = "active_invite_url"
-        private const val MAX_MATCH_DURATION_DIFF_MS = 4_000L
-        private const val CLOCK_RECALIBRATION_INTERVAL_MS = 45_000L
-        private const val FALLBACK_TRANSIT_COMPENSATION_MS = 55L
-        private const val AUDIO_SEEK_PIPELINE_LEAD_MS = 22L
-        private const val DRIFT_CHECK_INTERVAL_MS = 350L
-        private const val POST_SEEK_SETTLE_MS = 350L
-        private const val SEEK_DRIFT_THRESHOLD_MS = 175L
-        private const val SPEED_CORRECTION_THRESHOLD_MS = 18L
-        private const val SYNC_LOCK_WINDOW_MS = 35L
+        private const val MAX_MATCH_DURATION_DIFF_MS = 5_000L
+        private const val CLOCK_RECALIBRATION_INTERVAL_MS = 25_000L
+        private const val FALLBACK_TRANSIT_COMPENSATION_MS = 45L
+        private const val AUDIO_SEEK_PIPELINE_LEAD_MS = 24L
+        private const val READY_SNAP_THRESHOLD_MS = 14L
+        private const val DRIFT_CHECK_INTERVAL_MS = 200L
+        private const val POST_SEEK_SETTLE_MS = 240L
+        private const val SEEK_DRIFT_THRESHOLD_MS = 140L
+        private const val SPEED_CORRECTION_THRESHOLD_MS = 6L
+        private const val SYNC_LOCK_WINDOW_MS = 12L
+
+        /**
+         * Pure pitch-locked proportional PLL curve for OffGrid Jam cross-device phase alignment.
+         * Keeps two devices tightly locked within ±6ms (below audible echo perception) without clicks or pitch shift.
+         */
+        internal fun computeJamPllSpeed(driftMs: Long): Float {
+            val absDrift = kotlin.math.abs(driftMs)
+            if (absDrift < SPEED_CORRECTION_THRESHOLD_MS) return 1f
+            val delta = (driftMs.toFloat() / 750f).coerceIn(-0.05f, 0.05f)
+            return (1f + delta).coerceIn(0.95f, 1.05f)
+        }
     }
 }

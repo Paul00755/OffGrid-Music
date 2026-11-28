@@ -33,6 +33,8 @@ fun ArtistDetailSheet(
     playbackState: PlaybackState,
     onDismiss: () -> Unit,
     onPlayAll: (Song, List<Song>) -> Unit,
+    onPlayOrdered: ((List<Song>) -> Unit)? = null,
+    onShufflePlay: ((List<Song>) -> Unit)? = null,
     onFavoriteToggle: (Song) -> Unit,
     onPlayNext: (Song) -> Unit = {},
     onAddToQueue: (Song) -> Unit = {},
@@ -140,7 +142,11 @@ fun ArtistDetailSheet(
                 Button(
                     onClick = {
                         if (artistSongs.isNotEmpty()) {
-                            onPlayAll(artistSongs.first(), artistSongs)
+                            if (onPlayOrdered != null) {
+                                onPlayOrdered(artistSongs)
+                            } else {
+                                onPlayAll(artistSongs.first(), artistSongs)
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f),
@@ -158,8 +164,12 @@ fun ArtistDetailSheet(
                 Button(
                     onClick = {
                         if (artistSongs.isNotEmpty()) {
-                            val shuffled = artistSongs.shuffled()
-                            onPlayAll(shuffled.first(), shuffled)
+                            if (onShufflePlay != null) {
+                                onShufflePlay(artistSongs)
+                            } else {
+                                val shuffled = artistSongs.shuffled()
+                                onPlayAll(shuffled.first(), shuffled)
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f),

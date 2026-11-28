@@ -29,6 +29,7 @@ import com.example.jam.JamFeatureController
 import com.example.jam.JamRepository
 import android.app.Activity
 import android.net.Uri
+import androidx.compose.material.icons.filled.Tv
 import com.example.service.transcription.AudioTranscribeMode
 import com.example.service.transcription.TranscribeLanguage
 import com.example.service.transcription.GeminiLyricsService
@@ -426,11 +427,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val sleepTimerManager: SleepTimerManager = playbackManager.sleepTimerManager
     val lyricsFetcher: LyricsFetcher = LyricsFetcher(db.lyricsDao(), application)
     val audioRouteManager: com.example.util.AudioRouteManager = com.example.util.AudioRouteManager(application)
-    val currentAudioRoute: StateFlow<com.example.util.AudioRouteInfo> = audioRouteManager.currentRoute
     val availableAudioDevices: StateFlow<List<com.example.util.AudioRouteDevice>> = audioRouteManager.availableDevices
 
     val castManager: com.example.cast.CastManager = com.example.cast.CastManager.getInstance(application)
     val castSessionState: StateFlow<com.example.cast.CastSessionState> = castManager.sessionState
+    val currentAudioRoute: StateFlow<com.example.util.AudioRouteInfo> = combine(
+        audioRouteManager.currentRoute,
+        castSessionState
+    ) { route, cast ->
+        if (cast.isActiveSession) {
+            com.example.util.AudioRouteInfo(
+                name = "Playing in TV",
+                type = com.example.util.AudioDeviceType.TV_CAST,
+                icon = androidx.compose.material.icons.Icons.Default.Tv,
+                deviceId = cast.connectedDevice?.id
+            )
+        } else {
+            route
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, audioRouteManager.currentRoute.value)
     val showCastSheet = MutableStateFlow(false)
     val openCastSheetInHelpMode = MutableStateFlow(false)
 
@@ -473,9 +488,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun launchBluetoothSettings(context: android.content.Context) = castManager.launchBluetoothSettings(context)
 
     fun selectAudioRoute(device: com.example.util.AudioRouteDevice) {
+        // Audio output is locked to TV while actively casting
+        if (castSessionState.value.isActiveSession) return
         audioRouteManager.selectRoute(device)
     }
-    fun launchSystemOutputSwitcher(context: android.content.Context) = audioRouteManager.launchSystemOutputSwitcher(context)
+    fun launchSystemOutputSwitcher(context: android.content.Context) {
+        if (castSessionState.value.isActiveSession) return
+        audioRouteManager.launchSystemOutputSwitcher(context)
+    }
 
     // UI Navigation State
     val selectedTab = MutableStateFlow(NavTab.HOME)
@@ -2158,10 +2178,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playAll(songs: List<Song>, sourceContext: String = "UNKNOWN") {
         if (songs.isNotEmpty()) {
+            // Respect the exact playlist/custom/sorted order even when shuffle mode was previously active
             playbackManager.playQueue(
                 songs = songs,
                 startIndex = 0,
-                sourceContext = sourceContext
+                sourceContext = sourceContext,
+                forceShuffle = false
             )
         }
     }

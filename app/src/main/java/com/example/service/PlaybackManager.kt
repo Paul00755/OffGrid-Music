@@ -125,6 +125,7 @@ class PlaybackManager(
         },
         onPauseRequested = { pauseFromAudioFocus() },
         onResumeRequested = { resumeFromInterruption() },
+        onResumeAfterCallRequested = { resumeFromPhoneCall() },
         onDuckRequested = { duckVol ->
             val clampedMultiplier = duckVol.coerceIn(0.05f, 1.0f)
             try {
@@ -184,12 +185,32 @@ class PlaybackManager(
     val crossfadeStereoBalanceProcessor = StereoBalanceAudioProcessor()
     val crossfadeNormalizerProcessor = AudioNormalizerProcessor()
 
+    private val queueLoudnessAnalyzer = QueueLoudnessAnalyzer(context).also {
+        NormalizationCache.init(context)
+    }
+
+    private var postCallResumeJob: Job? = null
+
     var isNormalizeAudioEnabled: Boolean = false
         set(value) {
             field = value
             audioNormalizerProcessor.isEnabled = value
             crossfadeNormalizerProcessor.isEnabled = value
+            if (value) {
+                val st = _playbackState.value
+                triggerQueueLoudnessAnalysis(st.queue, st.queueIndex)
+            } else {
+                queueLoudnessAnalyzer.cancel()
+            }
         }
+
+    private fun triggerQueueLoudnessAnalysis(songs: List<Song>, currentIndex: Int) {
+        if (!isNormalizeAudioEnabled || songs.isEmpty()) return
+        queueLoudnessAnalyzer.analyzeQueue(songs, currentIndex) { trackKey, optimalGain ->
+            audioNormalizerProcessor.applyMeasuredGainForTrack(trackKey, optimalGain)
+            crossfadeNormalizerProcessor.applyMeasuredGainForTrack(trackKey, optimalGain)
+        }
+    }
 
     private val renderersFactory = object : androidx.media3.exoplayer.DefaultRenderersFactory(context) {
         override fun buildAudioSink(
@@ -575,6 +596,34 @@ class PlaybackManager(
             }
         }
 
+        private var lastPreMuteCastVolume: Float = 0.7f
+
+        @Deprecated("Deprecated in Java")
+        override fun setDeviceMuted(muted: Boolean) {
+            if (isCastPlaybackActive) {
+                val cm = com.example.cast.CastManager.activeInstance ?: return
+                if (muted) {
+                    val cur = cm.sessionState.value.remoteVolume
+                    if (cur > 0.01f) lastPreMuteCastVolume = cur
+                    cm.setRemoteVolume(0f)
+                } else {
+                    cm.setRemoteVolume(lastPreMuteCastVolume.coerceIn(0.15f, 1f))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                super.setDeviceMuted(muted)
+            }
+        }
+
+        override fun setDeviceMuted(muted: Boolean, flags: Int) {
+            if (isCastPlaybackActive) {
+                @Suppress("DEPRECATION")
+                setDeviceMuted(muted)
+            } else {
+                super.setDeviceMuted(muted, flags)
+            }
+        }
+
         override fun getDuration(): Long {
             if (isCastPlaybackActive) {
                 val resolved = resolveEffectiveDurationMs()
@@ -640,7 +689,21 @@ class PlaybackManager(
         override fun getAvailableCommands(): Player.Commands {
             val base = super.getAvailableCommands()
             val hasLoadedSong = _playbackState.value.currentSong != null || super.getMediaItemCount() > 0
-            if (!hasLoadedSong) return base
+            if (!hasLoadedSong) {
+                if (isCastPlaybackActive) {
+                    @Suppress("DEPRECATION")
+                    return base.buildUpon()
+                        .addAll(
+                            Player.COMMAND_GET_DEVICE_VOLUME,
+                            Player.COMMAND_SET_DEVICE_VOLUME,
+                            Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                            Player.COMMAND_ADJUST_DEVICE_VOLUME,
+                            Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
+                        )
+                        .build()
+                }
+                return base
+            }
             val builder = base.buildUpon()
                 .addAll(
                     Player.COMMAND_GET_CURRENT_MEDIA_ITEM,
@@ -685,9 +748,12 @@ class PlaybackManager(
                 return builder.build()
             }
             if (isCastPlaybackActive) {
+                @Suppress("DEPRECATION")
                 builder.addAll(
                     Player.COMMAND_GET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME,
                     Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME,
                     Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
                 )
             }
@@ -704,9 +770,12 @@ class PlaybackManager(
         }
 
         override fun isCommandAvailable(command: Int): Boolean {
+            @Suppress("DEPRECATION")
             if (isCastPlaybackActive && command in setOf(
                     Player.COMMAND_GET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME,
                     Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME,
                     Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
                 )
             ) {
@@ -894,6 +963,14 @@ class PlaybackManager(
                     .add(androidx.media3.session.SessionCommand("ACTION_TOGGLE_SHUFFLE", android.os.Bundle.EMPTY))
                     .build()
                 val playerCommands = connectionResult.availablePlayerCommands.buildUpon()
+                @Suppress("DEPRECATION")
+                playerCommands.addAll(
+                    Player.COMMAND_GET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME,
+                    Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME,
+                    Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS
+                )
                 if (jamPlaybackActive) {
                     playerCommands
                         .remove(Player.COMMAND_SET_MEDIA_ITEM)
@@ -1721,6 +1798,7 @@ class PlaybackManager(
             currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
         persistPlaybackStateNow()
+        triggerQueueLoudnessAnalysis(currentQueue, activeIndex)
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1791,6 +1869,7 @@ class PlaybackManager(
             currentSong = currentQueue.getOrNull(activeIndex) ?: _playbackState.value.currentSong
         )
         persistPlaybackStateNow()
+        triggerQueueLoudnessAnalysis(currentQueue, activeIndex)
         if (currentQueue.size == songs.size && player.isPlaying) {
             player.prepare()
             player.play()
@@ -1835,6 +1914,9 @@ class PlaybackManager(
         player.pause()
         player.playWhenReady = false
         player.volume = 1.0f
+        audioNormalizerProcessor.setTrack(song.id, song.path)
+        crossfadeNormalizerProcessor.setTrack(song.id, song.path)
+        triggerQueueLoudnessAnalysis(songs, actualIndex)
         isRestoringPlayback = false
         notifyLiveMetadataChanged()
         updateNotificationLayout()
@@ -2256,6 +2338,7 @@ class PlaybackManager(
 
         audioNormalizerProcessor.setTrack(selectedSongFromQueue.id, selectedSongFromQueue.path)
         crossfadeNormalizerProcessor.setTrack(selectedSongFromQueue.id, selectedSongFromQueue.path)
+        triggerQueueLoudnessAnalysis(currentQueue, actualIndex)
 
         val mediaItems = currentQueue.map { s ->
             buildMediaItem(s, loadArtworkBytes = false)
@@ -4229,6 +4312,97 @@ class PlaybackManager(
         }
     }
 
+    /**
+     * Smooth, flicker-free post-call auto-resume:
+     * Pre-mutes ExoPlayer before unpausing so the newly restored media audio sink/Bluetooth A2DP
+     * route can lock cleanly (~80ms), then glides volume up with a cubic ease-in curve over
+     * at least 650ms (or the user's configured fadeInMs if longer).
+     */
+    private fun resumeFromPhoneCall() {
+        if (isSleepTimerFinalStopping || isCastPlaybackActive) return
+        if (audioFocusManager.hasActiveInterruption() || audioFocusManager.userManuallyPausedOrStopped) return
+        val alreadyPlaying = !isFadingOutToPause && (player.isPlaying || _playbackState.value.isPlaying)
+        if (alreadyPlaying) return
+
+        val queue = _playbackState.value.queue
+        if (player.mediaItemCount == 0 && queue.isEmpty()) return
+
+        postCallResumeJob?.cancel()
+        postCallResumeJob = null
+        fadeJob?.cancel()
+        fadeJob = null
+        cancelCrossfade(resetVolume = false)
+        cancelZeroVolumeTimers()
+        wasPausedByZeroVolume = false
+        syncLastObservedVolumeState()
+        suppressAutoPauseUntilNonZeroVolume = false
+        isFadingOutToPause = false
+        isAudioFocusDucked = false
+
+        val wasApplying = applyingJamSnapshot
+        if (jamPlaybackActive) applyingJamSnapshot = true
+        try {
+            if (!audioFocusManager.hasAudioFocus) {
+                audioFocusManager.requestAudioFocus()
+            }
+            if (player.mediaItemCount == 0 && queue.isNotEmpty()) {
+                val mediaItems = queue.map { buildMediaItem(it) }
+                val idx = _playbackState.value.queueIndex.coerceIn(queue.indices)
+                val safePos = _playbackState.value.positionMs.coerceAtLeast(0L)
+                player.setMediaItems(mediaItems, idx, safePos)
+                player.prepare()
+            } else if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            } else if (player.playbackState == Player.STATE_ENDED) {
+                val idx = _playbackState.value.queueIndex.coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+                player.seekTo(idx, 0L)
+                player.prepare()
+            }
+
+            // Mute BEFORE starting playback so the HAL/A2DP sink stabilizes with zero stutter or pop
+            player.volume = 0.0f
+            _playbackState.value = _playbackState.value.copy(isPlaying = true, playbackError = null)
+            com.example.widget.WidgetUpdateManager.setPlayStateImmediate(context, true)
+            player.playWhenReady = true
+            player.play()
+            startProgressTracker()
+            startMusicPlaybackService()
+            updateNotificationLayout()
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+
+            val rampDurationMs = maxOf(effectiveFadeInMs, 650).coerceIn(650, 10_000)
+            postCallResumeJob = scope.launch(Dispatchers.Main) {
+                try {
+                    // Brief silent sink-lock window so stale SCO/HAL buffers drain silently
+                    delay(80L)
+                    if (!player.playWhenReady || isFadingOutToPause || audioFocusManager.hasActiveInterruption()) {
+                        return@launch
+                    }
+                    val startTime = android.os.SystemClock.elapsedRealtime()
+                    while (true) {
+                        if (!player.playWhenReady || isFadingOutToPause || audioFocusManager.hasActiveInterruption()) {
+                            return@launch
+                        }
+                        val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+                        if (elapsed >= rampDurationMs) break
+                        val t = (elapsed.toFloat() / rampDurationMs.toFloat()).coerceIn(0f, 1f)
+                        // Cubic smoothstep ease-in eliminates abrupt audible edge on post-call resume
+                        val eased = t * t * (3f - 2f * t)
+                        val target = transitionTargetVolume(1.0f)
+                        player.volume = (eased * target).coerceIn(0f, 1f)
+                        delay(16L)
+                    }
+                    if (player.playWhenReady && !isFadingOutToPause && !audioFocusManager.hasActiveInterruption()) {
+                        player.volume = transitionTargetVolume(1.0f)
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        } finally {
+            applyingJamSnapshot = wasApplying
+        }
+    }
+
     fun pause() {
         if (dispatchJamCommand(JamPlaybackAction.PAUSE)) return
         if (isCastPlaybackActive) {
@@ -4260,6 +4434,8 @@ class PlaybackManager(
             zeroVolumeResumeMonitorJob = null
         }
         cancelCrossfade(resetVolume = true)
+        postCallResumeJob?.cancel()
+        postCallResumeJob = null
         fadeJob?.cancel()
         fadeJob = null
         player.playWhenReady = false
@@ -4364,6 +4540,8 @@ class PlaybackManager(
         if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
             audioFocusManager.requestAudioFocus()
         }
+        postCallResumeJob?.cancel()
+        postCallResumeJob = null
         fadeJob?.cancel()
         fadeJob = null
         player.volume = transitionTargetVolume()
@@ -4423,6 +4601,8 @@ class PlaybackManager(
         if (!fromAutoResume || !audioFocusManager.hasAudioFocus) {
             audioFocusManager.requestAudioFocus()
         }
+        postCallResumeJob?.cancel()
+        postCallResumeJob = null
         fadeJob?.cancel()
         fadeJob = null
         val duration = (customFadeInMs ?: fadeInMs).coerceIn(0, 10000)
@@ -5092,6 +5272,9 @@ class PlaybackManager(
         notificationArtworkJob?.cancel()
         notificationArtworkJob = null
         stopProgressTracker()
+        postCallResumeJob?.cancel()
+        postCallResumeJob = null
+        queueLoudnessAnalyzer.release()
         cancelCrossfade(resetVolume = true)
         audioFocusManager.unregisterCameraCallback()
         audioFocusManager.abandonAudioFocus()
@@ -5377,10 +5560,14 @@ class PlaybackManager(
         }
     }
 
-    fun syncFavoriteStateInMemory(songId: Long, isFavorite: Boolean) {
+    fun syncFavoriteStateInMemory(
+        songId: Long,
+        isFavorite: Boolean,
+        preserveWidgetFavAnim: Boolean = false
+    ) {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             scope.launch(Dispatchers.Main) {
-                syncFavoriteStateInMemory(songId, isFavorite)
+                syncFavoriteStateInMemory(songId, isFavorite, preserveWidgetFavAnim)
             }
             return
         }
@@ -5414,7 +5601,9 @@ class PlaybackManager(
             positionMs = livePos,
             durationMs = liveDur
         )
-        com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(context, songId, isFavorite)
+        if (!preserveWidgetFavAnim) {
+            com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(context, songId, isFavorite)
+        }
         updateNotificationLayout()
     }
 
@@ -5425,9 +5614,14 @@ class PlaybackManager(
             }
             return
         }
-        com.example.widget.WidgetUpdateManager.setFavoriteStateImmediate(context, songId, isFavorite)
-        syncFavoriteStateInMemory(songId, isFavorite)
-        com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        val isCurrentTrack = _playbackState.value.currentSong?.id == songId
+        if (isCurrentTrack) {
+            com.example.widget.WidgetUpdateManager.playFavoriteTransitionAnimation(context, songId, isFavorite)
+            syncFavoriteStateInMemory(songId, isFavorite, preserveWidgetFavAnim = true)
+        } else {
+            syncFavoriteStateInMemory(songId, isFavorite, preserveWidgetFavAnim = false)
+            com.example.widget.WidgetUpdateManager.updateAllWidgets(context, _playbackState.value)
+        }
     }
 
     fun toggleCurrentSongFavorite() {
@@ -5590,45 +5784,68 @@ class PlaybackManager(
     }
 
     private fun notifyCastDeviceVolumeChanged(vol01: Float) {
-        val discrete = kotlin.math.round(vol01 * 20f).toInt().coerceIn(0, 20)
-        val muted = vol01 <= 0.001f
-        for (listener in forwardingListeners) {
-            try {
-                listener.onDeviceVolumeChanged(discrete, muted)
-            } catch (_: Throwable) {}
-        }
-    }
-
-    private fun notifyCastMediaSessionStateChanged() {
-        try {
-            val devInfo = forwardingPlayer.deviceInfo
-            val playing = forwardingPlayer.isPlaying
-            val pbState = forwardingPlayer.playbackState
-            val availCmds = forwardingPlayer.availableCommands
+        val dispatch = {
+            val discrete = kotlin.math.round(vol01 * 20f).toInt().coerceIn(0, 20)
+            val muted = vol01 <= 0.001f
             val events = Player.Events(
                 androidx.media3.common.FlagSet.Builder()
-                    .addAll(
-                        Player.EVENT_PLAYBACK_STATE_CHANGED,
-                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
-                        Player.EVENT_IS_PLAYING_CHANGED,
-                        Player.EVENT_DEVICE_INFO_CHANGED,
-                        Player.EVENT_DEVICE_VOLUME_CHANGED,
-                        Player.EVENT_AVAILABLE_COMMANDS_CHANGED,
-                        Player.EVENT_MEDIA_METADATA_CHANGED
-                    )
+                    .add(Player.EVENT_DEVICE_VOLUME_CHANGED)
                     .build()
             )
             for (listener in forwardingListeners) {
                 try {
-                    listener.onDeviceInfoChanged(devInfo)
-                    listener.onAvailableCommandsChanged(availCmds)
-                    listener.onPlayWhenReadyChanged(playing, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
-                    listener.onPlaybackStateChanged(pbState)
-                    listener.onIsPlayingChanged(playing)
+                    listener.onDeviceVolumeChanged(discrete, muted)
                     listener.onEvents(forwardingPlayer, events)
                 } catch (_: Throwable) {}
             }
-        } catch (_: Throwable) {}
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            dispatch()
+        } else {
+            android.os.Handler(android.os.Looper.getMainLooper()).post(dispatch)
+        }
+    }
+
+    private fun notifyCastMediaSessionStateChanged() {
+        val dispatch = {
+            try {
+                val devInfo = forwardingPlayer.deviceInfo
+                val devVol = forwardingPlayer.deviceVolume
+                val devMuted = forwardingPlayer.isDeviceMuted
+                val playing = forwardingPlayer.isPlaying
+                val pbState = forwardingPlayer.playbackState
+                val availCmds = forwardingPlayer.availableCommands
+                val events = Player.Events(
+                    androidx.media3.common.FlagSet.Builder()
+                        .addAll(
+                            Player.EVENT_PLAYBACK_STATE_CHANGED,
+                            Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                            Player.EVENT_IS_PLAYING_CHANGED,
+                            Player.EVENT_DEVICE_INFO_CHANGED,
+                            Player.EVENT_DEVICE_VOLUME_CHANGED,
+                            Player.EVENT_AVAILABLE_COMMANDS_CHANGED,
+                            Player.EVENT_MEDIA_METADATA_CHANGED
+                        )
+                        .build()
+                )
+                for (listener in forwardingListeners) {
+                    try {
+                        listener.onDeviceInfoChanged(devInfo)
+                        listener.onDeviceVolumeChanged(devVol, devMuted)
+                        listener.onAvailableCommandsChanged(availCmds)
+                        listener.onPlayWhenReadyChanged(playing, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                        listener.onPlaybackStateChanged(pbState)
+                        listener.onIsPlayingChanged(playing)
+                        listener.onEvents(forwardingPlayer, events)
+                    } catch (_: Throwable) {}
+                }
+            } catch (_: Throwable) {}
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            dispatch()
+        } else {
+            android.os.Handler(android.os.Looper.getMainLooper()).post(dispatch)
+        }
     }
 
     /**

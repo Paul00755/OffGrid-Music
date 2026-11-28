@@ -45,6 +45,16 @@ data class GlassThemeConfig(
 val LocalGlassThemeConfig = staticCompositionLocalOf { GlassThemeConfig() }
 
 /**
+ * Returns true when a color is neutral black, white, or gray (monochrome artwork seed),
+ * so theme shaping preserves crisp silver/graphite neutrality instead of injecting synthetic hue.
+ */
+fun Color.isMonochromeNeutral(): Boolean {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    return hsv[1] < 0.05f
+}
+
+/**
  * Shapes any color into a soft, airy pastel background tint (high brightness, subtle saturation),
  * gently shifting warm orange/brown hues toward peach-blush and yellow-olive hues toward fresh cream/sage
  * so dynamic artwork themes always look luminous, clean, and pastel rather than dark or muddy.
@@ -52,6 +62,11 @@ val LocalGlassThemeConfig = staticCompositionLocalOf { GlassThemeConfig() }
 fun Color.toPastelBackground(saturationTarget: Float = 0.16f, valueTarget: Float = 0.96f): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = valueTarget.coerceIn(0.90f, 0.98f)
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (hsv[0] in 20f..48f) {
         hsv[0] = (hsv[0] - 6f).coerceAtLeast(12f)
     } else if (hsv[0] in 50f..86f) {
@@ -65,6 +80,11 @@ fun Color.toPastelBackground(saturationTarget: Float = 0.16f, valueTarget: Float
 fun Color.toPastelSurface(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.985f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (hsv[0] in 20f..48f) {
         hsv[0] = (hsv[0] - 6f).coerceAtLeast(12f)
     }
@@ -76,6 +96,11 @@ fun Color.toPastelSurface(): Color {
 fun Color.toPastelSurfaceVariant(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.92f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (hsv[0] in 20f..48f) {
         hsv[0] = (hsv[0] - 6f).coerceAtLeast(12f)
     }
@@ -87,6 +112,11 @@ fun Color.toPastelSurfaceVariant(): Color {
 fun Color.toPastelAccent(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.84f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (hsv[0] in 20f..48f) {
         hsv[0] = (hsv[0] - 6f).coerceAtLeast(14f)
     }
@@ -98,6 +128,11 @@ fun Color.toPastelAccent(): Color {
 fun Color.toPastelCompanionHue(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.72f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     val shift = if (hsv[0] in 15f..95f) -24f else 28f
     hsv[0] = (hsv[0] + shift + 360f) % 360f
     hsv[1] = hsv[1].coerceIn(0.22f, 0.38f)
@@ -108,6 +143,11 @@ fun Color.toPastelCompanionHue(): Color {
 fun Color.toReadableLightAccent(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.34f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (hsv[0] in 20f..48f) {
         hsv[0] = (hsv[0] - 6f).coerceAtLeast(14f)
     }
@@ -136,6 +176,11 @@ fun Color.isExplicitDarkColor(): Boolean {
 fun Color.toRichDarkAccent(preserveExactIfAlreadyDark: Boolean = false): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = if (preserveExactIfAlreadyDark && hsv[2] < 0.62f) hsv[2].coerceAtLeast(0.28f) else 0.46f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     if (preserveExactIfAlreadyDark && hsv[2] < 0.62f) {
         hsv[2] = hsv[2].coerceAtLeast(0.24f)
         return Color(android.graphics.Color.HSVToColor(hsv))
@@ -151,6 +196,11 @@ fun Color.toRichDarkAccent(preserveExactIfAlreadyDark: Boolean = false): Color {
 fun Color.toRichDarkCompanionHue(): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    if (hsv[1] < 0.05f) {
+        hsv[1] = 0f
+        hsv[2] = 0.32f
+        return Color(android.graphics.Color.HSVToColor(hsv))
+    }
     val shift = if (hsv[0] in 15f..95f) -26f else 32f
     hsv[0] = (hsv[0] + shift + 360f) % 360f
     hsv[1] = hsv[1].coerceIn(0.48f, 0.82f)

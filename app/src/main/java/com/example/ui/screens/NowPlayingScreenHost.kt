@@ -54,12 +54,15 @@ fun NowPlayingScreenHost(
         val showNowPlayingSeekButtons by viewModel.showNowPlayingSeekButtons.collectAsState()
         val nowPlayingBackwardSeconds by viewModel.nowPlayingBackwardSeconds.collectAsState()
         val nowPlayingForwardSeconds by viewModel.nowPlayingForwardSeconds.collectAsState()
+        val castSessionState by viewModel.castSessionState.collectAsState()
 
         NowPlayingScreen(
             playbackState = playbackState,
             currentLyrics = currentLyrics,
             audioRouteInfo = currentAudioRoute,
             availableAudioDevices = availableAudioDevices,
+            isCastingToTv = castSessionState.isActiveSession,
+            castDeviceName = castSessionState.connectedDevice?.name,
             keepScreenAwake = keepScreenAwakeSetting,
             gesturePlaybackEnabled = gesturePlaybackEnabled,
             lyricsAutoScroll = lyricsAutoScroll,

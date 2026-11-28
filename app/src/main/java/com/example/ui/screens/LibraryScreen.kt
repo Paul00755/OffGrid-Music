@@ -128,6 +128,7 @@ fun LibraryScreen(
     allPlaylists: List<Playlist> = emptyList(),
     onGetPlaylistsContainingSong: suspend (Long) -> List<Playlist> = { emptyList() },
     onRemoveFromPlaylist: (Long, Long) -> Unit = { _, _ -> },
+    onPlayAllOrdered: ((List<Song>) -> Unit)? = null,
     onShuffleAll: ((List<Song>) -> Unit)? = null,
     recentSearches: List<String> = emptyList(),
     onAddRecentSearch: (String) -> Unit = {},
@@ -1081,6 +1082,16 @@ fun LibraryScreen(
                     onPlayQueue(queue, queue.indexOf(song).coerceAtLeast(0))
                     selectedAlbumForSheet = null
                 },
+                onPlayOrdered = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onPlayAllOrdered?.invoke(queue) ?: onPlayQueue(queue, 0)
+                    selectedAlbumForSheet = null
+                },
+                onShufflePlay = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onShuffleAll?.invoke(queue) ?: onPlayQueue(queue.shuffled(), 0)
+                    selectedAlbumForSheet = null
+                },
                 onFavoriteToggle = {
                     if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                     onFavoriteToggle(it)
@@ -1118,6 +1129,16 @@ fun LibraryScreen(
                 onPlayAll = { song, queue ->
                     if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
                     onPlayQueue(queue, queue.indexOf(song).coerceAtLeast(0))
+                    selectedArtistForSheet = null
+                },
+                onPlayOrdered = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onPlayAllOrdered?.invoke(queue) ?: onPlayQueue(queue, 0)
+                    selectedArtistForSheet = null
+                },
+                onShufflePlay = { queue ->
+                    if (searchQuery.isNotBlank()) onAddRecentSearch(searchQuery)
+                    onShuffleAll?.invoke(queue) ?: onPlayQueue(queue.shuffled(), 0)
                     selectedArtistForSheet = null
                 },
                 onFavoriteToggle = {

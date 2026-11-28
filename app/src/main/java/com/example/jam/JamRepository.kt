@@ -112,32 +112,34 @@ class JamRepository(
 
     /**
      * Measures the monotonic offset between local SystemClock.elapsedRealtime() and Firestore server time
-     * using the participant's own `lastSeenAt` field (allowed by existing rules). Runs [samples] probes
-     * and returns the lowest-RTT `(serverOffsetMs, rttMs)` pair for sub-20ms cross-device clock lock.
+     * using the participant's own `lastSeenAt` field (allowed by existing rules). Runs [samples] probes,
+     * discards cold/high-RTT spikes, and computes an inverse-RTT-squared weighted average of the most
+     * symmetric lowest-RTT probes for sub-12ms cross-device clock lock.
      */
-    suspend fun calibrateServerClock(sessionId: String, samples: Int = 3): Pair<Long, Long>? {
+    suspend fun calibrateServerClock(sessionId: String, samples: Int = 7): Pair<Long, Long>? {
         val uid = authManager.currentUser?.uid?.takeIf(String::isNotBlank) ?: return null
         val member = sessionRef(sessionId).collection(PARTICIPANTS).document(uid)
-        var bestOffsetMs: Long? = null
-        var bestRttMs = Long.MAX_VALUE
-        val probeCount = samples.coerceIn(1, 5)
-        repeat(probeCount) {
+        val probeCount = samples.coerceIn(1, 7)
+        val collected = ArrayList<Pair<Long, Long>>(probeCount)
+        repeat(probeCount) { idx ->
             val probe = runCatching {
                 val tSend = SystemClock.elapsedRealtime()
                 member.update("lastSeenAt", FieldValue.serverTimestamp()).await()
                 val tAck = SystemClock.elapsedRealtime()
                 val serverSnap = member.get(Source.SERVER).await()
                 val serverTimeMs = serverSnap.getTimestamp("lastSeenAt")?.toDate()?.time ?: return@runCatching null
-                val rtt = (tAck - tSend).coerceAtLeast(0L)
+                val rtt = (tAck - tSend).coerceAtLeast(1L)
                 val midpointElapsed = tSend + (rtt / 2L)
                 (serverTimeMs - midpointElapsed) to rtt
             }.getOrNull()
-            if (probe != null && probe.second < bestRttMs) {
-                bestOffsetMs = probe.first
-                bestRttMs = probe.second
+            if (probe != null) {
+                collected += probe
+            }
+            if (idx < probeCount - 1) {
+                kotlinx.coroutines.delay(35L)
             }
         }
-        return bestOffsetMs?.let { it to bestRttMs }
+        return aggregateClockCalibrationProbes(collected)
     }
 
     suspend fun requestFeature(sessionId: String, feature: JamFeature, displayName: String) {
@@ -1823,6 +1825,36 @@ class JamRepository(
         private const val LIBRARY_MATCH_KEYS_PER_CHUNK = 200
         private const val MAX_LIBRARY_MATCH_KEYS = 20_000
         private const val MAX_RECOMMENDATIONS = 30
+
+        internal fun aggregateClockCalibrationProbes(probes: List<Pair<Long, Long>>): Pair<Long, Long>? {
+            if (probes.isEmpty()) return null
+            if (probes.size == 1) return probes.first()
+            val minRtt = probes.minOf { it.second }.coerceAtLeast(1L)
+            // Drop cold first-probe TLS/connection spikes when cleaner probes exist
+            val trimmed = if (probes.size >= 3 && probes.first().second > (minRtt * 1.35).toLong() + 12L) {
+                probes.drop(1)
+            } else {
+                probes
+            }
+            val cleanMinRtt = trimmed.minOf { it.second }.coerceAtLeast(1L)
+            val rttCeiling = maxOf((cleanMinRtt * 1.45).toLong(), cleanMinRtt + 24L)
+            val inliers = trimmed
+                .filter { it.second <= rttCeiling }
+                .sortedBy { it.second }
+                .take(3)
+                .ifEmpty { listOf(trimmed.minBy { it.second }) }
+
+            var weightedSum = 0.0
+            var totalWeight = 0.0
+            for ((offsetMs, rttMs) in inliers) {
+                val safeRtt = rttMs.coerceAtLeast(4L).toDouble()
+                val weight = 1.0 / (safeRtt * safeRtt)
+                weightedSum += offsetMs.toDouble() * weight
+                totalWeight += weight
+            }
+            val bestOffset = if (totalWeight > 0.0) kotlin.math.round(weightedSum / totalWeight).toLong() else inliers.first().first
+            return bestOffset to cleanMinRtt
+        }
     }
 }
 

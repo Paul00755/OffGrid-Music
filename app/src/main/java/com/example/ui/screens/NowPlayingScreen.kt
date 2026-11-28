@@ -80,6 +80,8 @@ fun NowPlayingScreen(
     availableAudioDevices: List<AudioRouteDevice> = emptyList(),
     onSelectAudioDevice: (AudioRouteDevice) -> Unit = {},
     onLaunchSystemOutputSwitcher: () -> Unit = {},
+    isCastingToTv: Boolean = false,
+    castDeviceName: String? = null,
     sleepTimerState: com.example.service.SleepTimerState = com.example.service.SleepTimerState(),
     dynamicArtworkColor: Color? = null,
     onDismiss: () -> Unit,
@@ -1088,6 +1090,35 @@ fun NowPlayingScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = BentoPrimary.copy(alpha = 0.16f),
+                                    modifier = Modifier.testTag("now_playing_casting_tv_status")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Tv,
+                                            contentDescription = "Playing in TV",
+                                            tint = BentoPrimary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = if (!castDeviceName.isNullOrBlank()) "Playing in TV · $castDeviceName" else "Playing in TV",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = BentoPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
                             if (showAdvancedSongInfo && audioTechnicalInfo != null) {
                                 com.example.ui.components.AdvancedSongInfoRow(
                                     info = audioTechnicalInfo,
@@ -1436,6 +1467,8 @@ fun NowPlayingScreen(
                         positionMs = livePositionMs,
                         currentLyrics = currentLyrics,
                         audioRouteInfo = audioRouteInfo,
+                        isCastingToTv = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST,
+                        castDeviceName = castDeviceName,
                         onDismiss = onDismiss,
                         onTogglePlayPause = onTogglePlayPause,
                         onSkipNext = onSkipNext,
@@ -1471,6 +1504,8 @@ fun NowPlayingScreen(
                         positionMs = livePositionMs,
                         currentLyrics = currentLyrics,
                         audioRouteInfo = audioRouteInfo,
+                        isCastingToTv = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST,
+                        castDeviceName = castDeviceName,
                         onDismiss = onDismiss,
                         onTogglePlayPause = onTogglePlayPause,
                         onSkipNext = onSkipNext,
@@ -1506,6 +1541,8 @@ fun NowPlayingScreen(
                         positionMs = livePositionMs,
                         currentLyrics = currentLyrics,
                         audioRouteInfo = audioRouteInfo,
+                        isCastingToTv = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST,
+                        castDeviceName = castDeviceName,
                         onDismiss = onDismiss,
                         onTogglePlayPause = onTogglePlayPause,
                         onSkipNext = onSkipNext,
@@ -1553,9 +1590,14 @@ fun NowPlayingScreen(
                     fun Color.toVelvetStageTone(targetValue: Float, minSat: Float, maxSat: Float): Color {
                         val hsv = FloatArray(3)
                         android.graphics.Color.colorToHSV(this.toArgb(), hsv)
-                        if (hsv[1] < 0.14f || (hsv[0] in 15f..46f && hsv[1] < 0.28f)) {
-                            hsv[0] = 222f
-                            hsv[1] = 0.36f
+                        // Preserve neutral black & white / monochrome artworks as sleek dark charcoal
+                        if (hsv[1] < 0.06f) {
+                            hsv[1] = 0f
+                            hsv[2] = (targetValue * 0.78f).coerceIn(0.13f, 0.22f)
+                            return Color(android.graphics.Color.HSVToColor(hsv))
+                        }
+                        if (hsv[1] < 0.14f) {
+                            hsv[1] = hsv[1].coerceAtMost(0.12f)
                         } else {
                             hsv[1] = hsv[1].coerceIn(minSat, maxSat)
                         }
@@ -1680,10 +1722,40 @@ fun NowPlayingScreen(
                                 playbackState.songRepeatRemainingCount
                             } else 0
 
+                            val effectiveCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (effectiveCasting) {
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFF151822).copy(alpha = 0.72f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                                        modifier = Modifier.testTag("now_playing_casting_tv_status")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Tv,
+                                                contentDescription = "Playing in TV",
+                                                tint = bentoInk,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = if (!castDeviceName.isNullOrBlank()) "Playing in TV · $castDeviceName" else "Playing in TV",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = bentoInk,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
                                 if (activeSongRepeatCount > 0) {
                                     Surface(
                                         onClick = { showRepeatSongDialog = true },
@@ -1970,7 +2042,8 @@ fun NowPlayingScreen(
                                 )
                             }
 
-                            // Centered Audio Output Device Label (e.g. earbuds icon + device name)
+                            // Centered Audio Output Device Label (shows locked "Playing in TV" when casting)
+                            val bentoCasting = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.Center
@@ -1978,7 +2051,7 @@ fun NowPlayingScreen(
                                 Row(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(50))
-                                        .clickable {
+                                        .clickable(enabled = !bentoCasting) {
                                             HapticUtils.performClickHaptic(context)
                                             showAudioOutputSheet = true
                                         }
@@ -1988,19 +2061,27 @@ fun NowPlayingScreen(
                                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Icon(
-                                        imageVector = audioRouteInfo.icon,
-                                        contentDescription = "Audio Output Device",
-                                        tint = bentoSubInk,
+                                        imageVector = if (bentoCasting) Icons.Default.Tv else audioRouteInfo.icon,
+                                        contentDescription = if (bentoCasting) "Playing in TV" else "Audio Output Device",
+                                        tint = if (bentoCasting) bentoInk else bentoSubInk,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Text(
-                                        text = audioRouteInfo.name,
+                                        text = if (bentoCasting) "Playing in TV" else audioRouteInfo.name,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = bentoSubInk,
+                                        fontWeight = if (bentoCasting) FontWeight.SemiBold else FontWeight.Medium,
+                                        color = if (bentoCasting) bentoInk else bentoSubInk,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (bentoCasting) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Output locked while casting",
+                                            tint = bentoSubInk,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -2059,22 +2140,23 @@ fun NowPlayingScreen(
                                             HapticUtils.performClickHaptic(context)
                                             showAudioOutputSheet = true
                                         },
+                                        enabled = !bentoCasting,
                                         shape = RoundedCornerShape(
                                             topStart = 22.dp,
                                             bottomStart = 22.dp,
                                             topEnd = 5.dp,
                                             bottomEnd = 5.dp
                                         ),
-                                        color = pillBgColor,
+                                        color = if (bentoCasting) pillBgColor.copy(alpha = 0.08f) else pillBgColor,
                                         modifier = Modifier
                                             .width(54.dp)
                                             .height(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
-                                                imageVector = Icons.Default.SpeakerGroup,
-                                                contentDescription = "Switch Audio Output",
-                                                tint = bentoInk.copy(alpha = 0.92f),
+                                                imageVector = if (bentoCasting) Icons.Default.Tv else Icons.Default.SpeakerGroup,
+                                                contentDescription = if (bentoCasting) "Playing in TV (Output locked)" else "Switch Audio Output",
+                                                tint = bentoInk.copy(alpha = if (bentoCasting) 0.58f else 0.92f),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -2450,6 +2532,8 @@ fun NowPlayingScreen(
             AudioOutputSwitcherSheet(
                 audioRouteInfo = audioRouteInfo,
                 availableDevices = availableAudioDevices,
+                isCastingToTv = isCastingToTv || audioRouteInfo.type == com.example.util.AudioDeviceType.TV_CAST,
+                castDeviceName = castDeviceName,
                 onSelectDevice = { device ->
                     onSelectAudioDevice(device)
                 },
