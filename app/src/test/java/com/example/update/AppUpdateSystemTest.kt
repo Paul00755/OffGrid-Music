@@ -855,10 +855,5 @@ class AppUpdateSystemTest {
                 publishScriptText.contains("PRODUCTION_BRANCHES") &&
                 fcmScriptText.contains("PRODUCTION_BRANCHES")
         )
-        assertTrue(
-            "generate_release_notes.py must inspect production code diffs from the previous main release",
-            notesScriptText.contains("collect_diff_code_highlights") &&
-                notesScriptText.contains("is_internal_repo_only_note")
-        )
     }
 }

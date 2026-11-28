@@ -73,7 +73,6 @@
 | **Support the Developer** | **[Buy Me a Coffee](https://buymeacoffee.com/paulrajmes9)** | Optional support for ongoing independent open-source development. |
 
 ### Update Over Your Existing App Without Losing Data
-- **New Install Help:** First time installing an Android `.apk`? Jump to **[Frequently Asked Questions (#1 Download Steps & #2 Play Protect Scan)](#-frequently-asked-questions)**.
 - **In-Place Upgrades:** Install any newer `OffGrid-Music.apk` directly over your current installation without uninstalling. Your playlists, favorites, synced `.lrc` lyrics, timing offsets, cover art, listening stats, and custom layouts stay intact.
 - **Built-In OTA Checker & Aggregated Changelogs:** Automatic semantic releases (`v1.0.5`, `v1.0.15`, ...) come with an in-app GitHub release checker that summarizes every improvement since your installed version in one view.
 
@@ -292,59 +291,26 @@ OffGrid Music is built as a true **synced lyrics music player for Android**, sup
 - **Dual-Mode Sleep Timer:** **Time-Based** (up to 180 min + live `+5/+10/+15m` extensions & *"Finish current track"*) or **Track-Based** (up to 50 tracks + `+1/+2` track extensions).
 - **Optional Encrypted Cloud Backup (`Google` / `Email & Password`):** Trigger **Backup Now**, **Sync / Restore Now**, or scheduled **Automatic Backups** (*Daily, Weekly, Monthly*)—never uploading your MP3/FLAC files or Gemini API key.
 - **OffGrid Jam (2–10 Listeners):** Host or join synchronized listening rooms via **Invite Code, Invite Link, or QR Code Scanner**, vote on shared-library recommendations, and transfer approved local tracks (up to 25 MB) directly peer-to-peer via WebRTC without cloud audio storage.
-- **Storage, FAQ & Support:** 3 SQLite capacity tiers (*10K, 50K, 100K* history records), one-tap **Optimize DB**, searchable 16-question in-app **FAQ** (with APK install & Play Protect guide), `.TXT` / `.JSON` diagnostics export, and direct support at **`offgridmusicsupport@gmail.com`**.
+- **Storage, FAQ & Support:** 3 SQLite capacity tiers (*10K, 50K, 100K* history records), one-tap **Optimize DB**, searchable 14-question in-app **FAQ**, `.TXT` / `.JSON` diagnostics export, and direct support at **`offgridmusicsupport@gmail.com`**.
 
 ---
 
-## Frequently Asked Questions
-
-### 1. How do I download and install the OffGrid Music APK?
-Follow these quick steps on Android 7.0+:
-
-1. **Download the APK:** Tap **[Download OffGrid-Music.apk](https://github.com/Paul00755/OffGrid-Music/releases/latest/download/OffGrid-Music.apk)** or open **[offgrid-music-web.pages.dev](https://offgrid-music-web.pages.dev/)** in your phone's browser.
-2. **Allow Browser Download Access (if asked):** Grant storage/download permission if your browser requests it, then tap **Download anyway** if Android shows *"File might be harmful"* (shown automatically for every `.apk` download outside the Play Store).
-3. **Allow "Install unknown apps" (one-time per browser or file manager):**
-   - Tap **Open** on the download notification (or open your **Files / Downloads** app and tap `OffGrid-Music.apk`).
-   - When Android displays *"For your security, your phone currently isn't allowed to install unknown apps from this source"*, tap **Settings** right on that popup.
-   - Or open **Android Settings → Apps → Special app access → Install unknown apps**, choose your browser (**Chrome, Brave, Samsung Internet, etc.**) or **Files**, and turn **ON** **Allow from this source**.
-4. **Verify & Install:** Press Back, allow **Google Play Protect** to scan the package (*"This app looks safe"*), tap **Install**, and open **OffGrid Music**.
-5. **Future Updates:** You never need to uninstall first—installing any newer `OffGrid-Music.apk` (via browser or the built-in in-app updater) keeps all playlists, synced `.lrc` lyrics, listening stats, and settings intact.
-
----
-
-### 2. My browser shows *"File might be harmful"* when downloading `OffGrid-Music.apk` — is it really safe?
-**Yes—100% safe.** Android browsers automatically display a generic *"File might be harmful"* popup for **every `.apk` file** downloaded outside the Google Play Store simply because the file ends in `.apk`, **not** because anything unsafe was found.
-
-- Once you tap **Download anyway** from `release-assets.githubusercontent.com` and open `OffGrid-Music.apk`, **Google Play Protect** scans the signed app directly on your phone and passes with **"This app looks safe — You can continue to install it"**.
-- OffGrid Music is **100% open source** on GitHub, built cleanly via transparent GitHub Actions CI, and contains zero ads, zero ad trackers, and zero background audio uploads.
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/faq-browser-harmful-warning.jpg" alt="Android browser generic warning: File might be harmful — Do you want to download OffGrid-Music.apk from release-assets.githubusercontent.com anyway — tap Download anyway" width="320" /><br />
-      <sub><strong>Step 1 · Generic browser warning for all APK files:</strong><br />Tap <strong>Download anyway</strong></sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/faq-play-protect-safe.png" alt="Google Play Protect security scan passed for OffGrid Music showing This app looks safe and You can continue to install it" width="320" /><br />
-      <sub><strong>Step 2 · Google Play Protect scan passed:</strong><br />Confirms <strong>"This app looks safe"</strong> — tap <strong>Install</strong></sub>
-    </td>
-  </tr>
-</table>
+## Frequently Asked Questions (Highlights)
 
 <details>
-<summary><strong>More Frequently Asked Questions (Play Store, Offline Playback, In-Place Updates, Cloud Sign-In, Cast &amp; AI Key)</strong></summary>
+<summary><strong>Click to view key answers (Safety, Offline Playback, Updates, Google Sign-In, Cast, OffGrid Jam & AI Key)</strong></summary>
 
-3. **The app isn't on the Google Play Store — is it safe to use?**
+1. **The app isn't on the Google Play Store — is it safe to use?**
    Yes. OffGrid Music is 100% open source on GitHub with zero ads, zero ad trackers, and zero hidden permissions. Every APK is built and released transparently via [GitHub Releases](https://github.com/Paul00755/OffGrid-Music/releases) so anyone can inspect the code.
-4. **Does OffGrid Music work completely offline?**
+2. **Does OffGrid Music work completely offline?**
    Yes. Local playback across all 12 audio formats (`MP3`, `FLAC`, `OPUS`, `WAV`, `M4A`, `AAC`, `OGG`, `AIFF`, etc.), playlists, 5-Band EQ, Wrapped Stats, cached `.lrc` lyrics, and Home Screen Widgets work 100% offline with no account required.
-5. **Will updating to a newer APK delete my playlists, stats, or settings?**
+3. **Will updating to a newer APK delete my playlists, stats, or settings?**
    No. Install the newer `OffGrid-Music.apk` directly over your existing app without uninstalling—your playlists, favorites, synced lyrics offsets, cover art, listening history, and layouts stay preserved.
-6. **If I use Google Sign-In for Cloud Backup, what is uploaded?**
+4. **If I use Google Sign-In for Cloud Backup, what is uploaded?**
    Only your Favorites, Playlists, Smart Playlists, Listening Stats, Synced Lyrics & Offsets, Folder Rules, Home Feed order, and Preferences (saved in your account-scoped Firebase space). Your MP3/FLAC audio files and Gemini API key are **never** uploaded.
-7. **How does TV Casting work without internet streaming?**
+5. **How does TV Casting work without internet streaming?**
    Your phone spins up a lightweight, token-secured local LAN HTTP server (`LocalCastMediaServer`) over your home Wi-Fi to stream your local audio, artwork, and live synced lyrics directly to your Chromecast, Google TV, Android TV, or DLNA Smart TV.
-8. **Where can I search all 16 FAQ guides interactively?**
+6. **How do I get the remaining 7 questions & interactive FAQ?**
    Visit **[offgrid-music-web.pages.dev/#faq](https://offgrid-music-web.pages.dev/#faq)** or open **Settings → Other & Privacy → FAQ** inside the app.
 
 </details>

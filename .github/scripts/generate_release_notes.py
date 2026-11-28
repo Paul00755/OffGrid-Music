@@ -18,7 +18,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 import unicodedata
 import urllib.error
 import urllib.request
@@ -203,30 +202,6 @@ MODULE_CHANGE_DESCRIPTIONS: List[Tuple[str, str, str, Set[str]]] = [
         "Improved sign-in experience for Google and Email accounts",
         {"auth", "sign-in", "sign in", "login"},
     ),
-    (
-        "AudioFocusManager",
-        "Improvements",
-        "Improved audio focus and interruption handling during playback",
-        {"audio focus", "interruption", "duck", "phone call"},
-    ),
-    (
-        "UserPreferences",
-        "Improvements",
-        "Updated playback and appearance preferences",
-        {"preference", "settings", "default", "mini-player", "home feed", "waveform"},
-    ),
-    (
-        "MusicViewModel",
-        "Improvements",
-        "Updated player preferences and playback state handling",
-        {"mini-player", "waveform", "home feed", "playback", "volume", "cast"},
-    ),
-    (
-        "Cast",
-        "Improvements",
-        "Improved Google Cast streaming, sync, and playback controls",
-        {"cast", "chromecast", "remote media", "hls", "dlna"},
-    ),
 ]
 
 
@@ -325,111 +300,27 @@ def to_plain_note(raw: str) -> Optional[str]:
         return None
 
     prefix_map = [
-        (
-            r"^fix(\([^)]*\))?!?:\s*",
-            "Fixed ",
-            ("fix", "fixed", "fixes", "resolve", "resolved", "prevent", "prevented", "correct", "corrected", "patch", "patched", "stop", "stopped"),
-        ),
-        (
-            r"^bugfix(\([^)]*\))?!?:\s*",
-            "Fixed ",
-            ("fix", "fixed", "resolve", "resolved", "prevent", "prevented", "correct", "corrected"),
-        ),
-        (
-            r"^hotfix(\([^)]*\))?!?:\s*",
-            "Fixed ",
-            ("fix", "fixed", "resolve", "resolved", "prevent", "prevented"),
-        ),
-        (
-            r"^feat(\([^)]*\))?!?:\s*",
-            "Added ",
-            ("add", "added", "adds", "introduce", "introduced", "enable", "enabled", "implement", "implemented", "create", "created", "support", "supported", "enhance", "enhanced", "improve", "improved", "update", "updated", "upgrade", "upgraded", "allow", "integrate", "integrated"),
-        ),
-        (
-            r"^feature(\([^)]*\))?!?:\s*",
-            "Added ",
-            ("add", "added", "introduce", "introduced", "enable", "enabled", "implement", "implemented", "create", "created", "support"),
-        ),
-        (
-            r"^perf(\([^)]*\))?!?:\s*",
-            "Improved ",
-            ("improve", "improved", "optimize", "optimized", "speed", "faster", "reduce", "reduced", "enhance", "enhanced"),
-        ),
-        (
-            r"^refactor(\([^)]*\))?!?:\s*",
-            "Refined ",
-            ("refine", "refined", "clean", "cleaned", "simplify", "simplified", "restructure", "reorganize", "improve", "improved", "update", "updated"),
-        ),
-        (
-            r"^style(\([^)]*\))?!?:\s*",
-            "Updated ",
-            ("update", "updated", "polish", "polished", "refine", "refined", "style", "format"),
-        ),
-        (
-            r"^ui(\([^)]*\))?!?:\s*",
-            "Updated ",
-            ("update", "updated", "polish", "polished", "refine", "refined", "add", "added", "fix", "fixed", "improve", "improved"),
-        ),
-        (
-            r"^ux(\([^)]*\))?!?:\s*",
-            "Improved ",
-            ("improve", "improved", "refine", "refined", "polish", "polished", "enhance", "enhanced", "update", "updated"),
-        ),
-        (
-            r"^docs(\([^)]*\))?!?:\s*",
-            "Updated documentation for ",
-            ("update", "updated", "add", "added", "document", "documented", "improve", "improved"),
-        ),
-        (
-            r"^chore(\([^)]*\))?!?:\s*",
-            "Updated ",
-            ("update", "updated", "upgrade", "upgraded", "add", "added", "remove", "removed", "clean", "cleaned", "set", "configure", "configured", "enhance", "enhanced", "improve", "improved", "fix", "fixed"),
-        ),
+        (r"^fix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^bugfix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^hotfix(\([^)]*\))?!?:\s*", "Fixed "),
+        (r"^feat(\([^)]*\))?!?:\s*", "Added "),
+        (r"^feature(\([^)]*\))?!?:\s*", "Added "),
+        (r"^perf(\([^)]*\))?!?:\s*", "Improved "),
+        (r"^refactor(\([^)]*\))?!?:\s*", "Refined "),
+        (r"^style(\([^)]*\))?!?:\s*", "Updated "),
+        (r"^ui(\([^)]*\))?!?:\s*", "Updated "),
+        (r"^ux(\([^)]*\))?!?:\s*", "Improved "),
+        (r"^docs(\([^)]*\))?!?:\s*", "Updated documentation for "),
+        (r"^chore(\([^)]*\))?!?:\s*", "Updated "),
     ]
-    past_tense_map = {
-        "add": "Added",
-        "adds": "Added",
-        "fix": "Fixed",
-        "fixes": "Fixed",
-        "improve": "Improved",
-        "enhance": "Enhanced",
-        "update": "Updated",
-        "upgrade": "Upgraded",
-        "refine": "Refined",
-        "polish": "Polished",
-        "enable": "Enabled",
-        "implement": "Implemented",
-        "introduce": "Introduced",
-        "create": "Created",
-        "resolve": "Resolved",
-        "prevent": "Prevented",
-        "correct": "Corrected",
-        "patch": "Patched",
-        "stop": "Stopped",
-        "optimize": "Optimized",
-        "reduce": "Reduced",
-        "clean": "Cleaned",
-        "simplify": "Simplified",
-        "configure": "Configured",
-        "integrate": "Integrated",
-        "support": "Added support for",
-        "document": "Documented",
-    }
-    for pattern, replacement, leading_verbs in prefix_map:
+    for pattern, replacement in prefix_map:
         if re.match(pattern, cleaned, flags=re.IGNORECASE):
             rest = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip()
             if not rest:
                 return None
-            first_word_match = re.match(r"^([A-Za-z]+)\b(.*)$", rest)
-            if first_word_match and first_word_match.group(1).lower() in leading_verbs:
-                lead = first_word_match.group(1).lower()
-                tail = first_word_match.group(2)
-                verb = past_tense_map.get(lead, first_word_match.group(1).capitalize())
-                cleaned = f"{verb}{tail}".strip()
-            else:
-                if replacement.endswith(" ") and rest[:1].isupper() and not rest[:2].isupper():
-                    rest = rest[:1].lower() + rest[1:]
-                cleaned = replacement + rest
+            if replacement.endswith(" ") and rest[:1].isupper() and not rest[:2].isupper():
+                rest = rest[:1].lower() + rest[1:]
+            cleaned = replacement + rest
             break
 
     if cleaned and cleaned[0].islower():
@@ -464,45 +355,6 @@ def is_similar_entry(candidate: str, existing_list: List[str]) -> bool:
             if smaller >= 2 and (overlap / smaller) >= 0.72:
                 return True
     return False
-
-
-def is_internal_repo_only_note(text: str) -> bool:
-    low = text.lower().strip()
-    internal_markers = (
-        "readme",
-        "ci isolation",
-        "ci/cd",
-        "github actions",
-        "workflow",
-        "build-apk",
-        "release-notification",
-        "unit test",
-        "robolectric",
-        "test branch",
-        "main/test",
-    )
-    has_internal = any(m in low for m in internal_markers)
-    has_app_feature = any(
-        m in low
-        for m in (
-            "player",
-            "playback",
-            "mini-player",
-            "mini player",
-            "waveform",
-            "lyrics",
-            "volume",
-            "cast",
-            "home feed",
-            "equalizer",
-            "playlist",
-            "shuffle",
-            "jam",
-            "theme",
-            "widget",
-        )
-    )
-    return has_internal and not has_app_feature
 
 
 def collect_commit_notes(base_ref: str) -> List[Tuple[str, str]]:
@@ -611,14 +463,6 @@ def extract_added_ui_features_from_diff(base_ref: str, changed_files: List[Tuple
                 "HomeFeedSections.kt",
                 "UserPreferences.kt",
                 "BottomNavOrderManagerCard.kt",
-                "MiniPlayer.kt",
-                "MusicViewModel.kt",
-                "PlaybackManager.kt",
-                "AudioFocusManager.kt",
-                "UiLayoutStudioScreen.kt",
-                "OnboardingScreen.kt",
-                "SyncModels.kt",
-                "NowPlayingNeonWaveform.kt",
             )
         )
     ]
@@ -697,94 +541,7 @@ def extract_added_ui_features_from_diff(base_ref: str, changed_files: List[Tuple
                 )
             )
 
-    # 4. Detect Artglass default Mini-Player update
-    if '"ARTWORK_GLASS"' in added_blob and any("MiniPlayer" in p or "UserPreferences" in p for p in interesting_paths):
-        key = "default_mini_player_artglass"
-        if key not in seen_lower:
-            seen_lower.add(key)
-            extracted.append(
-                (
-                    "Improvements",
-                    "Set Artwork Glass as the default Mini-Player style",
-                )
-            )
-
-    # 5. Detect 8-section Classic 8 Home Screen Feed default order
-    if "Classic 8" in added_blob or (
-        "defaultHomeSectionsRaw" in added_blob and "suggestions_mix" in added_blob
-    ):
-        key = "default_home_classic_8"
-        if key not in seen_lower:
-            seen_lower.add(key)
-            extracted.append(
-                (
-                    "Improvements",
-                    "Set the 8-section Classic 8 order as the default Home Screen feed layout",
-                )
-            )
-
-    # 6. Detect Modern Bento Wave default waveform and cross-screen waveform persistence
-    if "defaultWaveformForNowPlayingLayout" in added_blob or "WAVEFORM_USER_OVERRIDDEN" in added_blob:
-        key = "modern_bento_wave_default"
-        if key not in seen_lower:
-            seen_lower.add(key)
-            extracted.append(
-                (
-                    "Improvements",
-                    "Made Wave the default waveform for Modern Bento while keeping your chosen waveform style intact across all Now Playing screens",
-                )
-            )
-
-    # 7. Detect zero-volume auto-pause and volume-increase auto-resume fixes
-    if (
-        "zeroVolumeResumeMonitorJob" in added_blob
-        or "isMusicStreamMuted" in added_blob
-        or "evaluateZeroVolumeStateOnMain" in added_blob
-    ):
-        key = "zero_volume_pause_resume_fix"
-        if key not in seen_lower:
-            seen_lower.add(key)
-            extracted.append(
-                (
-                    "Fixes",
-                    "Fixed Pause on Zero Volume and Auto-Resume on Volume Increase to respond reliably across hardware keys, volume sliders, and muted states",
-                )
-            )
-
     return extracted
-
-
-def collect_diff_code_highlights(base_ref: str, changed_files: List[Tuple[str, str]]) -> str:
-    """Builds a compact excerpt of production app code changes between base_ref..HEAD for Gemini."""
-    if not base_ref:
-        return ""
-    prod_paths = [
-        path
-        for _, path in changed_files
-        if path.startswith("app/src/main/java/") and path.endswith(".kt")
-    ][:18]
-    if not prod_paths:
-        return ""
-
-    diff_text = run_git("diff", "-U0", f"{base_ref}..HEAD", "--", *prod_paths)
-    if not diff_text:
-        return ""
-
-    kept_lines: List[str] = []
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
-            kept_lines.append(line.split(" b/", 1)[-1])
-        elif line.startswith("+") and not line.startswith("+++"):
-            stripped = line[1:].strip()
-            if len(stripped) >= 6 and not stripped.startswith("import "):
-                kept_lines.append(f"+ {stripped[:160]}")
-        elif line.startswith("-") and not line.startswith("---"):
-            stripped = line[1:].strip()
-            if len(stripped) >= 6 and not stripped.startswith("import "):
-                kept_lines.append(f"- {stripped[:160]}")
-        if sum(len(x) + 1 for x in kept_lines) >= 3600:
-            break
-    return "\n".join(kept_lines)
 
 
 def collect_diff_notes(base_ref: str, existing_notes: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -885,7 +642,6 @@ def try_gemini_summary(
     commit_notes: List[Tuple[str, str]],
     diff_notes: List[Tuple[str, str]],
     changed_files: List[Tuple[str, str]],
-    diff_excerpt: str = "",
 ) -> Optional[str]:
     """
     Optionally uses Gemini (if GEMINI_API_KEY is configured in CI secrets) to polish
@@ -903,25 +659,22 @@ def try_gemini_summary(
     ][:45]
 
     raw_items = [f"- [{b}] {t}" for b, t in (commit_notes + diff_notes)]
-    if not raw_items and not prod_files and not diff_excerpt:
+    if not raw_items and not prod_files:
         return None
 
-    excerpt_block = f"\n\nKey code diff excerpt ({base_ref or 'previous'}..HEAD):\n{diff_excerpt}" if diff_excerpt else ""
     prompt = (
         "You are writing the in-app update changelog for OffGrid Music (an Android music player).\n"
-        f"Summarize ALL user-facing changes from the last release ({base_ref or 'previous main release'}) to this latest release.\n"
+        "Summarize ALL user-facing changes from the last release to this release.\n"
         "Strict rules:\n"
-        "- Cover EVERY distinct user-facing feature, UI/default update, improvement, and bug fix (do not drop earlier changes).\n"
-        "- Ignore internal-only CI workflow scripts, GitHub test-branch setup, README edits, or unit tests unless there are no app changes.\n"
+        "- Cover EVERY distinct feature, improvement, and bug fix below (do not drop earlier changes).\n"
         "- Plain language for end users; no emojis, no file paths, no commit hashes, no version/tag headers, no release boilerplate.\n"
         "- Group into only the sections that apply using Markdown level-3 headings: `### Highlights`, `### Improvements`, `### Fixes`.\n"
         "- Use concise bullet points starting with `- ` (max 14 bullets total).\n"
         "- Do not invent features not supported by the inputs.\n\n"
         f"Collected change items since {base_ref or 'previous release'}:\n"
-        + ("\n".join(raw_items) if raw_items else "(no explicit commit bullets)")
+        + "\n".join(raw_items)
         + "\n\nChanged files:\n"
         + "\n".join(prod_files)
-        + excerpt_block
     )
 
     url = (
@@ -1019,42 +772,37 @@ def fetch_latest_published_release_tag() -> Tuple[Optional[Tuple[int, int, int]]
         },
         method="GET",
     )
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                releases = json.loads(resp.read().decode("utf-8"))
-            if not isinstance(releases, list):
-                return None, ""
-            published_with_apk: List[Tuple[Tuple[int, int, int], str]] = []
-            published_any: List[Tuple[Tuple[int, int, int], str]] = []
-            for rel in releases:
-                if not isinstance(rel, dict):
-                    continue
-                if rel.get("draft") or rel.get("prerelease"):
-                    continue
-                tag = (rel.get("tag_name") or "").strip()
-                parsed = parse_semver(tag)
-                if not parsed:
-                    continue
-                published_any.append((parsed, tag))
-                assets = rel.get("assets") or []
-                has_apk = any(
-                    isinstance(a, dict) and str(a.get("name", "")).lower().endswith(".apk")
-                    for a in assets
-                )
-                if has_apk:
-                    published_with_apk.append((parsed, tag))
-
-            chosen = published_with_apk if published_with_apk else published_any
-            if chosen:
-                chosen.sort(key=lambda item: item[0])
-                return chosen[-1]
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(releases, list):
             return None, ""
-        except Exception as exc:
-            if attempt < 2:
-                time.sleep(2)
+        published_with_apk: List[Tuple[Tuple[int, int, int], str]] = []
+        published_any: List[Tuple[Tuple[int, int, int], str]] = []
+        for rel in releases:
+            if not isinstance(rel, dict):
                 continue
-            print(f"Note: Could not query published GitHub releases ({exc}); using git tags.", file=sys.stderr)
+            if rel.get("draft") or rel.get("prerelease"):
+                continue
+            tag = (rel.get("tag_name") or "").strip()
+            parsed = parse_semver(tag)
+            if not parsed:
+                continue
+            published_any.append((parsed, tag))
+            assets = rel.get("assets") or []
+            has_apk = any(
+                isinstance(a, dict) and str(a.get("name", "")).lower().endswith(".apk")
+                for a in assets
+            )
+            if has_apk:
+                published_with_apk.append((parsed, tag))
+
+        chosen = published_with_apk if published_with_apk else published_any
+        if chosen:
+            chosen.sort(key=lambda item: item[0])
+            return chosen[-1]
+    except Exception as exc:
+        print(f"Note: Could not query published GitHub releases ({exc}); using git tags.", file=sys.stderr)
     return None, ""
 
 
@@ -1115,9 +863,6 @@ def determine_version_and_base() -> Tuple[str, str, str, str]:
         prev_tag = published_tag
     elif semver_tags and semver_tags[-1][0] >= floor_ver:
         highest_ver, prev_tag = semver_tags[-1]
-
-    if prev_tag and not git_ref_exists(prev_tag):
-        run_git("fetch", "--tags", "--force", "origin")
 
     head_sha = git_rev_parse("HEAD")
     diff_base_ref = ""
@@ -1180,18 +925,10 @@ def main() -> int:
     commit_notes = collect_commit_notes(diff_base_ref)
     diff_notes = collect_diff_notes(diff_base_ref, commit_notes)
     changed_files, _ = get_diff_stats(diff_base_ref)
-    diff_excerpt = collect_diff_code_highlights(diff_base_ref, changed_files)
 
-    # Put concrete diff-detected UI/player notes ahead of vague repo-chore commit lines,
-    # and drop internal-only CI/README commit noise whenever real user-facing notes exist.
-    user_facing_commits = [item for item in commit_notes if not is_internal_repo_only_note(item[1])]
-    if diff_notes or user_facing_commits:
-        all_items = diff_notes + user_facing_commits
-    else:
-        all_items = commit_notes
-
+    all_items = commit_notes + diff_notes
     gemini_markdown = (
-        try_gemini_summary(diff_base_ref, commit_notes, diff_notes, changed_files, diff_excerpt)
+        try_gemini_summary(diff_base_ref, commit_notes, diff_notes, changed_files)
         if is_prod
         else None
     )
